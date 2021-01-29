@@ -2,7 +2,7 @@
 <feed xmlns="http://www.w3.org/2005/Atom">
     <id>https://blog.margrop.net</id>
     <title>魔都水滴</title>
-    <updated>2021-01-29T07:54:07.144Z</updated>
+    <updated>2021-01-29T08:23:03.926Z</updated>
     <generator>https://github.com/jpmonette/feed</generator>
     <link rel="alternate" href="https://blog.margrop.net"/>
     <link rel="self" href="https://blog.margrop.net/atom.xml"/>
@@ -10,6 +10,206 @@
     <logo>https://blog.margrop.net/images/avatar.png</logo>
     <icon>https://blog.margrop.net/favicon.ico</icon>
     <rights>All rights reserved 2021, 魔都水滴</rights>
+    <entry>
+        <title type="html"><![CDATA[如何使用通用的Hibernate类型映射JSON对象]]></title>
+        <id>https://blog.margrop.net/post/how-to-map-json-collections-using-jpa-and-hibernate/</id>
+        <link href="https://blog.margrop.net/post/how-to-map-json-collections-using-jpa-and-hibernate/">
+        </link>
+        <updated>2021-01-29T08:06:09.000Z</updated>
+        <content type="html"><![CDATA[<!-- more -->
+<h1 id="介绍">介绍</h1>
+<p>在本文中，我们将看到如何使用<a href="http://www.google.com/" title="Hibernate Types">Hibernate Types</a>开源项目将JSON列映射到JPA实体属性。</p>
+<p>虽然您可以创建自己的自定义Hibernate类型，但可以在Oracle，SQL Server，PostgreSQL或MySQL上映射JSON列类型，但是由于<a href="http://www.google.com/" title="Hibernate Types">Hibernate Types</a>项目已经提供了此功能，因此您无需实现自己的Hibernate Type 。</p>
+<!-- more -->
+<h1 id="领域模型">领域模型</h1>
+<p>假设我们具有以下域模型：<br>
+<img src="https://vladmihalcea.com/wp-content/uploads/2016/06/jsontypedomainmodel.png" alt="JsonType域模型" loading="lazy"></p>
+<p>Location和Ticket是JSON Object(s)，而Event和Participant是JPA实体。我们的目标是提供一种Type适用于任何类型的JSON JavaObject以及支持JSON列的任何关系数据库的Hibernate JSON 。</p>
+<h1 id="maven依赖">Maven依赖</h1>
+<p>您需要做的第一件事是在项目pom.xml配置文件中设置以下Maven依赖项：</p>
+<pre><code class="language-xml">&lt;dependency&gt;
+    &lt;groupId&gt;com.vladmihalcea&lt;/groupId&gt;
+    &lt;artifactId&gt;hibernate-types-52&lt;/artifactId&gt;
+    &lt;version&gt;${hibernate-types.version}&lt;/version&gt;
+&lt;/dependency&gt;
+</code></pre>
+<p>如果您使用的是Hibernate的旧版本，请查看<a href="https://github.com/vladmihalcea/hibernate-types">hibernate-types<code>GitHub存储库</code></a>，以获取有关当前Hibernate版本的匹配依赖项的更多信息。</p>
+<h1 id="声明hibernate-types">声明Hibernate Types</h1>
+<p>要使用JSON Hibernate Types，我们必须使用@TypeDef注释声明它们：</p>
+<pre><code class="language-java">@TypeDefs({
+    @TypeDef(name = &quot;json&quot;, typeClass = JsonStringType.class),
+    @TypeDef(name = &quot;jsonb&quot;, typeClass = JsonBinaryType.class)
+})
+@MappedSuperclass
+public class BaseEntity {
+    //Code omitted for brevity
+}
+</code></pre>
+<blockquote>
+<p>TypeDef批注可以应用于基本实体类，也可以应用于与当前实体包关联的package-info.java文件。</p>
+</blockquote>
+<h1 id="mysql">MySQL</h1>
+<p>MySQL 5.7增加了对JSON类型的支持，在JDBC级别上，需要将其实现为String。因此，我们将使用JsonStringType。</p>
+<p>实体映射如下所示：</p>
+<pre><code class="language-java">@Entity(name = &quot;Event&quot;)
+@Table(name = &quot;event&quot;)
+public class Event extends BaseEntity {
+ 
+    @Type(type = &quot;json&quot;)
+    @Column(columnDefinition = &quot;json&quot;)
+    private Location location;
+ 
+    public Location getLocation() {
+        return location;
+    }
+ 
+    public void setLocation(Location location) {
+        this.location = location;
+    }
+}
+ 
+@Entity(name = &quot;Participant&quot;)
+@Table(name = &quot;participant&quot;)
+public class Participant extends BaseEntity {
+ 
+    @Type(type = &quot;json&quot;)
+    @Column(columnDefinition = &quot;json&quot;)
+    private Ticket ticket;
+ 
+    @ManyToOne
+    private Event event;
+ 
+    public Ticket getTicket() {
+        return ticket;
+    }
+ 
+    public void setTicket(Ticket ticket) {
+        this.ticket = ticket;
+    }
+ 
+    public Event getEvent() {
+        return event;
+    }
+ 
+    public void setEvent(Event event) {
+        this.event = event;
+    }
+}
+</code></pre>
+<p>插入以下实体时：</p>
+<pre><code class="language-java">final AtomicReference&lt;Event&gt; eventHolder = new AtomicReference&lt;&gt;();
+final AtomicReference&lt;Participant&gt; participantHolder = new AtomicReference&lt;&gt;();
+ 
+doInJPA(entityManager -&gt; {
+    Event nullEvent = new Event();
+    nullEvent.setId(0L);
+    entityManager.persist(nullEvent);
+ 
+    Location location = new Location();
+    location.setCountry(&quot;Romania&quot;);
+    location.setCity(&quot;Cluj-Napoca&quot;);
+ 
+    Event event = new Event();
+    event.setId(1L);
+    event.setLocation(location);
+    entityManager.persist(event);
+ 
+    Ticket ticket = new Ticket();
+    ticket.setPrice(12.34d);
+    ticket.setRegistrationCode(&quot;ABC123&quot;);
+ 
+    Participant participant = new Participant();
+    participant.setId(1L);
+    participant.setTicket(ticket);
+    participant.setEvent(event);
+ 
+    entityManager.persist(participant);
+ 
+    eventHolder.set(event);
+    participantHolder.set(participant);
+});
+</code></pre>
+<p>Hibernate生成以下语句：</p>
+<pre><code class="language-java">INSERT INTO event (location, id)
+VALUES (NULL(OTHER), 0)
+ 
+INSERT INTO event (location, id)
+VALUES ('{&quot;country&quot;:&quot;Romania&quot;,&quot;city&quot;:&quot;Cluj-Napoca&quot;}', 1)
+ 
+INSERT INTO participant (event_id, ticket, id)
+VALUES (1, {&quot;registrationCode&quot;:&quot;ABC123&quot;,&quot;price&quot;:12.34}, 1)
+</code></pre>
+<p>JSONObject(s)已正确实现在其关联的数据库列中。</p>
+<p>不仅JSONObject(s)已从其数据库表示形式正确转换：</p>
+<pre><code class="language-java">Event event = entityManager.find(Event.class, eventHolder.get().getId());
+ 
+assertEquals(&quot;Cluj-Napoca&quot;, event.getLocation().getCity());
+ 
+Participant participant = entityManager.find(
+    Participant.class, participantHolder.get().getId());
+assertEquals(&quot;ABC123&quot;, participant.getTicket().getRegistrationCode());
+</code></pre>
+<p>但是我们甚至可以发出基于JSON的本地SQL查询：</p>
+<pre><code class="language-java">List&lt;String&gt; participants = entityManager.createNativeQuery(
+    &quot;SELECT p.ticket -&gt; \&quot;$.registrationCode\&quot; &quot; +
+    &quot;FROM participant p &quot; +
+    &quot;WHERE JSON_EXTRACT(p.ticket, \&quot;$.price\&quot;) &gt; 1 &quot;)
+.getResultList();
+</code></pre>
+<p>Object(s)可以修改JSON ：</p>
+<pre><code class="language-java">event.getLocation().setCity(&quot;Constanța&quot;);
+entityManager.flush();
+</code></pre>
+<p>Hibernate生成正确的UPDATE语句：</p>
+<pre><code class="language-java">UPDATE event
+SET location = '{&quot;country&quot;:&quot;Romania&quot;,&quot;city&quot;:&quot;Constanța&quot;}'
+WHERE id = 1
+</code></pre>
+<h1 id="postgresql">PostgreSQL</h1>
+<p>从9.2版开始，PostgreSQL就一直支持JSON类型。有两种类型可以使用：</p>
+<ul>
+<li>json</li>
+<li>jsonb<br>
+两种PostgreSQL JSON类型都需要使用二进制数据格式来实现，因此我们需要使用JsonBinaryType这次。</li>
+</ul>
+<h1 id="postgresql-json列类型">PostgreSQL JSON列类型</h1>
+<p>对于JSON列类型，Object(s)必须如下更改两个JSON映射：</p>
+<pre><code class="language-java">@Type(type = &quot;jsonb&quot;)
+@Column(columnDefinition = &quot;json&quot;)
+private Location location;
+ 
+@Type(type = &quot;jsonb&quot;)
+@Column(columnDefinition = &quot;json&quot;)
+private Ticket ticket;
+</code></pre>
+<p>插入和实体更新都一样，甚至可以JSON按以下方式查询该列：</p>
+<pre><code class="language-java">List&lt;String&gt; participants = entityManager.createNativeQuery(
+    &quot;SELECT p.ticket -&gt;&gt;'registrationCode' &quot; +
+    &quot;FROM participant p &quot; +
+    &quot;WHERE p.ticket -&gt;&gt; 'price' &gt; '10'&quot;)
+.getResultList();
+</code></pre>
+<h1 id="postgresql-jsonb列类型">PostgreSQL JSONB列类型</h1>
+<p>对于JSONB列类型，我们只需要更改columnDefinition属性，因为json和jsonbPostgreSQL列类型都由来处理JsonBinaryType：</p>
+<pre><code class="language-java">@Type(type = &quot;jsonb&quot;)
+@Column(columnDefinition = &quot;jsonb&quot;)
+private Location location;
+ 
+@Type(type = &quot;jsonb&quot;)
+@Column(columnDefinition = &quot;jsonb&quot;)
+private Ticket ticket;
+</code></pre>
+<p>插入和JSONObject更新的工作方式相同，而JSONB列类型提供了更高级的查询功能：</p>
+<pre><code class="language-java">List&lt;String&gt; participants = entityManager.createNativeQuery(
+    &quot;SELECT jsonb_pretty(p.ticket) &quot; +
+    &quot;FROM participant p &quot; +
+    &quot;WHERE p.ticket -&gt;&gt; 'price' &gt; '10'&quot;)
+.getResultList();
+</code></pre>
+<p>参考<br>
+<a href="https://vladmihalcea.com/how-to-map-json-objects-using-generic-hibernate-types/">How to map JSON objects using generic Hibernate Types</a></p>
+]]></content>
+    </entry>
     <entry>
         <title type="html"><![CDATA[CentOS 7 升级或新安装MariaDB 10.5，使用阿里云镜像]]></title>
         <id>https://blog.margrop.net/post/centos-7-upgrade-or-install-mariadb-10.x-aliyun-mirror/</id>
@@ -730,67 +930,6 @@ docker start jupyter-notebook
 <ul>
 <li>在浏览器访问<a href="http://127.0.0.1:8888/">http://127.0.0.1:8888/</a>即可</li>
 </ul>
-]]></content>
-    </entry>
-    <entry>
-        <title type="html"><![CDATA[CentOS安装Frp客户端，可使用SSH]]></title>
-        <id>https://blog.margrop.net/post/centos-install-frp-client-for-ssh/</id>
-        <link href="https://blog.margrop.net/post/centos-install-frp-client-for-ssh/">
-        </link>
-        <updated>2021-01-23T09:22:58.000Z</updated>
-        <summary type="html"><![CDATA[<h1 id="下载并解压frp">下载并解压Frp</h1>
-<ul>
-<li>最新Frp下载地址：<a href="https://github.com/fatedier/frp/releases/">https://github.com/fatedier/frp/releases/</a></li>
-</ul>
-<pre><code class="language-bash">mkdir ~/frp
-cd ~/frp
-wget https://github.com/fatedier/frp/releases/download/v0.35.0/frp_0.35.0_linux_amd64.tar.gz
-tar -xvzf frp_0.35.0_linux_amd64.tar.gz
-</code></pre>
-]]></summary>
-        <content type="html"><![CDATA[<h1 id="下载并解压frp">下载并解压Frp</h1>
-<ul>
-<li>最新Frp下载地址：<a href="https://github.com/fatedier/frp/releases/">https://github.com/fatedier/frp/releases/</a></li>
-</ul>
-<pre><code class="language-bash">mkdir ~/frp
-cd ~/frp
-wget https://github.com/fatedier/frp/releases/download/v0.35.0/frp_0.35.0_linux_amd64.tar.gz
-tar -xvzf frp_0.35.0_linux_amd64.tar.gz
-</code></pre>
-<!-- more -->
-<h1 id="删除服务器相关文件">删除服务器相关文件</h1>
-<pre><code class="language-bash">cd ~/frp/frp_0.35.0_linux_amd64
-rm -rf frps*
-</code></pre>
-<h1 id="配置frp客户端">配置Frp客户端</h1>
-<ul>
-<li>需自行修改<code>server_addr</code>,<code>server_port</code>,<code>local_port</code>,<code>remote_port</code>以及<code>客户端名称</code></li>
-</ul>
-<pre><code class="language-bash">vi frpc.ini
-
-[common]
-server_addr = blog.margrop.net
-server_port = 2000
- 
-[SSH-VM-CENTOS]
-type = tcp
-local_port = 22
-remote_port = 2022
-</code></pre>
-<h1 id="启动frp服务">启动FRP服务</h1>
-<pre><code class="language-bash">cd ~/frp/frp_0.35.0_linux_amd64
-nohup ./frpc &amp;
-tail -f nohup.out
-</code></pre>
-<h1 id="可选请自行修改加入免认证公钥">(可选，请自行修改)加入免认证公钥</h1>
-<pre><code class="language-bash">echo &quot;ssh-rsa AAAAB3NzaC1yc2EAAAABIwAAAQEAyq1pB5aF0w6ps4OzwQl1C8uP41Iq7J+gqylLMXkoESrTUVhH1+irHuImxi2At886sO7x9s+b4jhRZoJZpZURPU4UmzUEBHKoXlqOf9eO//GtUita2AaPFw5tc0YgLPrgnO+z5MKfjo20aoJtVBvleRA/0YJcWy1a6ufXa8944D8a1Dirc9uVNR5QjKVFRbQt/twLkLdFB6t16HCwISKCVI56DcJOoY2g7mXI8clKaESeB+ANIhSKJclPwjoC6P0pHFfgqNauxC+0xugx3W2ZSIkVhdZu1L7iKvzXXPiETjPQA6qMjp/1dY2WU49Lf+wDOQplCy4HLq7QqNNVSzIBGw== Administrator@PCOS-1407251925&quot; &gt;&gt; ~/.ssh/authorized_keys
-</code></pre>
-<h1 id="设置自动启动">设置自动启动</h1>
-<pre><code class="language-bash">cat /etc/rc.d/rc.local
-chmod +x /etc/rc.d/rc.local
-echo &quot;cd /root/frp/frp_0.35.0_linux_amd64&quot; &gt;&gt; /etc/rc.d/rc.local
-echo &quot;nohup /root/frp/frp_0.35.0_linux_amd64/frpc &amp; &quot;&gt;&gt; /etc/rc.d/rc.local
-</code></pre>
 ]]></content>
     </entry>
 </feed>
