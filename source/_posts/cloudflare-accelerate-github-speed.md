@@ -62,3 +62,6 @@ isTop: false
 **注：workers每日总计免费10w次请求额度，普通人是几乎不可能用完，但为防止滥用仍建议添加路由和规则限制他人使用。**
 
 **附上作者GitHub：https://github.com/hunshcn/gh-proxy**
+<!--stackedit_data:
+eyJoaXN0b3J5IjpbNDQxMDMxNDA1XX0=
+-->
