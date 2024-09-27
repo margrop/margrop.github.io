@@ -2,6 +2,8 @@
 title: 'cloudflare workers 解决docker无法拉取镜像问题'
 date: 2024-06-10 14:16:26
 cover: /images/banner/1007_20240927_021428.webp
+coverWidth: 1280
+coverHeight: 720
 tags: [docker,cloudflare,fuckgfw,worker]
 published: true
 hideInList: false

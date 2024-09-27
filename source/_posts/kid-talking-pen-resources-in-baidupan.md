@@ -2,6 +2,8 @@
 title: '点读笔资源大全——百度云'
 date: 2023-03-12 20:26:01
 cover: /images/banner/1002_20240927_021333.webp
+coverWidth: 1280
+coverHeight: 720
 tags: [kid,baidupan]
 published: true
 hideInList: false

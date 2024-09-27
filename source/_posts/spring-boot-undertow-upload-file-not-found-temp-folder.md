@@ -2,6 +2,8 @@
 title: 'Spring Boot + Undertow上传文件找不到临时目录'
 date: 2021-03-27 11:17:26
 cover: /images/banner/1011_20240927_021456.webp
+coverWidth: 1280
+coverHeight: 720
 tags: [java,springboot,undertow]
 published: true
 hideInList: false

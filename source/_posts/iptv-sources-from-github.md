@@ -2,6 +2,8 @@
 title: 'iptv-sources 源收集（From Github）——2024/6/10更新'
 date: 2024-06-10 16:49:07
 cover: /images/banner/1001_20240927_021324.webp
+coverWidth: 1280
+coverHeight: 720
 tags: [iptv,github]
 published: true
 hideInList: false

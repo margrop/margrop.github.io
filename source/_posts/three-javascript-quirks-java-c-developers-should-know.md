@@ -2,6 +2,8 @@
 title: 'Java / C开发人员应该知道的三个JavaScript怪癖'
 date: 2021-02-28 22:28:36
 cover: /images/banner/1005_20240927_021343.webp
+coverWidth: 1280
+coverHeight: 720
 tags: [javascript,js,scoping,hoisting,function,with,closures]
 published: true
 hideInList: false

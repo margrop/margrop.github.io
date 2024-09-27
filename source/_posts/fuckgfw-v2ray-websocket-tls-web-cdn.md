@@ -2,6 +2,8 @@
 title: '搭梯子或机场：V2RAY配置WebSocket + TLS + Web + CDN'
 date: 2021-01-26 13:44:36
 cover: /images/banner/1009_20240927_021416.webp
+coverWidth: 1280
+coverHeight: 720
 tags: [梯子,fuckgfw,gfw,websocket,tls,web,cdn,v2ray,caddy2]
 published: true
 hideInList: false

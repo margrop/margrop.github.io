@@ -2,6 +2,8 @@
 title: '黑苹果（Hackintosh）核显或非核显处理器，如何修改 OpenCore 配置文件'
 date: 2021-09-13 16:48:17
 cover: /images/banner/1010_20240927_021443.webp
+coverWidth: 1280
+coverHeight: 720
 tags: []
 published: true
 hideInList: false
