@@ -32,3 +32,6 @@ isTop: false
 <https://docs.gitlab.com/ee/ci/variables/predefined_variables.html>
 
 
+<!--stackedit_data:
+eyJoaXN0b3J5IjpbMTgzNTEwNzQ2NF19
+-->
