@@ -127,3 +127,6 @@ print("云电脑连接状态：", response.json())
    - 添加一行来定期运行脚本，例如每小时运行一次：
      ```
      0 * * * * /usr/bin/python3
+<!--stackedit_data:
+eyJoaXN0b3J5IjpbLTQ0NjAxMDQyXX0=
+-->
