@@ -1,6 +1,7 @@
 ---
 title: 'Proxmox VE 8.2 日常维护，去掉未订阅的提示，和设置国内源——2024年6月4日更新'
 date: 2023-02-26 20:00:19
+cover: /images/banner/1012_20240927_021455.webp
 tags: [pve,Proxmox VE,pvekclean]
 published: true
 hideInList: false

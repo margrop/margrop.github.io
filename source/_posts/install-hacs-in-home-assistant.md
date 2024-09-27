@@ -1,6 +1,7 @@
 ---
 title: '如何在Home Assistant里面安装HACS'
 date: 2021-02-19 10:53:04
+cover: /images/banner/1008_20240927_021414.webp
 tags: [hacs,homeassistant,ssh]
 published: true
 hideInList: false
