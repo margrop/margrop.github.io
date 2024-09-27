@@ -100,3 +100,6 @@ GitHub地址：https://github.com/fatedier/frp，可以在 [Release](https://www
 添加计划任务会需要输入管理员密码，默认天翼云电脑没有设置管理员密码，我们需要在系统-账户-登录选项 创建一个密码。
 
 这个样子我们的开机启动就配置完成了，我们的云电脑就算重启也能保证frpc稳定运行。
+<!--stackedit_data:
+eyJoaXN0b3J5IjpbMzMyMjYwNDE3XX0=
+-->
