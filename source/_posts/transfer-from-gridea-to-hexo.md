@@ -20,11 +20,8 @@ categories: 个人随笔
 ## 安装 Hexo
 
 安装Hexo其实挺傻瓜式的，基本按着[官方教程](https://hexo.io/zh-cn/docs/)走下来就ok了。
-
+注：
 ```
-HEXO_PATH=~/Applications/Hexo
-mkdir $HEXO_PATH && cd $HEXO_PATH
-
 npm install -g hexo-cli
 hexo init
 npm install
@@ -390,5 +387,5 @@ sitemap:
 * 注：`Github` 对唯一 tag 的长度有限制，`Gridea` 使用的是 `pathname` 作为评论唯一 tag
 * 上面的配置中，当 `pathname` 超过49字节时，`Gitalk` 使用前49个字节作为评论唯一 tag
 <!--stackedit_data:
-eyJoaXN0b3J5IjpbLTExNDIxMzEyOTcsLTEzNDQwMDQ1NF19
+eyJoaXN0b3J5IjpbLTE3Mjc1MjExNjksLTEzNDQwMDQ1NF19
 -->
