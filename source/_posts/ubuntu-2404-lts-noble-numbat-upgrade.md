@@ -76,3 +76,6 @@ Edubuntu遵循与Ubuntu桌面相同的指示。
 请参考[这里](https://ubuntukylin.com/news/ubuntukylin2404-en.html)了解升级指示。
 
 ###
+<!--stackedit_data:
+eyJoaXN0b3J5IjpbLTgwODU2OTkwXX0=
+-->
