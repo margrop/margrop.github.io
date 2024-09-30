@@ -11,11 +11,13 @@ hideInList: false
 feature: 
 isTop: false
 ---
-经过几天的忙碌，终于将之前 Gridea 的全部文章内容与评论迁移到 Hexo，且保留了原有文章的URL不变。
+经过几天的忙碌，终于将之前 `Gridea` 的全部文章内容与评论迁移到 `Hexo`，且保留了原有文章的URL不变。
 
-Gridea 作为一个多年缺乏维护的项目，
+`Gridea` 作为一个多年缺乏维护的项目，且缺乏定制化功能。
 
+之前作为`Pages`的入门还行，但随着要求的提高，迁移成了必然选择。
 
+作为
 
 # Linux环境准备
 
@@ -89,6 +91,6 @@ nano _config.nexmoe.yml
 hexo g && hexo d
 ```
 <!--stackedit_data:
-eyJoaXN0b3J5IjpbMzA1NzcxNjc2LC02MjAzODExMzUsODc3Mz
-A4MzYwXX0=
+eyJoaXN0b3J5IjpbNjM5NTUyMzMsLTYyMDM4MTEzNSw4NzczMD
+gzNjBdfQ==
 -->
