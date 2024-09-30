@@ -1,6 +1,6 @@
 
 ---
-title: '从Gridea迁移到Hexo'
+title: '从Gridea迁移到Hexo，过程及注意事项'
 date: 2024-09-30 16:08:57
 cover: /images/banner/1015_20240930_111405.webp
 coverWidth: 1280
@@ -319,7 +319,7 @@ npm install hexo-generator-sitemap
 npm install hexo-word-counter
 ```
 
-并且在\_config.yml中进行配置：
+并且在_config.yml中进行配置：
 
 ```yaml
 # hexo-generator-feed
@@ -377,7 +377,9 @@ sitemap:
   categories: false
 ```
 
-到这里就大功告成了，剩下的就是迁移内容。因为都是Markdown，只需要把两个博客框架的front-matters统一一下就可以直接使用了。整体把文章移过去，收拾了一下关于、友链等几个页面，博客终于焕然一新了。之后最重要的还是保持更新吧，经常写点博客也确实是个好习惯。
+到这里就大功告成了，剩下的就是迁移内容。
+
+
 
 ## 其他的一些配置
 
@@ -387,5 +389,5 @@ sitemap:
 * 注：`Github` 对唯一 tag 的长度有限制，`Gridea` 使用的是 `pathname` 作为评论唯一 tag
 * 上面的配置中，当 `pathname` 超过49字节时，`Gitalk` 使用前49个字节作为评论唯一 tag
 <!--stackedit_data:
-eyJoaXN0b3J5IjpbNjA4NDE3NTUwLC0xMzQ0MDA0NTRdfQ==
+eyJoaXN0b3J5IjpbMTQ1Njk0MDQxMiwtMTM0NDAwNDU0XX0=
 -->
