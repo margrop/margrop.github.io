@@ -1,4 +1,3 @@
-
 ---
 title: 'ProxmoxVE硬盘local-lvm监控、网线速率监控（Uptime Kuma）'
 date: 2024-09-30 17:45:22
@@ -22,7 +21,7 @@ isTop: false
 
 > 该需求过于小众，于是自定义并集成到已有监控系统，方便统一监控页面
 
----
+
 
 ## 背景二
 
@@ -32,7 +31,7 @@ isTop: false
 
 > 该需求过于小众，于是自定义并集成到已有监控系统，方便统一监控页面
 
----
+
 
 ## local-lvm硬盘使用率监控
 
@@ -175,5 +174,5 @@ isTop: false
   * * * * * /root/TOOLS/lan_speed_checker.sh
   ```
 <!--stackedit_data:
-eyJoaXN0b3J5IjpbLTE0Mzk0MjA4NzVdfQ==
+eyJoaXN0b3J5IjpbLTEwNzM1MTQyODFdfQ==
 -->
