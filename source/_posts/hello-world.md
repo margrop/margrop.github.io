@@ -2,7 +2,7 @@
 ---
 title: 'Hello，Hexo；Goodbye Gridea'
 date: 2024-09-30 13:48:52
-cover: /images/banner/1014_20240930_111226.webp
+cover: /images/banner/1014_20240930_111329.webp
 coverWidth: 1280
 coverHeight: 720
 tags: [hexo, git, nodejs, npm]
@@ -17,7 +17,7 @@ isTop: false
 
 之前作为`Pages`的入门还行，但随着要求的提高，迁移成了必然选择。
 
-作为`Hexo`相关文章的首篇，记录的是环境准备以及基本操作方法。
+作为`Hexo`相关文章的首篇，记录的是环境准备以及基本操作方法，
 
 # Linux环境准备
 
@@ -91,6 +91,6 @@ nano _config.nexmoe.yml
 hexo g && hexo d
 ```
 <!--stackedit_data:
-eyJoaXN0b3J5IjpbMTQ1MDE1NjE3OCwtNjIwMzgxMTM1LDg3Nz
-MwODM2MF19
+eyJoaXN0b3J5IjpbLTEyMDAzNDE2NjQsLTYyMDM4MTEzNSw4Nz
+czMDgzNjBdfQ==
 -->
