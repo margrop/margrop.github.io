@@ -379,7 +379,9 @@ sitemap:
 
 到这里就大功告成了，剩下的就是迁移内容。
 
+## 迁移内容
 
+原 Gridea 目录：./post/*.md  -> 新 Hexo 目录 ./source/_posts/*.
 
 ## 其他的一些配置
 
@@ -389,5 +391,5 @@ sitemap:
 * 注：`Github` 对唯一 tag 的长度有限制，`Gridea` 使用的是 `pathname` 作为评论唯一 tag
 * 上面的配置中，当 `pathname` 超过49字节时，`Gitalk` 使用前49个字节作为评论唯一 tag
 <!--stackedit_data:
-eyJoaXN0b3J5IjpbMTQ1Njk0MDQxMiwtMTM0NDAwNDU0XX0=
+eyJoaXN0b3J5IjpbMTkwNzk1NDAxMSwtMTM0NDAwNDU0XX0=
 -->
