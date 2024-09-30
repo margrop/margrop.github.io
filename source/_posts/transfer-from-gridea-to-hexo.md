@@ -394,6 +394,8 @@ sitemap:
 需要使用任意批量文件替换工具，将其替换为相对路径。
 
 ## 其他的一些配置
+### Nexmoe主题配置
+nexmoe
 
 ### 配置 Gitalk
 
@@ -401,5 +403,5 @@ sitemap:
 * 注：`Github` 对唯一 tag 的长度有限制，`Gridea` 使用的是 `pathname` 作为评论唯一 tag
 * 上面的配置中，当 `pathname` 超过49字节时，`Gitalk` 使用前49个字节作为评论唯一 tag
 <!--stackedit_data:
-eyJoaXN0b3J5IjpbMTI2Njc0NjQ3MCwtMTM0NDAwNDU0XX0=
+eyJoaXN0b3J5IjpbMTk4OTk1ODA4MywtMTM0NDAwNDU0XX0=
 -->
