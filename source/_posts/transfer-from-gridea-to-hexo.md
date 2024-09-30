@@ -10,9 +10,11 @@ published: true
 hideInList: false
 feature: 
 isTop: false
+categories: 
+- Hexo
 ---
 
 
 <!--stackedit_data:
-eyJoaXN0b3J5IjpbLTE1Mzk4MTk3NTRdfQ==
+eyJoaXN0b3J5IjpbLTEwNTQ3MzU2NV19
 -->
