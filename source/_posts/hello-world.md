@@ -1,6 +1,6 @@
 
 ---
-title: 'Hello，Hexo'
+title: 'Hello，Hexo；Goodbye Gridea'
 date: 2024-09-30 13:48:52
 cover: /images/banner/1014_20240930_111226.webp
 coverWidth: 1280
@@ -11,8 +11,11 @@ hideInList: false
 feature: 
 isTop: false
 ---
+经过几天的忙碌，终于将之前 Gridea 的全部文章内容与评论迁移到 Hexo，且保留了原有文章的URL不变。
 
-经过几天的忙碌，终于将之前 Gridea 的文章内容迁移到 Hexo，且保留了原有文章的URL
+Gridea 作为一个多年缺乏维护的项目，
+
+
 
 # Linux环境准备
 
@@ -86,6 +89,6 @@ nano _config.nexmoe.yml
 hexo g && hexo d
 ```
 <!--stackedit_data:
-eyJoaXN0b3J5IjpbNDc2MjI5MjAxLC02MjAzODExMzUsODc3Mz
+eyJoaXN0b3J5IjpbMzA1NzcxNjc2LC02MjAzODExMzUsODc3Mz
 A4MzYwXX0=
 -->
