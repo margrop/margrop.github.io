@@ -386,8 +386,9 @@ sitemap:
 ## 迁移图片资源
 
 原 Gridea 目录：`./post-images/`  -> 新 Hexo 目录 `./source/_posts/`
+原 Gridea 文件：`./favicon.ico`  -> 新 Hexo 文件 `./source/favicon.ico`
 
-## 迁移Markdown内容
+## 
 
 原 Gridea 目录：`./post/`  -> 新 Hexo 目录 `./source/post-images/`
 
@@ -399,5 +400,5 @@ sitemap:
 * 注：`Github` 对唯一 tag 的长度有限制，`Gridea` 使用的是 `pathname` 作为评论唯一 tag
 * 上面的配置中，当 `pathname` 超过49字节时，`Gitalk` 使用前49个字节作为评论唯一 tag
 <!--stackedit_data:
-eyJoaXN0b3J5IjpbLTM2NDYxNTM2MywtMTM0NDAwNDU0XX0=
+eyJoaXN0b3J5IjpbMjYwODMxNDk4LC0xMzQ0MDA0NTRdfQ==
 -->
