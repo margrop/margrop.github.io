@@ -1,16 +1,15 @@
 ---
 title: '【规则清单】2024年10月27日更新'
-date: 2024-10-27 17:45:22
+date: 2024-10-27 10:01:42
 cover: /images/banner/1016_20240930_111523.webp
 coverWidth: 1280
 coverHeight: 720
-tags: [hexo, git, nodejs, npm]
+tags: [adblock,rules]
 published: true
 hideInList: false
 feature: 
 isTop: false
 ---
-****
 
 **1、ad-pc.txt：合并自乘风视频广告过滤规则、Easylist、EasylistChina、EasyPrivacy、CJX'sAnnoyance，以及补充的一些规则；**  
 源地址1：https://cdn.jsdelivr.net/gh/o0HalfLife0o/list@master/ad-pc.txt  
@@ -76,5 +75,5 @@ isTop: false
 源地址1：https://raw.githubusercontent.com/afwfv/DD-AD/main/rule/DD-AD.txt  
 源地址2：https://ghproxy.com/https://raw.githubusercontent.com/afwfv/DD-AD/main/rule/DD-AD.txt
 <!--stackedit_data:
-eyJoaXN0b3J5IjpbLTUxNzgyNzgyOF19
+eyJoaXN0b3J5IjpbMjAwNTQ3MTYzMl19
 -->
