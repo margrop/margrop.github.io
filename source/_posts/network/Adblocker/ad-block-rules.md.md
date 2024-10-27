@@ -31,6 +31,7 @@ isTop: false
 
 **7、all.txt：去重的规则合集，包含domain.txt、regex.txt、modify.txt、hosts.txt规则**  
 源地址1：https://raw.githubusercontent.com/xndeye/adblock_list/main/rule/easylist.txt  
+源地址2：https://github-mirrors.margrop.net/https://raw.githubusercontent.com/xndeye/adblock_list/beta/rule/easylist.txt
 
 **8、dns.txt：包含 domain.txt、regex.txt、hosts.txt规则**  
 源地址1：https://raw.githubusercontent.com/xndeye/adblock_list/main/rule/dns.txt  
@@ -51,12 +52,13 @@ isTop: false
 源地址1：https://raw.githubusercontent.com/xndeye/adblock_list/main/rule/private.txt  
 
 **14、去油管广告：正则规则，包含正则的域名规则**  
-源地址1：https://raw.githubusercontent.com/Maasea/sgmodule/master/Youtube.Enhance.sgmodule  
+源地址1：https://raw.githubusercontent.com/Maasea/sgmodule/master/YouTube.Enhance.sgmodule
+源地址2：https://github-mirrors.margrop.net/https://raw.githubusercontent.com/Maasea/sgmodule/master/YouTube.Enhance.sgmodule
 
 **15、DD-AD.txt：afwfv私有规则，主要是对上游规则的补充**  
 源地址1：https://raw.githubusercontent.com/afwfv/DD-AD/main/rule/DD-AD.txt  
 
 ** 参考链接 **: https://wp.gxnas.com/12069.html
 <!--stackedit_data:
-eyJoaXN0b3J5IjpbLTcwMTQ3NDI1Ml19
+eyJoaXN0b3J5IjpbLTc3Njg4ODYzMl19
 -->
