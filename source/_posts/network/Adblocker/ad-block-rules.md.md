@@ -1,10 +1,10 @@
 ---
-title: '【规则清单】2024年10月27日更新'
+title: '【AdGuard Home规则清单】2024年10月27日更新'
 date: 2024-10-27 10:01:42
-cover: /images/banner/1016_20240930_111523.webp
+cover: /images/banner/1017_20241027_100142.webp
 coverWidth: 1280
 coverHeight: 720
-tags: [adblock,rules]
+tags: [adblock]
 published: true
 hideInList: false
 feature: 
@@ -40,9 +40,9 @@ isTop: false
 源地址2：https://raw.githubusercontent.com/o0HalfLife0o/list/master/ad-edentw.txt
 
 **7、all.txt：去重的规则合集，包含domain.txt、regex.txt、modify.txt、hosts.txt规则**  
-源地址1：https://raw.githubusercontent.com/xndeye/adblock_list/main/rule/all.txt  
-源地址2：https://ghproxy.com/https://raw.githubusercontent.com/xndeye/adblock_list/main/rule/all.txt
-
+源地址1：https://raw.githubusercontent.com/xndeye/adblock_list/main/rule/easylist.txt  
+源地址2：https://ghproxy.com/https://raw.githubusercontent.com/xndeye/adblock_list/main/rule/easylist.txt
+1
 **8、dns.txt：包含 domain.txt、regex.txt、hosts.txt规则**  
 源地址1：https://raw.githubusercontent.com/xndeye/adblock_list/main/rule/dns.txt  
 源地址2：https://ghproxy.com/https://raw.githubusercontent.com/xndeye/adblock_list/main/rule/dns.txt
@@ -75,5 +75,5 @@ isTop: false
 源地址1：https://raw.githubusercontent.com/afwfv/DD-AD/main/rule/DD-AD.txt  
 源地址2：https://ghproxy.com/https://raw.githubusercontent.com/afwfv/DD-AD/main/rule/DD-AD.txt
 <!--stackedit_data:
-eyJoaXN0b3J5IjpbMjAwNTQ3MTYzMl19
+eyJoaXN0b3J5IjpbNjIxNjcyMDUzXX0=
 -->
