@@ -22,3 +22,6 @@ PATH=/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin
 * 注：命令中的`2007`是vmid，即`VM`的全局唯一ID
 
 <!-- more -->
+<!--stackedit_data:
+eyJoaXN0b3J5IjpbLTEyNjMyNTk4ODVdfQ==
+-->
