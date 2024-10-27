@@ -116,3 +116,6 @@ root@pve247:~# dmesg | grep microcode
 # 四、参考文章
 <https://blog.csdn.net/u013360850/article/details/129769334>
 <https://chat.openai.com/share/71e270ee-a0b7-4b58-96b1-eb27cb21b044>
+<!--stackedit_data:
+eyJoaXN0b3J5IjpbLTEyNjIwMDQxNzRdfQ==
+-->
