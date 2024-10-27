@@ -74,6 +74,8 @@ isTop: false
 **15、DD-AD.txt：afwfv私有规则，主要是对上游规则的补充**  
 源地址1：https://raw.githubusercontent.com/afwfv/DD-AD/main/rule/DD-AD.txt  
 源地址2：https://ghproxy.com/https://raw.githubusercontent.com/afwfv/DD-AD/main/rule/DD-AD.txt
+
+** 参考链接 **: https://wp.gxnas.com/12069.html
 <!--stackedit_data:
-eyJoaXN0b3J5IjpbNjIxNjcyMDUzXX0=
+eyJoaXN0b3J5IjpbLTEzNDgxNTk1MTNdfQ==
 -->
