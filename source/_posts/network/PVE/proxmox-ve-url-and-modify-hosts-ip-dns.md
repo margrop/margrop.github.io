@@ -1,11 +1,23 @@
 ---
-title: 'Proxmox VE 常用本地路径，以及如何修改hosts、主机名、IP地址和DNS配置'
-date: 2021-01-22 17:02:01
-tags: [pve,Proxmox VE,hosts,ip,dns,network,iso,ovz,template]
+title: Proxmox VE 常用本地路径，以及如何修改hosts、主机名、IP地址和DNS配置
+tags:
+  - pve
+  - Proxmox VE
+  - hosts
+  - ip
+  - dns
+  - network
+  - iso
+  - ovz
+  - template
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - PVE
+date: 2021-01-22 17:02:01
+feature:
 ---
 PVE本地ISO文件目录：`/var/lib/vz/template/iso`
 PVE本地OVZ文件目录：`/var/lib/vz/template/cache`

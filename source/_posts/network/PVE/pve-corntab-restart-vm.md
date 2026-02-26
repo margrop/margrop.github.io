@@ -1,11 +1,18 @@
 ---
-title: 'PVE对特定容器定时重启'
-date: 2023-03-12 20:59:38
-tags: [pro,pve,crontab,vm]
+title: PVE对特定容器定时重启
+tags:
+  - pro
+  - pve
+  - crontab
+  - vm
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - PVE
+date: 2023-03-12 20:59:38
+feature:
 ---
 # 背景
 * 由于观测到`HomeAssistant`这台`VM`的内存占用总是随着时间的推移而增加，然后最终会`OOM`，且无论升级了多少个版本也是如此，推测`HomeAssistant`有内存泄漏问题

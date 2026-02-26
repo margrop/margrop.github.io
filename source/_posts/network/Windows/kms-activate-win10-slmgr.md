@@ -1,11 +1,22 @@
 ---
-title: '使用KMS激活Win10，含第三方服务和自建服务'
-date: 2021-01-18 22:12:43
-tags: [kms,activate,windows,slmgr,vlmcsd,gcc,firewall-cmd,激活]
+title: 使用KMS激活Win10，含第三方服务和自建服务
+tags:
+  - kms
+  - activate
+  - windows
+  - slmgr
+  - vlmcsd
+  - gcc
+  - firewall-cmd
+  - 激活
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - Windows
+date: 2021-01-18 22:12:43
+feature:
 ---
 # 第三方服务激活
 * 使用`管理员`权限，运行两行命令即可（鸣谢：<https://03k.org/kms.html>）

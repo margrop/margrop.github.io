@@ -1,11 +1,19 @@
 ---
-title: 'CentOS 7下，pip install -upgrade pip 导致 pip 无法使用的问题 ImportError: No module named typing'
-date: 2021-06-16 11:13:46
-tags: [python,pip,centos]
+title: >-
+  CentOS 7下，pip install -upgrade pip 导致 pip 无法使用的问题 ImportError: No module named
+  typing
+tags:
+  - python
+  - pip
+  - centos
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - CentOS
+date: 2021-06-16 11:13:46
+feature:
 ---
 
 # 问题现象

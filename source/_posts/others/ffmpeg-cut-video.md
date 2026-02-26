@@ -1,11 +1,13 @@
 ---
-title: '使用ffmpeg批量删除音视频的片头片尾'
-date: 2023-04-02 11:51:41
+title: 使用ffmpeg批量删除音视频的片头片尾
 tags: []
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - others
+date: 2023-04-02 11:51:41
+feature:
 ---
 # 步骤
 ## 1. 下载ffmpeg

@@ -1,11 +1,20 @@
 ---
-title: '【转】Kodi IPTV直播源m3u8下载 2021年最新直播源'
-date: 2021-02-08 10:08:34
-tags: [kodi,iptv,live,source,url,直播源,m3u8]
+title: 【转】Kodi IPTV直播源m3u8下载 2021年最新直播源
+tags:
+  - kodi
+  - iptv
+  - live
+  - source
+  - url
+  - 直播源
+  - m3u8
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+date: 2021-02-08 10:08:34
+feature:
 ---
 由于版权原因很多电视直播软件播放时会卡顿、画面不清晰。现在各个宽带运营商都有IPTV业务了，不用安装有线电视就可以高清无卡顿的看电视。没有开通iptv的朋友也可以使用网友抓取的iptv直播源地址拷贝到电脑、电视网络盒子等设备上看,如果动手能力强也可以自己抓包获取直播源。
 

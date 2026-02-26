@@ -1,11 +1,17 @@
 ---
-title: 'HomeAssistant：常用的 HACS，Github 第三方支持库 Repo'
-date: 2021-03-15 08:56:00
-tags: [homeassistant,github,repo]
+title: HomeAssistant：常用的 HACS，Github 第三方支持库 Repo
+tags:
+  - homeassistant
+  - github
+  - repo
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - SmartHome
+date: 2021-03-15 08:56:00
+feature:
 ---
 # HACS
 * HACS官方网站

@@ -1,11 +1,16 @@
 ---
-title: 'ProxmoxVE 7.4升级到8.0，详细步骤'
-date: 2023-07-08 10:25:13
-tags: [pve,Proxmox VE]
+title: ProxmoxVE 7.4升级到8.0，详细步骤
+tags:
+  - pve
+  - Proxmox VE
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - PVE
+date: 2023-07-08 10:25:13
+feature:
 ---
 # 第一步：详细阅读官方文档
 https://pve.proxmox.com/wiki/Upgrade_from_7_to_8

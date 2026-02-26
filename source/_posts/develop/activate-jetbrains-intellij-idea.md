@@ -1,11 +1,17 @@
 ---
-title: 'IDEA激活服务器搜索方法'
-date: 2024-05-01 13:34:09
-tags: [activate,jetbrains,Java,idea]
+title: IDEA激活服务器搜索方法
+tags:
+  - activate
+  - jetbrains
+  - Java
+  - idea
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - develop
+date: 2024-05-01 13:34:09
+feature:
 ---
 # 请自行通过下面搜索引擎和关键字进行搜索
 

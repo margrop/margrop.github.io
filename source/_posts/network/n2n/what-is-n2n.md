@@ -1,11 +1,16 @@
 ---
-title: 'N2N 是什么？'
-date: 2021-01-13 16:27:39
-tags: [network,n2n]
+title: N2N 是什么？
+tags:
+  - network
+  - n2n
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - n2n
+date: 2021-01-13 16:27:39
+feature:
 ---
 `N2N`是一个开源的P2P加密组网的工具
 

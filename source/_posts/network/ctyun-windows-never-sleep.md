@@ -1,11 +1,16 @@
 ---
-title: '天翼云电脑相关配置，及永不休眠方法'
-date: 2024-06-04 12:27:39
-tags: [ctyun,天翼云,云电脑]
+title: 天翼云电脑相关配置，及永不休眠方法
+tags:
+  - ctyun
+  - 天翼云
+  - 云电脑
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+date: 2024-06-04 12:27:39
+feature:
 ---
 Windows软件下载地址：https://download.margrop.net/#/EXE
 

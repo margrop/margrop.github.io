@@ -1,11 +1,17 @@
 ---
-title: '论Mac电脑和TimeMachine的重要性'
-date: 2021-09-14 16:55:10
-tags: [MacOS,TimeMachine,NAS]
+title: 论Mac电脑和TimeMachine的重要性
+tags:
+  - MacOS
+  - TimeMachine
+  - NAS
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - MacOS
+date: 2021-09-14 16:55:10
+feature:
 ---
 
 今天是2021年9月14日。

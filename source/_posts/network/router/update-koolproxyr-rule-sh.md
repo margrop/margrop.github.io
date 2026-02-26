@@ -1,11 +1,18 @@
 ---
-title: '更新 KoolProxyR 的规则地址，2021年2月12日更新'
-date: 2021-02-12 19:43:55
-tags: [koolproxy,koolproxyr,rule,ad]
+title: 更新 KoolProxyR 的规则地址，2021年2月12日更新
+tags:
+  - koolproxy
+  - koolproxyr
+  - rule
+  - ad
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - router
+date: 2021-02-12 19:43:55
+feature:
 ---
 KoolProxyR 的规则地址已经好久没更新了，好多广告都没法过滤
 只能自己改下更新地址了

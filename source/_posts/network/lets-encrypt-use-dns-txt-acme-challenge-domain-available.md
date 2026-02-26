@@ -1,11 +1,21 @@
 ---
-title: 'Let''s Encrypt通过DNS TXT记录来验证域名有效性'
-date: 2021-01-19 10:39:58
-tags: [letsencrypt,dns,txt,renew,https,ssl,certbot,domain]
+title: Let's Encrypt通过DNS TXT记录来验证域名有效性
+tags:
+  - letsencrypt
+  - dns
+  - txt
+  - renew
+  - https
+  - ssl
+  - certbot
+  - domain
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+date: 2021-01-19 10:39:58
+feature:
 ---
 我们在使用`letsencrypt`获取免费的`HTTPS`证书的时候，`letsencrypt`需要对域名进行验证。默认情况下它的验证方式是这样的：
 1. `certbot`程序在`web`目录的根目录下放置一个文件。

@@ -1,11 +1,16 @@
 ---
-title: 'Python3常用字符串操作'
-date: 2021-02-14 22:33:22
-tags: [python,string,print]
+title: Python3常用字符串操作
+tags:
+  - python
+  - string
+  - print
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - develop
+date: 2021-02-14 22:33:22
+feature:
 ---
 
 #  python print

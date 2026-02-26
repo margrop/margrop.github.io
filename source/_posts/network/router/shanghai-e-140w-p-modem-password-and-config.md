@@ -1,11 +1,14 @@
 ---
-title: '上海贝尔 E-140W-P，光猫配置'
-date: 2021-12-04 13:46:58
+title: 上海贝尔 E-140W-P，光猫配置
 tags: []
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - router
+date: 2021-12-04 13:46:58
+feature:
 ---
 # Telnet
 telnet 命令：telnet 192.168.1.1

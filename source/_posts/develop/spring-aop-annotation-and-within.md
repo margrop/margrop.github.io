@@ -1,11 +1,18 @@
 ---
-title: '【转】Spring AOP 拦截指定注解标识的类或方法'
-date: 2021-01-14 15:29:41
-tags: [java,spring,aop,annotation,springboot]
+title: 【转】Spring AOP 拦截指定注解标识的类或方法
+tags:
+  - java
+  - spring
+  - aop
+  - annotation
+  - springboot
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - develop
+date: 2021-01-14 15:29:41
+feature:
 ---
 AOP中扫描指定注解相关说明
 （1）@annotation：用来拦截所有被某个注解修饰的方法

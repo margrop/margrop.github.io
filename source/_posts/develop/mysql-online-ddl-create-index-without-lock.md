@@ -1,11 +1,13 @@
 ---
-title: 'Mysql online DDL 线上无锁添加索引'
-date: 2023-04-02 08:51:17
+title: Mysql online DDL 线上无锁添加索引
 tags: []
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - develop
+date: 2023-04-02 08:51:17
+feature:
 ---
 # 步骤
 

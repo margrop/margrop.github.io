@@ -1,11 +1,32 @@
 ---
-title: '如何通过 NPM 安装 Node-RED'
-date: 2021-02-01 09:57:07
-tags: [node,npm,nodejs,node-red,linux,centos,os,API,low-code,browser,浏览器,智能家居,模块,流程,flow,安装,启动,升级]
+title: 如何通过 NPM 安装 Node-RED
+tags:
+  - node
+  - npm
+  - nodejs
+  - node-red
+  - linux
+  - centos
+  - os
+  - API
+  - low-code
+  - browser
+  - 浏览器
+  - 智能家居
+  - 模块
+  - 流程
+  - flow
+  - 安装
+  - 启动
+  - 升级
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - Container
+date: 2021-02-01 09:57:07
+feature:
 ---
 # `Node-RED`是什么
 `Node-RED`是一种低代码/无代码编程工具，用于以新颖有趣的方式将`硬件设备`，`API`和`在线服务`连接在一起。特别适用于`智能家居`。

@@ -1,11 +1,14 @@
 ---
-title: '【转】Android实现系统状态栏的隐藏和显示功能'
-date: 2021-07-09 20:41:13
+title: 【转】Android实现系统状态栏的隐藏和显示功能
 tags: []
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - Android
+date: 2021-07-09 20:41:13
+feature:
 ---
 # 问题描述
 尤其视频类APP，需要实现切换到横屏后，隐藏系统状态栏，全屏显示，以实现看更大画面的视频。当切换回

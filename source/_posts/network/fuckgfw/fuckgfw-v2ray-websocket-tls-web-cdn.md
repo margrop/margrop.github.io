@@ -1,14 +1,26 @@
 ---
-title: '搭梯子或机场：V2RAY配置WebSocket + TLS + Web + CDN'
-date: 2021-01-26 13:44:36
+title: 搭梯子或机场：V2RAY配置WebSocket + TLS + Web + CDN
 cover: /images/banner/1009_20240927_021416.webp
 coverWidth: 1280
 coverHeight: 720
-tags: [梯子,fuckgfw,gfw,websocket,tls,web,cdn,v2ray,caddy2]
+tags:
+  - 梯子
+  - fuckgfw
+  - gfw
+  - websocket
+  - tls
+  - web
+  - cdn
+  - v2ray
+  - caddy2
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - fuckgfw
+date: 2021-01-26 13:44:36
+feature:
 ---
 `v2ray`现在最安全的配置就是`WebSocket + TLS + Web + CDN` 了，访问的是`443`端口，直接访问是一个网站，通过客户端连接后他是个梯子(飞机)。外观上看是一个刮胡刀，原来呢，它是一个吹风机。
 

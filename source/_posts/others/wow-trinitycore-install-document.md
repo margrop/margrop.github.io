@@ -1,11 +1,14 @@
 ---
-title: 'WOW TrinityCore 安装教程（基于10.0.2.47657）'
-date: 2023-03-12 20:28:58
-tags: [wow]
+title: WOW TrinityCore 安装教程（基于10.0.2.47657）
+tags:
+  - wow
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - others
+date: 2023-03-12 20:28:58
+feature:
 ---
 # WOW TrinityCore 安装教程
 ## 相关参考资料

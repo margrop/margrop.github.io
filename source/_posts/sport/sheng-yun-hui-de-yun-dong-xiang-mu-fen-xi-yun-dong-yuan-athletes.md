@@ -1,11 +1,13 @@
 ---
-title: '省运会的运动项目分析——赛程和结果 Schedule and results'
-date: 2021-08-24 13:27:05
+title: 省运会的运动项目分析——赛程和结果 Schedule and results
 tags: []
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - sport
+date: 2021-08-24 13:27:05
+feature:
 ---
 ## 01. 田径 Athletics
 ## 0111. 田径时间表

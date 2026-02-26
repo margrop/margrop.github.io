@@ -1,11 +1,21 @@
 ---
-title: 'Mac安装Frp客户端，可使用远程桌面'
-date: 2021-01-18 13:28:26
-tags: [mac,frpc,frp,remote desktop,launchctl,brew,client]
+title: Mac安装Frp客户端，可使用远程桌面
+tags:
+  - mac
+  - frpc
+  - frp
+  - remote desktop
+  - launchctl
+  - brew
+  - client
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - MacOS
+date: 2021-01-18 13:28:26
+feature:
 ---
 可以使用brew进行安装
 ```bash

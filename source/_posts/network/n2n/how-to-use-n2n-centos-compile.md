@@ -1,11 +1,16 @@
 ---
-title: '如何使用CentOS 7运行N2N—编译篇'
-date: 2021-01-14 14:26:49
-tags: [network,n2n]
+title: 如何使用CentOS 7运行N2N—编译篇
+tags:
+  - network
+  - n2n
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - n2n
+date: 2021-01-14 14:26:49
+feature:
 ---
 若对完整编译过程有兴趣，可以慢慢浏览。
 当然也可以直接下载下载已编译好的文件。

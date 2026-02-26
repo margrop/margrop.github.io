@@ -1,14 +1,20 @@
 ---
-title: '【转】如何设置xiaoya的docker，及tvbox配置'
-date: 2024-04-30 21:18:55
+title: 【转】如何设置xiaoya的docker，及tvbox配置
 cover: /images/banner/1003_20240927_021349.webp
 coverWidth: 1280
 coverHeight: 720
-tags: [docker,xiaoya,tvbox]
+tags:
+  - docker
+  - xiaoya
+  - tvbox
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - Container
+date: 2024-04-30 21:18:55
+feature:
 ---
 文章来源：<https://xiaoyaliu.notion.site/xiaoya-docker-69404af849504fa5bcf9f2dd5ecaa75f>
 

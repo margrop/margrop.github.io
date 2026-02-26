@@ -1,11 +1,17 @@
 ---
-title: 'HomeAssistant 接入天猫精灵，2021年版本'
-date: 2021-05-10 22:19:34
-tags: [homeassistant,aligenie,天猫精灵]
+title: HomeAssistant 接入天猫精灵，2021年版本
+tags:
+  - homeassistant
+  - aligenie
+  - 天猫精灵
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - SmartHome
+date: 2021-05-10 22:19:34
+feature:
 ---
 # 不要频繁升级 HA【2021年5月15日更新】
 `强烈不建议升级到 core-2021.3.1 以及之后的版本，包括 core-2021.5.3`

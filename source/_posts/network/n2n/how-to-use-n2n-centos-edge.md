@@ -1,11 +1,18 @@
 ---
-title: '如何使用CentOS 7运行N2N—edge篇'
-date: 2021-01-16 14:00:18
-tags: [n2n,network,centos,edge]
+title: 如何使用CentOS 7运行N2N—edge篇
+tags:
+  - n2n
+  - network
+  - centos
+  - edge
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - n2n
+date: 2021-01-16 14:00:18
+feature:
 ---
 `边缘节点（node）`：将成为虚拟网络一部分的节点。
 

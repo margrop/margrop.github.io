@@ -1,11 +1,14 @@
 ---
-title: 'Mac编译N2N组件SuperNode和Edge'
-date: 2021-11-09 20:21:05
+title: Mac编译N2N组件SuperNode和Edge
 tags: []
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - n2n
+date: 2021-11-09 20:21:05
+feature:
 ---
 # 参考：https://www.jianshu.com/p/5021b70c3ff9
 

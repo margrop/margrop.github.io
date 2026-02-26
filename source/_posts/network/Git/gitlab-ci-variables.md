@@ -1,11 +1,14 @@
 ---
-title: 'gitlab-ci-yml配置说明（官方文档翻译）'
-date: 2023-04-02 09:02:29
+title: gitlab-ci-yml配置说明（官方文档翻译）
 tags: []
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - Git
+date: 2023-04-02 09:02:29
+feature:
 ---
 ## 重要的内置变量
 `CI_COMMIT_REF_NAME`: The branch or tag name for which project is built.

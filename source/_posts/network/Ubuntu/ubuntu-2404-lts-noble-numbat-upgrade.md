@@ -1,11 +1,15 @@
 ---
-title: 'Ubuntu 24.04 LTS —— "Noble Numbat" 升级指南'
-date: 2024-04-30 19:55:19
-tags: [ubuntu]
+title: Ubuntu 24.04 LTS —— "Noble Numbat" 升级指南
+tags:
+  - ubuntu
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - Ubuntu
+date: 2024-04-30 19:55:19
+feature:
 ---
 感谢ChatGPT从官网翻译，[原文入口](https://help.ubuntu.com/community/NobleUpgrades)
 

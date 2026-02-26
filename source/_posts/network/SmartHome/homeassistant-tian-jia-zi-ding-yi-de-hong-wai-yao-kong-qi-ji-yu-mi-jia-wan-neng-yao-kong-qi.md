@@ -1,11 +1,17 @@
 ---
-title: 'HomeAssistant 添加自定义的红外遥控器，并支持天猫精灵和小度小度'
-date: 2021-05-12 16:09:09
-tags: [homeassistant,havcs,remote]
+title: HomeAssistant 添加自定义的红外遥控器，并支持天猫精灵和小度小度
+tags:
+  - homeassistant
+  - havcs
+  - remote
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - SmartHome
+date: 2021-05-12 16:09:09
+feature:
 ---
 # 准备工作
 * 已联网的`米家万能遥控器`，且已添加到`HomeAssistant`

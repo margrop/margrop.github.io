@@ -1,14 +1,18 @@
 ---
-title: '【AdGuard Home规则清单】2024年10月27日更新'
-date: 2024-10-27 10:01:42
+title: 【AdGuard Home规则清单】2024年10月27日更新
 cover: /images/banner/1017_20241027_100142.webp
 coverWidth: 1280
 coverHeight: 720
-tags: [adblock]
+tags:
+  - adblock
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - Adblocker
+date: 2024-10-27 10:01:42
+feature:
 ---
 
 **1、ad-pc.txt：合并自乘风视频广告过滤规则、Easylist、EasylistChina、EasyPrivacy、CJX'sAnnoyance，以及补充的一些规则；**  

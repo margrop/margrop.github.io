@@ -1,11 +1,14 @@
 ---
-title: 'MacOS 自定义登录和注销脚本'
-date: 2021-11-04 10:44:50
+title: MacOS 自定义登录和注销脚本
 tags: []
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - MacOS
+date: 2021-11-04 10:44:50
+feature:
 ---
 # 登录和注销脚本（Login and Logout Scripts）
 > `重要提示`：避免使用登录和注销脚本的原因有很多：

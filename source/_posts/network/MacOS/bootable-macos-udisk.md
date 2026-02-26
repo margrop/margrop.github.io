@@ -1,14 +1,19 @@
 ---
 title: '正版苹果系统U盘制作，MacOS，Macintosh，Hackintosh '
-date: 2024-09-30 11:19:53
 cover: /images/banner/1013_20240930_111226.webp
 coverWidth: 1280
 coverHeight: 720
-tags: [macos,udisk]
+tags:
+  - macos
+  - udisk
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - MacOS
+date: 2024-09-30 11:19:53
+feature:
 ---
 制作MacOS引导U盘的步骤如下：
 

@@ -1,11 +1,33 @@
 ---
-title: '如何搭建开源的Web流程图工具 Diagrams.net（原draw.io）'
-date: 2021-01-30 17:59:08
-tags: [Diagrams.net,web,UML,drawio,ProcessOn,png,svg,html,xml,docker,firewall-cmd,github,draw,web,浏览器,画图,centos,draw,流程图]
+title: 如何搭建开源的Web流程图工具 Diagrams.net（原draw.io）
+tags:
+  - Diagrams.net
+  - web
+  - UML
+  - drawio
+  - ProcessOn
+  - png
+  - svg
+  - html
+  - xml
+  - docker
+  - firewall-cmd
+  - github
+  - draw
+  - web
+  - 浏览器
+  - 画图
+  - centos
+  - draw
+  - 流程图
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - Container
+date: 2021-01-30 17:59:08
+feature:
 ---
 `ProcessOn`目前已经是大家熟知的Web的`流程图`，`UML`等绘图工具了。但 `ProcessOn` 是收费服务，免费的又限制太多，那还有免费的午餐吗？
 

@@ -1,14 +1,21 @@
 ---
-title: 'ProxmoxVE硬盘local-lvm监控、网线速率监控（Uptime Kuma）'
-date: 2024-09-30 17:45:22
+title: ProxmoxVE硬盘local-lvm监控、网线速率监控（Uptime Kuma）
 cover: /images/banner/1016_20240930_111523.webp
 coverWidth: 1280
 coverHeight: 720
-tags: [hexo, git, nodejs, npm]
+tags:
+  - hexo
+  - git
+  - nodejs
+  - npm
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - PVE
+date: 2024-09-30 17:45:22
+feature:
 ---
 
 ## 背景一

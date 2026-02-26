@@ -1,11 +1,14 @@
 ---
-title: '为什么要使用Github Page?'
-date: 2021-01-13 13:24:27
+title: 为什么要使用Github Page?
 tags: []
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - Git
+date: 2021-01-13 13:24:27
+feature:
 ---
 那是十几年前的事情，十几年前用的是 `163Blog`，因为Blog转载的几篇搭建机场和飞机的文章，于是`163Blog`被永久封禁。
 

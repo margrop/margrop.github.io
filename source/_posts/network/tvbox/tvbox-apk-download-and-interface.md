@@ -1,11 +1,15 @@
 ---
-title: 'TVBOX 长期维护apk下载地址和接口'
-date: 2023-07-03 21:11:04
-tags: [tvbox]
+title: TVBOX 长期维护apk下载地址和接口
+tags:
+  - tvbox
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - tvbox
+date: 2023-07-03 21:11:04
+feature:
 ---
 # TVBOX下载地址
 * [TVBoxOSC](https://github.com/o0HalfLife0o/TVBoxOSC/releases)

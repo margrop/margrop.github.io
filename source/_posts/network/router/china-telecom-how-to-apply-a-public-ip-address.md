@@ -1,11 +1,23 @@
 ---
-title: '中国电信，如何找客服申请公网IP'
-date: 2021-01-25 22:12:32
-tags: [中国电信,telecom,IP,IPv4,NAS,Web,公网IP,内网IP,PPPoE]
+title: 中国电信，如何找客服申请公网IP
+tags:
+  - 中国电信
+  - telecom
+  - IP
+  - IPv4
+  - NAS
+  - Web
+  - 公网IP
+  - 内网IP
+  - PPPoE
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - router
+date: 2021-01-25 22:12:32
+feature:
 ---
 目前国内的三大运营商中，也就中国电信的`公网IP`最富裕了。
 但是随着全球`IPv4`资源彻底耗尽，地主家也没余粮了。

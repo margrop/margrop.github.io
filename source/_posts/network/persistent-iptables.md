@@ -1,11 +1,13 @@
 ---
-title: '【转】iptables持久化方案'
-date: 2023-03-12 20:43:10
+title: 【转】iptables持久化方案
 tags: []
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+date: 2023-03-12 20:43:10
+feature:
 ---
 # debian若没有安装iptables，使用以下命令安装
 ```

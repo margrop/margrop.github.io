@@ -1,11 +1,18 @@
 ---
-title: '如何使用CentOS 7运行N2N—supernode篇'
-date: 2021-01-15 09:15:03
-tags: [network,n2n,supernode,centos]
+title: 如何使用CentOS 7运行N2N—supernode篇
+tags:
+  - network
+  - n2n
+  - supernode
+  - centos
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - n2n
+date: 2021-01-15 09:15:03
+feature:
 ---
 `超级节点（supernode）`：它允许边缘节点宣布和发现其他节点。它必须具有可在Internet上公开访问的端口。
 

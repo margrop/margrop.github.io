@@ -1,11 +1,14 @@
 ---
-title: 'OpenWRT / LEDE 设置跨网段访问方法'
-date: 2021-12-04 11:17:47
+title: OpenWRT / LEDE 设置跨网段访问方法
 tags: []
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - router
+date: 2021-12-04 11:17:47
+feature:
 ---
 # 1. 静态IPv4路由，增加路由表
 * 访问`网络`->`静态路由`页面

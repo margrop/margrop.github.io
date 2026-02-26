@@ -1,11 +1,14 @@
 ---
-title: '关于'
-date: 2021-01-13 17:34:15
-tags: [hello]
+title: 关于
+tags:
+  - hello
 published: true
 hideInList: true
-feature: 
 isTop: false
+categories:
+  - notes
+date: 2021-01-13 17:34:15
+feature:
 ---
 经过各种思想和环境准备工作，我个人的博客终于正式开张营业了。
 

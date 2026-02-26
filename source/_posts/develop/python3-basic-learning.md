@@ -1,11 +1,15 @@
 ---
-title: 'Python3基础'
-date: 2021-02-12 14:28:13
-tags: [python,learning]
+title: Python3基础
+tags:
+  - python
+  - learning
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - develop
+date: 2021-02-12 14:28:13
+feature:
 ---
 # Python3教程
 <http://www.liaoxuefeng.com/wiki/0014316089557264a6b348958f449949df42a6d3a2e542c000>

@@ -1,11 +1,17 @@
 ---
-title: '集客AP和AC固件下载地址'
-date: 2021-01-14 21:28:52
-tags: [集客,AC,AP]
+title: 集客AP和AC固件下载地址
+tags:
+  - 集客
+  - AC
+  - AP
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - router
+date: 2021-01-14 21:28:52
+feature:
 ---
 # 常用下载地址
 `AP230EP`：

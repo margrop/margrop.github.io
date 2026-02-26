@@ -1,15 +1,20 @@
-
 ---
-title: 'Hello，Hexo；Goodbye Gridea'
-date: 2024-09-30 13:48:52
+title: Hello，Hexo；Goodbye Gridea
 cover: /images/banner/1014_20240930_111329.webp
 coverWidth: 1280
 coverHeight: 720
-tags: [hexo, git, nodejs, npm]
+tags:
+  - hexo
+  - git
+  - nodejs
+  - npm
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - notes
+date: 2024-09-30 13:48:52
+feature:
 ---
 经过几天的忙碌，终于将之前 `Gridea` 的全部文章内容与评论迁移到 `Hexo`，且保留了原有文章的URL不变。
 

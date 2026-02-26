@@ -1,11 +1,16 @@
 ---
-title: 'Swagger-JS 如何增加MD5校验，和项目依赖'
-date: 2021-02-06 09:05:25
-tags: [swagger,md5,js]
+title: Swagger-JS 如何增加MD5校验，和项目依赖
+tags:
+  - swagger
+  - md5
+  - js
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - develop
+date: 2021-02-06 09:05:25
+feature:
 ---
 # swagger-bundle 打包
 首先进入`swagger-js`目录

@@ -1,11 +1,13 @@
 ---
-title: '解决 PostgreSQL 10 升级至 11，Permissions should be u=rwx (0700)问题'
-date: 2021-08-23 16:45:41
+title: 解决 PostgreSQL 10 升级至 11，Permissions should be u=rwx (0700)问题
 tags: []
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - develop
+date: 2021-08-23 16:45:41
+feature:
 ---
 # 问题描述
 

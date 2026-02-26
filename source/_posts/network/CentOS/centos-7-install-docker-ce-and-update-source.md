@@ -1,11 +1,21 @@
 ---
-title: 'CentOS 7 安装Docker并设置国内阿里源'
-date: 2021-01-29 11:40:18
-tags: [centos,docker,install,aliyun,systemctl,阿里云,容器]
+title: CentOS 7 安装Docker并设置国内阿里源
+tags:
+  - centos
+  - docker
+  - install
+  - aliyun
+  - systemctl
+  - 阿里云
+  - 容器
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - CentOS
+date: 2021-01-29 11:40:18
+feature:
 ---
 # docker版本
 docker从1.13版本之后采用时间线的方式作为版本号，分为社区版CE和企业版EE。Docker CE即社区免费版，Docker EE即企业版,付费使用。

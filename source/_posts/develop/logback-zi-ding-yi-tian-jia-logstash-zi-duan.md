@@ -1,11 +1,13 @@
 ---
-title: 'logback 自定义添加 logstash 字段'
-date: 2023-04-02 08:57:41
+title: logback 自定义添加 logstash 字段
 tags: []
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - develop
+date: 2023-04-02 08:57:41
+feature:
 ---
 # 步骤
 

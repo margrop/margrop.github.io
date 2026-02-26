@@ -1,11 +1,20 @@
 ---
-title: 'CentOS 7 安装最新版本Node和NPM'
-date: 2021-01-27 11:28:59
-tags: [centos,安装,node,npm,阿里云,镜像]
+title: CentOS 7 安装最新版本Node和NPM
+tags:
+  - centos
+  - 安装
+  - node
+  - npm
+  - 阿里云
+  - 镜像
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - CentOS
+date: 2021-01-27 11:28:59
+feature:
 ---
 # 下载Node：
 * 下载使用了阿里云镜像

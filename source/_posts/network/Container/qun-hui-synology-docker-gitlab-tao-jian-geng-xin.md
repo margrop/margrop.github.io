@@ -1,11 +1,14 @@
 ---
-title: '群晖 Synology Docker Gitlab 套件更新'
-date: 2021-08-23 17:30:14
+title: 群晖 Synology Docker Gitlab 套件更新
 tags: []
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - Container
+date: 2021-08-23 17:30:14
+feature:
 ---
 # 警告
 升级时会清空环境设置

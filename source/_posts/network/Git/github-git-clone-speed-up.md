@@ -1,11 +1,19 @@
 ---
-title: '仅对Github的git clone进行代理'
-date: 2021-01-17 12:53:12
-tags: [github,git,clone,proxy,socks]
+title: 仅对Github的git clone进行代理
+tags:
+  - github
+  - git
+  - clone
+  - proxy
+  - socks
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - Git
+date: 2021-01-17 12:53:12
+feature:
 ---
 ```bash
 git config --global http.https://github.com.proxy socks5://127.0.0.1:1080

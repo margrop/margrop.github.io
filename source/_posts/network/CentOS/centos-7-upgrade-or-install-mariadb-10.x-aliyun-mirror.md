@@ -1,11 +1,24 @@
 ---
-title: 'CentOS 7 升级或新安装MariaDB 10.5，使用阿里云镜像'
-date: 2021-01-29 15:42:20
-tags: [centos,mariadb,mysql,yum,install,upgrade,aliyun,阿里云,镜像,阿里源]
+title: CentOS 7 升级或新安装MariaDB 10.5，使用阿里云镜像
+tags:
+  - centos
+  - mariadb
+  - mysql
+  - yum
+  - install
+  - upgrade
+  - aliyun
+  - 阿里云
+  - 镜像
+  - 阿里源
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - CentOS
+date: 2021-01-29 15:42:20
+feature:
 ---
 # 先进行系统更新
 ```bash

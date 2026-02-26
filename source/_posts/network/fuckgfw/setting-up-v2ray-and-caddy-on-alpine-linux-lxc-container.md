@@ -1,11 +1,23 @@
 ---
-title: '在 Alpine Linux 上使用 LXC 容器搭建 V2Ray 和 Caddy 服务，提供基于 IPv6 的 SSL WebSocket 代理'
-date: 2024-07-03 15:32:41
-tags: [caddy2,linux,lxc,alpine,SSL,ipv6,websocket,proxy,Linux]
+title: 在 Alpine Linux 上使用 LXC 容器搭建 V2Ray 和 Caddy 服务，提供基于 IPv6 的 SSL WebSocket 代理
+tags:
+  - caddy2
+  - linux
+  - lxc
+  - alpine
+  - SSL
+  - ipv6
+  - websocket
+  - proxy
+  - Linux
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - fuckgfw
+date: 2024-07-03 15:32:41
+feature:
 ---
 ### 前言
 

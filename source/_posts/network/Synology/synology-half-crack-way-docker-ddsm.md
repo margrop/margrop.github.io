@@ -1,11 +1,20 @@
 ---
-title: '【转】黑群晖（Synology）半洗白最新方法'
-date: 2021-01-19 18:10:53
-tags: [dsm,docker,ddsm,synology,pat,序列号]
+title: 【转】黑群晖（Synology）半洗白最新方法
+tags:
+  - dsm
+  - docker
+  - ddsm
+  - synology
+  - pat
+  - 序列号
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - Synology
+date: 2021-01-19 18:10:53
+feature:
 ---
 最近新搭一个`NAS`，安装好发现之前提供的半洗白方案已经不起作用了
 之前的帖子<http://blog.lixx.vip/黑群晖（synology）nas-6-22-折腾记-半洗白/>

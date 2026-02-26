@@ -1,14 +1,20 @@
 ---
-title: '如何在Home Assistant里面安装HACS'
-date: 2021-02-19 10:53:04
+title: 如何在Home Assistant里面安装HACS
 cover: /images/banner/1008_20240927_021414.webp
 coverWidth: 1280
 coverHeight: 720
-tags: [hacs,homeassistant,ssh]
+tags:
+  - hacs
+  - homeassistant
+  - ssh
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - HomeAssistant
+date: 2021-02-19 10:53:04
+feature:
 ---
 # 如果是虚拟机环境（Home Assistant OS）
 1.转到`Supervisor`面板

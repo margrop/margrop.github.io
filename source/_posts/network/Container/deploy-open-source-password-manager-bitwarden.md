@@ -1,11 +1,21 @@
 ---
-title: '搭建自己的密码管理服务器 Bitwarden'
-date: 2021-02-17 20:20:06
-tags: [bitwarden,1password,docker,deploy,lastpass,openssl,letsencrypt]
+title: 搭建自己的密码管理服务器 Bitwarden
+tags:
+  - bitwarden
+  - 1password
+  - docker
+  - deploy
+  - lastpass
+  - openssl
+  - letsencrypt
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - Container
+date: 2021-02-17 20:20:06
+feature:
 ---
 很多人对于把密码放在网上，比如 lastpass 虽然官方说是提供加密了，服务器上看不到用户密码，但是还是不太放心，那么就可以搭建开源的 Bitwarden 搭建一个自己的密码管理服务器。
 

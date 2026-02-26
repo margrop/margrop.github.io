@@ -1,14 +1,18 @@
 ---
-title: '点读笔资源大全——百度云'
-date: 2023-03-12 20:26:01
+title: 点读笔资源大全——百度云
 cover: /images/banner/1002_20240927_021333.webp
 coverWidth: 1280
 coverHeight: 720
-tags: [kid,baidupan]
+tags:
+  - kid
+  - baidupan
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+date: 2023-03-12 20:26:01
+feature:
 ---
 牛津所有资源
 

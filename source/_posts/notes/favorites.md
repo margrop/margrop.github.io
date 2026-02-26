@@ -1,11 +1,13 @@
 ---
-title: '收藏夹、常用软件、常用国内镜像仓库、常用 Chrome 插件'
-date: 2021-01-14 21:05:24
+title: 收藏夹、常用软件、常用国内镜像仓库、常用 Chrome 插件
 tags: []
 published: true
 hideInList: true
-feature: 
 isTop: false
+categories:
+  - notes
+date: 2021-01-14 21:05:24
+feature:
 ---
 ## 常用 Windows 软件下载
 <https://download.margrop.net/d/oneindex/EXE/>

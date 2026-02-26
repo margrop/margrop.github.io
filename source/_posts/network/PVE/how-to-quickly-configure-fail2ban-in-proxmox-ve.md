@@ -1,11 +1,18 @@
 ---
-title: '在Proxmox VE中快速设置Fail2ban防止多次登录失败的有效方法'
-date: 2024-06-18 15:33:01
-tags: [Linux,pve,Proxmox VE,fail2ban]
+title: 在Proxmox VE中快速设置Fail2ban防止多次登录失败的有效方法
+tags:
+  - Linux
+  - pve
+  - Proxmox VE
+  - fail2ban
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - PVE
+date: 2024-06-18 15:33:01
+feature:
 ---
 这里简要介绍了如何在Proxmox VE中设置Fail2ban以暂时阻止多次错误登录尝试的IP地址。
 

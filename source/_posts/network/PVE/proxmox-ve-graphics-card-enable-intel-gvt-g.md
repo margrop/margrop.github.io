@@ -1,11 +1,21 @@
 ---
-title: '【转】Proxmox VE开启显卡虚拟化intel GVT-g'
-date: 2021-01-23 11:23:04
-tags: [pve,Proxmox VE,intel,gvt-g,grub,modules,显卡虚拟化]
+title: 【转】Proxmox VE开启显卡虚拟化intel GVT-g
+tags:
+  - pve
+  - Proxmox VE
+  - intel
+  - gvt-g
+  - grub
+  - modules
+  - 显卡虚拟化
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - PVE
+date: 2021-01-23 11:23:04
+feature:
 ---
 > 注意，intel gvt-g技术，PVE目前只支持第五代，第六代和第七代英特尔酷睿处理器以及E3 v4，E3 v5和E3 v6 Xeon处理器
 > 8代和8代以上的CPU，博主亲测暂时不支持 -_-!

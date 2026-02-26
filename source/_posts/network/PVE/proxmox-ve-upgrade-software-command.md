@@ -1,11 +1,17 @@
 ---
-title: 'Proxmox VE 6.4 日常升级命令'
-date: 2021-03-29 08:23:52
-tags: [Proxmox VE,pvekclean,升级]
+title: Proxmox VE 6.4 日常升级命令
+tags:
+  - Proxmox VE
+  - pvekclean
+  - 升级
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - PVE
+date: 2021-03-29 08:23:52
+feature:
 ---
 # 移除未使用的Linux内核
 ```bash

@@ -1,11 +1,23 @@
 ---
-title: '如何使用Windows运行N2N-运行篇'
-date: 2021-01-29 13:43:19
-tags: [n2n,edge,supernode,windows,nssm,tap-windows,ping,cmd,openssl]
+title: 如何使用Windows运行N2N-运行篇
+tags:
+  - n2n
+  - edge
+  - supernode
+  - windows
+  - nssm
+  - tap-windows
+  - ping
+  - cmd
+  - openssl
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - n2n
+date: 2021-01-29 13:43:19
+feature:
 ---
 这里只讲如何运行N2N的客户端edge，其实运行supernode起来更加简单，这里不再重复。
 

@@ -1,11 +1,26 @@
 ---
-title: 'PVE下如何配置新安装的 ubuntu 20.04 server 虚拟机'
-date: 2021-01-30 15:33:44
-tags: [pve,Proxmox VE,ubuntu,server,虚拟机,vm,aliyun,阿里云,阿里源,ssh,qemu-guest-agent,mirror]
+title: PVE下如何配置新安装的 ubuntu 20.04 server 虚拟机
+tags:
+  - pve
+  - Proxmox VE
+  - ubuntu
+  - server
+  - 虚拟机
+  - vm
+  - aliyun
+  - 阿里云
+  - 阿里源
+  - ssh
+  - qemu-guest-agent
+  - mirror
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - PVE
+date: 2021-01-30 15:33:44
+feature:
 ---
 # 下载安装镜像ISO
 [阿里云ubuntu-20.04-live-server下载](https://mirrors.aliyun.com/ubuntu-releases/focal/ubuntu-20.04.2-live-server-amd64.iso)

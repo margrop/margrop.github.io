@@ -1,11 +1,16 @@
 ---
-title: '解决 Gitlab 仓库数据恢复后，旧仓库无法提交的问题 error: unpack failed: unable to create temporary object directory'
-date: 2021-08-24 10:05:20
+title: >-
+  解决 Gitlab 仓库数据恢复后，旧仓库无法提交的问题 error: unpack failed: unable to create temporary
+  object directory
 tags: []
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - Git
+date: 2021-08-24 10:05:20
+feature:
 ---
 # 问题描述
 `Gitlab` 服务器刚进行完数据恢复

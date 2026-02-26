@@ -1,11 +1,26 @@
 ---
-title: '在 Proxmox VE 里面，如何导入第三方的虚拟机镜像？'
-date: 2021-02-01 15:12:47
-tags: [pve,kvm,qemu,vmdk,qcow2,import,导入,虚拟机,镜像,image,Proxmox VE,img]
+title: 在 Proxmox VE 里面，如何导入第三方的虚拟机镜像？
+tags:
+  - pve
+  - kvm
+  - qemu
+  - vmdk
+  - qcow2
+  - import
+  - 导入
+  - 虚拟机
+  - 镜像
+  - image
+  - Proxmox VE
+  - img
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - PVE
+date: 2021-02-01 15:12:47
+feature:
 ---
 下面的例子，`虚拟机ID`均以`100`为例，需自行修改。
 

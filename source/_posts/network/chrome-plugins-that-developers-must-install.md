@@ -1,11 +1,16 @@
 ---
-title: '开发者必备Chrome插件'
-date: 2021-05-10 09:18:24
-tags: [chrome,plugin,developer]
+title: 开发者必备Chrome插件
+tags:
+  - chrome
+  - plugin
+  - developer
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+date: 2021-05-10 09:18:24
+feature:
 ---
 > 注：请自行解决无法访问`chrome.google.com`的问题
 

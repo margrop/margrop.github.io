@@ -1,11 +1,14 @@
 ---
-title: 'OpenCore 的 config.plist 文件，如何打印日志？'
-date: 2021-12-14 20:37:35
+title: OpenCore 的 config.plist 文件，如何打印日志？
 tags: []
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - MacOS
+date: 2021-12-14 20:37:35
+feature:
 ---
 # 准备工作
 * PlistEdit Pro

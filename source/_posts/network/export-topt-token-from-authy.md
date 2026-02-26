@@ -1,11 +1,19 @@
 ---
-title: '【转】从 Authy 导出 TOTP token 的方法'
-date: 2021-02-17 19:53:14
-tags: [token,authy,golang,export,otp,totp]
+title: 【转】从 Authy 导出 TOTP token 的方法
+tags:
+  - token
+  - authy
+  - golang
+  - export
+  - otp
+  - totp
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+date: 2021-02-17 19:53:14
+feature:
 ---
 基于 Ubuntu 18.04（普通用户），其他 Linux 系统大同小异。
 Golang 官网：<https://golang.org/>

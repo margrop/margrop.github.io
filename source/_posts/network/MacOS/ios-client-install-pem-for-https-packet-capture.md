@@ -1,11 +1,24 @@
 ---
-title: 'iOS端如何安装证书，如何https抓包'
-date: 2021-01-28 15:33:23
-tags: [ios,pem,cert,https,抓包,packet capture,charles,web,safari,描述文件]
+title: iOS端如何安装证书，如何https抓包
+tags:
+  - ios
+  - pem
+  - cert
+  - https
+  - 抓包
+  - packet capture
+  - charles
+  - web
+  - safari
+  - 描述文件
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - MacOS
+date: 2021-01-28 15:33:23
+feature:
 ---
 # iOS下载证书
 * 在Charles中导出pem证书，放置任意Web服务器中

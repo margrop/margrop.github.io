@@ -1,11 +1,20 @@
 ---
-title: 'Python3的Web环境，含第三方以及自建'
-date: 2021-01-24 13:07:30
-tags: [python,web,jupter,scipy-notebook,runtime,docker,jupyterlab]
+title: Python3的Web环境，含第三方以及自建
+tags:
+  - python
+  - web
+  - jupter
+  - scipy-notebook
+  - runtime
+  - docker
+  - jupyterlab
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - develop
+date: 2021-01-24 13:07:30
+feature:
 ---
 之前因为某件家事，需要使用`Python3`的Web环境，于是收集了一下。
 第三方网站的环境使用起来很简单，但缺点也很明显，不能保存上次的`Python`代码。

@@ -1,11 +1,19 @@
 ---
-title: 'gperftools安装与使用分析java堆外内存'
-date: 2021-03-30 09:54:54
-tags: [gperftools,perf,heap,dump,内存,jvm]
+title: gperftools安装与使用分析java堆外内存
+tags:
+  - gperftools
+  - perf
+  - heap
+  - dump
+  - 内存
+  - jvm
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - develop
+date: 2021-03-30 09:54:54
+feature:
 ---
 # CentOS
 * 使用 yum 安装

@@ -1,11 +1,16 @@
 ---
-title: '使用 v2ray 配置内网访问——基于公网IP'
-date: 2023-03-25 15:44:58
-tags: [v2ray,lan]
+title: 使用 v2ray 配置内网访问——基于公网IP
+tags:
+  - v2ray
+  - lan
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - router
+date: 2023-03-25 15:44:58
+feature:
 ---
 # 前提条件：
 * 有公网IP

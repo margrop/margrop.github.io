@@ -1,14 +1,20 @@
 ---
-title: 'cloudflare workers 解决docker无法拉取镜像问题'
-date: 2024-06-10 14:16:26
+title: cloudflare workers 解决docker无法拉取镜像问题
 cover: /images/banner/1007_20240927_021428.webp
 coverWidth: 1280
 coverHeight: 720
-tags: [docker,cloudflare,fuckgfw,worker]
+tags:
+  - docker
+  - cloudflare
+  - fuckgfw
+  - worker
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+date: 2024-06-10 14:16:26
+feature:
 ---
 由于某些原因，目前国内无法正常拉取docker镜像，去年写的加速拉取镜像的办法也没法用，困难总比办法多（不是），干脆新写一篇教程，利用cloudflare workers 解决docker无法拉取镜像问题。
 

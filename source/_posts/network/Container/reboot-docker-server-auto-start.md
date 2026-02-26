@@ -1,11 +1,17 @@
 ---
-title: 'reboot 后 Docker服务及容器自动启动设置'
-date: 2021-04-06 14:39:32
-tags: [docker,reboot,container]
+title: reboot 后 Docker服务及容器自动启动设置
+tags:
+  - docker
+  - reboot
+  - container
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - Container
+date: 2021-04-06 14:39:32
+feature:
 ---
 重启reboot操作系统后，发现docker 服务未启动，容器也未启动，天生反骨，怎么才能重启后自动启动呢？
 

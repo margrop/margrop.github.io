@@ -1,11 +1,16 @@
 ---
-title: 'Linux启动时，如何编辑GRUB2的启动参数'
-date: 2021-12-08 09:29:58
-tags: [Linux,boot,grub]
+title: Linux启动时，如何编辑GRUB2的启动参数
+tags:
+  - Linux
+  - boot
+  - grub
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+date: 2021-12-08 09:29:58
+feature:
 ---
 
 # To edit Grub2 during the boot process try the following:

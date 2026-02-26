@@ -1,11 +1,20 @@
 ---
-title: PVE 磁盘巡检接入 Uptime Kuma——踩坑 404 的来龙去脉与最终脚本  
-date: 2025‑05‑14T17:05:00Z  
-tags: [Proxmox VE, LVM‑Thin, Uptime Kuma, Shell, Cron, 运维监控]
+title: PVE 磁盘巡检接入 Uptime Kuma——踩坑 404 的来龙去脉与最终脚本
+date: '2025‑05‑14T17:05:00Z'
+tags:
+  - Proxmox VE
+  - LVM‑Thin
+  - Uptime Kuma
+  - Shell
+  - Cron
+  - 运维监控
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - PVE
+feature:
 ---
 
 

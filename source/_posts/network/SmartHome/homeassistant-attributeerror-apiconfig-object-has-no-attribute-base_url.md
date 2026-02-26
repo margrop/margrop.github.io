@@ -1,11 +1,18 @@
 ---
-title: '解决 HAVCS 在最新版本的 HomeAssistant 无法正常启动的问题，AttributeError: ''ApiConfig'' object has no attribute ''base_url'''
-date: 2021-05-12 18:12:02
-tags: [homeassistant,havcs]
+title: >-
+  解决 HAVCS 在最新版本的 HomeAssistant 无法正常启动的问题，AttributeError: 'ApiConfig' object has
+  no attribute 'base_url'
+tags:
+  - homeassistant
+  - havcs
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - SmartHome
+date: 2021-05-12 18:12:02
+feature:
 ---
 # 不要频繁升级 HA【2021年5月15日更新】
 `强烈不建议升级到 core-2021.3.1 以及之后的版本，包括 core-2021.5.3`

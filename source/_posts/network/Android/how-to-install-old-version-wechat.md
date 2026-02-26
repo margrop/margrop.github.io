@@ -1,11 +1,18 @@
 ---
-title: '微信安装旧版本方法，版本过低，请升级最新版本'
-date: 2021-03-05 11:22:11
-tags: [wechat,adb,install,uninstall]
+title: 微信安装旧版本方法，版本过低，请升级最新版本
+tags:
+  - wechat
+  - adb
+  - install
+  - uninstall
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - Android
+date: 2021-03-05 11:22:11
+feature:
 ---
 # 先安装最新版本微信，并登录。
 

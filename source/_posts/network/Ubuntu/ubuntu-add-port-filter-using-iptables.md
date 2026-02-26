@@ -1,11 +1,19 @@
 ---
-title: 'Ubuntu 22.04 通过ufw / iptables 开放指定端口——20230715更新'
-date: 2023-02-26 20:04:53
-tags: [ubuntu,iptables,防火墙,gfw,fuckgfw]
+title: Ubuntu 22.04 通过ufw / iptables 开放指定端口——20230715更新
+tags:
+  - ubuntu
+  - iptables
+  - 防火墙
+  - gfw
+  - fuckgfw
 published: true
 hideInList: false
-feature: 
 isTop: true
+categories:
+  - network
+  - Ubuntu
+date: 2023-02-26 20:04:53
+feature:
 ---
 # Ubuntu22.04 新增防火墙端口
 ## 查看防火墙状态

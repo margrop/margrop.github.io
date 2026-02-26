@@ -1,11 +1,16 @@
 ---
-title: 'Brew一键安装swagger2markup并生成markdown文档'
-date: 2022-01-25 21:43:39
-tags: [brew,swagger,markdown]
+title: Brew一键安装swagger2markup并生成markdown文档
+tags:
+  - brew
+  - swagger
+  - markdown
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - develop
+date: 2022-01-25 21:43:39
+feature:
 ---
 # 1. 一键安装
 ```

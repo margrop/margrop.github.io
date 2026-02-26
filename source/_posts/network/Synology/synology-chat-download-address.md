@@ -1,11 +1,18 @@
 ---
-title: 'Synology Chat 下载安装地址'
-date: 2021-06-07 08:31:39
-tags: [dsm,synology,chat,download]
+title: Synology Chat 下载安装地址
+tags:
+  - dsm
+  - synology
+  - chat
+  - download
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - Synology
+date: 2021-06-07 08:31:39
+feature:
 ---
 由于众所周知的原因，`Chat` 目前已经被消失了
 

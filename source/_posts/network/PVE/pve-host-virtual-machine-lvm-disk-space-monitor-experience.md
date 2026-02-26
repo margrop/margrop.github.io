@@ -1,11 +1,20 @@
 ---
-title: PVE 宿主机磁盘空间监控——从踩坑到接入 Uptime Kuma 的完整小白教程  
-date: 2025‑05‑14T16:10:00Z  
-tags: [Proxmox VE, LVM‑Thin, Uptime Kuma, Shell, Cron, 运维监控]
+title: PVE 宿主机磁盘空间监控——从踩坑到接入 Uptime Kuma 的完整小白教程
+date: '2025‑05‑14T16:10:00Z'
+tags:
+  - Proxmox VE
+  - LVM‑Thin
+  - Uptime Kuma
+  - Shell
+  - Cron
+  - 运维监控
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - PVE
+feature:
 ---
 > **目标读者**  
 > 这篇文章写给刚刚接触 Proxmox VE（简称 **PVE**）且希望“按步骤照做就能跑”的同学。整篇内容力求：

@@ -1,11 +1,15 @@
 ---
-title: '电视盒子TVBox takagen99版，v20230307_2315 (附最新接口地址)'
-date: 2023-07-03 21:09:41
-tags: [tvbox]
+title: 电视盒子TVBox takagen99版，v20230307_2315 (附最新接口地址)
+tags:
+  - tvbox
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - tvbox
+date: 2023-07-03 21:09:41
+feature:
 ---
 开源，免费，自行配置接口，直播、点播两用，安卓设备。
 

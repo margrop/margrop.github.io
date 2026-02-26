@@ -1,11 +1,28 @@
 ---
-title: 'Let''s Encrypt自动续期后自动同步Proxmox VE和DSM证书'
-date: 2021-02-02 19:19:38
-tags: [pve,Proxmox VE,dsm,https,ssl,sync,续期,证书,letsencrypt,cert,scp,群晖,key,pem,systemctl]
+title: Let's Encrypt自动续期后自动同步Proxmox VE和DSM证书
+tags:
+  - pve
+  - Proxmox VE
+  - dsm
+  - https
+  - ssl
+  - sync
+  - 续期
+  - 证书
+  - letsencrypt
+  - cert
+  - scp
+  - 群晖
+  - key
+  - pem
+  - systemctl
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+date: 2021-02-02 19:19:38
+feature:
 ---
 
 上次我们讲了[Let's Encrypt通过DNS TXT记录来验证域名有效性](https://blog.margrop.net/post/lets-encrypt-use-dns-txt-acme-challenge-domain-available/)，其中文章最后写了，如何使用`certbot renew`进行自动续期。那自动续期成功了，如何同步到`PVE`和`DSM`呢？

@@ -1,11 +1,16 @@
 ---
-title: 'Docker容器内如何连接宿主机的MySQL服务器'
-date: 2021-09-30 13:08:50
-tags: [docker,MySQL]
+title: Docker容器内如何连接宿主机的MySQL服务器
+tags:
+  - docker
+  - MySQL
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - Container
+date: 2021-09-30 13:08:50
+feature:
 ---
 博主最近遇到一种情况，从服务器拷贝了一份数据库在宿主机Mysql服务器上，想要用本地的数据库测试自己的代码正确性，但是项目程序都是靠docker一键部署的，于是必定要在docker容器里访问到本地的数据库。在探索中遇到了问题并得到了解决。
 

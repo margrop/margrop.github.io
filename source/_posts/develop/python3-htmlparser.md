@@ -1,11 +1,16 @@
 ---
-title: 'Python3常用内建模块-HTMLParser'
-date: 2021-02-15 11:07:02
-tags: [python,html,htmlparser]
+title: Python3常用内建模块-HTMLParser
+tags:
+  - python
+  - html
+  - htmlparser
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - develop
+date: 2021-02-15 11:07:02
+feature:
 ---
 # HTMLParser
 

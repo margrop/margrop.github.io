@@ -1,11 +1,15 @@
 ---
-title: 'Python3面向对象编程'
-date: 2021-03-04 22:23:55
-tags: [python,oop]
+title: Python3面向对象编程
+tags:
+  - python
+  - oop
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - develop
+date: 2021-03-04 22:23:55
+feature:
 ---
 # 面向对象编程
 ```py

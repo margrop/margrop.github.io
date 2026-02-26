@@ -1,11 +1,21 @@
 ---
-title: 'CentOS7 开机自动添加N2N的路由表'
-date: 2022-02-06 19:50:38
-tags: [centos,route,n2n,edge,systemctl,linux,Linux]
+title: CentOS7 开机自动添加N2N的路由表
+tags:
+  - centos
+  - route
+  - n2n
+  - edge
+  - systemctl
+  - linux
+  - Linux
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - n2n
+date: 2022-02-06 19:50:38
+feature:
 ---
 # 1. 编辑 `systemctl` 自启动文件
 ```

@@ -1,11 +1,19 @@
 ---
-title: 'SpringBoot DevTools的大坑，没有之一'
-date: 2021-03-03 18:23:39
-tags: [springboot,devtools,java,hibernate,classloader,jvm]
+title: SpringBoot DevTools的大坑，没有之一
+tags:
+  - springboot
+  - devtools
+  - java
+  - hibernate
+  - classloader
+  - jvm
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - develop
+date: 2021-03-03 18:23:39
+feature:
 ---
 最近在SpringBoot的项目中新增了不少改动，然后就碰到了一个非常奇怪的问题。
 

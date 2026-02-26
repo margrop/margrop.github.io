@@ -1,11 +1,22 @@
 ---
-title: '自定义LEDE路由器KoolProxyR屏蔽广告规则，20200705'
-date: 2021-01-15 15:05:48
-tags: [lede,router,adblock,rules,广告屏蔽,软路由,koolproxy,koolproxyr]
+title: 自定义LEDE路由器KoolProxyR屏蔽广告规则，20200705
+tags:
+  - lede
+  - router
+  - adblock
+  - rules
+  - 广告屏蔽
+  - 软路由
+  - koolproxy
+  - koolproxyr
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - router
+date: 2021-01-15 15:05:48
+feature:
 ---
 # 如何安装KoolProxyR
 * 参考[KoolProxyR项目官网](https://github.com/user1121114685/koolproxyR)

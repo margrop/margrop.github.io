@@ -1,11 +1,21 @@
 ---
-title: 'Windows安装Frp客户端，可使用远程桌面'
-date: 2021-01-17 19:36:38
-tags: [windows,frpc,frp,remote desktop,mstsc,nssm,client]
+title: Windows安装Frp客户端，可使用远程桌面
+tags:
+  - windows
+  - frpc
+  - frp
+  - remote desktop
+  - mstsc
+  - nssm
+  - client
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - Windows
+date: 2021-01-17 19:36:38
+feature:
 ---
 > 由于 TeamViewer 的使用限制越来越严格，时不时就会被当成企业用户，天下终究没有免费的午餐，下面是使用Frp客户端进行内网穿透，并可远程控制的方法。
 

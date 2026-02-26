@@ -1,11 +1,18 @@
 ---
-title: '2021年的MacOS BigSur系统外接2k显示屏及字体虚化锯齿的解决方案整理'
-date: 2022-01-25 21:45:33
-tags: [retina,MacOS,hidpi,monitor]
+title: 2021年的MacOS BigSur系统外接2k显示屏及字体虚化锯齿的解决方案整理
+tags:
+  - retina
+  - MacOS
+  - hidpi
+  - monitor
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - MacOS
+date: 2022-01-25 21:45:33
+feature:
 ---
 # 1. 关闭系统 SIP
 

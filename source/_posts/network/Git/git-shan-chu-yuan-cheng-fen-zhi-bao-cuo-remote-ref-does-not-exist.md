@@ -1,11 +1,14 @@
 ---
 title: 'git删除远程分支报错: remote ref does not exist'
-date: 2021-08-27 10:48:48
 tags: []
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - Git
+date: 2021-08-27 10:48:48
+feature:
 ---
 # 问题描述
 在视图删除某个远程分支的时候显示：`remote ref does not exist`

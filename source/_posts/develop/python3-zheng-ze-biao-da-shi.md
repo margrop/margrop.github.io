@@ -1,11 +1,14 @@
 ---
-title: 'Python3正则表达式'
-date: 2021-02-24 08:38:22
-tags: [python]
+title: Python3正则表达式
+tags:
+  - python
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - develop
+date: 2021-02-24 08:38:22
+feature:
 ---
 # re模块
 ```py

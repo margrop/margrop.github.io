@@ -1,11 +1,18 @@
 ---
-title: '天翼云电脑永不休眠方法高科技版本（基于Python）'
-date: 2024-06-18 17:41:35
-tags: [ctyun,python,chrome,天翼云,云电脑]
+title: 天翼云电脑永不休眠方法高科技版本（基于Python）
+tags:
+  - ctyun
+  - python
+  - chrome
+  - 天翼云
+  - 云电脑
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+date: 2024-06-18 17:41:35
+feature:
 ---
 #### 原理：定期连接天翼云桌面（需小于1小时间隔）
 

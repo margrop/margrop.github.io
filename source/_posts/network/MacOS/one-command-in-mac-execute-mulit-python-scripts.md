@@ -1,11 +1,18 @@
 ---
-title: '如何在Mac上执行一行命令，同时运行多个Python脚本？'
-date: 2021-02-25 15:52:15
-tags: [mac,command,terminal,python]
+title: 如何在Mac上执行一行命令，同时运行多个Python脚本？
+tags:
+  - mac
+  - command
+  - terminal
+  - python
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - MacOS
+date: 2021-02-25 15:52:15
+feature:
 ---
 目前有4个Python脚本，打算使用一条命令，同时执行这4个脚本，如何操作呢？
 我目前采用的办法比较简陋，使用了5个shell脚本来实现，不知道还有没有更好的方法。

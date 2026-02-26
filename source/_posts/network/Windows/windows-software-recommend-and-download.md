@@ -1,11 +1,26 @@
 ---
-title: 'Windows常用软件推荐和下载，无推荐'
-date: 2021-01-24 22:22:47
-tags: [windows,常用软件,腾讯,软件管家,应用市场,chrome,火绒,zip,rar,notepad++,unlocker,pdf]
+title: Windows常用软件推荐和下载，无推荐
+tags:
+  - windows
+  - 常用软件
+  - 腾讯
+  - 软件管家
+  - 应用市场
+  - chrome
+  - 火绒
+  - zip
+  - rar
+  - notepad++
+  - unlocker
+  - pdf
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - Windows
+date: 2021-01-24 22:22:47
+feature:
 ---
 这里推荐一些本站在`Windows`环境常用的一些软件，无推荐，不喜欢的赶紧关掉页面。
 

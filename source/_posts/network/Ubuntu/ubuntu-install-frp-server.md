@@ -1,11 +1,21 @@
 ---
-title: 'Ubuntu安装Frp服务端，非客户端'
-date: 2021-01-23 13:43:20
-tags: [ubuntu,frpc,frps,bash,github,nohup,server]
+title: Ubuntu安装Frp服务端，非客户端
+tags:
+  - ubuntu
+  - frpc
+  - frps
+  - bash
+  - github
+  - nohup
+  - server
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - Ubuntu
+date: 2021-01-23 13:43:20
+feature:
 ---
 # 下载并解压Frp
 * 最新Frp下载地址：<https://github.com/fatedier/frp/releases/>

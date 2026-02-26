@@ -1,11 +1,14 @@
 ---
-title: 'Mac OS X Lion 10 7 4 如何安装Homebrew'
-date: 2021-05-29 17:30:33
+title: Mac OS X Lion 10 7 4 如何安装Homebrew
 tags: []
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - MacOS
+date: 2021-05-29 17:30:33
+feature:
 ---
 参考文章：
 * Mac OS X Lion 10 7 4 如何安装Homebrew

@@ -1,11 +1,17 @@
 ---
-title: 'Ubuntu / CentOS 磁盘根目录在线扩容 & 修改分区 inode 数量'
-date: 2023-03-25 13:42:44
-tags: [ubuntu,lvm,resize]
+title: Ubuntu / CentOS 磁盘根目录在线扩容 & 修改分区 inode 数量
+tags:
+  - ubuntu
+  - lvm
+  - resize
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - Ubuntu
+date: 2023-03-25 13:42:44
+feature:
 ---
 Ubuntu 作为服务器系统使用的时候，系统盘的空间可能并不是很充裕，apt apt 着，根目录就满了。诚然，增加磁盘 / 分区并挂载是一个方案，但并不能解决所有问题（例如 apt）。同时，一些跑在云平台上的服务器并没有很好的离线操作磁盘的手段，这时候在线扩容就显得极为必要了。
 

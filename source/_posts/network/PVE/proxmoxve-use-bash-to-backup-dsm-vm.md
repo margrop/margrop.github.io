@@ -1,11 +1,20 @@
 ---
-title: 'ProxmoxVE 6.3 使用命令备份群晖虚拟机'
-date: 2021-01-21 18:16:22
-tags: [pve,Proxmox VE,dsm,backup,bash,sata]
+title: ProxmoxVE 6.3 使用命令备份群晖虚拟机
+tags:
+  - pve
+  - Proxmox VE
+  - dsm
+  - backup
+  - bash
+  - sata
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - PVE
+date: 2021-01-21 18:16:22
+feature:
 ---
 由于我`ProxmoxVE`里面的群晖虚拟机，是使用`LUN直通`硬盘的方式运行的，所以没办法直接在`Web`界面上直接点击备份。
 * DSM虚拟机备份的流程：

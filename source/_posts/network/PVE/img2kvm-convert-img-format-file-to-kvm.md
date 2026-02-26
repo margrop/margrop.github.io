@@ -1,11 +1,20 @@
 ---
-title: 'img2KVM，将IMG格式转换为KVM格式，安装DSM群晖虚拟机'
-date: 2021-01-20 08:32:25
-tags: [img2kvm,img,kvm,dsm,pve,Proxmox VE]
+title: img2KVM，将IMG格式转换为KVM格式，安装DSM群晖虚拟机
+tags:
+  - img2kvm
+  - img
+  - kvm
+  - dsm
+  - pve
+  - Proxmox VE
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - PVE
+date: 2021-01-20 08:32:25
+feature:
 ---
 # 安装img2kvm
 ```bash

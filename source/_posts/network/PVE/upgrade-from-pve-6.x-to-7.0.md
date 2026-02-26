@@ -1,11 +1,16 @@
 ---
-title: '如何从 Proxmox VE 6.4 升级到 Proxmox VE 7.0?'
-date: 2021-08-16 14:52:58
-tags: [pve,upgrade]
+title: 如何从 Proxmox VE 6.4 升级到 Proxmox VE 7.0?
+tags:
+  - pve
+  - upgrade
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - PVE
+date: 2021-08-16 14:52:58
+feature:
 ---
 好久没关注 Proxmox VE 的官网。
 

@@ -1,11 +1,18 @@
 ---
-title: '利用cloudflare搭建gh-proxy加速github'
-date: 2024-06-10 15:26:32
-tags: [cloudflare,github,mirror,worker,fuckgfw]
+title: 利用cloudflare搭建gh-proxy加速github
+tags:
+  - cloudflare
+  - github
+  - mirror
+  - worker
+  - fuckgfw
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+date: 2024-06-10 15:26:32
+feature:
 ---
 前面几期有玩过青龙面板，但是如果要拉GitHub库就会遇到网络不行拉取失败的情况，平时github下文件速度也是奇慢无比，就用免费的cloudflare搭建gh-proxy加速GitHub。
 

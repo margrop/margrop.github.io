@@ -1,11 +1,13 @@
 ---
-title: '省运会的运动项目分析——运动项目分类'
-date: 2021-09-11 15:30:06
+title: 省运会的运动项目分析——运动项目分类
 tags: []
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - sport
+date: 2021-09-11 15:30:06
+feature:
 ---
 # 0. 通用要求
 * 提供 RESTful 接口和数据文件

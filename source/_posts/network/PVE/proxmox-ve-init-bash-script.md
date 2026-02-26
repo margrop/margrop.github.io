@@ -1,11 +1,23 @@
 ---
-title: 'Proxmox VE 安装完成后的初始化环境脚本'
-date: 2021-01-22 16:42:46
-tags: [pve,Proxmox VE,install,bash,ssh,镜像源,pvekclean,ntp,dns]
+title: Proxmox VE 安装完成后的初始化环境脚本
+tags:
+  - pve
+  - Proxmox VE
+  - install
+  - bash
+  - ssh
+  - 镜像源
+  - pvekclean
+  - ntp
+  - dns
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - PVE
+date: 2021-01-22 16:42:46
+feature:
 ---
 个人为了方便安装PVE，自己整理的相关命令，请根据自己的环境自行修改。
 

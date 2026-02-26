@@ -1,11 +1,21 @@
 ---
-title: 'HomeAssistant配置：长时间忘记关闭防盗门时，自动提醒'
-date: 2021-03-09 18:18:37
-tags: [HA,小米,网关,Aqara,门窗传感器,智能音箱,TTS]
+title: HomeAssistant配置：长时间忘记关闭防盗门时，自动提醒
+tags:
+  - HA
+  - 小米
+  - 网关
+  - Aqara
+  - 门窗传感器
+  - 智能音箱
+  - TTS
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - SmartHome
+date: 2021-03-09 18:18:37
+feature:
 ---
 需要的设备：
 `小米门窗传感器`，`小米Aqara网关`，`小米触屏音箱`

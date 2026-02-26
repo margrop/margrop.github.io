@@ -1,15 +1,20 @@
-
 ---
-title: '从Gridea迁移到Hexo，过程及注意事项'
-date: 2024-09-30 16:08:57
+title: 从Gridea迁移到Hexo，过程及注意事项
 cover: /images/banner/1015_20240930_111405.webp
 coverWidth: 1280
 coverHeight: 720
-tags: [hexo, git, nodejs, npm]
+tags:
+  - hexo
+  - git
+  - nodejs
+  - npm
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - notes
+date: 2024-09-30 16:08:57
+feature:
 ---
 
 ## 参考文章

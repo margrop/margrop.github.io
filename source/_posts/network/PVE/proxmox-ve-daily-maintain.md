@@ -1,14 +1,20 @@
 ---
-title: 'Proxmox VE 8.2 日常维护，去掉未订阅的提示，和设置国内源——2024年6月4日更新'
-date: 2023-02-26 20:00:19
+title: Proxmox VE 8.2 日常维护，去掉未订阅的提示，和设置国内源——2024年6月4日更新
 cover: /images/banner/1012_20240927_021455.webp
 coverWidth: 1280
 coverHeight: 720
-tags: [pve,Proxmox VE,pvekclean]
+tags:
+  - pve
+  - Proxmox VE
+  - pvekclean
 published: true
 hideInList: false
-feature: 
 isTop: true
+categories:
+  - network
+  - PVE
+date: 2023-02-26 20:00:19
+feature:
 ---
 # 移除未使用的Linux内核
 * 若不存在`pvekclean`，请先安装

@@ -1,11 +1,19 @@
 ---
-title: '如何使用Windows运行N2N-编译篇'
-date: 2021-01-15 14:26:49
-tags: [network,n2n,windows,tap,tapwindows]
+title: 如何使用Windows运行N2N-编译篇
+tags:
+  - network
+  - n2n
+  - windows
+  - tap
+  - tapwindows
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - n2n
+date: 2021-01-15 14:26:49
+feature:
 ---
 按照[N2N官方网站](https://github.com/ntop/n2n)的[Building说明](https://github.com/ntop/n2n/blob/dev/doc/Building.md)，Windows编译需要的软件有
 `Visual Studio`,`Cmake`,`OpenSSL`。

@@ -1,11 +1,25 @@
 ---
-title: 'Proxmox VE 环境下，如何安装集客AC虚拟机？'
-date: 2021-02-03 16:18:33
-tags: [集客,AC,pve,Proxmox VE,install,vhd,虚拟机,AP,漫游,路由,软路由]
+title: Proxmox VE 环境下，如何安装集客AC虚拟机？
+tags:
+  - 集客
+  - AC
+  - pve
+  - Proxmox VE
+  - install
+  - vhd
+  - 虚拟机
+  - AP
+  - 漫游
+  - 路由
+  - 软路由
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - PVE
+date: 2021-02-03 16:18:33
+feature:
 ---
 根据[恩山的集客AC AP扫盲贴](https://www.right.com.cn/forum/thread-1501038-1-1.html)介绍：
 > 问：可以不用`AC`，直接两个`AP`连接主路由漫游么？

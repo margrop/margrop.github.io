@@ -1,11 +1,18 @@
 ---
-title: '记一次家庭网络的网络风暴故障排查'
-date: 2021-03-26 09:37:21
-tags: [网络风暴,交换机,路由器,AP,network]
+title: 记一次家庭网络的网络风暴故障排查
+tags:
+  - 网络风暴
+  - 交换机
+  - 路由器
+  - AP
+  - network
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+date: 2021-03-26 09:37:21
+feature:
 ---
 3月7日，周日，本来是一个应该好好休息放松的日子。
 

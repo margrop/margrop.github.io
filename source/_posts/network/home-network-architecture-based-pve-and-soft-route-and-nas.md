@@ -1,11 +1,19 @@
 ---
-title: '基于 PVE + 软路由 + NAS的家里网络架构梳理（面向技术人员）'
-date: 2021-09-03 09:50:49
-tags: [network,pve,NAS,router,电信,光猫]
+title: 基于 PVE + 软路由 + NAS的家里网络架构梳理（面向技术人员）
+tags:
+  - network
+  - pve
+  - NAS
+  - router
+  - 电信
+  - 光猫
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+date: 2021-09-03 09:50:49
+feature:
 ---
 # 家庭网络概述
 家庭网络，不会像正规的虚拟化平台那样，搞『业务平面』『管理平面』『数据平面』三个平面分离。

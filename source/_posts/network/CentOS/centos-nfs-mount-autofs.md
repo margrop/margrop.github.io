@@ -1,11 +1,18 @@
 ---
-title: 'Centos 7.4 NFS自动挂载'
-date: 2021-02-17 21:15:19
-tags: [centos,nfs,autofs,mount]
+title: Centos 7.4 NFS自动挂载
+tags:
+  - centos
+  - nfs
+  - autofs
+  - mount
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - CentOS
+date: 2021-02-17 21:15:19
+feature:
 ---
 # 触发式自动挂载
 用户登录时自动挂载NFS共享目录`/home/share`到本机`/mnt/share`

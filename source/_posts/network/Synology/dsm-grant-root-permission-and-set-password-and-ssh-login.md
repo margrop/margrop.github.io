@@ -1,11 +1,17 @@
 ---
-title: '群晖6.17最新获取root权限，设置root密码和SSH免登录'
-date: 2021-02-10 20:40:26
-tags: [dsm,root,ssh]
+title: 群晖6.17最新获取root权限，设置root密码和SSH免登录
+tags:
+  - dsm
+  - root
+  - ssh
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - Synology
+date: 2021-02-10 20:40:26
+feature:
 ---
 # 一、开启SSH功能
 * `控制面板`->`终端机和SNMP`里，开启`SSH`功能

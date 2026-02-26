@@ -1,11 +1,16 @@
 ---
-title: 'NodeRed代码版本控制'
-date: 2021-08-28 14:40:50
-tags: [node-red,git,github]
+title: NodeRed代码版本控制
+tags:
+  - node-red
+  - git
+  - github
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+date: 2021-08-28 14:40:50
+feature:
 ---
 # 问题描述
 

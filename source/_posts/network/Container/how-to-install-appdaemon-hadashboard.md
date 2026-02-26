@@ -1,11 +1,17 @@
 ---
-title: 'AppDaemon （HADashboard）安装教程'
-date: 2021-05-29 14:22:56
-tags: [AppDaemon, HomeAssistant,HADashboard]
+title: AppDaemon （HADashboard）安装教程
+tags:
+  - AppDaemon
+  - HomeAssistant
+  - HADashboard
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - Container
+date: 2021-05-29 14:22:56
+feature:
 ---
 
 # 安装准备

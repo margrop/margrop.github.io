@@ -1,11 +1,13 @@
 ---
-title: 'Python3错误、调试和测试'
-date: 2021-03-01 17:27:07
+title: Python3错误、调试和测试
 tags: []
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - develop
+date: 2021-03-01 17:27:07
+feature:
 ---
 # 错误处理
 * try

@@ -1,11 +1,19 @@
 ---
-title: 'PVE因boot空间不足而升级失败的解决办法'
-date: 2021-01-17 19:25:59
-tags: [pve,boot,pvekclean,Proxmox VE,kernel]
+title: PVE因boot空间不足而升级失败的解决办法
+tags:
+  - pve
+  - boot
+  - pvekclean
+  - Proxmox VE
+  - kernel
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - PVE
+date: 2021-01-17 19:25:59
+feature:
 ---
 默认安装时，`proxmox`给`/boot`分配的空间才不到300M。而`proxmox`的迭代很快，`/boot`很容易就被占满，稍不注意就导致升级失败，唯一的做法就是手工删除旧的kernel。
 

@@ -1,11 +1,19 @@
 ---
-title: '如何使用群晖（DSM）运行N2N-编译篇'
-date: 2021-01-15 13:18:07
-tags: [network,n2n,dsm,群晖,nas]
+title: 如何使用群晖（DSM）运行N2N-编译篇
+tags:
+  - network
+  - n2n
+  - dsm
+  - 群晖
+  - nas
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - n2n
+date: 2021-01-15 13:18:07
+feature:
 ---
 群晖（后面使用`DSM`代替）是一个目前最著名的`NAS`系统，没有之一。
 如何在`DSM`上直接运行`N2N`呢，当然又需要交叉编译了😂。

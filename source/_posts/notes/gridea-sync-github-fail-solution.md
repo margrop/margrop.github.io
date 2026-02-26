@@ -1,11 +1,13 @@
 ---
-title: 'Gridea同步github失败最终解决方案'
-date: 2021-12-04 11:36:32
+title: Gridea同步github失败最终解决方案
 tags: []
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - notes
+date: 2021-12-04 11:36:32
+feature:
 ---
 # 前言
 废话不多说，解决这个问题的核心思路就是跑代理，如果你没有科学上网工具的话，那下面的也就用不着看了，建议你用`coding`吧。

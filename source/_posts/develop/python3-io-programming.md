@@ -1,11 +1,15 @@
 ---
-title: 'Python3 IO编程'
-date: 2021-02-26 10:29:31
-tags: [python,io]
+title: Python3 IO编程
+tags:
+  - python
+  - io
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - develop
+date: 2021-02-26 10:29:31
+feature:
 ---
 # 文件读写
 ## 读文件：read()会一次性读取全部内容

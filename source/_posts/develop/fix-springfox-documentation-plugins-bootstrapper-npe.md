@@ -1,11 +1,17 @@
 ---
-title: '修复 SpringFox 3.0.0 不兼容 SpringBoot 2.6.4 的问题'
-date: 2023-03-12 17:56:57
-tags: [Java,spring,springfox,springboot]
+title: 修复 SpringFox 3.0.0 不兼容 SpringBoot 2.6.4 的问题
+tags:
+  - Java
+  - spring
+  - springfox
+  - springboot
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - develop
+date: 2023-03-12 17:56:57
+feature:
 ---
 # 异常提示：
 ```

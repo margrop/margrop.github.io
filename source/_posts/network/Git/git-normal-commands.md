@@ -1,11 +1,20 @@
 ---
-title: 'Git常用命令'
-date: 2021-01-17 12:59:53
-tags: [git,clone,svn,stash,commit,reflog]
+title: Git常用命令
+tags:
+  - git
+  - clone
+  - svn
+  - stash
+  - commit
+  - reflog
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - Git
+date: 2021-01-17 12:59:53
+feature:
 ---
 1. `git reflog` 显示git最近的一系列的操作记录
 ```

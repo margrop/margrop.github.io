@@ -1,11 +1,21 @@
 ---
-title: '如何使用通用的Hibernate类型映射JSON对象'
-date: 2021-01-29 16:06:09
-tags: [java,jpa,hibernate,json,jsonb,maven,MySQL,PostgreSQL]
+title: 如何使用通用的Hibernate类型映射JSON对象
+tags:
+  - java
+  - jpa
+  - hibernate
+  - json
+  - jsonb
+  - maven
+  - MySQL
+  - PostgreSQL
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - develop
+date: 2021-01-29 16:06:09
+feature:
 ---
 [Hibernate Types]: http://www.google.com/ "Hibernate Types"
 

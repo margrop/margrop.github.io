@@ -1,11 +1,17 @@
 ---
-title: '修复 Spring 2.3.x 升级到更新版本出现的跨域问题'
-date: 2023-03-12 20:20:01
-tags: [Java,springfox,springboot,spring]
+title: 修复 Spring 2.3.x 升级到更新版本出现的跨域问题
+tags:
+  - Java
+  - springfox
+  - springboot
+  - spring
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - develop
+date: 2023-03-12 20:20:01
+feature:
 ---
 # 异常提示：
 ```

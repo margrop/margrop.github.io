@@ -1,11 +1,13 @@
 ---
-title: '论备份和 RAID 1 的重要性'
-date: 2021-08-23 10:47:13
+title: 论备份和 RAID 1 的重要性
 tags: []
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - notes
+date: 2021-08-23 10:47:13
+feature:
 ---
 # 第一次硬盘损毁
 

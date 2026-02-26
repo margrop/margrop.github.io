@@ -1,14 +1,23 @@
 ---
 title: 'MySQL中Date，夏令时时间转换引发的错误HOUR_OF_DAY: 0 -> 1，及解决办法'
-date: 2021-03-25 10:53:15
 cover: /images/banner/1004_20240927_021400.webp
 coverWidth: 1280
 coverHeight: 720
-tags: [MySQL,Date,exception,Java,异常,夏令时,时区]
+tags:
+  - MySQL
+  - Date
+  - exception
+  - Java
+  - 异常
+  - 夏令时
+  - 时区
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - develop
+date: 2021-03-25 10:53:15
+feature:
 ---
 # 做用户导出的功能，代码报错HOUR_OF_DAY: 0 -> 1
 * Exception in thread "main" java.lang.IllegalArgumentException: HOUR_OF_DAY: 0 -> 1

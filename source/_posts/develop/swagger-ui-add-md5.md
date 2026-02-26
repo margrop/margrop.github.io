@@ -1,11 +1,18 @@
 ---
-title: 'Swagger-UI 增加项目依赖，修改index.html'
-date: 2021-02-06 09:13:39
-tags: [swagger,ui,js,index,md5]
+title: Swagger-UI 增加项目依赖，修改index.html
+tags:
+  - swagger
+  - ui
+  - js
+  - index
+  - md5
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - develop
+date: 2021-02-06 09:13:39
+feature:
 ---
 # swagger-bundle 打包
 首先进入`swagger-ui`目录

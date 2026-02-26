@@ -1,14 +1,22 @@
 ---
 title: '使用SpringFox 3.0.0版本出现NumberFormatException的解决办法 '
-date: 2021-01-18 16:39:34
 cover: /images/banner/1006_20240927_021409.webp
 coverWidth: 1280
 coverHeight: 720
-tags: [java,springfox,swagger,exception,maven,dependency]
+tags:
+  - java
+  - springfox
+  - swagger
+  - exception
+  - maven
+  - dependency
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - develop
+date: 2021-01-18 16:39:34
+feature:
 ---
 最近升级了SpringFox至3.0.0版本，访问接口文档，出现了一堆异常
 

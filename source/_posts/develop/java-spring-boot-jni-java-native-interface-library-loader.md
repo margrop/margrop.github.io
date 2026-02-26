@@ -1,11 +1,24 @@
 ---
-title: 'Java基于 SpringBoot 的 JNI 本地方法库加载器'
-date: 2021-03-27 16:37:31
-tags: [Java,springboot,spring,jni,so,dll,jnilib,dylib,MacOS,Linux,Windows]
+title: Java基于 SpringBoot 的 JNI 本地方法库加载器
+tags:
+  - Java
+  - springboot
+  - spring
+  - jni
+  - so
+  - dll
+  - jnilib
+  - dylib
+  - MacOS
+  - Linux
+  - Windows
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - develop
+date: 2021-03-27 16:37:31
+feature:
 ---
 由于Java跨平台需要，自行写了一个跨平台的 JNI 本地方法库加载器。
 

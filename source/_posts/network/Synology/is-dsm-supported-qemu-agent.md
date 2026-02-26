@@ -1,11 +1,21 @@
 ---
-title: 'Q：群晖下有Qemu Guest Agent吗？'
-date: 2021-01-20 13:19:28
-tags: [qemu,agent,powerbutton,spk,dsm,pve,Proxmox VE]
+title: Q：群晖下有Qemu Guest Agent吗？
+tags:
+  - qemu
+  - agent
+  - powerbutton
+  - spk
+  - dsm
+  - pve
+  - Proxmox VE
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - Synology
+date: 2021-01-20 13:19:28
+feature:
 ---
 A：群晖里安装`Power Button Package`，关闭`PVE`的`qemu`代理选项。
 

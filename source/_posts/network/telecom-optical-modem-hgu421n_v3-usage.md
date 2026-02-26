@@ -1,11 +1,17 @@
 ---
-title: '电信光猫 HGU421N_V3使用'
-date: 2021-09-02 10:59:03
-tags: [telecom,modem,电信,光猫]
+title: 电信光猫 HGU421N_V3使用
+tags:
+  - telecom
+  - modem
+  - 电信
+  - 光猫
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+date: 2021-09-02 10:59:03
+feature:
 ---
 # Note:
 ```

@@ -1,11 +1,19 @@
 ---
-title: 'N5105 Promox VE 8.2版本，虚拟机频繁死机问题处理'
-date: 2024-05-04 07:55:22
-tags: [n5105,Proxmox VE,pve,intel,microcode]
+title: N5105 Promox VE 8.2版本，虚拟机频繁死机问题处理
+tags:
+  - n5105
+  - Proxmox VE
+  - pve
+  - intel
+  - microcode
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - PVE
+date: 2024-05-04 07:55:22
+feature:
 ---
 # 一、问题背景
 最近五一各大PT网站开发注册，于是乎注册了几家网站，然后为了做新手任务，疯狂下载上传，作为软路由的 N5105 、iKuai 在长时间高负载时，虚拟机会出现随机性的死机，CPU长期保持100%，只能杀掉再重启虚拟机，相当影响完成新手任务。死机了几次后终于受不了了，看网上各大同仁，发现同样问题不在少数。

@@ -1,11 +1,15 @@
 ---
-title: '安装 minikube-dashboard + 自动启动和外网访问'
-date: 2024-04-30 19:42:36
-tags: [k8s]
+title: 安装 minikube-dashboard + 自动启动和外网访问
+tags:
+  - k8s
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - Container
+date: 2024-04-30 19:42:36
+feature:
 ---
 # 一、安装 minikube-dashboard
 > 参考官网文档：<https://minikube.sigs.k8s.io/docs/start/>

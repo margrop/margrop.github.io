@@ -1,11 +1,22 @@
 ---
-title: 'CentOS安装Frp客户端，可使用SSH'
-date: 2021-01-23 17:22:58
-tags: [centos,install,frps,frpc,nohup,linux,client,ssh]
+title: CentOS安装Frp客户端，可使用SSH
+tags:
+  - centos
+  - install
+  - frps
+  - frpc
+  - nohup
+  - linux
+  - client
+  - ssh
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - CentOS
+date: 2021-01-23 17:22:58
+feature:
 ---
 # 下载并解压Frp
 * 最新Frp下载地址：<https://github.com/fatedier/frp/releases/>

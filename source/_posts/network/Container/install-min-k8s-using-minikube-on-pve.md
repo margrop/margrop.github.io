@@ -1,11 +1,17 @@
 ---
-title: '使用 Minikube 安装最小化k8s环境'
-date: 2024-04-30 19:37:29
-tags: [k8s,Proxmox VE,pve]
+title: 使用 Minikube 安装最小化k8s环境
+tags:
+  - k8s
+  - Proxmox VE
+  - pve
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - network
+  - Container
+date: 2024-04-30 19:37:29
+feature:
 ---
 在 Proxmox VE（一种基于 Debian 的虚拟化环境）上部署 Minikube 需要考虑 Proxmox 的特性，它本质上是一个虚拟机和容器管理平台。您将需要在 Proxmox VE 上创建一个虚拟机（VM），然后在该 VM 中安装 Minikube。以下是详细的步骤：
 

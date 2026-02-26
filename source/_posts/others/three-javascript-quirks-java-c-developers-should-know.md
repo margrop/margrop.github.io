@@ -1,14 +1,23 @@
 ---
-title: 'Java / C开发人员应该知道的三个JavaScript怪癖'
-date: 2021-02-28 22:28:36
+title: Java / C开发人员应该知道的三个JavaScript怪癖
 cover: /images/banner/1005_20240927_021343.webp
 coverWidth: 1280
 coverHeight: 720
-tags: [javascript,js,scoping,hoisting,function,with,closures]
+tags:
+  - javascript
+  - js
+  - scoping
+  - hoisting
+  - function
+  - with
+  - closures
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - others
+date: 2021-02-28 22:28:36
+feature:
 ---
 JavaScript可能是一种欺骗性的语言，并且可能会造成极大的痛苦，因为它不是100％一致的。众所周知，它确实存在一些不好的，令人迷惑的或冗余的功能：臭名昭著的[with语句]()，[隐式全局变量](http://yuiblog.com/blog/2006/06/01/global-domination/)和[不稳定的比较](http://dorey.github.io/JavaScript-Equality-Table/)可能是最著名的。
 

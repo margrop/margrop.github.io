@@ -1,11 +1,18 @@
 ---
-title: 'feign 使用示例：@Body注解，http请求体'
-date: 2021-03-05 18:25:23
-tags: [javascript,feign,openfeign,demo,json]
+title: feign 使用示例：@Body注解，http请求体
+tags:
+  - javascript
+  - feign
+  - openfeign
+  - demo
+  - json
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - develop
+date: 2021-03-05 18:25:23
+feature:
 ---
 出现接口使用http请求体来传递参数的情况，所以研究了一下feign，发现@Body注解大致可以实现。
 虽然说是使用请求体来传递参数，但实质上请求体还是放了json格式的数据。当然，如果不想只局限于json格式，可以将其设置为通用的格式，详见文末。

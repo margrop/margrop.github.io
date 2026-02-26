@@ -1,11 +1,13 @@
 ---
-title: '【转】Mybatis-Plus 通用枚举类型的使用'
-date: 2022-02-02 20:20:58
+title: 【转】Mybatis-Plus 通用枚举类型的使用
 tags: []
 published: true
 hideInList: false
-feature: 
 isTop: false
+categories:
+  - develop
+date: 2022-02-02 20:20:58
+feature:
 ---
 有些字段，例如性别、婚姻状况、等标志性字段，在数据库中存放的形式往往是数字，0 或者 1，这样做的好处是存取的效率高节省空间，但是前端的在展示的时候不能直接展示，需要进行一个判断，但是判断逻辑放在前端不妥，所以后端应该提前将值转换好返回该前端。
 
