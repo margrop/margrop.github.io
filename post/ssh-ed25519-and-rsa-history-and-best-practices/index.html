@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>SSH 密钥算法 Ed25519 与 RSA 的前世今生，以及今天该怎么用 - 魔都水滴</title>
+<meta name="description" content="很多人第一次接触 SSH，都是从一行命令开始的： ssh-keygen -t rsa 这条命令并没有错，但它背后有一个经常被忽略的问题： 我们讨论的到底是“RSA 这种密钥类型”，还是 ssh-rsa 这种“签名算法”？ 这两个概念在很多旧教程里被混用，导致不少人一边以为自己“还在用老旧不安全方案”，一边又不知道怎么迁 …">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://blog.margrop.net/post/ssh-ed25519-and-rsa-history-and-best-practices/">
+
+<meta property="og:site_name" content="魔都水滴">
+<meta property="og:title" content="SSH 密钥算法 Ed25519 与 RSA 的前世今生，以及今天该怎么用 - 魔都水滴">
+<meta property="og:description" content="很多人第一次接触 SSH，都是从一行命令开始的： ssh-keygen -t rsa 这条命令并没有错，但它背后有一个经常被忽略的问题： 我们讨论的到底是“RSA 这种密钥类型”，还是 ssh-rsa 这种“签名算法”？ 这两个概念在很多旧教程里被混用，导致不少人一边以为自己“还在用老旧不安全方案”，一边又不知道怎么迁 …">
+<meta property="og:url" content="https://blog.margrop.net/post/ssh-ed25519-and-rsa-history-and-best-practices/">
+<meta property="og:locale" content="zh_CN"><meta property="og:type" content="article"><meta property="og:image" content="https://blog.margrop.net/images/avatar.png"><meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="SSH 密钥算法 Ed25519 与 RSA 的前世今生，以及今天该怎么用 - 魔都水滴">
+<meta name="twitter:description" content="很多人第一次接触 SSH，都是从一行命令开始的： ssh-keygen -t rsa 这条命令并没有错，但它背后有一个经常被忽略的问题： 我们讨论的到底是“RSA 这种密钥类型”，还是 ssh-rsa 这种“签名算法”？ 这两个概念在很多旧教程里被混用，导致不少人一边以为自己“还在用老旧不安全方案”，一边又不知道怎么迁 …"><meta name="twitter:image" content="https://blog.margrop.net/images/avatar.png"><meta property="article:published_time" content="2026-03-02T09:00:00&#43;08:00">
+<meta property="article:modified_time" content="2026-03-02T09:00:00&#43;08:00"><meta property="article:tag" content="ssh"><meta property="article:tag" content="ed25519"><meta property="article:tag" content="rsa"><meta property="article:tag" content="openssh"><meta property="article:tag" content="安全"><meta property="article:tag" content="运维"><script type="application/ld+json">{"@context":"https://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"魔都水滴"},"dateModified":"2026-03-02T09:00:00+08:00","datePublished":"2026-03-02T09:00:00+08:00","description":"很多人第一次接触 SSH，都是从一行命令开始的： ssh-keygen -t rsa 这条命令并没有错，但它背后有一个经常被忽略的问题： 我们讨论的到底是“RSA 这种密钥类型”，还是 ssh-rsa 这种“签名算法”？ 这两个概念在很多旧教程里被混用，导致不少人一边以为自己“还在用老旧不安全方案”，一边又不知道怎么迁 …","headline":"SSH 密钥算法 Ed25519 与 RSA 的前世今生，以及今天该怎么用","mainEntityOfPage":"https://blog.margrop.net/post/ssh-ed25519-and-rsa-history-and-best-practices/","url":"https://blog.margrop.net/post/ssh-ed25519-and-rsa-history-and-best-practices/"}</script>
+    <meta name="baidu-site-verification" content="code-sVFZ8SER59" />
+    
+    
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-3J2W592DHJ"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-3J2W592DHJ');
+    </script>
+    
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; line-height: 1.8; }
+        h1 { border-bottom: 2px solid #333; padding-bottom: 10px; }
+        .meta { color: #666; font-size: 14px; margin-bottom: 20px; }
+        .content { line-height: 1.8; }
+        .content code { background: #f4f4f4; padding: 2px 5px; border-radius: 3px; }
+        .content pre { background: #f4f4f4; padding: 15px; overflow-x: auto; border-radius: 5px; }
+        .content img { max-width: 100%; height: auto; }
+        .tags { margin-top: 30px; }
+        .tag { background: #eee; padding: 2px 8px; border-radius: 3px; font-size: 12px; margin-right: 5px; }
+        nav { margin-bottom: 30px; border-bottom: 1px solid #eee; padding-bottom: 15px; }
+        nav a { margin-right: 20px; text-decoration: none; color: #333; font-size: 16px; }
+        nav a:hover { color: #006CFF; }
+        a { color: #006CFF; }
+    </style>
+</head>
+<body>
+    <nav>
+  <a href="/">首页</a>
+  <a href="/post/">归档</a>
+  <a href="/tags/">标签</a>
+  <a href="/post/about">关于</a>
+  <a href="https://download.margrop.net" target="_blank">下载</a>
+  <a href="/post/favorites">Link</a>
+  <a href="/post/github-project-stars">Github</a>
+  <a href="https://github-mirrors.margrop.net" target="_blank">Github加速</a>
+  <a href="https://status.anye.xyz/" target="_blank">Docker加速</a>
+</nav>
+
+    <article>
+        <h1>SSH 密钥算法 Ed25519 与 RSA 的前世今生，以及今天该怎么用</h1>
+        <div class="meta">
+            发布时间: 2026-03-02
+            
+            | 标签: 
+            
+                
+                <a href="/tag/ssh"><span class="tag">ssh</span></a>
+            
+                
+                <a href="/tag/ed25519"><span class="tag">ed25519</span></a>
+            
+                
+                <a href="/tag/rsa"><span class="tag">rsa</span></a>
+            
+                
+                <a href="/tag/openssh"><span class="tag">openssh</span></a>
+            
+                
+                <a href="/tag/%E5%AE%89%E5%85%A8"><span class="tag">安全</span></a>
+            
+                
+                <a href="/tag/%E8%BF%90%E7%BB%B4"><span class="tag">运维</span></a>
+            
+            
+        </div>
+        <div class="content">
+            <p>很多人第一次接触 SSH，都是从一行命令开始的：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>ssh-keygen -t rsa
+</span></span></code></pre></div><p>这条命令并没有错，但它背后有一个经常被忽略的问题：
+我们讨论的到底是“RSA 这种密钥类型”，还是 <code>ssh-rsa</code> 这种“签名算法”？</p>
+<p>这两个概念在很多旧教程里被混用，导致不少人一边以为自己“还在用老旧不安全方案”，一边又不知道怎么迁移，甚至在新系统和老设备之间反复踩坑。</p>
+<p>这篇文章就把这件事讲清楚：</p>
+<ol>
+<li>RSA 和 Ed25519 在 SSH 世界里是怎么一路走来的。</li>
+<li>为什么今天大家都在推荐 Ed25519。</li>
+<li>如果你线上还有一堆老机器，应该怎么稳妥迁移。</li>
+<li>2026 年这个时间点，个人和团队应该采用什么默认策略。</li>
+</ol>
+<h2 id="一先把概念对齐ssh-里不止一种算法">一、先把概念对齐：SSH 里不止一种“算法”</h2>
+<p>很多文章把 SSH 算法一把梭，实际上 SSH 协议里至少有四类东西：</p>
+<ol>
+<li>密钥交换算法（KEX）：决定会话密钥怎么协商。</li>
+<li>主机密钥算法（Host Key）：客户端如何确认“这台服务器就是它自己”。</li>
+<li>用户认证签名算法（Public Key Auth）：你登录时，客户端拿私钥做签名，服务器验签。</li>
+<li>对称加密/MAC：会话建立后数据如何加密与完整性保护。</li>
+</ol>
+<p>我们今天重点说的 RSA 和 Ed25519，主要落在第 2 和第 3 类。</p>
+<p>这也是为什么你会看到这些名字同时出现：</p>
+<ul>
+<li><code>ssh-ed25519</code></li>
+<li><code>ssh-rsa</code></li>
+<li><code>rsa-sha2-256</code></li>
+<li><code>rsa-sha2-512</code></li>
+</ul>
+<p>其中最容易误解的是：</p>
+<ul>
+<li>RSA 是非对称算法家族（密钥类型）。</li>
+<li><code>ssh-rsa</code> 是“RSA + SHA-1”这一类签名标识。</li>
+<li>现在被推荐的是“RSA 密钥 + SHA-2 签名”（<code>rsa-sha2-256/512</code>），而不是 <code>ssh-rsa</code>（SHA-1）。</li>
+</ul>
+<p>只要这层理清，后面所有配置基本都能看懂。</p>
+<h2 id="二rsa-的前世为什么它曾经一统江湖">二、RSA 的前世：为什么它曾经一统江湖</h2>
+<p>RSA 的历史很长，放在 SSH 里看，大致可以分几段：</p>
+<ol>
+<li>1977 年，RSA 公开发表，成为现代公钥密码学最重要的基石之一。</li>
+<li>90 年代到 2010 年前后，RSA 在各种协议里都几乎是“默认选项”。</li>
+<li>早期 SSH 生态（尤其老系统和老固件）大量使用 RSA，并长期沿用 <code>ssh-rsa</code> 标识。</li>
+</ol>
+<p>它能长期占主流，原因很现实：</p>
+<ol>
+<li>实现成熟，库和硬件支持广。</li>
+<li>兼容性好，几乎所有系统都认识它。</li>
+<li>管理员熟悉，文档与教程极多。</li>
+</ol>
+<p>但问题也一样现实：</p>
+<ol>
+<li>为了达到同等安全强度，RSA 密钥通常更大（常见 2048/3072/4096 bit）。</li>
+<li>在握手和签名场景下，速度和资源开销不占优势。</li>
+<li>早年大量部署绑定了 SHA-1 的 <code>ssh-rsa</code>，而 SHA-1 早已不再适合作为长期安全基线。</li>
+</ol>
+<p>后面大家感受到的“RSA 不安全”争论，本质上大多数时候是在说：
+老的 <code>ssh-rsa</code>（SHA-1）不应再作为默认；不是说 RSA 数学本身立刻不能用了。</p>
+<h2 id="三ed25519-的今生它为什么成为默认推荐">三、Ed25519 的今生：它为什么成为默认推荐</h2>
+<p>Ed25519 来自 Edwards 曲线体系，在工程上非常“运维友好”：</p>
+<ol>
+<li>密钥短，公钥和私钥都更轻量。</li>
+<li>签名快、验签快，CPU 压力更小。</li>
+<li>参数固定，减少“曲线参数选错”的概率。</li>
+<li>在现代 OpenSSH 里支持成熟，默认体验好。</li>
+</ol>
+<p>你可以把它理解成：
+在“日常 SSH 登录和自动化运维”这个具体场景中，Ed25519 给了更好的性能/安全/可用性平衡点。</p>
+<p>所以今天大多数新环境，默认优先级是：</p>
+<ol>
+<li>首选 Ed25519。</li>
+<li>兼容兜底才使用 RSA（并尽量使用 SHA-2 签名）。</li>
+</ol>
+<h2 id="四一个关键分水岭ssh-rsa-被默认淘汰之后">四、一个关键分水岭：<code>ssh-rsa</code> 被默认淘汰之后</h2>
+<p>很多人是在某次系统升级后，突然遇到这类报错才开始研究算法问题：</p>
+<ul>
+<li>no matching host key type found</li>
+<li>no matching key exchange method found</li>
+<li>userauth_pubkey: key type ssh-rsa not in PubkeyAcceptedAlgorithms</li>
+</ul>
+<p>这背后的核心变化是：</p>
+<ol>
+<li>新版本 OpenSSH 不再默认接受基于 SHA-1 的 <code>ssh-rsa</code> 签名。</li>
+<li>但仍可使用 RSA 密钥，只要协商的是 <code>rsa-sha2-256</code> 或 <code>rsa-sha2-512</code>。</li>
+</ol>
+<p>这就是“RSA 还能不能用”争论的标准答案：</p>
+<ul>
+<li>能用，但别把 <code>ssh-rsa</code> 当默认。</li>
+<li>新系统以 Ed25519 为主，RSA 作为兼容层。</li>
+</ul>
+<h2 id="五2026-年推荐基线个人与团队该怎么选">五、2026 年推荐基线：个人与团队该怎么选</h2>
+<p>下面这套策略，适合绝大多数个人开发者、小团队和一般企业运维。</p>
+<h3 id="1-用户登录密钥策略">1) 用户登录密钥策略</h3>
+<ol>
+<li>默认创建 <code>ed25519</code> 用户密钥。</li>
+<li>强制私钥口令（passphrase），并配合 <code>ssh-agent</code>。</li>
+<li>仅在必须兼容旧设备时，额外保留一把 RSA 3072/4096 密钥。</li>
+</ol>
+<h3 id="2-服务器-host-key-策略">2) 服务器 Host Key 策略</h3>
+<ol>
+<li>至少启用一把 Ed25519 主机密钥。</li>
+<li>可同时保留 RSA 主机密钥用于老客户端兼容。</li>
+<li>拒绝或最小化 <code>ssh-rsa</code>（SHA-1）签名路径。</li>
+</ol>
+<h3 id="3-认证与访问控制策略">3) 认证与访问控制策略</h3>
+<ol>
+<li>关闭密码登录，使用公钥认证。</li>
+<li>禁止直接 root 密码登录。</li>
+<li><code>authorized_keys</code> 做细粒度限制（来源 IP、命令限制、禁止端口转发等）。</li>
+</ol>
+<h3 id="4-合规例外fips-等">4) 合规例外（FIPS 等）</h3>
+<p>在某些强合规环境中，Ed25519 可能不是可用选项。遇到这类场景时：</p>
+<ol>
+<li>按组织合规基线执行（通常是特定曲线或 RSA 方案）。</li>
+<li>不要“个人偏好优先于审计要求”。</li>
+<li>在合规与兼容约束下，尽量使用 SHA-2 签名与最小权限策略。</li>
+</ol>
+<h2 id="六实操一客户端正确生成与使用密钥">六、实操一：客户端正确生成与使用密钥</h2>
+<h3 id="1-生成-ed25519-密钥推荐">1) 生成 Ed25519 密钥（推荐）</h3>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>ssh-keygen -t ed25519 -a <span style="color:#ae81ff">64</span> -C <span style="color:#e6db74">&#34;your_email@example.com&#34;</span>
+</span></span></code></pre></div><p>说明：</p>
+<ol>
+<li><code>-a 64</code> 是 KDF 轮数，提升口令抗暴力破解能力。</li>
+<li>生成后建议确认私钥文件权限是 <code>600</code>。</li>
+</ol>
+<h3 id="2-添加到-agent">2) 添加到 agent</h3>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>eval <span style="color:#e6db74">&#34;</span><span style="color:#66d9ef">$(</span>ssh-agent -s<span style="color:#66d9ef">)</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>ssh-add ~/.ssh/id_ed25519
+</span></span></code></pre></div><h3 id="3-服务器安装公钥">3) 服务器安装公钥</h3>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>ssh-copy-id -i ~/.ssh/id_ed25519.pub user@your-server
+</span></span></code></pre></div><h3 id="4-客户端-sshconfig-示例">4) 客户端 <code>~/.ssh/config</code> 示例</h3>
+<pre tabindex="0"><code class="language-sshconfig" data-lang="sshconfig">Host prod-main
+  HostName 203.0.113.10
+  User deploy
+  Port 22
+  IdentityFile ~/.ssh/id_ed25519
+  IdentitiesOnly yes
+  ServerAliveInterval 30
+  ServerAliveCountMax 3
+</code></pre><p>这套配置的核心目的只有一个：
+让连接行为可预测，不要把本机一堆私钥乱试一遍。</p>
+<h2 id="七实操二服务端-sshd_config-的一份稳健模板">七、实操二：服务端 <code>sshd_config</code> 的一份稳健模板</h2>
+<p>以下示例是通用安全基线，实际请按发行版路径与版本调整：</p>
+<pre tabindex="0"><code class="language-conf" data-lang="conf"># /etc/ssh/sshd_config
+
+PubkeyAuthentication yes
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitRootLogin prohibit-password
+AuthenticationMethods publickey
+MaxAuthTries 3
+
+# Host keys
+HostKey /etc/ssh/ssh_host_ed25519_key
+HostKey /etc/ssh/ssh_host_rsa_key
+
+# Prefer modern public key signature algorithms
+PubkeyAcceptedAlgorithms ssh-ed25519,rsa-sha2-512,rsa-sha2-256
+</code></pre><p>修改后建议先做两步：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>sshd -t
+</span></span><span style="display:flex;"><span>systemctl reload sshd
+</span></span></code></pre></div><p>注意是 <code>reload</code> 优先，不要上来就 <code>restart</code> 把自己关在门外。</p>
+<h2 id="八从老-rsa-环境迁移一套低风险步骤">八、从老 RSA 环境迁移：一套低风险步骤</h2>
+<p>很多线上环境的问题不是“不会配”，而是“不能断”。
+建议按下面步骤走，几乎可以把风险压到最低。</p>
+<h3 id="第-1-步先盘点">第 1 步：先盘点</h3>
+<ol>
+<li>统计所有服务器、跳板机、CI 节点的 SSH 客户端版本。</li>
+<li>找出仍依赖 <code>ssh-rsa</code> 的系统（通常是老 NAS、老交换机、老发行版）。</li>
+<li>识别所有自动化任务（Ansible、CI/CD、备份脚本）的密钥类型。</li>
+</ol>
+<h3 id="第-2-步先加不减">第 2 步：先加不减</h3>
+<ol>
+<li>给服务器先加 Ed25519 host key。</li>
+<li>给运维账号先加 Ed25519 用户公钥。</li>
+<li>保留原 RSA 兼容路径，观察一段时间。</li>
+</ol>
+<h3 id="第-3-步分批切换默认">第 3 步：分批切换默认</h3>
+<ol>
+<li>客户端默认 <code>IdentityFile</code> 改为 Ed25519。</li>
+<li>CI 任务密钥逐个替换，避免一次性全量切。</li>
+<li>日志观察认证失败原因，确认没有关键业务受影响。</li>
+</ol>
+<h3 id="第-4-步收口">第 4 步：收口</h3>
+<ol>
+<li>对新环境禁止 <code>ssh-rsa</code>（SHA-1）签名。</li>
+<li>对历史孤岛设备做白名单例外，不把例外扩散到全局。</li>
+<li>把例外写进文档和配置管理，不要靠“记忆运维”。</li>
+</ol>
+<h2 id="九常见误区与修正建议">九、常见误区与修正建议</h2>
+<h3 id="误区-1ssh-rsa-不能用--rsa-完全不能用">误区 1：<code>ssh-rsa</code> 不能用 = RSA 完全不能用</h3>
+<p>修正：</p>
+<ul>
+<li>不能默认用的是 <code>ssh-rsa</code>（SHA-1）签名。</li>
+<li>RSA 密钥配合 <code>rsa-sha2-256/512</code> 仍可作为兼容方案。</li>
+</ul>
+<h3 id="误区-2只要是-ed25519-就绝对安全">误区 2：只要是 Ed25519 就绝对安全</h3>
+<p>修正：</p>
+<ol>
+<li>私钥无口令、权限混乱、随意分发，一样会出事。</li>
+<li>安全性不只看算法，还看密钥生命周期管理。</li>
+</ol>
+<h3 id="误区-3为了兼容在全局开启老算法">误区 3：为了兼容，在全局开启老算法</h3>
+<p>修正：</p>
+<ol>
+<li>只对特定主机写例外配置。</li>
+<li>避免在全局 <code>Host *</code> 上放宽算法，防止把风险扩散到所有连接。</li>
+</ol>
+<p>例如，仅对老设备临时例外：</p>
+<pre tabindex="0"><code class="language-sshconfig" data-lang="sshconfig">Host legacy-switch
+  HostName 198.51.100.20
+  User admin
+  PubkeyAcceptedAlgorithms +ssh-rsa
+  HostKeyAlgorithms +ssh-rsa
+</code></pre><p>并在设备升级后及时删除这段配置。</p>
+<h2 id="十最后给一份可执行清单直接照着做">十、最后给一份可执行清单（直接照着做）</h2>
+<p>如果你现在要把自己的 SSH 体系拉回到正确状态，可以按这份 checklist：</p>
+<ol>
+<li>新建 Ed25519 密钥，并设置强口令。</li>
+<li>服务器安装 Ed25519 用户公钥。</li>
+<li><code>sshd_config</code> 关闭密码登录，启用公钥认证。</li>
+<li>客户端 <code>~/.ssh/config</code> 指定 <code>IdentityFile</code> 和 <code>IdentitiesOnly yes</code>。</li>
+<li>为老设备仅做“主机级别”临时兼容，不做全局放宽。</li>
+<li>盘点并替换 CI/CD 中遗留的弱配置。</li>
+<li>每季度复查一次 SSH 算法与密钥策略。</li>
+</ol>
+<p>做到这 7 条，基本就能同时满足：</p>
+<ol>
+<li>日常运维稳定。</li>
+<li>性能与体验更好。</li>
+<li>安全基线不落后。</li>
+<li>老系统迁移过程可控。</li>
+</ol>
+<h2 id="结语">结语</h2>
+<p>RSA 在 SSH 里的历史地位，确实是“功勋级别”；
+Ed25519 则是当下更适合作为默认选项的现代方案。</p>
+<p>真正正确的做法，不是情绪化地“只押一种算法”，而是：</p>
+<ol>
+<li>以 Ed25519 建立新基线。</li>
+<li>用 RSA(SHA-2) 做受控兼容。</li>
+<li>把例外收敛到最小范围，并持续清理。</li>
+</ol>
+<p>当你把“算法选择”变成“可审计、可迁移、可回滚”的工程实践，SSH 才算真正稳下来。</p>
+        </div>
+    </article>
+    
+    
+  
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk/dist/gitalk.css">
+<script src="https://cdn.jsdelivr.net/npm/gitalk/dist/gitalk.min.js"></script>
+<div id="gitalk-container" style="margin-top:40px"></div>
+<script>
+  (function(){
+    var gitalk = new Gitalk({
+      clientID: '3181fd94e501cc5db0ad',
+      clientSecret: 'af1dab79dae02c69296e6615bfcecf47fc8615ee',
+      repo: 'margropcomment.margrop.io',
+      owner: 'margrop',
+      admin: ["margrop"],
+      
+      id: '\/post\/ssh-ed25519-and-rsa-history-and-best-practi',
+      
+      distractionFreeMode: false
+    });
+    gitalk.render('gitalk-container');
+  })();
+</script>
+  
+
+
+
+    <script type="text/javascript" src="https://js.users.51.la/21044367.js"></script>
+    <script charset="UTF-8" id="LA_COLLECT" src="//sdk.51.la/js-sdk-pro.min.js"></script>
+    <script>LA.init({id: "1vVTUWl7zoRjnKXi",ck: "1vVTUWl7zoRjnKXi"})</script>
+    <script src="https://sdk.51.la/perf/js-sdk-perf.min.js" crossorigin="anonymous"></script>
+    <script>
+      new LingQue.Monitor().init({id:"202teQt8THXwqyve"});
+    </script>
+</body>
+</html>
