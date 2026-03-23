@@ -1,0 +1,841 @@
+<!doctype html>
+<html lang="cn"><head>
+<title>Docker容器网络互通排障全流程：从Bridge到iptables的深度排查 - 魔都水滴</title>
+<meta charset="UTF-8">
+<meta name="keywords" content="">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5">
+
+<link rel="shortcut icon" href="/favicon.ico" type="image/x-icon" />
+<meta name="description" content="前言容器网络互通是Docker部署中最容易出问题的环节之一。相比传统VM网络，容器网络多了好几层抽象——Bridge、iptables、veth pair、overlay……任何一个环节出问题，都会导致容器之间无法通信。 本文记录一次典型的跨宿主机容器网络互通问题排查全过程，从现象到根因到解决，提供可复用的排障思路和一键脚本。 问题背景业务场景在多台服务器上使用Docker Compose部署了一">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Docker容器网络互通排障全流程：从Bridge到iptables的深度排查">
+<meta property="og:url" content="http://blog.margrop.com/post/2026-03-23-docker-container-networking-troubleshooting/index.html">
+<meta property="og:site_name" content="魔都水滴">
+<meta property="og:description" content="前言容器网络互通是Docker部署中最容易出问题的环节之一。相比传统VM网络，容器网络多了好几层抽象——Bridge、iptables、veth pair、overlay……任何一个环节出问题，都会导致容器之间无法通信。 本文记录一次典型的跨宿主机容器网络互通问题排查全过程，从现象到根因到解决，提供可复用的排障思路和一键脚本。 问题背景业务场景在多台服务器上使用Docker Compose部署了一">
+<meta property="og:locale">
+<meta property="article:published_time" content="2026-03-23T13:30:00.000Z">
+<meta property="article:modified_time" content="2026-03-23T13:04:46.480Z">
+<meta property="article:author" content="Margrop">
+<meta property="article:tag" content="运维">
+<meta property="article:tag" content="技术">
+<meta property="article:tag" content="网络">
+<meta property="article:tag" content="Docker">
+<meta property="article:tag" content="容器">
+<meta name="twitter:card" content="summary">
+
+<link rel="stylesheet" href="../../lib/fancybox/fancybox.css">
+<link rel="stylesheet" href="../../lib/mdui_043tiny/mdui.css">
+
+
+<link rel="stylesheet" href="../../lib/iconfont/iconfont.css?v=1774271097673">
+
+<link rel="stylesheet" href="../../css/style.css?v=1774271097673">
+
+
+
+
+    
+        <link rel="stylesheet" href="../../custom.css?v=1774271097673">
+    
+
+
+
+<script src="../../lib/mdui_043tiny/mdui.js" async></script>
+<script src="../../lib/fancybox/fancybox.umd.js" async></script>
+<script src="../../lib/lax.min.js" async></script>
+
+
+<script async src="../../js/app.js?v=1774271097674"></script>
+
+ 
+
+<script charset="UTF-8" id="LA_COLLECT" src="//sdk.51.la/js-sdk-pro.min.js"></script>
+<script>LA.init({id:"23bDEwNOu1L8NhV1",ck:"23bDEwNOu1L8NhV1"})</script>
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-4NGHEP8LEV"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+
+  gtag('config', 'G-4NGHEP8LEV');
+</script>
+
+
+<link rel="stylesheet"  href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/atom-one-dark.min.css">
+<meta name="generator" content="Hexo 7.3.0"><link rel="alternate" href="atom.xml" title="魔都水滴" type="application/atom+xml">
+</head><body class="nexmoe mdui-drawer-body-left"><div id="nexmoe-background"><div class="nexmoe-bg" style="background-image: url(/images/background.webp)"></div><div class="mdui-appbar mdui-shadow-0"><div class="mdui-toolbar"><a class="mdui-btn mdui-btn-icon mdui-ripple" mdui-drawer="{target: &#039;#drawer&#039;, swipe: true}" title="menu"><i class="mdui-icon nexmoefont icon-menu"></i></a><div class="mdui-toolbar-spacer"></div><a class="mdui-btn mdui-btn-icon" href="../../index.html" title="Margrop"><img src="/images/avatar.webp" alt="Margrop"></a></div></div></div><div id="nexmoe-header"><div class="nexmoe-drawer mdui-drawer" id="drawer">
+    <div class="nexmoe-avatar mdui-ripple">
+        <a href="../../index.html" title="Margrop">
+            <img src="/images/avatar.webp" alt="Margrop" alt="Margrop">
+        </a>
+    </div>
+    <div class="nexmoe-count">
+        <div><span>Articles</span>218</div>
+        <div><span>Tags</span>391</div>
+        <div><span>Categories</span>23</div>
+    </div>
+    <div class="nexmoe-list mdui-list" mdui-collapse="{accordion: true}">
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" href="../../index.html" title="回到首页">
+            <i class="mdui-list-item-icon nexmoefont icon-home"></i>
+            <div class="mdui-list-item-content">
+                回到首页
+            </div>
+        </a>
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" href="../../post/archives/" title="文章归档">
+            <i class="mdui-list-item-icon nexmoefont icon-container"></i>
+            <div class="mdui-list-item-content">
+                文章归档
+            </div>
+        </a>
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" target="_blank" rel="noopener" href="https://example.com/" title="下载">
+            <i class="mdui-list-item-icon nexmoefont icon-container"></i>
+            <div class="mdui-list-item-content">
+                下载
+            </div>
+        </a>
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" href="../../post/favorites/" title="常用链接">
+            <i class="mdui-list-item-icon nexmoefont icon-unorderedlist"></i>
+            <div class="mdui-list-item-content">
+                常用链接
+            </div>
+        </a>
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" href="../../post/github-project-stars/" title="GithubStars">
+            <i class="mdui-list-item-icon nexmoefont icon-github"></i>
+            <div class="mdui-list-item-content">
+                GithubStars
+            </div>
+        </a>
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" href="../../post/donate/" title="给我赞助">
+            <i class="mdui-list-item-icon nexmoefont icon-coffee"></i>
+            <div class="mdui-list-item-content">
+                给我赞助
+            </div>
+        </a>
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" href="../../post/about/" title="关于博主">
+            <i class="mdui-list-item-icon nexmoefont icon-info-circle"></i>
+            <div class="mdui-list-item-content">
+                关于博主
+            </div>
+        </a>
+        
+    </div>
+    
+    
+        
+        <div class="nexmoe-widget-wrap">
+    <div class="nexmoe-widget nexmoe-search">
+         
+            <form id="search_form" action_e="https://cn.bing.com/search?q=site:example.com" onsubmit="return search();">
+                <label><input id="search_value" name="q" type="search" placeholder="Search"></label>
+            </form>
+         
+    </div>
+</div>
+
+
+
+
+    
+        
+        <div class="nexmoe-widget-wrap">
+	<div class="nexmoe-widget nexmoe-social">
+		<a
+			class="mdui-ripple"
+			href="http://qm.qq.com/cgi-bin/qm/qr?_wv=1027&k=weD8TANNWdCOveAMcdmoAxOKt5owKkDS"
+			target="_blank"
+			mdui-tooltip="{content: 'QQ群'}"
+			style="
+				color: rgb(249, 174, 8);
+				background-color: rgba(249, 174, 8, .1);
+			"
+		>
+			<i
+				class="nexmoefont icon-QQ"
+			></i> </a
+		><a
+			class="mdui-ripple"
+			href="https://github.com/margrop/"
+			target="_blank"
+			mdui-tooltip="{content: 'GitHub'}"
+			style="
+				color: rgb(25, 23, 23);
+				background-color: rgba(25, 23, 23, .1);
+			"
+		>
+			<i
+				class="nexmoefont icon-github"
+			></i> </a
+		><a
+			class="mdui-ripple"
+			href="../../atom.xml"
+			target="_blank"
+			mdui-tooltip="{content: 'RSS'}"
+			style="
+				color: rgb(247, 132, 34);
+				background-color: rgba(247, 132, 34, .1);
+			"
+		>
+			<i
+				class="nexmoefont icon-rss"
+			></i> </a
+		>
+	</div>
+</div>
+
+    
+        
+        
+  <div class="nexmoe-widget-wrap">
+    <h3 class="nexmoe-widget-title">Categories</h3>
+    <div class="nexmoe-widget">
+
+      <ul class="category-list">
+
+        
+
+
+        
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/Adblocker/">Adblocker</a>
+          <span class="category-list-count">1</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/Android/">Android</a>
+          <span class="category-list-count">2</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/CentOS/">CentOS</a>
+          <span class="category-list-count">6</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/Container/">Container</a>
+          <span class="category-list-count">10</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/Git/">Git</a>
+          <span class="category-list-count">7</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/HomeAssistant/">HomeAssistant</a>
+          <span class="category-list-count">1</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/MacOS/">MacOS</a>
+          <span class="category-list-count">11</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/PVE/">PVE</a>
+          <span class="category-list-count">19</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/SmartHome/">SmartHome</a>
+          <span class="category-list-count">5</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/Synology/">Synology</a>
+          <span class="category-list-count">4</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/Ubuntu/">Ubuntu</a>
+          <span class="category-list-count">4</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/Windows/">Windows</a>
+          <span class="category-list-count">3</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/ai-diary/">ai_diary</a>
+          <span class="category-list-count">31</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/ai-tech/">ai_tech</a>
+          <span class="category-list-count">29</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/develop/">develop</a>
+          <span class="category-list-count">28</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/fuckgfw/">fuckgfw</a>
+          <span class="category-list-count">2</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/n2n/">n2n</a>
+          <span class="category-list-count">9</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/">network</a>
+          <span class="category-list-count">112</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/notes/">notes</a>
+          <span class="category-list-count">10</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/others/">others</a>
+          <span class="category-list-count">3</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/router/">router</a>
+          <span class="category-list-count">7</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/sport/">sport</a>
+          <span class="category-list-count">4</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/tvbox/">tvbox</a>
+          <span class="category-list-count">3</span>
+        </li>
+
+        
+      </ul>
+
+    </div>
+  </div>
+
+
+    
+        
+        
+  <div class="nexmoe-widget-wrap">
+    <div id="randomtagcloud" class="nexmoe-widget tagcloud nexmoe-rainbow">
+      <a href="../../tags/1password/" style="font-size: 10px;">1password</a> <a href="../../tags/AC/" style="font-size: 10.63px;">AC</a> <a href="../../tags/AI/" style="font-size: 11.25px;">AI</a> <a href="../../tags/AP/" style="font-size: 11.25px;">AP</a> <a href="../../tags/API/" style="font-size: 10.63px;">API</a> <a href="../../tags/AppDaemon/" style="font-size: 10px;">AppDaemon</a> <a href="../../tags/Aqara/" style="font-size: 10px;">Aqara</a> <a href="../../tags/Caddy/" style="font-size: 10px;">Caddy</a> <a href="../../tags/Cookie-%E8%AE%A4%E8%AF%81/" style="font-size: 10px;">Cookie 认证</a> <a href="../../tags/Cron/" style="font-size: 11.25px;">Cron</a> <a href="../../tags/Date/" style="font-size: 10px;">Date</a> <a href="../../tags/Diagrams-net/" style="font-size: 10px;">Diagrams.net</a> <a href="../../tags/Docker/" style="font-size: 14.38px;">Docker</a> <a href="../../tags/HA/" style="font-size: 10px;">HA</a> <a href="../../tags/HADashboard/" style="font-size: 10px;">HADashboard</a> <a href="../../tags/HomeAssistant/" style="font-size: 10px;">HomeAssistant</a> <a href="../../tags/IP/" style="font-size: 10px;">IP</a> <a href="../../tags/IPv4/" style="font-size: 10px;">IPv4</a> <a href="../../tags/Java/" style="font-size: 12.5px;">Java</a> <a href="../../tags/LVM%E2%80%91Thin/" style="font-size: 10.63px;">LVM‑Thin</a> <a href="../../tags/Linux/" style="font-size: 13.13px;">Linux</a> <a href="../../tags/MacOS/" style="font-size: 11.25px;">MacOS</a> <a href="../../tags/Markdown/" style="font-size: 10px;">Markdown</a> <a href="../../tags/MiniMax/" style="font-size: 10px;">MiniMax</a> <a href="../../tags/MySQL/" style="font-size: 11.25px;">MySQL</a> <a href="../../tags/NAS/" style="font-size: 11.25px;">NAS</a> <a href="../../tags/Nginx/" style="font-size: 10px;">Nginx</a> <a href="../../tags/Node-js/" style="font-size: 10px;">Node.js</a> <a href="../../tags/OpenAI/" style="font-size: 10px;">OpenAI</a> <a href="../../tags/OpenClaw/" style="font-size: 13.75px;">OpenClaw</a> <a href="../../tags/OpenResty/" style="font-size: 10px;">OpenResty</a> <a href="../../tags/PPPoE/" style="font-size: 10px;">PPPoE</a> <a href="../../tags/PostgreSQL/" style="font-size: 10px;">PostgreSQL</a> <a href="../../tags/ProcessOn/" style="font-size: 10px;">ProcessOn</a> <a href="../../tags/Prometheus/" style="font-size: 10px;">Prometheus</a> <a href="../../tags/Proxmox-VE/" style="font-size: 18.13px;">Proxmox VE</a> <a href="../../tags/SOCKS5/" style="font-size: 10px;">SOCKS5</a> <a href="../../tags/SSL/" style="font-size: 10px;">SSL</a> <a href="../../tags/Shell/" style="font-size: 10.63px;">Shell</a> <a href="../../tags/TTS/" style="font-size: 10px;">TTS</a> <a href="../../tags/TimeMachine/" style="font-size: 10px;">TimeMachine</a> <a href="../../tags/UML/" style="font-size: 10px;">UML</a> <a href="../../tags/Uptime-Kuma/" style="font-size: 10.63px;">Uptime Kuma</a> <a href="../../tags/VPN/" style="font-size: 10px;">VPN</a> <a href="../../tags/VPS/" style="font-size: 10.63px;">VPS</a> <a href="../../tags/Web/" style="font-size: 10px;">Web</a> <a href="../../tags/Windows/" style="font-size: 10px;">Windows</a> <a href="../../tags/activate/" style="font-size: 10.63px;">activate</a> <a href="../../tags/ad/" style="font-size: 10px;">ad</a> <a href="../../tags/adb/" style="font-size: 10px;">adb</a> <a href="../../tags/adblock/" style="font-size: 10.63px;">adblock</a> <a href="../../tags/agent/" style="font-size: 10px;">agent</a> <a href="../../tags/aligenie/" style="font-size: 10px;">aligenie</a> <a href="../../tags/aliyun/" style="font-size: 11.25px;">aliyun</a> <a href="../../tags/alpine/" style="font-size: 10px;">alpine</a> <a href="../../tags/annotation/" style="font-size: 10px;">annotation</a> <a href="../../tags/aop/" style="font-size: 10px;">aop</a> <a href="../../tags/authy/" style="font-size: 10px;">authy</a> <a href="../../tags/autofs/" style="font-size: 10px;">autofs</a> <a href="../../tags/backup/" style="font-size: 10px;">backup</a> <a href="../../tags/baidupan/" style="font-size: 10px;">baidupan</a> <a href="../../tags/bash/" style="font-size: 11.25px;">bash</a> <a href="../../tags/bitwarden/" style="font-size: 10px;">bitwarden</a> <a href="../../tags/boot/" style="font-size: 10.63px;">boot</a> <a href="../../tags/brew/" style="font-size: 10.63px;">brew</a> <a href="../../tags/browser/" style="font-size: 10px;">browser</a> <a href="../../tags/caddy2/" style="font-size: 10.63px;">caddy2</a> <a href="../../tags/cdn/" style="font-size: 10px;">cdn</a> <a href="../../tags/centos/" style="font-size: 16.25px;">centos</a> <a href="../../tags/cert/" style="font-size: 10.63px;">cert</a> <a href="../../tags/certbot/" style="font-size: 10px;">certbot</a> <a href="../../tags/charles/" style="font-size: 10px;">charles</a> <a href="../../tags/chat/" style="font-size: 10px;">chat</a> <a href="../../tags/chrome/" style="font-size: 11.25px;">chrome</a> <a href="../../tags/classloader/" style="font-size: 10px;">classloader</a> <a href="../../tags/client/" style="font-size: 11.25px;">client</a> <a href="../../tags/clone/" style="font-size: 10.63px;">clone</a> <a href="../../tags/closures/" style="font-size: 10px;">closures</a> <a href="../../tags/cloudflare/" style="font-size: 10.63px;">cloudflare</a> <a href="../../tags/cmd/" style="font-size: 10px;">cmd</a> <a href="../../tags/command/" style="font-size: 10px;">command</a> <a href="../../tags/commit/" style="font-size: 10px;">commit</a> <a href="../../tags/container/" style="font-size: 10px;">container</a> <a href="../../tags/crontab/" style="font-size: 10px;">crontab</a> <a href="../../tags/ctyun/" style="font-size: 10.63px;">ctyun</a> <a href="../../tags/ddsm/" style="font-size: 10px;">ddsm</a> <a href="../../tags/demo/" style="font-size: 10px;">demo</a> <a href="../../tags/dependency/" style="font-size: 10px;">dependency</a> <a href="../../tags/deploy/" style="font-size: 10px;">deploy</a> <a href="../../tags/developer/" style="font-size: 10px;">developer</a> <a href="../../tags/devtools/" style="font-size: 10px;">devtools</a> <a href="../../tags/dll/" style="font-size: 10px;">dll</a> <a href="../../tags/dns/" style="font-size: 11.25px;">dns</a> <a href="../../tags/docker/" style="font-size: 15px;">docker</a> <a href="../../tags/domain/" style="font-size: 10px;">domain</a> <a href="../../tags/download/" style="font-size: 10px;">download</a> <a href="../../tags/draw/" style="font-size: 10.63px;">draw</a> <a href="../../tags/drawio/" style="font-size: 10px;">drawio</a> <a href="../../tags/dsm/" style="font-size: 14.38px;">dsm</a> <a href="../../tags/dump/" style="font-size: 10px;">dump</a> <a href="../../tags/dylib/" style="font-size: 10px;">dylib</a> <a href="../../tags/edge/" style="font-size: 11.25px;">edge</a> <a href="../../tags/exception/" style="font-size: 10.63px;">exception</a> <a href="../../tags/export/" style="font-size: 10px;">export</a> <a href="../../tags/fail2ban/" style="font-size: 10px;">fail2ban</a> <a href="../../tags/feign/" style="font-size: 10px;">feign</a> <a href="../../tags/firewall-cmd/" style="font-size: 10.63px;">firewall-cmd</a> <a href="../../tags/flow/" style="font-size: 10px;">flow</a> <a href="../../tags/frp/" style="font-size: 10.63px;">frp</a> <a href="../../tags/frpc/" style="font-size: 11.88px;">frpc</a> <a href="../../tags/frps/" style="font-size: 10.63px;">frps</a> <a href="../../tags/fuckgfw/" style="font-size: 11.88px;">fuckgfw</a> <a href="../../tags/function/" style="font-size: 10px;">function</a> <a href="../../tags/gcc/" style="font-size: 10px;">gcc</a> <a href="../../tags/gfw/" style="font-size: 10.63px;">gfw</a> <a href="../../tags/git/" style="font-size: 13.13px;">git</a> <a href="../../tags/github/" style="font-size: 13.75px;">github</a> <a href="../../tags/golang/" style="font-size: 10px;">golang</a> <a href="../../tags/gperftools/" style="font-size: 10px;">gperftools</a> <a href="../../tags/gridea/" style="font-size: 10.63px;">gridea</a> <a href="../../tags/grub/" style="font-size: 10.63px;">grub</a> <a href="../../tags/gvt-g/" style="font-size: 10px;">gvt-g</a> <a href="../../tags/hacs/" style="font-size: 10px;">hacs</a> <a href="../../tags/havcs/" style="font-size: 10.63px;">havcs</a> <a href="../../tags/heap/" style="font-size: 10px;">heap</a> <a href="../../tags/hello/" style="font-size: 10.63px;">hello</a> <a href="../../tags/hexo/" style="font-size: 11.25px;">hexo</a> <a href="../../tags/hibernate/" style="font-size: 10.63px;">hibernate</a> <a href="../../tags/hidpi/" style="font-size: 10px;">hidpi</a> <a href="../../tags/hoisting/" style="font-size: 10px;">hoisting</a> <a href="../../tags/homeassistant/" style="font-size: 12.5px;">homeassistant</a> <a href="../../tags/hosts/" style="font-size: 10px;">hosts</a> <a href="../../tags/html/" style="font-size: 10.63px;">html</a> <a href="../../tags/htmlparser/" style="font-size: 10px;">htmlparser</a> <a href="../../tags/https/" style="font-size: 11.25px;">https</a> <a href="../../tags/idea/" style="font-size: 10px;">idea</a> <a href="../../tags/image/" style="font-size: 10px;">image</a> <a href="../../tags/img/" style="font-size: 10.63px;">img</a> <a href="../../tags/img2kvm/" style="font-size: 10px;">img2kvm</a> <a href="../../tags/import/" style="font-size: 10px;">import</a> <a href="../../tags/index/" style="font-size: 10px;">index</a> <a href="../../tags/install/" style="font-size: 13.13px;">install</a> <a href="../../tags/intel/" style="font-size: 10.63px;">intel</a> <a href="../../tags/io/" style="font-size: 10px;">io</a> <a href="../../tags/ios/" style="font-size: 10px;">ios</a> <a href="../../tags/ip/" style="font-size: 10px;">ip</a> <a href="../../tags/iptables/" style="font-size: 10px;">iptables</a> <a href="../../tags/iptv/" style="font-size: 10.63px;">iptv</a> <a href="../../tags/ipv6/" style="font-size: 10px;">ipv6</a> <a href="../../tags/iso/" style="font-size: 10px;">iso</a> <a href="../../tags/java/" style="font-size: 12.5px;">java</a> <a href="../../tags/javascript/" style="font-size: 10.63px;">javascript</a> <a href="../../tags/jetbrains/" style="font-size: 10px;">jetbrains</a> <a href="../../tags/jni/" style="font-size: 10px;">jni</a> <a href="../../tags/jnilib/" style="font-size: 10px;">jnilib</a> <a href="../../tags/jpa/" style="font-size: 10px;">jpa</a> <a href="../../tags/js/" style="font-size: 11.25px;">js</a> <a href="../../tags/json/" style="font-size: 10.63px;">json</a> <a href="../../tags/jsonb/" style="font-size: 10px;">jsonb</a> <a href="../../tags/jupter/" style="font-size: 10px;">jupter</a> <a href="../../tags/jupyterlab/" style="font-size: 10px;">jupyterlab</a> <a href="../../tags/jvm/" style="font-size: 10.63px;">jvm</a> <a href="../../tags/k8s/" style="font-size: 10.63px;">k8s</a> <a href="../../tags/kernel/" style="font-size: 10px;">kernel</a> <a href="../../tags/key/" style="font-size: 10px;">key</a> <a href="../../tags/kid/" style="font-size: 10px;">kid</a> <a href="../../tags/kms/" style="font-size: 10px;">kms</a> <a href="../../tags/kodi/" style="font-size: 10px;">kodi</a> <a href="../../tags/koolproxy/" style="font-size: 10.63px;">koolproxy</a> <a href="../../tags/koolproxyr/" style="font-size: 10.63px;">koolproxyr</a> <a href="../../tags/kvm/" style="font-size: 10.63px;">kvm</a> <a href="../../tags/lan/" style="font-size: 10px;">lan</a> <a href="../../tags/lastpass/" style="font-size: 10px;">lastpass</a> <a href="../../tags/launchctl/" style="font-size: 10px;">launchctl</a> <a href="../../tags/learning/" style="font-size: 10px;">learning</a> <a href="../../tags/lede/" style="font-size: 10px;">lede</a> <a href="../../tags/letsencrypt/" style="font-size: 11.25px;">letsencrypt</a> <a href="../../tags/linux/" style="font-size: 11.88px;">linux</a> <a href="../../tags/live/" style="font-size: 10px;">live</a> <a href="../../tags/low-code/" style="font-size: 10px;">low-code</a> <a href="../../tags/lvm/" style="font-size: 10px;">lvm</a> <a href="../../tags/lxc/" style="font-size: 10px;">lxc</a> <a href="../../tags/m3u8/" style="font-size: 10px;">m3u8</a> <a href="../../tags/mac/" style="font-size: 10.63px;">mac</a> <a href="../../tags/macos/" style="font-size: 10px;">macos</a> <a href="../../tags/mariadb/" style="font-size: 10px;">mariadb</a> <a href="../../tags/markdown/" style="font-size: 10px;">markdown</a> <a href="../../tags/maven/" style="font-size: 10.63px;">maven</a> <a href="../../tags/md5/" style="font-size: 10.63px;">md5</a> <a href="../../tags/microcode/" style="font-size: 10px;">microcode</a> <a href="../../tags/mirror/" style="font-size: 10.63px;">mirror</a> <a href="../../tags/modem/" style="font-size: 10px;">modem</a> <a href="../../tags/modules/" style="font-size: 10px;">modules</a> <a href="../../tags/monitor/" style="font-size: 10px;">monitor</a> <a href="../../tags/mount/" style="font-size: 10px;">mount</a> <a href="../../tags/mstsc/" style="font-size: 10px;">mstsc</a> <a href="../../tags/mysql/" style="font-size: 10px;">mysql</a> <a href="../../tags/n2n/" style="font-size: 14.38px;">n2n</a> <a href="../../tags/n5105/" style="font-size: 10px;">n5105</a> <a href="../../tags/nas/" style="font-size: 10px;">nas</a> <a href="../../tags/network/" style="font-size: 15px;">network</a> <a href="../../tags/nfs/" style="font-size: 10px;">nfs</a> <a href="../../tags/node/" style="font-size: 10.63px;">node</a> <a href="../../tags/node-red/" style="font-size: 10.63px;">node-red</a> <a href="../../tags/nodejs/" style="font-size: 11.88px;">nodejs</a> <a href="../../tags/nohup/" style="font-size: 10.63px;">nohup</a> <a href="../../tags/notepad/" style="font-size: 10px;">notepad++</a> <a href="../../tags/npm/" style="font-size: 13.13px;">npm</a> <a href="../../tags/nssm/" style="font-size: 10.63px;">nssm</a> <a href="../../tags/ntp/" style="font-size: 10px;">ntp</a> <a href="../../tags/oop/" style="font-size: 10px;">oop</a> <a href="../../tags/openfeign/" style="font-size: 10px;">openfeign</a> <a href="../../tags/openssl/" style="font-size: 10.63px;">openssl</a> <a href="../../tags/os/" style="font-size: 10px;">os</a> <a href="../../tags/otp/" style="font-size: 10px;">otp</a> <a href="../../tags/ovz/" style="font-size: 10px;">ovz</a> <a href="../../tags/packet-capture/" style="font-size: 10px;">packet capture</a> <a href="../../tags/pat/" style="font-size: 10px;">pat</a> <a href="../../tags/pdf/" style="font-size: 10px;">pdf</a> <a href="../../tags/pem/" style="font-size: 10.63px;">pem</a> <a href="../../tags/perf/" style="font-size: 10px;">perf</a> <a href="../../tags/ping/" style="font-size: 10px;">ping</a> <a href="../../tags/pip/" style="font-size: 10px;">pip</a> <a href="../../tags/plugin/" style="font-size: 10px;">plugin</a> <a href="../../tags/png/" style="font-size: 10px;">png</a> <a href="../../tags/powerbutton/" style="font-size: 10px;">powerbutton</a> <a href="../../tags/print/" style="font-size: 10px;">print</a> <a href="../../tags/pro/" style="font-size: 10px;">pro</a> <a href="../../tags/proxy/" style="font-size: 10.63px;">proxy</a> <a href="../../tags/pve/" style="font-size: 18.13px;">pve</a> <a href="../../tags/pvekclean/" style="font-size: 11.88px;">pvekclean</a> <a href="../../tags/python/" style="font-size: 15.63px;">python</a> <a href="../../tags/qcow2/" style="font-size: 10px;">qcow2</a> <a href="../../tags/qemu/" style="font-size: 10.63px;">qemu</a> <a href="../../tags/qemu-guest-agent/" style="font-size: 10px;">qemu-guest-agent</a> <a href="../../tags/rar/" style="font-size: 10px;">rar</a> <a href="../../tags/reboot/" style="font-size: 10px;">reboot</a> <a href="../../tags/reflog/" style="font-size: 10px;">reflog</a> <a href="../../tags/remote/" style="font-size: 10px;">remote</a> <a href="../../tags/remote-desktop/" style="font-size: 10.63px;">remote desktop</a> <a href="../../tags/renew/" style="font-size: 10px;">renew</a> <a href="../../tags/repo/" style="font-size: 10px;">repo</a> <a href="../../tags/resize/" style="font-size: 10px;">resize</a> <a href="../../tags/retina/" style="font-size: 10px;">retina</a> <a href="../../tags/root/" style="font-size: 10px;">root</a> <a href="../../tags/route/" style="font-size: 10px;">route</a> <a href="../../tags/router/" style="font-size: 10.63px;">router</a> <a href="../../tags/rule/" style="font-size: 10px;">rule</a> <a href="../../tags/rules/" style="font-size: 10px;">rules</a> <a href="../../tags/runtime/" style="font-size: 10px;">runtime</a> <a href="../../tags/safari/" style="font-size: 10px;">safari</a> <a href="../../tags/sata/" style="font-size: 10px;">sata</a> <a href="../../tags/scipy-notebook/" style="font-size: 10px;">scipy-notebook</a> <a href="../../tags/scoping/" style="font-size: 10px;">scoping</a> <a href="../../tags/scp/" style="font-size: 10px;">scp</a> <a href="../../tags/server/" style="font-size: 10.63px;">server</a> <a href="../../tags/slmgr/" style="font-size: 10px;">slmgr</a> <a href="../../tags/so/" style="font-size: 10px;">so</a> <a href="../../tags/socks/" style="font-size: 10px;">socks</a> <a href="../../tags/source/" style="font-size: 10px;">source</a> <a href="../../tags/spk/" style="font-size: 10px;">spk</a> <a href="../../tags/spring/" style="font-size: 11.88px;">spring</a> <a href="../../tags/springboot/" style="font-size: 13.13px;">springboot</a> <a href="../../tags/springfox/" style="font-size: 11.25px;">springfox</a> <a href="../../tags/ssh/" style="font-size: 12.5px;">ssh</a> <a href="../../tags/ssl/" style="font-size: 10.63px;">ssl</a> <a href="../../tags/stash/" style="font-size: 10px;">stash</a> <a href="../../tags/string/" style="font-size: 10px;">string</a> <a href="../../tags/supernode/" style="font-size: 10.63px;">supernode</a> <a href="../../tags/svg/" style="font-size: 10px;">svg</a> <a href="../../tags/svn/" style="font-size: 10px;">svn</a> <a href="../../tags/swagger/" style="font-size: 11.88px;">swagger</a> <a href="../../tags/sync/" style="font-size: 10px;">sync</a> <a href="../../tags/synology/" style="font-size: 10.63px;">synology</a> <a href="../../tags/systemctl/" style="font-size: 11.25px;">systemctl</a> <a href="../../tags/tap/" style="font-size: 10px;">tap</a> <a href="../../tags/tap-windows/" style="font-size: 10px;">tap-windows</a> <a href="../../tags/tapwindows/" style="font-size: 10px;">tapwindows</a> <a href="../../tags/telecom/" style="font-size: 10.63px;">telecom</a> <a href="../../tags/template/" style="font-size: 10px;">template</a> <a href="../../tags/terminal/" style="font-size: 10px;">terminal</a> <a href="../../tags/tls/" style="font-size: 10px;">tls</a> <a href="../../tags/token/" style="font-size: 10px;">token</a> <a href="../../tags/totp/" style="font-size: 10px;">totp</a> <a href="../../tags/tvbox/" style="font-size: 11.25px;">tvbox</a> <a href="../../tags/txt/" style="font-size: 10px;">txt</a> <a href="../../tags/ubuntu/" style="font-size: 12.5px;">ubuntu</a> <a href="../../tags/udisk/" style="font-size: 10px;">udisk</a> <a href="../../tags/ui/" style="font-size: 10px;">ui</a> <a href="../../tags/undertow/" style="font-size: 10px;">undertow</a> <a href="../../tags/uninstall/" style="font-size: 10px;">uninstall</a> <a href="../../tags/unlocker/" style="font-size: 10px;">unlocker</a> <a href="../../tags/upgrade/" style="font-size: 10.63px;">upgrade</a> <a href="../../tags/url/" style="font-size: 10px;">url</a> <a href="../../tags/v2ray/" style="font-size: 10.63px;">v2ray</a> <a href="../../tags/vhd/" style="font-size: 10px;">vhd</a> <a href="../../tags/vim/" style="font-size: 10px;">vim</a> <a href="../../tags/vlmcsd/" style="font-size: 10px;">vlmcsd</a> <a href="../../tags/vm/" style="font-size: 10.63px;">vm</a> <a href="../../tags/vmdk/" style="font-size: 10px;">vmdk</a> <a href="../../tags/web/" style="font-size: 12.5px;">web</a> <a href="../../tags/websocket/" style="font-size: 10.63px;">websocket</a> <a href="../../tags/wechat/" style="font-size: 10px;">wechat</a> <a href="../../tags/windows/" style="font-size: 12.5px;">windows</a> <a href="../../tags/with/" style="font-size: 10px;">with</a> <a href="../../tags/worker/" style="font-size: 10.63px;">worker</a> <a href="../../tags/wow/" style="font-size: 10px;">wow</a> <a href="../../tags/xiaoya/" style="font-size: 10px;">xiaoya</a> <a href="../../tags/xml/" style="font-size: 10px;">xml</a> <a href="../../tags/yum/" style="font-size: 10px;">yum</a> <a href="../../tags/zip/" style="font-size: 10px;">zip</a> <a href="../../tags/%E4%B8%AD%E5%9B%BD%E7%94%B5%E4%BF%A1/" style="font-size: 10px;">中国电信</a> <a href="../../tags/%E4%BA%91%E7%94%B5%E8%84%91/" style="font-size: 10.63px;">云电脑</a> <a href="../../tags/%E4%BA%A4%E6%8D%A2%E6%9C%BA/" style="font-size: 10px;">交换机</a> <a href="../../tags/%E4%BB%A3%E7%90%86/" style="font-size: 10px;">代理</a> <a href="../../tags/%E5%81%A5%E5%BA%B7%E6%A3%80%E6%9F%A5/" style="font-size: 13.13px;">健康检查</a> <a href="../../tags/%E5%85%89%E7%8C%AB/" style="font-size: 10.63px;">光猫</a> <a href="../../tags/%E5%85%AC%E7%BD%91IP/" style="font-size: 10px;">公网IP</a> <a href="../../tags/%E5%86%85%E5%AD%98/" style="font-size: 10px;">内存</a> <a href="../../tags/%E5%86%85%E7%BD%91IP/" style="font-size: 10px;">内网IP</a> <a href="../../tags/%E5%8D%87%E7%BA%A7/" style="font-size: 10.63px;">升级</a> <a href="../../tags/%E5%8F%8D%E5%90%91%E4%BB%A3%E7%90%86/" style="font-size: 10px;">反向代理</a> <a href="../../tags/%E5%90%AF%E5%8A%A8/" style="font-size: 10px;">启动</a> <a href="../../tags/%E5%A4%8F%E4%BB%A4%E6%97%B6/" style="font-size: 10px;">夏令时</a> <a href="../../tags/%E5%A4%A9%E7%8C%AB%E7%B2%BE%E7%81%B5/" style="font-size: 10px;">天猫精灵</a> <a href="../../tags/%E5%A4%A9%E7%BF%BC%E4%BA%91/" style="font-size: 10.63px;">天翼云</a> <a href="../../tags/%E5%AE%89%E5%85%A8/" style="font-size: 16.88px;">安全</a> <a href="../../tags/%E5%AE%89%E8%A3%85/" style="font-size: 10.63px;">安装</a> <a href="../../tags/%E5%AE%9A%E6%97%B6%E4%BB%BB%E5%8A%A1/" style="font-size: 10px;">定时任务</a> <a href="../../tags/%E5%AE%B9%E5%99%A8/" style="font-size: 12.5px;">容器</a> <a href="../../tags/%E5%AF%BC%E5%85%A5/" style="font-size: 10px;">导入</a> <a href="../../tags/%E5%B0%8F%E7%B1%B3/" style="font-size: 10px;">小米</a> <a href="../../tags/%E5%B8%B8%E7%94%A8%E8%BD%AF%E4%BB%B6/" style="font-size: 10px;">常用软件</a> <a href="../../tags/%E5%B9%BF%E5%91%8A%E5%B1%8F%E8%94%BD/" style="font-size: 10px;">广告屏蔽</a> <a href="../../tags/%E5%BA%8F%E5%88%97%E5%8F%B7/" style="font-size: 10px;">序列号</a> <a href="../../tags/%E5%BA%94%E7%94%A8%E5%B8%82%E5%9C%BA/" style="font-size: 10px;">应用市场</a> <a href="../../tags/%E5%BC%82%E5%B8%B8/" style="font-size: 10px;">异常</a> <a href="../../tags/%E6%89%93%E5%B7%A5/" style="font-size: 18.75px;">打工</a> <a href="../../tags/%E6%8A%80%E6%9C%AF/" style="font-size: 19.38px;">技术</a> <a href="../../tags/%E6%8A%93%E5%8C%85/" style="font-size: 10px;">抓包</a> <a href="../../tags/%E6%8F%8F%E8%BF%B0%E6%96%87%E4%BB%B6/" style="font-size: 10px;">描述文件</a> <a href="../../tags/%E6%95%88%E7%8E%87%E5%B7%A5%E5%85%B7/" style="font-size: 10px;">效率工具</a> <a href="../../tags/%E6%97%A5%E8%AE%B0/" style="font-size: 19.38px;">日记</a> <a href="../../tags/%E6%97%B6%E5%8C%BA/" style="font-size: 10px;">时区</a> <a href="../../tags/%E6%98%BE%E5%8D%A1%E8%99%9A%E6%8B%9F%E5%8C%96/" style="font-size: 10px;">显卡虚拟化</a> <a href="../../tags/%E6%99%BA%E8%83%BD%E5%AE%B6%E5%B1%85/" style="font-size: 10px;">智能家居</a> <a href="../../tags/%E6%99%BA%E8%83%BD%E9%9F%B3%E7%AE%B1/" style="font-size: 10px;">智能音箱</a> <a href="../../tags/%E6%A2%AF%E5%AD%90/" style="font-size: 10px;">梯子</a> <a href="../../tags/%E6%A8%A1%E5%9D%97/" style="font-size: 10px;">模块</a> <a href="../../tags/%E6%B5%81%E7%A8%8B/" style="font-size: 10px;">流程</a> <a href="../../tags/%E6%B5%81%E7%A8%8B%E5%9B%BE/" style="font-size: 10px;">流程图</a> <a href="../../tags/%E6%B5%8F%E8%A7%88%E5%99%A8/" style="font-size: 10.63px;">浏览器</a> <a href="../../tags/%E6%BC%AB%E6%B8%B8/" style="font-size: 10px;">漫游</a> <a href="../../tags/%E6%BF%80%E6%B4%BB/" style="font-size: 10px;">激活</a> <a href="../../tags/%E7%81%AB%E7%BB%92/" style="font-size: 10px;">火绒</a> <a href="../../tags/%E7%8E%84%E5%AD%A6/" style="font-size: 10px;">玄学</a> <a href="../../tags/%E7%94%B5%E4%BF%A1/" style="font-size: 10.63px;">电信</a> <a href="../../tags/%E7%94%BB%E5%9B%BE/" style="font-size: 10px;">画图</a> <a href="../../tags/%E7%9B%91%E6%8E%A7/" style="font-size: 11.88px;">监控</a> <a href="../../tags/%E7%9B%B4%E6%92%AD%E6%BA%90/" style="font-size: 10px;">直播源</a> <a href="../../tags/%E7%AB%AF%E5%8F%A3%E6%89%AB%E6%8F%8F/" style="font-size: 10px;">端口扫描</a> <a href="../../tags/%E7%BB%AD%E6%9C%9F/" style="font-size: 10px;">续期</a> <a href="../../tags/%E7%BD%91%E5%85%B3/" style="font-size: 10px;">网关</a> <a href="../../tags/%E7%BD%91%E7%BB%9C/" style="font-size: 13.75px;">网络</a> <a href="../../tags/%E7%BD%91%E7%BB%9C%E9%A3%8E%E6%9A%B4/" style="font-size: 10px;">网络风暴</a> <a href="../../tags/%E7%BE%A4%E6%99%96/" style="font-size: 10.63px;">群晖</a> <a href="../../tags/%E8%84%9A%E6%9C%AC/" style="font-size: 10px;">脚本</a> <a href="../../tags/%E8%85%BE%E8%AE%AF/" style="font-size: 10px;">腾讯</a> <a href="../../tags/%E8%87%AA%E5%8A%A8%E5%8C%96/" style="font-size: 14.38px;">自动化</a> <a href="../../tags/%E8%99%9A%E6%8B%9F%E6%9C%BA/" style="font-size: 11.25px;">虚拟机</a> <a href="../../tags/%E8%AE%A4%E8%AF%81/" style="font-size: 10px;">认证</a> <a href="../../tags/%E8%AF%81%E4%B9%A6/" style="font-size: 10px;">证书</a> <a href="../../tags/%E8%AF%AD%E9%9B%80/" style="font-size: 10px;">语雀</a> <a href="../../tags/%E8%B6%85%E6%97%B6/" style="font-size: 10px;">超时</a> <a href="../../tags/%E8%B7%AF%E7%94%B1/" style="font-size: 10px;">路由</a> <a href="../../tags/%E8%B7%AF%E7%94%B1%E5%99%A8/" style="font-size: 10px;">路由器</a> <a href="../../tags/%E8%BD%AF%E4%BB%B6%E7%AE%A1%E5%AE%B6/" style="font-size: 10px;">软件管家</a> <a href="../../tags/%E8%BD%AF%E8%B7%AF%E7%94%B1/" style="font-size: 10.63px;">软路由</a> <a href="../../tags/%E8%BF%90%E7%BB%B4/" style="font-size: 20px;">运维</a> <a href="../../tags/%E8%BF%90%E7%BB%B4%E7%9B%91%E6%8E%A7/" style="font-size: 10.63px;">运维监控</a> <a href="../../tags/%E9%83%A8%E7%BD%B2/" style="font-size: 10.63px;">部署</a> <a href="../../tags/%E9%85%8D%E7%BD%AE/" style="font-size: 10px;">配置</a> <a href="../../tags/%E9%92%89%E9%92%89/" style="font-size: 10.63px;">钉钉</a> <a href="../../tags/%E9%95%9C%E5%83%8F/" style="font-size: 11.25px;">镜像</a> <a href="../../tags/%E9%95%9C%E5%83%8F%E6%BA%90/" style="font-size: 10px;">镜像源</a> <a href="../../tags/%E9%97%A8%E7%AA%97%E4%BC%A0%E6%84%9F%E5%99%A8/" style="font-size: 10px;">门窗传感器</a> <a href="../../tags/%E9%97%AE%E9%A2%98%E6%8E%92%E6%9F%A5/" style="font-size: 17.5px;">问题排查</a> <a href="../../tags/%E9%98%B2%E7%81%AB%E5%A2%99/" style="font-size: 11.88px;">防火墙</a> <a href="../../tags/%E9%98%BF%E9%87%8C%E4%BA%91/" style="font-size: 11.88px;">阿里云</a> <a href="../../tags/%E9%98%BF%E9%87%8C%E6%BA%90/" style="font-size: 10.63px;">阿里源</a> <a href="../../tags/%E9%9B%86%E5%AE%A2/" style="font-size: 10.63px;">集客</a>
+    </div>
+    
+      <script>
+        var maxTagcloud = parseInt(17);
+        var tags_length = parseInt(391);
+        var tags_arr = [];
+        for(var i = 0; i < tags_length; i++){
+          tags_arr.push(i);
+        }
+        tags_arr.sort(function (l, r) {
+          return Math.random() > 0.5 ? -1 : 1;
+        });
+        tags_arr = tags_arr.slice(0, maxTagcloud < tags_length ? tags_length - maxTagcloud : 0);
+        for(var tag_i = 0; tag_i < tags_arr.length; tag_i++){
+          document.getElementById("randomtagcloud").children[tags_arr[tag_i]].style.display = 'none';
+        }
+      </script>
+    
+  </div>
+
+    
+        
+        <!-- 一言 -->
+<div class="nexmoe-widget-wrap">
+  <h3 class="nexmoe-widget-title">
+    Hitokoto
+  </h3>
+  <div class="nexmoe-widget">
+    <ul class="hitokoto-box">
+      <li id="hitokoto_text_parent" class="hitokoto-text" hitokotoCategory="">
+        <a href="#" id="hitokoto_text">
+          
+        </a>
+        <a href="#" id="hitokoto_error_text" style="display: none;">
+          
+        </a>
+      </li>
+    </ul>
+  </div>
+</div>
+
+<script>
+  let hitokotoText = document.getElementById('hitokoto_text')
+  let hitokotoErroText = document.getElementById('hitokoto_error_text')
+  let hitokotoCategory = document.getElementById('hitokoto_text_parent').getAttribute('hitokotoCategory')
+  window.addEventListener('load', function () {
+    let url = 'https://v1.hitokoto.cn'
+    if (hitokotoCategory) {
+      url += '?c=' + hitokotoCategory
+    }
+    fetch(url)
+      .then(response => response.json())
+      .then(data => {
+        hitokotoText.innerText = "「 " + data.hitokoto + " 」 from " + data.from
+        hitokotoText.href = 'https://hitokoto.cn/?uuid=' + data.uuid
+      })
+      .catch((reason) => {
+        console.error(11, reason)
+        hitokotoText.style.display = 'none'
+        hitokotoErroText.style.display = 'block'
+      })
+  })
+</script>
+    
+        
+        
+  <div class="nexmoe-widget-wrap">
+    <h3 class="nexmoe-widget-title">Archive</h3>
+    <div class="nexmoe-widget">
+      <ul class="archive-list"><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2026/">2026</a><span class="archive-list-count">60</span></li><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2025/">2025</a><span class="archive-list-count">2</span></li><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2024/">2024</a><span class="archive-list-count">19</span></li><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2023/">2023</a><span class="archive-list-count">18</span></li><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2022/">2022</a><span class="archive-list-count">4</span></li><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2021/">2021</a><span class="archive-list-count">114</span></li><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2018/">2018</a><span class="archive-list-count">1</span></li></ul>
+    </div>
+  </div>
+
+
+
+    
+        
+        
+  <div class="nexmoe-widget-wrap">
+    <h3 class="nexmoe-widget-title">Recent Posts</h3>
+    <div class="nexmoe-widget">
+      <ul>
+        
+          <li>
+            <a href="../../post/2026-03-23-docker-container-networking-troubleshooting/">Docker容器网络互通排障全流程：从Bridge到iptables的深度排查</a>
+          </li>
+        
+          <li>
+            <a href="../../post/2026-03-23-ai-writing-assistant-vs-human-procrastination/">当我让AI帮我写周报，发现它比我还&#34;摸鱼&#34;</a>
+          </li>
+        
+          <li>
+            <a href="../../post/2026-03-22-npm-offline-deployment-guide/">当 npm install 遇到网络隔离：离线部署 Node.js 包实战指南</a>
+          </li>
+        
+          <li>
+            <a href="../../post/2026-03-22-offline-openclaw-deployment/">当 npm install 遇到网络隔离：一次 OpenClaw 离线部署实录</a>
+          </li>
+        
+          <li>
+            <a href="../../post/2026-03-22-docker-container-security-best-practices/">Docker容器安全配置实战：从运行用户到文件权限的完整指南</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+
+    
+        
+        <div class="nexmoe-widget-wrap">
+    <div class="nexmoe-widget nexmoe-link">
+		<ul>
+        
+            <li>
+                <a href="https://blog.example.com/" target="_blank" >
+                    <img src="/images/avatar.webp" alt="魔都水滴Blog"></img>
+                    <p>魔都水滴Blog</p>
+                </a>
+            </li>
+        
+		</ul>
+    </div>
+</div>
+<style>
+.nexmoe-widget-wrap .nexmoe-link ul li a {
+    text-align : center;
+}
+.nexmoe-widget-wrap .nexmoe-link ul li a img {
+    max-width : 100%;
+}
+.nexmoe-widget-wrap .nexmoe-link ul li a p {
+    margin: 10px 0;
+}
+</style>
+
+    
+   
+    <div class="nexmoe-copyright">
+        &copy; 2026 Margrop
+        Powered by <a href="http://hexo.io/" target="_blank">Hexo</a>
+        & <a href="https://github.com/theme-nexmoe/hexo-theme-nexmoe" target="_blank">Nexmoe</a>
+        
+    </div>
+</div><!-- .nexmoe-drawer --></div><div id="nexmoe-content"><div class="nexmoe-primary"><div class="nexmoe-post">
+  <article>
+    
+        <div class="nexmoe-post-cover absolute" style="padding-top: 56.25%;"> 
+            <img src="https://picsum.photos/seed/tech0323/1280/720" alt="Docker容器网络互通排障全流程：从Bridge到iptables的深度排查" loading="lazy">
+            <h1>Docker容器网络互通排障全流程：从Bridge到iptables的深度排查</h1>
+        </div>
+    
+    
+    <div class="nexmoe-post-meta">
+    <div class="nexmoe-rainbow">
+        <a class="nexmoefont icon-calendar-fill">2026年03月23日</a>
+        
+            <a class="nexmoefont icon-appstore-fill -link" href="../../categories/ai-tech/">ai_tech</a>
+        
+        
+    <a><i class="nexmoefont icon-areachart"></i>约29k字</a>
+    <a><i class="nexmoefont icon-time-circle-fill"></i>预计需要42 分钟</a>
+
+    </div>
+    
+    
+    
+    
+    
+</div>
+
+    <h2 id="前言"><a href="#前言" class="headerlink" title="前言"></a>前言</h2><p>容器网络互通是Docker部署中最容易出问题的环节之一。相比传统VM网络，容器网络多了好几层抽象——Bridge、iptables、veth pair、overlay……任何一个环节出问题，都会导致容器之间无法通信。</p>
+<p>本文记录一次典型的跨宿主机容器网络互通问题排查全过程，从现象到根因到解决，提供可复用的排障思路和一键脚本。</p>
+<h2 id="问题背景"><a href="#问题背景" class="headerlink" title="问题背景"></a>问题背景</h2><h3 id="业务场景"><a href="#业务场景" class="headerlink" title="业务场景"></a>业务场景</h3><p>在多台服务器上使用Docker Compose部署了一套微服务架构，各容器之间需要通过内部网络互通：</p>
+<ul>
+<li><code>web</code> 服务（前端Nginx）</li>
+<li><code>api</code> 服务（Python&#x2F;Go后端）</li>
+<li><code>db</code> 服务（MySQL数据库）</li>
+</ul>
+<p>三台服务器各运行部分容器，部分请求需要跨服务器访问。例如p14（某VPS）上的web容器需要访问VM152上的api容器。</p>
+<h3 id="问题现象"><a href="#问题现象" class="headerlink" title="问题现象"></a>问题现象</h3><p>部署完成后，同一宿主机上的容器之间通信正常，但跨宿主机通信全部失败：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 从p14的web容器访问同宿主机的api容器</span><br>curl http://api:8000/health  ✅ 正常<br><br><span class="hljs-comment"># 从p14的web容器访问VM152的api容器</span><br>curl http://api-host:8000/health  ❌ 连接超时<br></code></pre></td></tr></table></figure>
+
+<p>错误信息：<code>Connection timed out</code> 或 <code>No route to host</code></p>
+<h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3><table>
+<thead>
+<tr>
+<th>节点</th>
+<th>IP</th>
+<th>容器网络</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>p14（某VPS）</td>
+<td>某VPS_IP</td>
+<td>172.18.0.0&#x2F;16</td>
+<td>Docker Bridge: docker0</td>
+</tr>
+<tr>
+<td>VM152</td>
+<td>某内网IP</td>
+<td>172.19.0.0&#x2F;16</td>
+<td>Docker Bridge: docker0</td>
+</tr>
+<tr>
+<td>VM151</td>
+<td>某内网IP</td>
+<td>172.20.0.0&#x2F;16</td>
+<td>Docker Bridge: docker0</td>
+</tr>
+</tbody></table>
+<p>三个网络地址完全不同，网段也不在同一大段——这为互通埋下了隐患。</p>
+<h2 id="排查过程"><a href="#排查过程" class="headerlink" title="排查过程"></a>排查过程</h2><h3 id="第一步：确认Docker网络配置"><a href="#第一步：确认Docker网络配置" class="headerlink" title="第一步：确认Docker网络配置"></a>第一步：确认Docker网络配置</h3><p>先检查各宿主机的Docker网络配置：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 在各节点执行</span><br>docker network <span class="hljs-built_in">ls</span><br>docker network inspect bridge<br>docker network inspect &lt;自定义网络名&gt;<br></code></pre></td></tr></table></figure>
+
+<p>发现各节点使用的是默认的 <code>bridge</code> 网络，且网段配置如下：</p>
+<figure class="highlight apache"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><code class="hljs apache"><span class="hljs-attribute">p14</span>:  <span class="hljs-number">172.17.0.0</span>/<span class="hljs-number">16</span><br><span class="hljs-attribute">VM152</span>: <span class="hljs-number">172.18.0.0</span>/<span class="hljs-number">16</span>  <br><span class="hljs-attribute">VM151</span>: <span class="hljs-number">172.19.0.0</span>/<span class="hljs-number">16</span><br></code></pre></td></tr></table></figure>
+
+<p>问题初步定位：<strong>三个节点的Docker Bridge网段完全不同，且互不重叠</strong>。</p>
+<p>Docker默认的Bridge模式下，不同宿主机的容器处于完全隔离的网络中，无法直接互通。这是正常行为，不是bug。</p>
+<h3 id="第二步：理解Docker网络模式"><a href="#第二步：理解Docker网络模式" class="headerlink" title="第二步：理解Docker网络模式"></a>第二步：理解Docker网络模式</h3><p>Docker提供多种网络模式：</p>
+<table>
+<thead>
+<tr>
+<th>模式</th>
+<th>说明</th>
+<th>跨主机互通</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>bridge</td>
+<td>默认模式，使用docker0网桥</td>
+<td>❌ 不能直接互通</td>
+</tr>
+<tr>
+<td>host</td>
+<td>容器共享宿主机网络</td>
+<td>✅ 可以，但易端口冲突</td>
+</tr>
+<tr>
+<td>overlay</td>
+<td>Docker Swarm模式，自带VXLAN隧道</td>
+<td>✅ 可以</td>
+</tr>
+<tr>
+<td>macvlan</td>
+<td>给容器分配真实MAC，挂在物理网络上</td>
+<td>✅ 可以</td>
+</tr>
+</tbody></table>
+<p>要实现跨主机互通，有三种常用方案：</p>
+<ol>
+<li><strong>Docker Compose + external networks</strong>：使用自定义bridge网络配合 <code>--net=host</code></li>
+<li><strong>Docker overlay</strong>：需要Docker Swarm，比较重</li>
+<li><strong>macvlan + 物理网络打通</strong>：最接近物理网络的方案</li>
+</ol>
+<p>考虑到生产环境的简洁性，我们选择 <strong>macvlan</strong> 方案。</p>
+<h3 id="第三步：检查宿主机网络是否支持macvlan"><a href="#第三步：检查宿主机网络是否支持macvlan" class="headerlink" title="第三步：检查宿主机网络是否支持macvlan"></a>第三步：检查宿主机网络是否支持macvlan</h3><p>macvlan需要物理网卡支持”混杂模式”。检查方法：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 检查网卡是否支持混杂模式</span><br>ip <span class="hljs-built_in">link</span> show eth0<br><span class="hljs-comment"># 查看是否有 PROMISC 标志</span><br><br><span class="hljs-comment"># 或者用ethtool检查</span><br>ethtool eth0 | grep -i promis<br><span class="hljs-comment"># 如果显示 &quot;Promiscuous mode: on&quot; 则支持</span><br></code></pre></td></tr></table></figure>
+
+<p>如果网卡不支持macvlan，需要改用overlay或自定义bridge方案。</p>
+<h3 id="第四步：创建macvlan网络"><a href="#第四步：创建macvlan网络" class="headerlink" title="第四步：创建macvlan网络"></a>第四步：创建macvlan网络</h3><p>在各宿主机上执行以下命令（注意：需要先删除旧的bridge容器）：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 在p14上执行</span><br>docker network create \<br>  --driver macvlan \<br>  --subnet=172.18.0.0/16 \<br>  --gateway=172.18.0.1 \<br>  -o parent=eth0 \<br>  macvlan_net<br><br><span class="hljs-comment"># 在VM152上执行</span><br>docker network create \<br>  --driver macvlan \<br>  --subnet=172.19.0.0/16 \<br>  --gateway=172.19.0.1 \<br>  -o parent=eth0 \<br>  macvlan_net<br></code></pre></td></tr></table></figure>
+
+<h3 id="第五步：发现新问题——网关不通"><a href="#第五步：发现新问题——网关不通" class="headerlink" title="第五步：发现新问题——网关不通"></a>第五步：发现新问题——网关不通</h3><p>创建macvlan网络后，发现容器仍然无法跨宿主机通信。</p>
+<p>用 <code>ping</code> 测试：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 从p14的容器ping VM152的网关</span><br>ping 172.19.0.1<br><span class="hljs-comment"># 结果：Destination Host Unreachable</span><br></code></pre></td></tr></table></figure>
+
+<p>问题定位：<strong>宿主机之间的路由不通</strong>。</p>
+<p>检查网络架构：</p>
+<figure class="highlight apache"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><code class="hljs apache"><span class="hljs-attribute">p14</span>所在网络:  <span class="hljs-number">192.168.160.0</span>/<span class="hljs-number">24</span> (假设)<br><span class="hljs-attribute">VM152</span>所在网络: <span class="hljs-number">192.168.102.0</span>/<span class="hljs-number">24</span> (假设)<br></code></pre></td></tr></table></figure>
+
+<p>两个内网不在同一网段，需要通过路由器&#x2F;三层交换转发。</p>
+<h3 id="第六步：检查iptables和路由表"><a href="#第六步：检查iptables和路由表" class="headerlink" title="第六步：检查iptables和路由表"></a>第六步：检查iptables和路由表</h3><p>在VM152上检查iptables规则：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 查看NAT规则</span><br>iptables -t nat -L -n<br><span class="hljs-comment"># 重点关注 POSTROUTING 和 FORWARD 链</span><br><br><span class="hljs-comment"># 查看转发是否开启</span><br><span class="hljs-built_in">cat</span> /proc/sys/net/ipv4/ip_forward<br><span class="hljs-comment"># 如果是0，需要开启：echo 1 &gt; /proc/sys/net/ipv4/ip_forward</span><br></code></pre></td></tr></table></figure>
+
+<p>发现 <code>ip_forward</code> 是关闭的。开启后再次测试：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 开启IP转发（临时，重启失效）</span><br><span class="hljs-built_in">echo</span> 1 &gt; /proc/sys/net/ipv4/ip_forward<br><br><span class="hljs-comment"># 永久开启</span><br>sysctl -w net.ipv4.ip_forward=1<br></code></pre></td></tr></table></figure>
+
+<p>但问题依然存在。</p>
+<p>深入检查iptables的FORWARD链：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 查看filter表的FORWARD链</span><br>iptables -L FORWARD -n -v<br><br><span class="hljs-comment"># 临时放行所有转发流量测试</span><br>iptables -P FORWARD ACCEPT<br></code></pre></td></tr></table></figure>
+
+<p>测试发现：iptables的FORWARD策略默认是DROP的，阻止了跨宿主机流量。</p>
+<h3 id="第七步：配置正确的iptables规则"><a href="#第七步：配置正确的iptables规则" class="headerlink" title="第七步：配置正确的iptables规则"></a>第七步：配置正确的iptables规则</h3><figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 允许Docker网络之间的流量转发</span><br><span class="hljs-comment"># 注意：需要根据实际网段修改</span><br><br><span class="hljs-comment"># 允许p14网络访问VM152网络（示例网段）</span><br>iptables -A FORWARD -s 172.18.0.0/16 -d 172.19.0.0/16 -j ACCEPT<br>iptables -A FORWARD -s 172.19.0.0/16 -d 172.18.0.0/16 -j ACCEPT<br><br><span class="hljs-comment"># 允许已知Docker网段的流量</span><br>iptables -A FORWARD -s 172.0.0.0/8 -d 172.0.0.0/8 -j ACCEPT<br></code></pre></td></tr></table></figure>
+
+<p>但这种逐条配置的方式太繁琐，且不够安全。</p>
+<p>更好的方案是：<strong>在Docker服务启动时自动配置正确的iptables规则</strong>：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 编辑Docker服务配置</span><br>vim /etc/systemd/system/docker.service.d/10-macvlan.conf<br><br><span class="hljs-comment"># 添加以下内容</span><br>[Service]<br>ExecStart=<br>ExecStart=/usr/bin/dockerd -H fd:// -H tcp://0.0.0.0:2375 \<br>  --ip-masq=<span class="hljs-literal">true</span> \<br>  --ip-forward=<span class="hljs-literal">true</span> \<br>  --iptables=<span class="hljs-literal">true</span><br></code></pre></td></tr></table></figure>
+
+<h3 id="第八步：重新测试连通性"><a href="#第八步：重新测试连通性" class="headerlink" title="第八步：重新测试连通性"></a>第八步：重新测试连通性</h3><figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 重启Docker服务</span><br>systemctl daemon-reload<br>systemctl restart docker<br><br><span class="hljs-comment"># 再次测试</span><br>docker run --<span class="hljs-built_in">rm</span> --net=macvlan_net alpine ping -c 3 172.19.0.x<br><span class="hljs-comment"># 如果能ping通，说明macvlan配置成功</span><br></code></pre></td></tr></table></figure>
+
+<h2 id="根因分析"><a href="#根因分析" class="headerlink" title="根因分析"></a>根因分析</h2><h3 id="为什么默认bridge网络不能跨主机互通？"><a href="#为什么默认bridge网络不能跨主机互通？" class="headerlink" title="为什么默认bridge网络不能跨主机互通？"></a>为什么默认bridge网络不能跨主机互通？</h3><p>Docker默认的bridge网络是”单主机”的。<code>docker0</code> 网桥只在本机生效，不同宿主机的docker0网桥完全隔离。</p>
+<p>当你执行 <code>docker network inspect bridge</code> 时，会发现：</p>
+<figure class="highlight json"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><code class="hljs json"><span class="hljs-punctuation">&#123;</span><br>    <span class="hljs-attr">&quot;Name&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;bridge&quot;</span><span class="hljs-punctuation">,</span><br>    <span class="hljs-attr">&quot;Driver&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;bridge&quot;</span><span class="hljs-punctuation">,</span><br>    <span class="hljs-attr">&quot;Subnet&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;172.17.0.0/16&quot;</span><span class="hljs-punctuation">,</span><br>    <span class="hljs-attr">&quot;Gateway&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;172.17.0.1&quot;</span><br><span class="hljs-punctuation">&#125;</span><br></code></pre></td></tr></table></figure>
+
+<p>这个172.17.0.0&#x2F;16网段只在当前宿主机内有效。另一台宿主机的容器即使也用了172.17.0.0&#x2F;16，也不会和第一台冲突——因为它们根本不在同一个二层网络中。</p>
+<h3 id="为什么需要macvlan或overlay？"><a href="#为什么需要macvlan或overlay？" class="headerlink" title="为什么需要macvlan或overlay？"></a>为什么需要macvlan或overlay？</h3><p>要让容器跨主机通信，需要在”容器网络”和”物理网络”之间架设桥梁：</p>
+<ul>
+<li><strong>macvlan</strong>：让容器直接”挂”在物理网络上，容器有自己的MAC和IP，就像真实的物理机一样</li>
+<li><strong>overlay</strong>：在物理网络之上建立VXLAN隧道，容器在overlay网络中互通，物理网络只负责传输VXLAN数据包</li>
+</ul>
+<p>两种方案各有优劣：</p>
+<table>
+<thead>
+<tr>
+<th>方案</th>
+<th>优点</th>
+<th>缺点</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>macvlan</td>
+<td>性能最好，接近物理网络</td>
+<td>需要网卡支持混杂模式，配置复杂</td>
+</tr>
+<tr>
+<td>overlay</td>
+<td>Docker原生支持，易配置</td>
+<td>性能略有损耗，需要额外存储</td>
+</tr>
+</tbody></table>
+<h2 id="完整解决方案"><a href="#完整解决方案" class="headerlink" title="完整解决方案"></a>完整解决方案</h2><h3 id="方案一：macvlan方案（推荐用于生产环境）"><a href="#方案一：macvlan方案（推荐用于生产环境）" class="headerlink" title="方案一：macvlan方案（推荐用于生产环境）"></a>方案一：macvlan方案（推荐用于生产环境）</h3><p><strong>前置条件</strong>：</p>
+<ul>
+<li>网卡支持混杂模式</li>
+<li>宿主机网络允许macvlan流量</li>
+</ul>
+<p><strong>步骤</strong>：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 1. 创建macvlan网络（各宿主机执行，使用不同subnet）</span><br>docker network create \<br>  --driver macvlan \<br>  --subnet=&lt;各节点独立子网&gt; \<br>  --gateway=&lt;各节点网关&gt; \<br>  -o parent=&lt;物理网卡名&gt; \<br>  --internal \<br>  macvlan_internal<br><br><span class="hljs-comment"># 2. 使用网络启动容器</span><br>docker run --<span class="hljs-built_in">rm</span> --net=macvlan_internal --ip=&lt;固定IP&gt; -it alpine sh<br><br><span class="hljs-comment"># 3. 配置iptables允许转发</span><br>iptables -A FORWARD -s &lt;各节点子网&gt; -j ACCEPT<br>iptables -A FORWARD -d &lt;各节点子网&gt; -j ACCEPT<br></code></pre></td></tr></table></figure>
+
+<h3 id="方案二：overlay方案（推荐用于Docker-Swarm环境）"><a href="#方案二：overlay方案（推荐用于Docker-Swarm环境）" class="headerlink" title="方案二：overlay方案（推荐用于Docker Swarm环境）"></a>方案二：overlay方案（推荐用于Docker Swarm环境）</h3><figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 初始化Swarm（Manager节点）</span><br>docker swarm init<br><br><span class="hljs-comment"># 创建overlay网络</span><br>docker network create -d overlay --attachable my_overlay_net<br><br><span class="hljs-comment"># 在任意节点启动容器并加入该网络</span><br>docker run --<span class="hljs-built_in">rm</span> --net=my_overlay_net -it alpine sh<br></code></pre></td></tr></table></figure>
+
+<h3 id="一键排障脚本"><a href="#一键排障脚本" class="headerlink" title="一键排障脚本"></a>一键排障脚本</h3><p>以下脚本可快速排查容器网络问题：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br><span class="line">59</span><br><span class="line">60</span><br><span class="line">61</span><br><span class="line">62</span><br><span class="line">63</span><br><span class="line">64</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-meta">#!/bin/bash</span><br><span class="hljs-comment"># Docker容器网络排障脚本</span><br><span class="hljs-comment"># 保存到 /opt/scripts/docker-network-check.sh</span><br><br><span class="hljs-built_in">set</span> -e<br><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;========== Docker 容器网络排障 ==========&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;时间：<span class="hljs-subst">$(date &#x27;+%Y-%m-%d %H:%M:%S&#x27;)</span>&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;&quot;</span><br><br><span class="hljs-comment"># 1. 检查Docker网络列表</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;[1/7] Docker网络列表：&quot;</span><br>docker network <span class="hljs-built_in">ls</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;&quot;</span><br><br><span class="hljs-comment"># 2. 检查docker0网桥状态</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;[2/7] docker0网桥状态：&quot;</span><br>ip addr show docker0 2&gt;/dev/null || <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;  docker0不存在（可能使用其他网络）&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;&quot;</span><br><br><span class="hljs-comment"># 3. 检查IP转发</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;[3/7] IP转发状态：&quot;</span><br>IP_FORWARD=$(<span class="hljs-built_in">cat</span> /proc/sys/net/ipv4/ip_forward)<br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;  ip_forward = <span class="hljs-variable">$IP_FORWARD</span>&quot;</span><br><span class="hljs-keyword">if</span> [ <span class="hljs-string">&quot;<span class="hljs-variable">$IP_FORWARD</span>&quot;</span> != <span class="hljs-string">&quot;1&quot;</span> ]; <span class="hljs-keyword">then</span><br>    <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;  ⚠️  IP转发未开启，可能导致跨宿主机通信失败&quot;</span><br><span class="hljs-keyword">fi</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;&quot;</span><br><br><span class="hljs-comment"># 4. 检查iptables FORWARD策略</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;[4/7] iptables FORWARD策略：&quot;</span><br>FORWARD_POLICY=$(iptables -L FORWARD -n | grep <span class="hljs-string">&quot;^Chain FORWARD&quot;</span> | awk <span class="hljs-string">&#x27;&#123;print $4&#125;&#x27;</span>)<br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;  默认策略: <span class="hljs-variable">$FORWARD_POLICY</span>&quot;</span><br><span class="hljs-keyword">if</span> [ <span class="hljs-string">&quot;<span class="hljs-variable">$FORWARD_POLICY</span>&quot;</span> = <span class="hljs-string">&quot;DROP&quot;</span> ]; <span class="hljs-keyword">then</span><br>    <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;  ⚠️  FORWARD策略为DROP，可能阻止容器通信&quot;</span><br><span class="hljs-keyword">fi</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;&quot;</span><br><br><span class="hljs-comment"># 5. 检查Docker网络详情</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;[5/7] 各Docker网络详情：&quot;</span><br><span class="hljs-keyword">for</span> net <span class="hljs-keyword">in</span> $(docker network <span class="hljs-built_in">ls</span> --format <span class="hljs-string">&#x27;&#123;&#123;.Name&#125;&#125;&#x27;</span> | grep -v -E <span class="hljs-string">&#x27;^(none|host)$&#x27;</span>); <span class="hljs-keyword">do</span><br>    <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;  --- <span class="hljs-variable">$net</span> ---&quot;</span><br>    docker network inspect <span class="hljs-variable">$net</span> --format <span class="hljs-string">&#x27;&#123;&#123;range .IPAM.Config&#125;&#125;Subnet: &#123;&#123;.Subnet&#125;&#125;  Gateway: &#123;&#123;.Gateway&#125;&#125;&#123;&#123;end&#125;&#125;&#x27;</span> 2&gt;/dev/null<br>    <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;&quot;</span><br><span class="hljs-keyword">done</span><br><br><span class="hljs-comment"># 6. 检查容器网络连接（需要指定网络名）</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;[6/7] 跨宿主机连通性测试：&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;  说明：以下为示例测试，请根据实际环境修改目标IP&quot;</span><br><span class="hljs-comment"># ping -c 1 -W 1 目标IP 2&gt;/dev/null &amp;&amp; echo &quot;  ✅ 到目标IP可达&quot; || echo &quot;  ❌ 到目标IP不可达&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;&quot;</span><br><br><span class="hljs-comment"># 7. 检查DNS解析（容器间通信通常依赖DNS）</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;[7/7] 容器DNS配置：&quot;</span><br>docker run --<span class="hljs-built_in">rm</span> --net=bridge alpine <span class="hljs-built_in">cat</span> /etc/resolv.conf 2&gt;/dev/null || <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;  无法获取DNS配置&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;&quot;</span><br><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;========== 排障完成 ==========&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;常见问题处理建议：&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;1. IP转发未开：sysctl -w net.ipv4.ip_forward=1&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;2. FORWARD被DROP：iptables -P FORWARD ACCEPT&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;3. 跨主机不通：检查物理网络路由或使用overlay/macvlan&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;4. DNS解析失败：检查自定义网络的DNS配置&quot;</span><br></code></pre></td></tr></table></figure>
+
+<p>使用方法：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-built_in">chmod</span> +x /opt/scripts/docker-network-check.sh<br>/opt/scripts/docker-network-check.sh<br></code></pre></td></tr></table></figure>
+
+<h2 id="常见问题解答"><a href="#常见问题解答" class="headerlink" title="常见问题解答"></a>常见问题解答</h2><p><strong>Q1：为什么容器能ping通宿主机，但ping不通其他宿主机上的容器？</strong></p>
+<p>A：这通常意味着：</p>
+<ol>
+<li>宿主机之间的路由不通（检查网络设备和路由表）</li>
+<li>iptables的FORWARD策略阻止了流量（检查iptables -L FORWARD）</li>
+<li>IP转发未开启（检查&#x2F;proc&#x2F;sys&#x2F;net&#x2F;ipv4&#x2F;ip_forward）</li>
+</ol>
+<p><strong>Q2：macvlan容器无法获取IP怎么办？</strong></p>
+<p>A：可能的原因：</p>
+<ol>
+<li>物理网卡不支持混杂模式（用 <code>ip link show eth0</code> 检查）</li>
+<li>父网络（parent）配置错误</li>
+<li>子网与物理网络冲突</li>
+</ol>
+<p><strong>Q3：overlay网络创建失败怎么排查？</strong></p>
+<p>A：overlay需要Docker Swarm环境。先检查是否已初始化Swarm：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><code class="hljs bash">docker info | grep Swarm<br><span class="hljs-comment"># 如果显示 &quot;Swarm: inactive&quot;，需要先初始化</span><br>docker swarm init<br></code></pre></td></tr></table></figure>
+
+<p><strong>Q4：容器内无法解析其他容器的名字怎么办？</strong></p>
+<p>A：Docker的嵌入式DNS（Embedded DNS）只对用户自定义网络（如docker network create创建的网络）生效。默认bridge网络不支持容器间DNS解析。</p>
+<p>解决方案：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 创建自定义网络</span><br>docker network create my_net<br><br><span class="hljs-comment"># 启动容器时使用该网络</span><br>docker run --net=my_net --name=container_a -d image_a<br>docker run --net=my_net --name=container_b -d image_b<br><br><span class="hljs-comment"># 现在container_b可以通过container_a的名字访问它</span><br>docker <span class="hljs-built_in">exec</span> container_b ping container_a<br></code></pre></td></tr></table></figure>
+
+<p><strong>Q5：如何在不停容器的情况下修复网络问题？</strong></p>
+<p>A：Docker允许动态创建网络并让运行中的容器连接：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 创建新网络</span><br>docker network create -d bridge --subnet=172.20.0.0/16 my_new_net<br><br><span class="hljs-comment"># 将运行中的容器连接到新网络（不影响原网络连接）</span><br>docker network connect my_new_net &lt;运行中的容器ID&gt;<br><br><span class="hljs-comment"># 断开旧网络（如需要）</span><br>docker network disconnect bridge &lt;容器ID&gt;<br></code></pre></td></tr></table></figure>
+
+<h2 id="总结"><a href="#总结" class="headerlink" title="总结"></a>总结</h2><p>Docker容器网络互通问题排查的核心思路：</p>
+<ol>
+<li><strong>先确认是单主机问题还是跨主机问题</strong>：同主机通、跨主机不通，通常是网络层问题</li>
+<li><strong>理解Docker网络模式</strong>：bridge&#x2F;host&#x2F;overlay&#x2F;macvlan各有特点，选对方案是关键</li>
+<li><strong>逐层排查</strong>：物理网卡 → 网桥 → iptables → 路由表 → 应用层</li>
+<li><strong>善用工具</strong>：<code>ip</code>、<code>iptables</code>、<code>docker network inspect</code>、<code>tcpdump</code>都是排查利器</li>
+</ol>
+<p>希望这篇文章能帮到你。如果有问题，欢迎在评论区讨论。</p>
+<hr>
+<p><em>作者：小六，一个在上海努力搬砖的程序员</em></p>
+
+    
+  </article>
+
+  
+      
+    <div class="nexmoe-post-copyright">
+        <strong>Author：</strong>Margrop<br>
+        <strong>Link：</strong><a href="http://blog.margrop.com/post/2026-03-23-docker-container-networking-troubleshooting/" title="http:&#x2F;&#x2F;blog.margrop.com&#x2F;post&#x2F;2026-03-23-docker-container-networking-troubleshooting&#x2F;" target="_blank" rel="noopener">http:&#x2F;&#x2F;blog.margrop.com&#x2F;post&#x2F;2026-03-23-docker-container-networking-troubleshooting&#x2F;</a><br>
+        
+            <strong>版权声明：</strong>本文采用 <a href="https://creativecommons.org/licenses/by-nc-sa/3.0/cn/deed.zh" target="_blank">CC BY-NC-SA 3.0 CN</a> 协议进行许可
+
+        
+    </div>
+
+
+  
+  
+  <div class="nexmoe-post-meta nexmoe-rainbow">
+   
+    
+        <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/Docker/" rel="tag">Docker</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/%E5%AE%B9%E5%99%A8/" rel="tag">容器</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/%E6%8A%80%E6%9C%AF/" rel="tag">技术</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/%E7%BD%91%E7%BB%9C/" rel="tag">网络</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/%E8%BF%90%E7%BB%B4/" rel="tag">运维</a>
+    
+</div>
+  
+  
+    <script async src="../../js/copy-codeblock.js?v=1774271096029"></script>
+  
+
+  
+      <div class="nexmoe-post-footer">
+          <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+<script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+<div id="gitalk-container"></div>
+<script>
+  const gitalk = new Gitalk({
+    clientID: 'Ov23lib2oiNKjG5B7I1N',
+    clientSecret: '0a94653f17a7b9630d85b275008da4b38e0259dd',
+    repo: 'margropcomment.margrop.io',      // The repository of store comments,
+    owner: 'margrop',
+    admin: ['margrop'],
+    pagerDirection: 'last',
+    id: window.location.pathname.substring(0, 49), // 使用 pathname 的前49个字符作为 id
+    title: document.title,
+    language: 'zh-CN', // 根据需要设置语言
+    distractionFreeMode: false
+  })
+  gitalk.render('gitalk-container')
+</script>
+
+      </div>
+  
+</div></div><div class="nexmoe-post-right">    <div class="nexmoe-fixed">
+        <div class="nexmoe-tool">
+
+            
+
+            
+            
+            <button class="mdui-fab catalog" style="overflow:unset;">
+                <i class="nexmoefont icon-i-catalog"></i>
+                <div class="nexmoe-toc">
+                    <ol class="toc"><li class="toc-item toc-level-2"><a class="toc-link" href="#%E5%89%8D%E8%A8%80"><span class="toc-number">1.</span> <span class="toc-text">前言</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E9%97%AE%E9%A2%98%E8%83%8C%E6%99%AF"><span class="toc-number">2.</span> <span class="toc-text">问题背景</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#%E4%B8%9A%E5%8A%A1%E5%9C%BA%E6%99%AF"><span class="toc-number">2.1.</span> <span class="toc-text">业务场景</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E9%97%AE%E9%A2%98%E7%8E%B0%E8%B1%A1"><span class="toc-number">2.2.</span> <span class="toc-text">问题现象</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E7%8E%AF%E5%A2%83%E4%BF%A1%E6%81%AF"><span class="toc-number">2.3.</span> <span class="toc-text">环境信息</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E6%8E%92%E6%9F%A5%E8%BF%87%E7%A8%8B"><span class="toc-number">3.</span> <span class="toc-text">排查过程</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#%E7%AC%AC%E4%B8%80%E6%AD%A5%EF%BC%9A%E7%A1%AE%E8%AE%A4Docker%E7%BD%91%E7%BB%9C%E9%85%8D%E7%BD%AE"><span class="toc-number">3.1.</span> <span class="toc-text">第一步：确认Docker网络配置</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E7%AC%AC%E4%BA%8C%E6%AD%A5%EF%BC%9A%E7%90%86%E8%A7%A3Docker%E7%BD%91%E7%BB%9C%E6%A8%A1%E5%BC%8F"><span class="toc-number">3.2.</span> <span class="toc-text">第二步：理解Docker网络模式</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E7%AC%AC%E4%B8%89%E6%AD%A5%EF%BC%9A%E6%A3%80%E6%9F%A5%E5%AE%BF%E4%B8%BB%E6%9C%BA%E7%BD%91%E7%BB%9C%E6%98%AF%E5%90%A6%E6%94%AF%E6%8C%81macvlan"><span class="toc-number">3.3.</span> <span class="toc-text">第三步：检查宿主机网络是否支持macvlan</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E7%AC%AC%E5%9B%9B%E6%AD%A5%EF%BC%9A%E5%88%9B%E5%BB%BAmacvlan%E7%BD%91%E7%BB%9C"><span class="toc-number">3.4.</span> <span class="toc-text">第四步：创建macvlan网络</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E7%AC%AC%E4%BA%94%E6%AD%A5%EF%BC%9A%E5%8F%91%E7%8E%B0%E6%96%B0%E9%97%AE%E9%A2%98%E2%80%94%E2%80%94%E7%BD%91%E5%85%B3%E4%B8%8D%E9%80%9A"><span class="toc-number">3.5.</span> <span class="toc-text">第五步：发现新问题——网关不通</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E7%AC%AC%E5%85%AD%E6%AD%A5%EF%BC%9A%E6%A3%80%E6%9F%A5iptables%E5%92%8C%E8%B7%AF%E7%94%B1%E8%A1%A8"><span class="toc-number">3.6.</span> <span class="toc-text">第六步：检查iptables和路由表</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E7%AC%AC%E4%B8%83%E6%AD%A5%EF%BC%9A%E9%85%8D%E7%BD%AE%E6%AD%A3%E7%A1%AE%E7%9A%84iptables%E8%A7%84%E5%88%99"><span class="toc-number">3.7.</span> <span class="toc-text">第七步：配置正确的iptables规则</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E7%AC%AC%E5%85%AB%E6%AD%A5%EF%BC%9A%E9%87%8D%E6%96%B0%E6%B5%8B%E8%AF%95%E8%BF%9E%E9%80%9A%E6%80%A7"><span class="toc-number">3.8.</span> <span class="toc-text">第八步：重新测试连通性</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E6%A0%B9%E5%9B%A0%E5%88%86%E6%9E%90"><span class="toc-number">4.</span> <span class="toc-text">根因分析</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#%E4%B8%BA%E4%BB%80%E4%B9%88%E9%BB%98%E8%AE%A4bridge%E7%BD%91%E7%BB%9C%E4%B8%8D%E8%83%BD%E8%B7%A8%E4%B8%BB%E6%9C%BA%E4%BA%92%E9%80%9A%EF%BC%9F"><span class="toc-number">4.1.</span> <span class="toc-text">为什么默认bridge网络不能跨主机互通？</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E4%B8%BA%E4%BB%80%E4%B9%88%E9%9C%80%E8%A6%81macvlan%E6%88%96overlay%EF%BC%9F"><span class="toc-number">4.2.</span> <span class="toc-text">为什么需要macvlan或overlay？</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E5%AE%8C%E6%95%B4%E8%A7%A3%E5%86%B3%E6%96%B9%E6%A1%88"><span class="toc-number">5.</span> <span class="toc-text">完整解决方案</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#%E6%96%B9%E6%A1%88%E4%B8%80%EF%BC%9Amacvlan%E6%96%B9%E6%A1%88%EF%BC%88%E6%8E%A8%E8%8D%90%E7%94%A8%E4%BA%8E%E7%94%9F%E4%BA%A7%E7%8E%AF%E5%A2%83%EF%BC%89"><span class="toc-number">5.1.</span> <span class="toc-text">方案一：macvlan方案（推荐用于生产环境）</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E6%96%B9%E6%A1%88%E4%BA%8C%EF%BC%9Aoverlay%E6%96%B9%E6%A1%88%EF%BC%88%E6%8E%A8%E8%8D%90%E7%94%A8%E4%BA%8EDocker-Swarm%E7%8E%AF%E5%A2%83%EF%BC%89"><span class="toc-number">5.2.</span> <span class="toc-text">方案二：overlay方案（推荐用于Docker Swarm环境）</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E4%B8%80%E9%94%AE%E6%8E%92%E9%9A%9C%E8%84%9A%E6%9C%AC"><span class="toc-number">5.3.</span> <span class="toc-text">一键排障脚本</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E5%B8%B8%E8%A7%81%E9%97%AE%E9%A2%98%E8%A7%A3%E7%AD%94"><span class="toc-number">6.</span> <span class="toc-text">常见问题解答</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E6%80%BB%E7%BB%93"><span class="toc-number">7.</span> <span class="toc-text">总结</span></a></li></ol>
+                </div>
+            </button>
+            
+
+            
+
+            <a href="#nexmoe-content" class="backtop toc-link" aria-label="Back To Top" title="top"><button class="mdui-fab mdui-ripple"><i class="nexmoefont icon-caret-top"></i></button></a>
+        </div>
+    </div>
+</div></div><div id="nexmoe-footer"><!--!--></div><div id="nexmoe-search-space"><div class="search-container"><div class="search-header"><div class="search-input-container"><input class="search-input" type="text" placeholder="Search" onInput="sinput();"></div><a class="search-close" onclick="sclose();">×</a></div><div class="search-body"></div></div></div><div><script src="https://cdn.jsdelivr.net/npm/mathjax@latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+<script>MathJax.Hub.Config({
+    tex2jax: {
+        inlineMath: [ ['$','$'], ["\\(","\\)"] ],
+        processEscapes: true,
+        skipTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code']
+    }
+});
+MathJax.Hub.Queue(function() {
+    var all = MathJax.Hub.getAllJax(), i;
+    for(i=0; i < all.length; i += 1) {
+        all[i].SourceElement().parentNode.className += ' has-jax';
+    }
+});</script>
+</div></body></html>
