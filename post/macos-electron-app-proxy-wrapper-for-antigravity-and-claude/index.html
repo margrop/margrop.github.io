@@ -1,0 +1,496 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>给 macOS 上的 Antigravity 和 Claude 增加 Proxy：用 Wrapper App 安全接管 Electron 出网 - 魔都水滴</title>
+<meta name="description" content="写在前面 这篇文章记录一种我已经在本机验证过的办法：不要直接修改原始应用包，也不要把真实代理地址写死到公开文章里，而是给 Electron 应用外面再包一层极小的 wrapper app。这样既能给 Antigravity、Claude 这类 macOS 桌面应用注入代理，又不会轻易破坏原始签名、升级链路和回滚路径。  …">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://blog.margrop.net/post/macos-electron-app-proxy-wrapper-for-antigravity-and-claude/">
+
+<meta property="og:site_name" content="魔都水滴">
+<meta property="og:title" content="给 macOS 上的 Antigravity 和 Claude 增加 Proxy：用 Wrapper App 安全接管 Electron 出网 - 魔都水滴">
+<meta property="og:description" content="写在前面 这篇文章记录一种我已经在本机验证过的办法：不要直接修改原始应用包，也不要把真实代理地址写死到公开文章里，而是给 Electron 应用外面再包一层极小的 wrapper app。这样既能给 Antigravity、Claude 这类 macOS 桌面应用注入代理，又不会轻易破坏原始签名、升级链路和回滚路径。  …">
+<meta property="og:url" content="https://blog.margrop.net/post/macos-electron-app-proxy-wrapper-for-antigravity-and-claude/">
+<meta property="og:locale" content="zh_CN"><meta property="og:type" content="article"><meta property="og:locale:alternate" content="en_US"><meta property="og:image" content="https://blog.margrop.net/images/avatar.png"><meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="给 macOS 上的 Antigravity 和 Claude 增加 Proxy：用 Wrapper App 安全接管 Electron 出网 - 魔都水滴">
+<meta name="twitter:description" content="写在前面 这篇文章记录一种我已经在本机验证过的办法：不要直接修改原始应用包，也不要把真实代理地址写死到公开文章里，而是给 Electron 应用外面再包一层极小的 wrapper app。这样既能给 Antigravity、Claude 这类 macOS 桌面应用注入代理，又不会轻易破坏原始签名、升级链路和回滚路径。  …"><meta name="twitter:image" content="https://blog.margrop.net/images/avatar.png"><link rel="alternate" hreflang="zh-CN" href="https://blog.margrop.net/post/macos-electron-app-proxy-wrapper-for-antigravity-and-claude/"><link rel="alternate" hreflang="en-US" href="https://blog.margrop.net/en/post/macos-electron-app-proxy-wrapper-for-antigravity-and-claude/"><link rel="alternate" hreflang="x-default" href="https://blog.margrop.net/"><meta property="article:published_time" content="2026-03-25T10:00:00&#43;08:00">
+<meta property="article:modified_time" content="2026-03-25T10:00:00&#43;08:00"><meta property="article:tag" content="macOS"><meta property="article:tag" content="Electron"><meta property="article:tag" content="代理"><meta property="article:tag" content="Claude"><meta property="article:tag" content="Antigravity"><meta property="article:tag" content="自动化"><script type="application/ld+json">{"@context":"https://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"魔都水滴"},"dateModified":"2026-03-25T10:00:00+08:00","datePublished":"2026-03-25T10:00:00+08:00","description":"写在前面 这篇文章记录一种我已经在本机验证过的办法：不要直接修改原始应用包，也不要把真实代理地址写死到公开文章里，而是给 Electron 应用外面再包一层极小的 wrapper app。这样既能给 Antigravity、Claude 这类 macOS 桌面应用注入代理，又不会轻易破坏原始签名、升级链路和回滚路径。  …","headline":"给 macOS 上的 Antigravity 和 Claude 增加 Proxy：用 Wrapper App 安全接管 Electron 出网","mainEntityOfPage":"https://blog.margrop.net/post/macos-electron-app-proxy-wrapper-for-antigravity-and-claude/","url":"https://blog.margrop.net/post/macos-electron-app-proxy-wrapper-for-antigravity-and-claude/"}</script>
+    <meta name="baidu-site-verification" content="code-sVFZ8SER59" />
+
+    
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-3J2W592DHJ"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-3J2W592DHJ');
+    </script>
+
+    <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 860px; margin: 0 auto; padding: 20px; line-height: 1.7; color: #222; }
+    h1 { border-bottom: 2px solid #333; padding-bottom: 10px; }
+    .post-list { list-style: none; padding: 0; }
+    .post-list li { margin: 15px 0; }
+    .post-list a { text-decoration: none; color: #333; font-size: 18px; }
+    .post-list a:hover { color: #006CFF; }
+    .date { color: #666; font-size: 14px; margin-right: 10px; }
+    .tags { margin-top: 8px; }
+    .tag { background: #eee; padding: 2px 8px; border-radius: 3px; font-size: 12px; margin-right: 5px; display: inline-block; }
+    nav { margin-bottom: 18px; border-bottom: 1px solid #eee; padding-bottom: 15px; }
+    nav a { margin-right: 20px; text-decoration: none; color: #333; font-size: 16px; }
+    nav a:hover { color: #006CFF; }
+    .language-switcher { margin: -8px 0 26px; }
+    .language-switcher a { display: inline-block; margin-right: 10px; padding: 4px 10px; border: 1px solid #ddd; border-radius: 999px; color: #555; text-decoration: none; font-size: 14px; }
+    .language-switcher a.active { background: #006CFF; border-color: #006CFF; color: #fff; }
+    .content { line-height: 1.8; }
+    .content code { background: #f4f4f4; padding: 2px 5px; border-radius: 3px; }
+    .content pre { background: #f4f4f4; padding: 15px; overflow-x: auto; border-radius: 5px; }
+    .content img { max-width: 100%; height: auto; }
+    .meta { color: #666; font-size: 14px; margin-bottom: 14px; }
+    a { color: #006CFF; }
+    @media (max-width: 680px) {
+        body { padding: 16px; }
+        nav a { display: inline-block; margin-right: 12px; margin-bottom: 8px; }
+    }
+</style>
+
+</head>
+<body>
+    <nav>
+  
+  <a href="/">首页</a>
+  <a href="/post/">归档</a>
+  <a href="/tags/">标签</a>
+  <a href="/post/about/">关于</a>
+  <a href="https://download.margrop.net" target="_blank" rel="noopener">下载</a>
+  <a href="/post/favorites/">Link</a>
+  <a href="/post/github-project-stars/">Github</a>
+  
+  <a href="https://github-mirrors.margrop.net" target="_blank" rel="noopener">Github加速</a>
+  <a href="https://status.anye.xyz/" target="_blank" rel="noopener">Docker加速</a>
+  
+</nav>
+
+    
+<div class="language-switcher">
+  
+    <a href="/post/macos-electron-app-proxy-wrapper-for-antigravity-and-claude/" class="active">中文</a>
+  
+    <a href="/en/post/macos-electron-app-proxy-wrapper-for-antigravity-and-claude/" class="">English</a>
+  
+</div>
+
+
+    
+    <article>
+        <h1>给 macOS 上的 Antigravity 和 Claude 增加 Proxy：用 Wrapper App 安全接管 Electron 出网</h1>
+        <div class="meta">
+            发布时间: 2026-03-25
+        </div>
+        
+<div class="tags">
+    
+    <a href="/tag/macos/"><span class="tag">macOS</span></a>
+    
+    <a href="/tag/electron/"><span class="tag">Electron</span></a>
+    
+    <a href="/tag/%E4%BB%A3%E7%90%86/"><span class="tag">代理</span></a>
+    
+    <a href="/tag/claude/"><span class="tag">Claude</span></a>
+    
+    <a href="/tag/antigravity/"><span class="tag">Antigravity</span></a>
+    
+    <a href="/tag/%E8%87%AA%E5%8A%A8%E5%8C%96/"><span class="tag">自动化</span></a>
+    
+</div>
+
+
+        <div class="content">
+            <blockquote>
+<p><strong>写在前面</strong>
+这篇文章记录一种我已经在本机验证过的办法：<strong>不要直接修改原始应用包，也不要把真实代理地址写死到公开文章里，而是给 Electron 应用外面再包一层极小的 wrapper app</strong>。这样既能给 Antigravity、Claude 这类 macOS 桌面应用注入代理，又不会轻易破坏原始签名、升级链路和回滚路径。</p>
+</blockquote>
+<p>很多人第一次遇到这个问题时，第一反应都是去改 <code>/Applications/Claude.app</code> 或 <code>/Applications/Antigravity.app</code> 里面的内容。短期看似乎可行，但长期通常会带来三个问题：</p>
+<ol>
+<li>应用签名可能失效，后续启动、权限申请和升级都更脆弱。</li>
+<li>一旦原应用自动更新，你手工改过的内容很容易被覆盖。</li>
+<li>真实代理地址、内网 IP、鉴权信息如果直接写进应用包或公开文档，后果通常比“配置没生效”更严重。</li>
+</ol>
+<p>我最后采用的是一个更稳的方案：</p>
+<ol>
+<li>保留原始 <code>Claude.app</code> 和 <code>Antigravity.app</code> 不动。</li>
+<li>在 <code>~/Applications</code> 下创建 <code>Claude (Proxy).app</code> 和 <code>Antigravity (Proxy).app</code>。</li>
+<li>wrapper app 只做三件事：加载本地 <code>proxy.env</code>、导出大小写代理环境变量、用 <code>--proxy-server</code> 启动原始 Electron 应用。</li>
+<li>如果应用内部还用了 Node/undici 的 <code>fetch</code>，再通过 <code>NODE_OPTIONS=--require=...</code> 注入一个极小的 bootstrap，把代理继续传到 Node 侧请求链路。</li>
+</ol>
+<p>本文中的所有代理地址都用占位符表示，例如：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>http://127.0.0.1:PORT
+</span></span></code></pre></div><p>请把它替换成你自己的本地代理入口，<strong>不要把真实代理地址、内网 IP、用户名、密码、Token 或公司域名发布到公开文章、仓库或截图里</strong>。</p>
+<p><img src="/post-images/mac-electron-proxy-wrapper/electron-proxy-wrapper-overview.svg"></p>
+<h2 id="1-为什么-wrapper-app-比直接改原应用更安全">1 为什么 wrapper app 比直接改原应用更安全</h2>
+<p>这类问题的本质不是“Claude 不支持代理”，而是：</p>
+<ol>
+<li>你需要把 Chromium/Electron 层的代理参数传进去；</li>
+<li>同时还要尽量照顾 Node 运行时里的 <code>fetch/undici</code>；</li>
+<li>但又不想破坏原始应用包。</li>
+</ol>
+<p>而 wrapper app 恰好把这几个目标拆开了：</p>
+<ol>
+<li><strong>原始应用继续放在 <code>/Applications</code></strong>，不改签名、不改资源、不改 <code>app.asar</code>。</li>
+<li><strong>代理逻辑收敛到一个可读的 shell 脚本里</strong>，后续迁移到别的 Electron 应用也很容易。</li>
+<li><strong>代理地址放在用户目录下的 <code>proxy.env</code></strong>，方便按机器、按用户、按环境切换。</li>
+<li><strong>回滚极其简单</strong>：删掉 <code>~/Applications/&lt;App&gt; (Proxy).app</code> 和 <code>~/.&lt;app&gt;-proxy</code> 即可。</li>
+</ol>
+<p>这个模式对下面几类应用都很适合：</p>
+<ol>
+<li>Claude</li>
+<li>Antigravity</li>
+<li>VS Code 及其各种 fork</li>
+<li>其他可定位到主可执行文件路径的 Electron 桌面应用</li>
+</ol>
+<h2 id="2-整体结构长什么样">2 整体结构长什么样</h2>
+<p>一套最小可用的结构通常只有下面几部分：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>~/Applications/Claude (Proxy).app/
+</span></span><span style="display:flex;"><span>└── Contents/
+</span></span><span style="display:flex;"><span>    ├── Info.plist
+</span></span><span style="display:flex;"><span>    └── MacOS/
+</span></span><span style="display:flex;"><span>        └── launch
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>~/.claude-proxy/
+</span></span><span style="display:flex;"><span>├── proxy.env
+</span></span><span style="display:flex;"><span>└── bootstrap-fetch-proxy.cjs
+</span></span></code></pre></div><p>其中：</p>
+<ol>
+<li><code>Info.plist</code> 只是告诉 macOS 这是一个最小应用壳。</li>
+<li><code>launch</code> 是真正的入口，它负责导出环境变量并调用原始 app。</li>
+<li><code>proxy.env</code> 用来放私有代理配置。</li>
+<li><code>bootstrap-fetch-proxy.cjs</code> 用来补 Node/undici 一侧的代理。</li>
+</ol>
+<p><img src="/post-images/mac-electron-proxy-wrapper/electron-proxy-file-layout.svg"></p>
+<h2 id="3-先准备一份可复用的-node-fetch-代理-bootstrap">3 先准备一份可复用的 Node fetch 代理 bootstrap</h2>
+<p>这个文件可以直接复用到 Claude、Antigravity 和其他 Electron 应用：</p>
+<p>路径建议：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>~/.claude-proxy/bootstrap-fetch-proxy.cjs
+</span></span><span style="display:flex;"><span>~/.antigravity-proxy/bootstrap-fetch-proxy.cjs
+</span></span></code></pre></div><p>内容如下：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-js" data-lang="js"><span style="display:flex;"><span><span style="color:#e6db74">&#39;use strict&#39;</span>;
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">const</span> <span style="color:#a6e22e">path</span> <span style="color:#f92672">=</span> <span style="color:#a6e22e">require</span>(<span style="color:#e6db74">&#39;path&#39;</span>);
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">const</span> { <span style="color:#a6e22e">createRequire</span> } <span style="color:#f92672">=</span> <span style="color:#a6e22e">require</span>(<span style="color:#e6db74">&#39;module&#39;</span>);
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">function</span> <span style="color:#a6e22e">firstNonEmpty</span>(...<span style="color:#a6e22e">values</span>) {
+</span></span><span style="display:flex;"><span>  <span style="color:#66d9ef">for</span> (<span style="color:#66d9ef">const</span> <span style="color:#a6e22e">value</span> <span style="color:#66d9ef">of</span> <span style="color:#a6e22e">values</span>) {
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">if</span> (<span style="color:#66d9ef">typeof</span> <span style="color:#a6e22e">value</span> <span style="color:#f92672">===</span> <span style="color:#e6db74">&#39;string&#39;</span> <span style="color:#f92672">&amp;&amp;</span> <span style="color:#a6e22e">value</span>.<span style="color:#a6e22e">trim</span>() <span style="color:#f92672">!==</span> <span style="color:#e6db74">&#39;&#39;</span>) {
+</span></span><span style="display:flex;"><span>      <span style="color:#66d9ef">return</span> <span style="color:#a6e22e">value</span>.<span style="color:#a6e22e">trim</span>();
+</span></span><span style="display:flex;"><span>    }
+</span></span><span style="display:flex;"><span>  }
+</span></span><span style="display:flex;"><span>}
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">function</span> <span style="color:#a6e22e">resolveAppRequire</span>() {
+</span></span><span style="display:flex;"><span>  <span style="color:#66d9ef">const</span> <span style="color:#a6e22e">explicitPackageJson</span> <span style="color:#f92672">=</span> <span style="color:#a6e22e">firstNonEmpty</span>(<span style="color:#a6e22e">process</span>.<span style="color:#a6e22e">env</span>.<span style="color:#a6e22e">APP_PROXY_APP_PACKAGE_JSON</span>);
+</span></span><span style="display:flex;"><span>  <span style="color:#66d9ef">const</span> <span style="color:#a6e22e">packageJsonPath</span> <span style="color:#f92672">=</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#a6e22e">explicitPackageJson</span> <span style="color:#f92672">||</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#a6e22e">path</span>.<span style="color:#a6e22e">resolve</span>(
+</span></span><span style="display:flex;"><span>      <span style="color:#a6e22e">path</span>.<span style="color:#a6e22e">dirname</span>(<span style="color:#a6e22e">process</span>.<span style="color:#a6e22e">execPath</span>),
+</span></span><span style="display:flex;"><span>      <span style="color:#e6db74">&#39;..&#39;</span>,
+</span></span><span style="display:flex;"><span>      <span style="color:#e6db74">&#39;Resources&#39;</span>,
+</span></span><span style="display:flex;"><span>      <span style="color:#e6db74">&#39;app.asar&#39;</span>,
+</span></span><span style="display:flex;"><span>      <span style="color:#e6db74">&#39;package.json&#39;</span>
+</span></span><span style="display:flex;"><span>    );
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>  <span style="color:#66d9ef">return</span> <span style="color:#a6e22e">createRequire</span>(<span style="color:#a6e22e">packageJsonPath</span>);
+</span></span><span style="display:flex;"><span>}
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">function</span> <span style="color:#a6e22e">resolveUndici</span>() {
+</span></span><span style="display:flex;"><span>  <span style="color:#66d9ef">const</span> <span style="color:#a6e22e">explicitModule</span> <span style="color:#f92672">=</span> <span style="color:#a6e22e">firstNonEmpty</span>(<span style="color:#a6e22e">process</span>.<span style="color:#a6e22e">env</span>.<span style="color:#a6e22e">APP_PROXY_UNDICI_MODULE</span>);
+</span></span><span style="display:flex;"><span>  <span style="color:#66d9ef">if</span> (<span style="color:#a6e22e">explicitModule</span>) {
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">return</span> <span style="color:#a6e22e">require</span>(<span style="color:#a6e22e">explicitModule</span>);
+</span></span><span style="display:flex;"><span>  }
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>  <span style="color:#66d9ef">try</span> {
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">return</span> <span style="color:#a6e22e">require</span>(<span style="color:#e6db74">&#39;undici&#39;</span>);
+</span></span><span style="display:flex;"><span>  } <span style="color:#66d9ef">catch</span> (<span style="color:#a6e22e">_</span>) {
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">return</span> <span style="color:#a6e22e">resolveAppRequire</span>()(<span style="color:#e6db74">&#39;undici&#39;</span>);
+</span></span><span style="display:flex;"><span>  }
+</span></span><span style="display:flex;"><span>}
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">function</span> <span style="color:#a6e22e">enableFetchProxy</span>() {
+</span></span><span style="display:flex;"><span>  <span style="color:#66d9ef">const</span> <span style="color:#a6e22e">proxyUrl</span> <span style="color:#f92672">=</span> <span style="color:#a6e22e">firstNonEmpty</span>(
+</span></span><span style="display:flex;"><span>    <span style="color:#a6e22e">process</span>.<span style="color:#a6e22e">env</span>.<span style="color:#a6e22e">APP_PROXY_URL</span>,
+</span></span><span style="display:flex;"><span>    <span style="color:#a6e22e">process</span>.<span style="color:#a6e22e">env</span>.<span style="color:#a6e22e">HTTPS_PROXY</span>,
+</span></span><span style="display:flex;"><span>    <span style="color:#a6e22e">process</span>.<span style="color:#a6e22e">env</span>.<span style="color:#a6e22e">HTTP_PROXY</span>,
+</span></span><span style="display:flex;"><span>    <span style="color:#a6e22e">process</span>.<span style="color:#a6e22e">env</span>.<span style="color:#a6e22e">https_proxy</span>,
+</span></span><span style="display:flex;"><span>    <span style="color:#a6e22e">process</span>.<span style="color:#a6e22e">env</span>.<span style="color:#a6e22e">http_proxy</span>
+</span></span><span style="display:flex;"><span>  );
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>  <span style="color:#66d9ef">if</span> (<span style="color:#f92672">!</span><span style="color:#a6e22e">proxyUrl</span>) {
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">return</span>;
+</span></span><span style="display:flex;"><span>  }
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>  <span style="color:#66d9ef">try</span> {
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">const</span> <span style="color:#a6e22e">undici</span> <span style="color:#f92672">=</span> <span style="color:#a6e22e">resolveUndici</span>();
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">if</span> (
+</span></span><span style="display:flex;"><span>      <span style="color:#66d9ef">typeof</span> <span style="color:#a6e22e">undici</span>.<span style="color:#a6e22e">setGlobalDispatcher</span> <span style="color:#f92672">===</span> <span style="color:#e6db74">&#39;function&#39;</span> <span style="color:#f92672">&amp;&amp;</span>
+</span></span><span style="display:flex;"><span>      <span style="color:#66d9ef">typeof</span> <span style="color:#a6e22e">undici</span>.<span style="color:#a6e22e">EnvHttpProxyAgent</span> <span style="color:#f92672">===</span> <span style="color:#e6db74">&#39;function&#39;</span>
+</span></span><span style="display:flex;"><span>    ) {
+</span></span><span style="display:flex;"><span>      <span style="color:#a6e22e">undici</span>.<span style="color:#a6e22e">setGlobalDispatcher</span>(<span style="color:#66d9ef">new</span> <span style="color:#a6e22e">undici</span>.<span style="color:#a6e22e">EnvHttpProxyAgent</span>());
+</span></span><span style="display:flex;"><span>      <span style="color:#a6e22e">process</span>.<span style="color:#a6e22e">env</span>.<span style="color:#a6e22e">APP_FETCH_PROXY_ACTIVE</span> <span style="color:#f92672">=</span> <span style="color:#e6db74">&#39;1&#39;</span>;
+</span></span><span style="display:flex;"><span>    }
+</span></span><span style="display:flex;"><span>  } <span style="color:#66d9ef">catch</span> (<span style="color:#a6e22e">error</span>) {
+</span></span><span style="display:flex;"><span>    <span style="color:#a6e22e">console</span>.<span style="color:#a6e22e">error</span>(<span style="color:#e6db74">`[app-proxy] failed to enable fetch proxy: </span><span style="color:#e6db74">${</span><span style="color:#a6e22e">error</span>.<span style="color:#a6e22e">message</span><span style="color:#e6db74">}</span><span style="color:#e6db74">`</span>);
+</span></span><span style="display:flex;"><span>  }
+</span></span><span style="display:flex;"><span>}
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#a6e22e">enableFetchProxy</span>();
+</span></span></code></pre></div><p>这个 bootstrap 的关键点只有两个：</p>
+<ol>
+<li>优先从环境变量里读代理，而不是把地址写死在代码里。</li>
+<li>优先尝试 <code>require('undici')</code>，失败后再从目标应用自己的 <code>app.asar</code> 里解析。</li>
+</ol>
+<h2 id="4-claude完整可复用做法">4 Claude：完整可复用做法</h2>
+<p>先准备目录：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>mkdir -p <span style="color:#e6db74">&#34;</span>$HOME<span style="color:#e6db74">/Applications/Claude (Proxy).app/Contents/MacOS&#34;</span>
+</span></span><span style="display:flex;"><span>mkdir -p <span style="color:#e6db74">&#34;</span>$HOME<span style="color:#e6db74">/.claude-proxy&#34;</span>
+</span></span></code></pre></div><h3 id="41-infoplist">4.1 <code>Info.plist</code></h3>
+<p>文件路径：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>$HOME/Applications/Claude (Proxy).app/Contents/Info.plist
+</span></span></code></pre></div><p>内容：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-xml" data-lang="xml"><span style="display:flex;"><span><span style="color:#75715e">&lt;?xml version=&#34;1.0&#34; encoding=&#34;UTF-8&#34;?&gt;</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e">&lt;!DOCTYPE plist PUBLIC &#34;-//Apple//DTD PLIST 1.0//EN&#34; &#34;http://www.apple.com/DTDs/PropertyList-1.0.dtd&#34;&gt;</span>
+</span></span><span style="display:flex;"><span><span style="color:#f92672">&lt;plist</span> <span style="color:#a6e22e">version=</span><span style="color:#e6db74">&#34;1.0&#34;</span><span style="color:#f92672">&gt;</span>
+</span></span><span style="display:flex;"><span><span style="color:#f92672">&lt;dict&gt;</span>
+</span></span><span style="display:flex;"><span>  <span style="color:#f92672">&lt;key&gt;</span>CFBundleExecutable<span style="color:#f92672">&lt;/key&gt;</span>
+</span></span><span style="display:flex;"><span>  <span style="color:#f92672">&lt;string&gt;</span>launch<span style="color:#f92672">&lt;/string&gt;</span>
+</span></span><span style="display:flex;"><span>  <span style="color:#f92672">&lt;key&gt;</span>CFBundleIdentifier<span style="color:#f92672">&lt;/key&gt;</span>
+</span></span><span style="display:flex;"><span>  <span style="color:#f92672">&lt;string&gt;</span>com.example.claude.proxy-wrapper<span style="color:#f92672">&lt;/string&gt;</span>
+</span></span><span style="display:flex;"><span>  <span style="color:#f92672">&lt;key&gt;</span>CFBundleName<span style="color:#f92672">&lt;/key&gt;</span>
+</span></span><span style="display:flex;"><span>  <span style="color:#f92672">&lt;string&gt;</span>Claude (Proxy)<span style="color:#f92672">&lt;/string&gt;</span>
+</span></span><span style="display:flex;"><span>  <span style="color:#f92672">&lt;key&gt;</span>CFBundlePackageType<span style="color:#f92672">&lt;/key&gt;</span>
+</span></span><span style="display:flex;"><span>  <span style="color:#f92672">&lt;string&gt;</span>APPL<span style="color:#f92672">&lt;/string&gt;</span>
+</span></span><span style="display:flex;"><span>  <span style="color:#f92672">&lt;key&gt;</span>CFBundleVersion<span style="color:#f92672">&lt;/key&gt;</span>
+</span></span><span style="display:flex;"><span>  <span style="color:#f92672">&lt;string&gt;</span>1.0<span style="color:#f92672">&lt;/string&gt;</span>
+</span></span><span style="display:flex;"><span><span style="color:#f92672">&lt;/dict&gt;</span>
+</span></span><span style="display:flex;"><span><span style="color:#f92672">&lt;/plist&gt;</span>
+</span></span></code></pre></div><h3 id="42-launch">4.2 <code>launch</code></h3>
+<p>文件路径：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>$HOME/Applications/Claude (Proxy).app/Contents/MacOS/launch
+</span></span></code></pre></div><p>内容：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e">#!/bin/bash
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>set -euo pipefail
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>CONFIG_DIR<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>HOME<span style="color:#e6db74">}</span><span style="color:#e6db74">/.claude-proxy&#34;</span>
+</span></span><span style="display:flex;"><span>ENV_FILE<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>CONFIG_DIR<span style="color:#e6db74">}</span><span style="color:#e6db74">/proxy.env&#34;</span>
+</span></span><span style="display:flex;"><span>BOOTSTRAP<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>CONFIG_DIR<span style="color:#e6db74">}</span><span style="color:#e6db74">/bootstrap-fetch-proxy.cjs&#34;</span>
+</span></span><span style="display:flex;"><span>APP_BIN<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;/Applications/Claude.app/Contents/MacOS/Claude&#34;</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> <span style="color:#f92672">[[</span> -f <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>ENV_FILE<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span> <span style="color:#f92672">]]</span>; <span style="color:#66d9ef">then</span>
+</span></span><span style="display:flex;"><span>  set -a
+</span></span><span style="display:flex;"><span>  <span style="color:#75715e"># shellcheck disable=SC1090</span>
+</span></span><span style="display:flex;"><span>  source <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>ENV_FILE<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>  set +a
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">fi</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>PROXY_URL<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>APP_PROXY_URL<span style="color:#66d9ef">:-</span><span style="color:#e6db74">${</span>HTTPS_PROXY<span style="color:#66d9ef">:-</span><span style="color:#e6db74">${</span>HTTP_PROXY<span style="color:#66d9ef">:-</span>http://127.0.0.1:PORT<span style="color:#e6db74">}}}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>NO_PROXY_VALUE<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>NO_PROXY<span style="color:#66d9ef">:-</span>localhost,127.0.0.1,::1<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>PROXY_BYPASS_LIST<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>APP_PROXY_BYPASS_LIST<span style="color:#66d9ef">:-</span>localhost;127.0.0.1;::1<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>export APP_PROXY_URL<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>PROXY_URL<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>export HTTP_PROXY<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>HTTP_PROXY<span style="color:#66d9ef">:-</span><span style="color:#e6db74">${</span>PROXY_URL<span style="color:#e6db74">}}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>export HTTPS_PROXY<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>HTTPS_PROXY<span style="color:#66d9ef">:-</span><span style="color:#e6db74">${</span>PROXY_URL<span style="color:#e6db74">}}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>export ALL_PROXY<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>ALL_PROXY<span style="color:#66d9ef">:-</span><span style="color:#e6db74">${</span>PROXY_URL<span style="color:#e6db74">}}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>export NO_PROXY<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>NO_PROXY_VALUE<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>export http_proxy<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>http_proxy<span style="color:#66d9ef">:-</span><span style="color:#e6db74">${</span>HTTP_PROXY<span style="color:#e6db74">}}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>export https_proxy<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>https_proxy<span style="color:#66d9ef">:-</span><span style="color:#e6db74">${</span>HTTPS_PROXY<span style="color:#e6db74">}}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>export all_proxy<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>all_proxy<span style="color:#66d9ef">:-</span><span style="color:#e6db74">${</span>ALL_PROXY<span style="color:#e6db74">}}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>export no_proxy<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>no_proxy<span style="color:#66d9ef">:-</span><span style="color:#e6db74">${</span>NO_PROXY<span style="color:#e6db74">}}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> <span style="color:#f92672">[[</span> -f <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>BOOTSTRAP<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span> <span style="color:#f92672">]]</span>; <span style="color:#66d9ef">then</span>
+</span></span><span style="display:flex;"><span>  <span style="color:#66d9ef">if</span> <span style="color:#f92672">[[</span> -n <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>NODE_OPTIONS<span style="color:#66d9ef">:-</span><span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span> <span style="color:#f92672">]]</span>; <span style="color:#66d9ef">then</span>
+</span></span><span style="display:flex;"><span>    export NODE_OPTIONS<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;--require=</span><span style="color:#e6db74">${</span>BOOTSTRAP<span style="color:#e6db74">}</span><span style="color:#e6db74"> </span><span style="color:#e6db74">${</span>NODE_OPTIONS<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>  <span style="color:#66d9ef">else</span>
+</span></span><span style="display:flex;"><span>    export NODE_OPTIONS<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;--require=</span><span style="color:#e6db74">${</span>BOOTSTRAP<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>  <span style="color:#66d9ef">fi</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">fi</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># Finder 可能在 Rosetta 环境里启动 wrapper。</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 在 Apple Silicon 机器上，优先按硬件能力判断，然后强制拉起 arm64 Claude。</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> <span style="color:#f92672">[[</span> <span style="color:#e6db74">&#34;</span><span style="color:#66d9ef">$(</span>/usr/sbin/sysctl -in hw.optional.arm64 2&gt;/dev/null <span style="color:#f92672">||</span> echo 0<span style="color:#66d9ef">)</span><span style="color:#e6db74">&#34;</span> <span style="color:#f92672">==</span> <span style="color:#e6db74">&#34;1&#34;</span> <span style="color:#f92672">]]</span>; <span style="color:#66d9ef">then</span>
+</span></span><span style="display:flex;"><span>  exec /usr/bin/arch -arm64 <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>APP_BIN<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>    --proxy-server<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>PROXY_URL<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>    --proxy-bypass-list<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>PROXY_BYPASS_LIST<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>    <span style="color:#e6db74">&#34;</span>$@<span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">fi</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>exec <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>APP_BIN<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  --proxy-server<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>PROXY_URL<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  --proxy-bypass-list<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>PROXY_BYPASS_LIST<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  <span style="color:#e6db74">&#34;</span>$@<span style="color:#e6db74">&#34;</span>
+</span></span></code></pre></div><p>别忘了加执行权限：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>chmod +x <span style="color:#e6db74">&#34;</span>$HOME<span style="color:#e6db74">/Applications/Claude (Proxy).app/Contents/MacOS/launch&#34;</span>
+</span></span></code></pre></div><h3 id="43-proxyenv">4.3 <code>proxy.env</code></h3>
+<p>文件路径：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>$HOME/.claude-proxy/proxy.env
+</span></span></code></pre></div><p>内容：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># 请替换成你自己的本地代理入口，不要写真实内网地址到公开仓库</span>
+</span></span><span style="display:flex;"><span>APP_PROXY_URL<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;http://127.0.0.1:PORT&#34;</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 可选：Chromium/Electron 的 bypass 列表</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># APP_PROXY_BYPASS_LIST=&#34;localhost;127.0.0.1;::1&#34;</span>
+</span></span></code></pre></div><h3 id="44-bootstrap-fetch-proxycjs">4.4 <code>bootstrap-fetch-proxy.cjs</code></h3>
+<p>把上一节的通用 bootstrap 复制到这里：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>$HOME/.claude-proxy/bootstrap-fetch-proxy.cjs
+</span></span></code></pre></div><h2 id="5-antigravity做法完全一样只改三个地方">5 Antigravity：做法完全一样，只改三个地方</h2>
+<p>如果你已经把 Claude 版做通了，Antigravity 基本只是把路径和名字替换掉：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>mkdir -p <span style="color:#e6db74">&#34;</span>$HOME<span style="color:#e6db74">/Applications/Antigravity (Proxy).app/Contents/MacOS&#34;</span>
+</span></span><span style="display:flex;"><span>mkdir -p <span style="color:#e6db74">&#34;</span>$HOME<span style="color:#e6db74">/.antigravity-proxy&#34;</span>
+</span></span></code></pre></div><p><code>Info.plist</code> 只需要把名字改成 <code>Antigravity (Proxy)</code> 即可。</p>
+<p>真正关键的是 <code>launch</code> 顶部这几个变量：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>CONFIG_DIR<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>HOME<span style="color:#e6db74">}</span><span style="color:#e6db74">/.antigravity-proxy&#34;</span>
+</span></span><span style="display:flex;"><span>ENV_FILE<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>CONFIG_DIR<span style="color:#e6db74">}</span><span style="color:#e6db74">/proxy.env&#34;</span>
+</span></span><span style="display:flex;"><span>BOOTSTRAP<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>CONFIG_DIR<span style="color:#e6db74">}</span><span style="color:#e6db74">/bootstrap-fetch-proxy.cjs&#34;</span>
+</span></span><span style="display:flex;"><span>APP_BIN<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;/Applications/Antigravity.app/Contents/MacOS/Electron&#34;</span>
+</span></span></code></pre></div><p>如果你的 Antigravity 主程序路径不是上面这个值，就用实际路径替换它。</p>
+<p>对应的 <code>proxy.env</code> 同样建议保持私有，只放在用户目录下：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>APP_PROXY_URL<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;http://127.0.0.1:PORT&#34;</span>
+</span></span></code></pre></div><h2 id="6-如何确认代理真的生效了">6 如何确认代理真的生效了</h2>
+<p>最简单的验证方式不是只看图标能不能点开，而是看进程参数。</p>
+<p>先退出原始应用，再启动 proxy 版应用，然后执行：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>pgrep -lf <span style="color:#e6db74">&#39;/Applications/Claude.app/Contents/MacOS/Claude&#39;</span>
+</span></span><span style="display:flex;"><span>pgrep -lf <span style="color:#e6db74">&#39;/Applications/Antigravity.app/Contents/MacOS/Electron&#39;</span>
+</span></span></code></pre></div><p>你应该能在输出里看到类似参数：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>--proxy-server=http://127.0.0.1:PORT
+</span></span><span style="display:flex;"><span>--proxy-bypass-list=localhost;127.0.0.1;::1
+</span></span></code></pre></div><p>如果你还想确认 Node 侧 bootstrap 是否被吃到，可以额外检查环境变量或应用日志里是否出现：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>APP_FETCH_PROXY_ACTIVE=1
+</span></span></code></pre></div><h3 id="61-apple-silicon-上如果出现-claude-quit-unexpectedly">6.1 Apple Silicon 上如果出现 “Claude quit unexpectedly”</h3>
+<p>这个坑值得单独写出来，因为它表面看像“代理搞坏了 Claude”，但实际根因往往不是代理地址，而是<strong>wrapper 在 Finder/Rosetta 场景下把 Claude 以 x64 方式拉起了</strong>。</p>
+<p>我这次实际排到的现象是：</p>
+<ol>
+<li>Claude 一打开就被 macOS 报 “Claude quit unexpectedly”；</li>
+<li>crash report 里能看到 <code>translated: true</code> 和 <code>cpuType: &quot;X86-64&quot;</code>；</li>
+<li><code>~/Library/Logs/Claude/main.log</code> 里能看到 <code>arch: 'x64'</code>；</li>
+<li>同一台机器其实是 Apple Silicon，直接强制 <code>arch -arm64</code> 启动后，应用就恢复正常。</li>
+</ol>
+<p><img src="/post-images/mac-electron-proxy-wrapper/claude-proxy-rosetta-troubleshooting.svg"></p>
+<p>真正容易写错的地方是这里：</p>
+<ol>
+<li>很多 shell 脚本喜欢直接用 <code>uname -m</code> 判断当前架构；</li>
+<li>但如果 wrapper 自己就是在 Rosetta 环境里起的，这里返回的可能是 <code>x86_64</code>；</li>
+<li>于是你会误判，接着把一个 universal 的 Claude 也以 x64 拉起来；</li>
+<li>某些版本组合下，Claude 会继续运行，但更慢；另一些组合下会直接崩。</li>
+</ol>
+<p>更稳的做法是：</p>
+<ol>
+<li>用 <code>sysctl -in hw.optional.arm64</code> 判断这台机器是否支持 arm64；</li>
+<li>只要结果是 <code>1</code>，就直接 <code>arch -arm64 &quot;${APP_BIN}&quot;</code>；</li>
+<li>不要依赖 wrapper 当前进程的 <code>uname -m</code> 结果。</li>
+</ol>
+<p>如果你已经遇到这个问题，可以这样快速判断：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>sysctl -in hw.optional.arm64
+</span></span><span style="display:flex;"><span>grep -n <span style="color:#e6db74">&#34;Starting app&#34;</span> <span style="color:#e6db74">&#34;</span>$HOME<span style="color:#e6db74">/Library/Logs/Claude/main.log&#34;</span> | tail -n <span style="color:#ae81ff">2</span>
+</span></span></code></pre></div><p>如果第一条输出是 <code>1</code>，而日志里还是 <code>arch: 'x64'</code>，那基本就可以确认是 wrapper 误把 Claude 以 Rosetta/x64 拉起来了。</p>
+<p>修完后，你应该看到类似结果：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>arch: &#39;arm64&#39;
+</span></span></code></pre></div><p>而且 Claude 下载或更新内部资源时，也会从 <code>darwin-x64</code> 切换为 <code>darwin-arm64</code>。</p>
+<h2 id="7-这套方法为什么适合-claudeantigravity也适合类似应用">7 这套方法为什么适合 Claude、Antigravity，也适合类似应用</h2>
+<p>它本质上依赖的是 Electron 的两个稳定能力：</p>
+<ol>
+<li>Chromium 层支持 <code>--proxy-server</code> 和 <code>--proxy-bypass-list</code></li>
+<li>Node 侧支持 <code>NODE_OPTIONS=--require=...</code></li>
+</ol>
+<p>所以这个方法能不能迁移，关键只看三件事：</p>
+<ol>
+<li>你能不能找到原始 app 的主可执行文件；</li>
+<li>它是不是 Electron 或 Chromium 壳；</li>
+<li>你能不能把私有代理配置从公开内容里隔离出去。</li>
+</ol>
+<p>一旦这三点成立，Claude、Antigravity、VS Code 类应用其实都是同一个题。</p>
+<h2 id="8-常见坑">8 常见坑</h2>
+<h3 id="81-应用明明能打开但其实还是原始实例">8.1 应用明明能打开，但其实还是原始实例</h3>
+<p>如果原始 Claude 或 Antigravity 已经在运行，再去打开 proxy wrapper，有些应用会把请求转发给已存在实例，而不是按新的参数重新起一个新进程。</p>
+<p>所以正确顺序一般是：</p>
+<ol>
+<li>先退出原始应用；</li>
+<li>再打开 <code>Claude (Proxy).app</code> 或 <code>Antigravity (Proxy).app</code>；</li>
+<li>再看进程参数。</li>
+</ol>
+<h3 id="82-只配了-http_proxy但应用内部某些请求还是不走代理">8.2 只配了 <code>HTTP_PROXY</code>，但应用内部某些请求还是不走代理</h3>
+<p>这是因为 Chromium 网络层和 Node/undici 并不是完全同一条链路。只配环境变量，未必能覆盖 Electron 主进程里的所有请求来源；只配 <code>--proxy-server</code>，也未必能覆盖 Node 侧 <code>fetch</code>。</p>
+<p>所以更稳的做法是两层都做：</p>
+<ol>
+<li>环境变量</li>
+<li>Chromium 启动参数</li>
+<li><code>NODE_OPTIONS</code> bootstrap</li>
+</ol>
+<h3 id="83-不要把真实代理地址写进文章和仓库">8.3 不要把真实代理地址写进文章和仓库</h3>
+<p>这一点值得单独再说一次。</p>
+<p>很多教程在截图、脚本、提交记录里直接暴露：</p>
+<ol>
+<li>真实代理主机名</li>
+<li>内网 IP</li>
+<li>代理用户名密码</li>
+<li>公司域名</li>
+<li>VPN 出口结构</li>
+</ol>
+<p>这是完全没必要的。</p>
+<p>公开文章只需要使用：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>http://127.0.0.1:PORT
+</span></span></code></pre></div><p>私有环境里的真实值只放在：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>~/.claude-proxy/proxy.env
+</span></span><span style="display:flex;"><span>~/.antigravity-proxy/proxy.env
+</span></span></code></pre></div><h2 id="9-一句话总结">9 一句话总结</h2>
+<p>如果你要给 macOS 上的 Claude、Antigravity 或其他 Electron 应用加代理，<strong>最稳的办法不是去改原始 <code>.app</code>，而是在它外面包一个最小 wrapper app，把代理配置、启动参数和 Node fetch bootstrap 都留在用户目录</strong>。</p>
+<p>这样做的好处是：</p>
+<ol>
+<li>对原始应用侵入最小；</li>
+<li>迁移到其他 Electron 应用成本极低；</li>
+<li>更适合团队沉淀成模板，避免每次重复造轮子；</li>
+<li>也更容易避免把真实代理基础设施泄漏到公开文档里。</li>
+</ol>
+        </div>
+    </article>
+
+    
+  
+
+
+  
+    
+  
+
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk/dist/gitalk.css">
+<script src="https://cdn.jsdelivr.net/npm/gitalk/dist/gitalk.min.js"></script>
+<div id="gitalk-container" style="margin-top:40px"></div>
+<script>
+  (function(){
+    var gitalk = new Gitalk({
+      clientID: '3181fd94e501cc5db0ad',
+      clientSecret: 'af1dab79dae02c69296e6615bfcecf47fc8615ee',
+      repo: 'margropcomment.margrop.io',
+      owner: 'margrop',
+      admin: ["margrop"],
+      
+      id: '\/post\/macos-electron-app-proxy-wrapper-for-antigr',
+      
+      distractionFreeMode: false
+    });
+    gitalk.render('gitalk-container');
+  })();
+</script>
+  
+
+
+
+
+    
+    <script type="text/javascript" src="https://js.users.51.la/21044367.js"></script>
+    <script charset="UTF-8" id="LA_COLLECT" src="//sdk.51.la/js-sdk-pro.min.js"></script>
+    <script>LA.init({id: "1vVTUWl7zoRjnKXi",ck: "1vVTUWl7zoRjnKXi"})</script>
+    <script src="https://sdk.51.la/perf/js-sdk-perf.min.js" crossorigin="anonymous"></script>
+    <script>
+      new LingQue.Monitor().init({id:"202teQt8THXwqyve"});
+    </script>
+</body>
+</html>

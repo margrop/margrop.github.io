@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>PVE 中给 Ubuntu 虚拟机扩容磁盘——从 Web 界面到系统内部的完整操作 - 魔都水滴</title>
+<meta name="description" content="写在前面 在使用 Proxmox VE 管理虚拟化环境时，磁盘空间不足是迟早会遇到的问题。也许是一台跑 Docker 的 Ubuntu 镜像越拉越多，也许是数据库日志把根分区撑满了——总之，扩容是 PVE 运维的必修课。本文从 PVE Web 界面的磁盘 Resize 开始，到 Ubuntu 虚拟机内部 LVM 扩容的 …">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://blog.margrop.net/post/pve-ubuntu-vm-disk-resize/">
+
+<meta property="og:site_name" content="魔都水滴">
+<meta property="og:title" content="PVE 中给 Ubuntu 虚拟机扩容磁盘——从 Web 界面到系统内部的完整操作 - 魔都水滴">
+<meta property="og:description" content="写在前面 在使用 Proxmox VE 管理虚拟化环境时，磁盘空间不足是迟早会遇到的问题。也许是一台跑 Docker 的 Ubuntu 镜像越拉越多，也许是数据库日志把根分区撑满了——总之，扩容是 PVE 运维的必修课。本文从 PVE Web 界面的磁盘 Resize 开始，到 Ubuntu 虚拟机内部 LVM 扩容的 …">
+<meta property="og:url" content="https://blog.margrop.net/post/pve-ubuntu-vm-disk-resize/">
+<meta property="og:locale" content="zh_CN"><meta property="og:type" content="article"><meta property="og:locale:alternate" content="en_US"><meta property="og:image" content="https://blog.margrop.net/images/avatar.png"><meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="PVE 中给 Ubuntu 虚拟机扩容磁盘——从 Web 界面到系统内部的完整操作 - 魔都水滴">
+<meta name="twitter:description" content="写在前面 在使用 Proxmox VE 管理虚拟化环境时，磁盘空间不足是迟早会遇到的问题。也许是一台跑 Docker 的 Ubuntu 镜像越拉越多，也许是数据库日志把根分区撑满了——总之，扩容是 PVE 运维的必修课。本文从 PVE Web 界面的磁盘 Resize 开始，到 Ubuntu 虚拟机内部 LVM 扩容的 …"><meta name="twitter:image" content="https://blog.margrop.net/images/avatar.png"><link rel="alternate" hreflang="zh-CN" href="https://blog.margrop.net/post/pve-ubuntu-vm-disk-resize/"><link rel="alternate" hreflang="en-US" href="https://blog.margrop.net/en/post/pve-ubuntu-vm-disk-resize/"><link rel="alternate" hreflang="x-default" href="https://blog.margrop.net/"><meta property="article:published_time" content="2026-03-23T10:30:00&#43;08:00">
+<meta property="article:modified_time" content="2026-03-23T10:30:00&#43;08:00"><meta property="article:tag" content="Proxmox VE"><meta property="article:tag" content="Ubuntu"><meta property="article:tag" content="LVM"><meta property="article:tag" content="磁盘扩容"><meta property="article:tag" content="运维"><script type="application/ld+json">{"@context":"https://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"魔都水滴"},"dateModified":"2026-03-23T10:30:00+08:00","datePublished":"2026-03-23T10:30:00+08:00","description":"写在前面 在使用 Proxmox VE 管理虚拟化环境时，磁盘空间不足是迟早会遇到的问题。也许是一台跑 Docker 的 Ubuntu 镜像越拉越多，也许是数据库日志把根分区撑满了——总之，扩容是 PVE 运维的必修课。本文从 PVE Web 界面的磁盘 Resize 开始，到 Ubuntu 虚拟机内部 LVM 扩容的 …","headline":"PVE 中给 Ubuntu 虚拟机扩容磁盘——从 Web 界面到系统内部的完整操作","mainEntityOfPage":"https://blog.margrop.net/post/pve-ubuntu-vm-disk-resize/","url":"https://blog.margrop.net/post/pve-ubuntu-vm-disk-resize/"}</script>
+    <meta name="baidu-site-verification" content="code-sVFZ8SER59" />
+
+    
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-3J2W592DHJ"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-3J2W592DHJ');
+    </script>
+
+    <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 860px; margin: 0 auto; padding: 20px; line-height: 1.7; color: #222; }
+    h1 { border-bottom: 2px solid #333; padding-bottom: 10px; }
+    .post-list { list-style: none; padding: 0; }
+    .post-list li { margin: 15px 0; }
+    .post-list a { text-decoration: none; color: #333; font-size: 18px; }
+    .post-list a:hover { color: #006CFF; }
+    .date { color: #666; font-size: 14px; margin-right: 10px; }
+    .tags { margin-top: 8px; }
+    .tag { background: #eee; padding: 2px 8px; border-radius: 3px; font-size: 12px; margin-right: 5px; display: inline-block; }
+    nav { margin-bottom: 18px; border-bottom: 1px solid #eee; padding-bottom: 15px; }
+    nav a { margin-right: 20px; text-decoration: none; color: #333; font-size: 16px; }
+    nav a:hover { color: #006CFF; }
+    .language-switcher { margin: -8px 0 26px; }
+    .language-switcher a { display: inline-block; margin-right: 10px; padding: 4px 10px; border: 1px solid #ddd; border-radius: 999px; color: #555; text-decoration: none; font-size: 14px; }
+    .language-switcher a.active { background: #006CFF; border-color: #006CFF; color: #fff; }
+    .content { line-height: 1.8; }
+    .content code { background: #f4f4f4; padding: 2px 5px; border-radius: 3px; }
+    .content pre { background: #f4f4f4; padding: 15px; overflow-x: auto; border-radius: 5px; }
+    .content img { max-width: 100%; height: auto; }
+    .meta { color: #666; font-size: 14px; margin-bottom: 14px; }
+    a { color: #006CFF; }
+    @media (max-width: 680px) {
+        body { padding: 16px; }
+        nav a { display: inline-block; margin-right: 12px; margin-bottom: 8px; }
+    }
+</style>
+
+</head>
+<body>
+    <nav>
+  
+  <a href="/">首页</a>
+  <a href="/post/">归档</a>
+  <a href="/tags/">标签</a>
+  <a href="/post/about/">关于</a>
+  <a href="https://download.margrop.net" target="_blank" rel="noopener">下载</a>
+  <a href="/post/favorites/">Link</a>
+  <a href="/post/github-project-stars/">Github</a>
+  
+  <a href="https://github-mirrors.margrop.net" target="_blank" rel="noopener">Github加速</a>
+  <a href="https://status.anye.xyz/" target="_blank" rel="noopener">Docker加速</a>
+  
+</nav>
+
+    
+<div class="language-switcher">
+  
+    <a href="/post/pve-ubuntu-vm-disk-resize/" class="active">中文</a>
+  
+    <a href="/en/post/pve-ubuntu-vm-disk-resize/" class="">English</a>
+  
+</div>
+
+
+    
+    <article>
+        <h1>PVE 中给 Ubuntu 虚拟机扩容磁盘——从 Web 界面到系统内部的完整操作</h1>
+        <div class="meta">
+            发布时间: 2026-03-23
+        </div>
+        
+<div class="tags">
+    
+    <a href="/tag/proxmox-ve/"><span class="tag">Proxmox VE</span></a>
+    
+    <a href="/tag/ubuntu/"><span class="tag">Ubuntu</span></a>
+    
+    <a href="/tag/lvm/"><span class="tag">LVM</span></a>
+    
+    <a href="/tag/%E7%A3%81%E7%9B%98%E6%89%A9%E5%AE%B9/"><span class="tag">磁盘扩容</span></a>
+    
+    <a href="/tag/%E8%BF%90%E7%BB%B4/"><span class="tag">运维</span></a>
+    
+</div>
+
+
+        <div class="content">
+            <blockquote>
+<p><strong>写在前面</strong>
+在使用 Proxmox VE 管理虚拟化环境时，磁盘空间不足是迟早会遇到的问题。也许是一台跑 Docker 的 Ubuntu 镜像越拉越多，也许是数据库日志把根分区撑满了——总之，扩容是 PVE 运维的必修课。本文从 PVE Web 界面的磁盘 Resize 开始，到 Ubuntu 虚拟机内部 LVM 扩容的每一步命令，手把手带你完成整个流程。</p>
+</blockquote>
+<hr>
+<h2 id="1-为什么需要扩容">1 为什么需要扩容？</h2>
+<p>PVE 创建虚拟机时通常会分配一个固定大小的虚拟磁盘（比如 32GB）。随着业务发展，这个空间可能不够用了。好在 PVE 支持在线扩容虚拟磁盘，而 Ubuntu 默认安装使用的 LVM 也天然支持动态扩展逻辑卷，两者配合非常方便。</p>
+<p>整个扩容流程分为<strong>两个阶段</strong>：</p>
+<ol>
+<li><strong>PVE 侧</strong>：在 Web 界面上给虚拟机的磁盘增加容量（相当于给虚拟机&quot;换了一块更大的硬盘&quot;）</li>
+<li><strong>Ubuntu 侧</strong>：在虚拟机内部识别新增空间，扩展分区、物理卷、逻辑卷和文件系统</li>
+</ol>
+<hr>
+<h2 id="2-前置条件">2 前置条件</h2>
+<table>
+<thead>
+<tr>
+<th>项目</th>
+<th>要求</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>PVE 版本</td>
+<td>6.x / 7.x / 8.x 均可</td>
+</tr>
+<tr>
+<td>虚拟机系统</td>
+<td>Ubuntu 20.04 / 22.04 / 24.04（使用 LVM 分区方案安装）</td>
+</tr>
+<tr>
+<td>磁盘控制器</td>
+<td>VirtIO SCSI 或 IDE（推荐 VirtIO SCSI）</td>
+</tr>
+<tr>
+<td>权限</td>
+<td>PVE Web 界面管理员 + 虚拟机内 root 权限</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p><strong>提示</strong>：Ubuntu Server 默认安装时会使用 LVM 方案，根分区一般在 <code>/dev/mapper/ubuntu--vg-ubuntu--lv</code>。如果你安装时选择了手动分区且没有使用 LVM，则需要使用 <code>growpart</code> 等工具来扩展分区，流程会略有不同。</p>
+</blockquote>
+<hr>
+<h2 id="3-第一阶段pve-侧扩容">3 第一阶段：PVE 侧扩容</h2>
+<h3 id="31-在-web-界面操作">3.1 在 Web 界面操作</h3>
+<ol>
+<li>登录 PVE 管理界面（<code>https://&lt;PVE_IP&gt;:8006</code>）</li>
+<li>在左侧选中目标虚拟机，点击 <strong>Hardware（硬件）</strong> 标签</li>
+<li>选中需要扩容的磁盘（例如 <code>scsi0</code> 或 <code>virtio0</code>），点击上方的 <strong>Resize disk（调整磁盘大小）</strong> 按钮</li>
+<li>在弹出的对话框中输入要<strong>增加</strong>的大小（注意：是增量，不是目标大小）。例如输入 <code>50</code> 表示增加 50GB</li>
+<li>点击 <strong>Resize disk</strong> 确认</li>
+</ol>
+<p><img alt="PVE Web 界面 Resize disk 对话框" src="/post-images/pve-disk-resize/pve-resize-dialog.png"></p>
+<h3 id="32-使用命令行操作可选">3.2 使用命令行操作（可选）</h3>
+<p>如果你更习惯命令行，也可以 SSH 到 PVE 宿主机执行：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># 语法：qm resize &lt;vmid&gt; &lt;disk&gt; &lt;size&gt;</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 例如给 VM 100 的 scsi0 磁盘增加 50G</span>
+</span></span><span style="display:flex;"><span>qm resize <span style="color:#ae81ff">100</span> scsi0 +50G
+</span></span></code></pre></div><p>执行完成后，PVE 已经把虚拟磁盘的总容量增大了。但此时 Ubuntu 虚拟机内部还不知道磁盘变大了——就像你给电脑换了一块更大的硬盘，但操作系统还没有识别新增空间。</p>
+<hr>
+<h2 id="4-第二阶段ubuntu-虚拟机内部扩容">4 第二阶段：Ubuntu 虚拟机内部扩容</h2>
+<p>接下来 SSH 进入 Ubuntu 虚拟机，执行以下步骤。</p>
+<h3 id="41-确认当前磁盘状态">4.1 确认当前磁盘状态</h3>
+<p>首先查看当前的磁盘和分区信息：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># 查看分区表信息</span>
+</span></span><span style="display:flex;"><span>parted -l
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 查看磁盘设备列表</span>
+</span></span><span style="display:flex;"><span>fdisk -l
+</span></span></code></pre></div><p>你应该能看到 <code>/dev/sda</code>（或 <code>/dev/vda</code>，取决于磁盘控制器类型）的总容量已经变大了，但现有分区还没有占满整块磁盘。</p>
+<p>典型的分区布局如下：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>Device       Start      End  Sectors  Size Type
+</span></span><span style="display:flex;"><span>/dev/sda1     2048     4095     2048    1M BIOS boot
+</span></span><span style="display:flex;"><span>/dev/sda2     4096  3674111  3670016  1.8G Linux filesystem
+</span></span><span style="display:flex;"><span>/dev/sda3  3674112 67108830 63434719 30.2G Linux filesystem   ← 这是 LVM 物理卷所在分区
+</span></span></code></pre></div><p>可以看到 <code>sda3</code> 还是原来的大小，而磁盘总容量已经增大了。</p>
+<h3 id="42-扩展分区">4.2 扩展分区</h3>
+<p>使用 <code>cfdisk</code> 交互式工具来扩展 <code>sda3</code> 分区：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>cfdisk /dev/sda
+</span></span></code></pre></div><p>操作步骤：</p>
+<ol>
+<li>用方向键选中 <code>/dev/sda3</code> 分区</li>
+<li>选择 <strong>Resize</strong> 选项</li>
+<li>默认会显示可用的最大空间，直接回车确认</li>
+<li>选择 <strong>Write</strong> 写入分区表</li>
+<li>输入 <code>yes</code> 确认</li>
+<li>选择 <strong>Quit</strong> 退出</li>
+</ol>
+<p><img alt="cfdisk 分区编辑器界面" src="/post-images/pve-disk-resize/cfdisk-partition.png"></p>
+<blockquote>
+<p><strong>为什么用 cfdisk 而不是 fdisk？</strong>
+<code>cfdisk</code> 提供了一个友好的文字界面，操作更直观。当然你也可以用 <code>fdisk</code> 或 <code>parted</code> 来完成同样的操作，但 <code>cfdisk</code> 对于这种简单的分区调整最为便捷。</p>
+</blockquote>
+<h3 id="43-扩展物理卷pv">4.3 扩展物理卷（PV）</h3>
+<p>分区扩展后，需要通知 LVM 物理卷也扩展到新的分区大小：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># 查看扩展前的状态</span>
+</span></span><span style="display:flex;"><span>lsblk
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 扩展物理卷</span>
+</span></span><span style="display:flex;"><span>pvresize /dev/sda3
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 确认扩展结果</span>
+</span></span><span style="display:flex;"><span>lsblk
+</span></span></code></pre></div><p>执行 <code>pvresize</code> 后，<code>lsblk</code> 应该能看到 <code>sda3</code> 的大小已经增长到新的容量。</p>
+<h3 id="44-扩展逻辑卷lv">4.4 扩展逻辑卷（LV）</h3>
+<p>物理卷扩展后，卷组（VG）的可用空间也随之增大。现在把所有新增空间分配给根文件系统的逻辑卷：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># 将卷组中全部空闲空间分配给逻辑卷</span>
+</span></span><span style="display:flex;"><span>lvextend -l +100%FREE /dev/mapper/ubuntu--vg-ubuntu--lv
+</span></span></code></pre></div><p>参数说明：</p>
+<ul>
+<li><code>-l +100%FREE</code>：使用卷组中 100% 的剩余空间</li>
+<li><code>/dev/mapper/ubuntu--vg-ubuntu--lv</code>：Ubuntu 默认的根逻辑卷路径</li>
+</ul>
+<blockquote>
+<p><strong>不确定逻辑卷路径？</strong> 可以用 <code>lvs</code> 或 <code>lvdisplay</code> 命令查看。</p>
+</blockquote>
+<h3 id="45-扩展文件系统">4.5 扩展文件系统</h3>
+<p>逻辑卷扩展后，文件系统还需要手动 resize 才能使用新空间：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># 扩展 ext4 文件系统（Ubuntu 默认）</span>
+</span></span><span style="display:flex;"><span>resize2fs /dev/mapper/ubuntu--vg-ubuntu--lv
+</span></span></code></pre></div><blockquote>
+<p><strong>注意</strong>：如果你的文件系统是 XFS 而非 ext4，应使用 <code>xfs_growfs /</code> 代替 <code>resize2fs</code>。</p>
+</blockquote>
+<p><img alt="LVM 扩容命令执行过程" src="/post-images/pve-disk-resize/lvm-extend.png"></p>
+<h3 id="46-验证结果">4.6 验证结果</h3>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>df -h
+</span></span></code></pre></div><p>此时应该能看到根分区的大小已经增长到扩容后的大小，可用空间也大幅增加。</p>
+<p><img alt="df -h 验证扩容结果" src="/post-images/pve-disk-resize/df-result.png"></p>
+<hr>
+<h2 id="5-完整命令速查">5 完整命令速查</h2>
+<p>如果你已经熟悉了上述流程，以下是可以直接执行的命令汇总（PVE 侧操作已在 Web 界面完成的前提下）：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># ① 查看磁盘状态</span>
+</span></span><span style="display:flex;"><span>parted -l
+</span></span><span style="display:flex;"><span>fdisk -l
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># ② 扩展分区（交互式）</span>
+</span></span><span style="display:flex;"><span>cfdisk /dev/sda
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># ③ 扩展物理卷</span>
+</span></span><span style="display:flex;"><span>pvresize /dev/sda3
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># ④ 扩展逻辑卷</span>
+</span></span><span style="display:flex;"><span>lvextend -l +100%FREE /dev/mapper/ubuntu--vg-ubuntu--lv
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># ⑤ 扩展文件系统</span>
+</span></span><span style="display:flex;"><span>resize2fs /dev/mapper/ubuntu--vg-ubuntu--lv
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># ⑥ 验证</span>
+</span></span><span style="display:flex;"><span>df -h
+</span></span></code></pre></div><hr>
+<h2 id="6-常见问题">6 常见问题</h2>
+<h3 id="q1扩容后-df--h-没变化">Q1：扩容后 <code>df -h</code> 没变化？</h3>
+<p>检查是否漏掉了 <code>resize2fs</code> 步骤。<code>lvextend</code> 只是扩展了逻辑卷的块设备大小，文件系统并不会自动跟进。</p>
+<h3 id="q2pvresize-报错-device-not-found">Q2：<code>pvresize</code> 报错 &ldquo;Device not found&rdquo;？</h3>
+<p>确认你的磁盘设备名是否正确。如果虚拟机使用的是 VirtIO 控制器，设备名可能是 <code>/dev/vda3</code> 而不是 <code>/dev/sda3</code>。用 <code>lsblk</code> 确认即可。</p>
+<h3 id="q3可以在虚拟机运行时扩容吗">Q3：可以在虚拟机运行时扩容吗？</h3>
+<p>可以。PVE 侧的 Resize 和 Ubuntu 内部的 LVM 扩容都支持在线操作（无需关机或重启）。这也是 LVM + VirtIO 方案的一大优势。</p>
+<h3 id="q4能不能缩小磁盘">Q4：能不能缩小磁盘？</h3>
+<p>PVE <strong>不支持</strong>在线缩小虚拟磁盘。如果确实需要缩容，通常只能新建一个更小的磁盘，然后迁移数据。因此在初始分配时无需过于保守——扩容容易，缩容困难。</p>
+<hr>
+<h2 id="7-总结">7 总结</h2>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>PVE Web 界面 Resize  →  cfdisk 扩展分区  →  pvresize 扩展 PV  →  lvextend 扩展 LV  →  resize2fs 扩展文件系统
+</span></span></code></pre></div><p>整个流程五步走，全程在线操作，无需停机。PVE + Ubuntu LVM 的组合让磁盘扩容变得非常简单：PVE 负责虚拟层面的&quot;硬件升级&quot;，Ubuntu 内部的 LVM 负责&quot;软件适配&quot;。掌握这个流程后，以后再遇到磁盘告警就不用慌了——几分钟搞定，业务零中断。</p>
+        </div>
+    </article>
+
+    
+  
+
+
+  
+    
+  
+
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk/dist/gitalk.css">
+<script src="https://cdn.jsdelivr.net/npm/gitalk/dist/gitalk.min.js"></script>
+<div id="gitalk-container" style="margin-top:40px"></div>
+<script>
+  (function(){
+    var gitalk = new Gitalk({
+      clientID: '3181fd94e501cc5db0ad',
+      clientSecret: 'af1dab79dae02c69296e6615bfcecf47fc8615ee',
+      repo: 'margropcomment.margrop.io',
+      owner: 'margrop',
+      admin: ["margrop"],
+      
+      id: '\/post\/pve-ubuntu-vm-disk-resize\/',
+      
+      distractionFreeMode: false
+    });
+    gitalk.render('gitalk-container');
+  })();
+</script>
+  
+
+
+
+
+    
+    <script type="text/javascript" src="https://js.users.51.la/21044367.js"></script>
+    <script charset="UTF-8" id="LA_COLLECT" src="//sdk.51.la/js-sdk-pro.min.js"></script>
+    <script>LA.init({id: "1vVTUWl7zoRjnKXi",ck: "1vVTUWl7zoRjnKXi"})</script>
+    <script src="https://sdk.51.la/perf/js-sdk-perf.min.js" crossorigin="anonymous"></script>
+    <script>
+      new LingQue.Monitor().init({id:"202teQt8THXwqyve"});
+    </script>
+</body>
+</html>
