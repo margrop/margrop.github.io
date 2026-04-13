@@ -1,0 +1,899 @@
+<!doctype html>
+<html lang="cn"><head>
+<title>记一次Docker容器内部网卡&#34;假死&#34;故障排查：从表象到根因 - 魔都水滴</title>
+<meta charset="UTF-8">
+<meta name="keywords" content="">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5">
+
+<link rel="shortcut icon" href="/favicon.ico" type="image/x-icon" />
+<meta name="description" content="记一次Docker容器内部网卡”假死”故障排查：从表象到根因前言Docker容器的网络问题，是运维工作中最常见也最让人头疼的问题之一。相比于虚拟机或物理机，容器的网络模型更加复杂——它涉及Docker的网络驱动（bridge、host、overlay、macvlan等）、宿主机的网络配置、容器内部的iptables规则，以及Linux内核的网络栈。任何一个环节出问题，都可能导致容器内部网络完全不可">
+<meta property="og:type" content="article">
+<meta property="og:title" content="记一次Docker容器内部网卡&quot;假死&quot;故障排查：从表象到根因">
+<meta property="og:url" content="http://blog.margrop.com/post/2026-04-13-docker-container-network-card-death-troubleshooting/index.html">
+<meta property="og:site_name" content="魔都水滴">
+<meta property="og:description" content="记一次Docker容器内部网卡”假死”故障排查：从表象到根因前言Docker容器的网络问题，是运维工作中最常见也最让人头疼的问题之一。相比于虚拟机或物理机，容器的网络模型更加复杂——它涉及Docker的网络驱动（bridge、host、overlay、macvlan等）、宿主机的网络配置、容器内部的iptables规则，以及Linux内核的网络栈。任何一个环节出问题，都可能导致容器内部网络完全不可">
+<meta property="og:locale">
+<meta property="article:published_time" content="2026-04-13T13:30:00.000Z">
+<meta property="article:modified_time" content="2026-04-13T13:05:30.400Z">
+<meta property="article:author" content="Margrop">
+<meta property="article:tag" content="运维">
+<meta property="article:tag" content="技术">
+<meta property="article:tag" content="问题排查">
+<meta property="article:tag" content="网络">
+<meta property="article:tag" content="Docker">
+<meta property="article:tag" content="容器">
+<meta name="twitter:card" content="summary">
+
+<link rel="stylesheet" href="../../lib/fancybox/fancybox.css">
+<link rel="stylesheet" href="../../lib/mdui_043tiny/mdui.css">
+
+
+<link rel="stylesheet" href="../../lib/iconfont/iconfont.css?v=1776085608661">
+
+<link rel="stylesheet" href="../../css/style.css?v=1776085608661">
+
+
+
+
+    
+        <link rel="stylesheet" href="../../custom.css?v=1776085608661">
+    
+
+
+
+<script src="../../lib/mdui_043tiny/mdui.js" async></script>
+<script src="../../lib/fancybox/fancybox.umd.js" async></script>
+<script src="../../lib/lax.min.js" async></script>
+
+
+<script async src="../../js/app.js?v=1776085608661"></script>
+
+ 
+
+<script charset="UTF-8" id="LA_COLLECT" src="//sdk.51.la/js-sdk-pro.min.js"></script>
+<script>LA.init({id:"23bDEwNOu1L8NhV1",ck:"23bDEwNOu1L8NhV1"})</script>
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-4NGHEP8LEV"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+
+  gtag('config', 'G-4NGHEP8LEV');
+</script>
+
+
+<link rel="stylesheet"  href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/atom-one-dark.min.css">
+<meta name="generator" content="Hexo 7.3.0"><link rel="alternate" href="atom.xml" title="魔都水滴" type="application/atom+xml">
+</head><body class="nexmoe mdui-drawer-body-left"><div id="nexmoe-background"><div class="nexmoe-bg" style="background-image: url(/images/background.webp)"></div><div class="mdui-appbar mdui-shadow-0"><div class="mdui-toolbar"><a class="mdui-btn mdui-btn-icon mdui-ripple" mdui-drawer="{target: &#039;#drawer&#039;, swipe: true}" title="menu"><i class="mdui-icon nexmoefont icon-menu"></i></a><div class="mdui-toolbar-spacer"></div><a class="mdui-btn mdui-btn-icon" href="../../index.html" title="Margrop"><img src="/images/avatar.webp" alt="Margrop"></a></div></div></div><div id="nexmoe-header"><div class="nexmoe-drawer mdui-drawer" id="drawer">
+    <div class="nexmoe-avatar mdui-ripple">
+        <a href="../../index.html" title="Margrop">
+            <img src="/images/avatar.webp" alt="Margrop" alt="Margrop">
+        </a>
+    </div>
+    <div class="nexmoe-count">
+        <div><span>Articles</span>260</div>
+        <div><span>Tags</span>428</div>
+        <div><span>Categories</span>23</div>
+    </div>
+    <div class="nexmoe-list mdui-list" mdui-collapse="{accordion: true}">
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" href="../../index.html" title="回到首页">
+            <i class="mdui-list-item-icon nexmoefont icon-home"></i>
+            <div class="mdui-list-item-content">
+                回到首页
+            </div>
+        </a>
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" href="../../post/archives/" title="文章归档">
+            <i class="mdui-list-item-icon nexmoefont icon-container"></i>
+            <div class="mdui-list-item-content">
+                文章归档
+            </div>
+        </a>
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" target="_blank" rel="noopener" href="https://example.com/" title="下载">
+            <i class="mdui-list-item-icon nexmoefont icon-container"></i>
+            <div class="mdui-list-item-content">
+                下载
+            </div>
+        </a>
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" href="../../post/favorites/" title="常用链接">
+            <i class="mdui-list-item-icon nexmoefont icon-unorderedlist"></i>
+            <div class="mdui-list-item-content">
+                常用链接
+            </div>
+        </a>
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" href="../../post/github-project-stars/" title="GithubStars">
+            <i class="mdui-list-item-icon nexmoefont icon-github"></i>
+            <div class="mdui-list-item-content">
+                GithubStars
+            </div>
+        </a>
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" href="../../post/donate/" title="给我赞助">
+            <i class="mdui-list-item-icon nexmoefont icon-coffee"></i>
+            <div class="mdui-list-item-content">
+                给我赞助
+            </div>
+        </a>
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" href="../../post/about/" title="关于博主">
+            <i class="mdui-list-item-icon nexmoefont icon-info-circle"></i>
+            <div class="mdui-list-item-content">
+                关于博主
+            </div>
+        </a>
+        
+    </div>
+    
+    
+        
+        <div class="nexmoe-widget-wrap">
+    <div class="nexmoe-widget nexmoe-search">
+         
+            <form id="search_form" action_e="https://cn.bing.com/search?q=site:example.com" onsubmit="return search();">
+                <label><input id="search_value" name="q" type="search" placeholder="Search"></label>
+            </form>
+         
+    </div>
+</div>
+
+
+
+
+    
+        
+        <div class="nexmoe-widget-wrap">
+	<div class="nexmoe-widget nexmoe-social">
+		<a
+			class="mdui-ripple"
+			href="http://qm.qq.com/cgi-bin/qm/qr?_wv=1027&k=weD8TANNWdCOveAMcdmoAxOKt5owKkDS"
+			target="_blank"
+			mdui-tooltip="{content: 'QQ群'}"
+			style="
+				color: rgb(249, 174, 8);
+				background-color: rgba(249, 174, 8, .1);
+			"
+		>
+			<i
+				class="nexmoefont icon-QQ"
+			></i> </a
+		><a
+			class="mdui-ripple"
+			href="https://github.com/margrop/"
+			target="_blank"
+			mdui-tooltip="{content: 'GitHub'}"
+			style="
+				color: rgb(25, 23, 23);
+				background-color: rgba(25, 23, 23, .1);
+			"
+		>
+			<i
+				class="nexmoefont icon-github"
+			></i> </a
+		><a
+			class="mdui-ripple"
+			href="../../atom.xml"
+			target="_blank"
+			mdui-tooltip="{content: 'RSS'}"
+			style="
+				color: rgb(247, 132, 34);
+				background-color: rgba(247, 132, 34, .1);
+			"
+		>
+			<i
+				class="nexmoefont icon-rss"
+			></i> </a
+		>
+	</div>
+</div>
+
+    
+        
+        
+  <div class="nexmoe-widget-wrap">
+    <h3 class="nexmoe-widget-title">Categories</h3>
+    <div class="nexmoe-widget">
+
+      <ul class="category-list">
+
+        
+
+
+        
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/Adblocker/">Adblocker</a>
+          <span class="category-list-count">1</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/Android/">Android</a>
+          <span class="category-list-count">2</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/CentOS/">CentOS</a>
+          <span class="category-list-count">6</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/Container/">Container</a>
+          <span class="category-list-count">10</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/Git/">Git</a>
+          <span class="category-list-count">7</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/HomeAssistant/">HomeAssistant</a>
+          <span class="category-list-count">1</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/MacOS/">MacOS</a>
+          <span class="category-list-count">11</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/PVE/">PVE</a>
+          <span class="category-list-count">19</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/SmartHome/">SmartHome</a>
+          <span class="category-list-count">5</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/Synology/">Synology</a>
+          <span class="category-list-count">4</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/Ubuntu/">Ubuntu</a>
+          <span class="category-list-count">4</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/Windows/">Windows</a>
+          <span class="category-list-count">3</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/ai-diary/">ai_diary</a>
+          <span class="category-list-count">53</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/ai-tech/">ai_tech</a>
+          <span class="category-list-count">49</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/develop/">develop</a>
+          <span class="category-list-count">28</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/fuckgfw/">fuckgfw</a>
+          <span class="category-list-count">2</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/n2n/">n2n</a>
+          <span class="category-list-count">9</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/">network</a>
+          <span class="category-list-count">112</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/notes/">notes</a>
+          <span class="category-list-count">10</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/others/">others</a>
+          <span class="category-list-count">3</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/router/">router</a>
+          <span class="category-list-count">7</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/sport/">sport</a>
+          <span class="category-list-count">4</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/tvbox/">tvbox</a>
+          <span class="category-list-count">3</span>
+        </li>
+
+        
+      </ul>
+
+    </div>
+  </div>
+
+
+    
+        
+        
+  <div class="nexmoe-widget-wrap">
+    <div id="randomtagcloud" class="nexmoe-widget tagcloud nexmoe-rainbow">
+      <a href="../../tags/1password/" style="font-size: 10px;">1password</a> <a href="../../tags/AC/" style="font-size: 10.5px;">AC</a> <a href="../../tags/ACP/" style="font-size: 10px;">ACP</a> <a href="../../tags/AI/" style="font-size: 11.5px;">AI</a> <a href="../../tags/AP/" style="font-size: 11px;">AP</a> <a href="../../tags/API/" style="font-size: 10.5px;">API</a> <a href="../../tags/AppDaemon/" style="font-size: 10px;">AppDaemon</a> <a href="../../tags/Aqara/" style="font-size: 10px;">Aqara</a> <a href="../../tags/CI-CD/" style="font-size: 10.5px;">CI/CD</a> <a href="../../tags/Caddy/" style="font-size: 10px;">Caddy</a> <a href="../../tags/Cloudflare/" style="font-size: 10px;">Cloudflare</a> <a href="../../tags/Cookie-%E8%AE%A4%E8%AF%81/" style="font-size: 10px;">Cookie 认证</a> <a href="../../tags/Cron/" style="font-size: 11px;">Cron</a> <a href="../../tags/D1/" style="font-size: 10px;">D1</a> <a href="../../tags/Date/" style="font-size: 10px;">Date</a> <a href="../../tags/Diagrams-net/" style="font-size: 10px;">Diagrams.net</a> <a href="../../tags/Docker/" style="font-size: 16px;">Docker</a> <a href="../../tags/Docker-Compose/" style="font-size: 10px;">Docker Compose</a> <a href="../../tags/Electerm/" style="font-size: 10px;">Electerm</a> <a href="../../tags/Gateway/" style="font-size: 10.5px;">Gateway</a> <a href="../../tags/GitHub-Actions/" style="font-size: 10.5px;">GitHub Actions</a> <a href="../../tags/HA/" style="font-size: 10px;">HA</a> <a href="../../tags/HADashboard/" style="font-size: 10px;">HADashboard</a> <a href="../../tags/Hexo/" style="font-size: 11px;">Hexo</a> <a href="../../tags/HomeAssistant/" style="font-size: 10px;">HomeAssistant</a> <a href="../../tags/IP/" style="font-size: 10px;">IP</a> <a href="../../tags/IPv4/" style="font-size: 10px;">IPv4</a> <a href="../../tags/Java/" style="font-size: 12px;">Java</a> <a href="../../tags/LVM%E2%80%91Thin/" style="font-size: 10.5px;">LVM‑Thin</a> <a href="../../tags/Linux/" style="font-size: 12.5px;">Linux</a> <a href="../../tags/MacOS/" style="font-size: 11px;">MacOS</a> <a href="../../tags/Markdown/" style="font-size: 10px;">Markdown</a> <a href="../../tags/MiniMax/" style="font-size: 10px;">MiniMax</a> <a href="../../tags/Multi-Agent/" style="font-size: 10px;">Multi-Agent</a> <a href="../../tags/MySQL/" style="font-size: 11px;">MySQL</a> <a href="../../tags/NAS/" style="font-size: 11px;">NAS</a> <a href="../../tags/Nginx/" style="font-size: 10px;">Nginx</a> <a href="../../tags/Node-js/" style="font-size: 10px;">Node.js</a> <a href="../../tags/OpenAI/" style="font-size: 10px;">OpenAI</a> <a href="../../tags/OpenClaw/" style="font-size: 17.5px;">OpenClaw</a> <a href="../../tags/OpenResty/" style="font-size: 10px;">OpenResty</a> <a href="../../tags/PPPoE/" style="font-size: 10px;">PPPoE</a> <a href="../../tags/Portainer/" style="font-size: 10px;">Portainer</a> <a href="../../tags/PostgreSQL/" style="font-size: 10px;">PostgreSQL</a> <a href="../../tags/ProcessOn/" style="font-size: 10px;">ProcessOn</a> <a href="../../tags/Prometheus/" style="font-size: 11px;">Prometheus</a> <a href="../../tags/Proxmox-VE/" style="font-size: 17px;">Proxmox VE</a> <a href="../../tags/SOCKS5/" style="font-size: 10px;">SOCKS5</a> <a href="../../tags/SSL/" style="font-size: 10px;">SSL</a> <a href="../../tags/Session/" style="font-size: 10px;">Session</a> <a href="../../tags/Shell/" style="font-size: 10.5px;">Shell</a> <a href="../../tags/Subagent/" style="font-size: 10px;">Subagent</a> <a href="../../tags/TTS/" style="font-size: 10px;">TTS</a> <a href="../../tags/TimeMachine/" style="font-size: 10px;">TimeMachine</a> <a href="../../tags/UML/" style="font-size: 10px;">UML</a> <a href="../../tags/Uptime-Kuma/" style="font-size: 10.5px;">Uptime Kuma</a> <a href="../../tags/VPN/" style="font-size: 10px;">VPN</a> <a href="../../tags/VPS/" style="font-size: 10.5px;">VPS</a> <a href="../../tags/Web/" style="font-size: 10px;">Web</a> <a href="../../tags/Windows/" style="font-size: 10px;">Windows</a> <a href="../../tags/Workers/" style="font-size: 10px;">Workers</a> <a href="../../tags/activate/" style="font-size: 10.5px;">activate</a> <a href="../../tags/ad/" style="font-size: 10px;">ad</a> <a href="../../tags/adb/" style="font-size: 10px;">adb</a> <a href="../../tags/adblock/" style="font-size: 10.5px;">adblock</a> <a href="../../tags/agent/" style="font-size: 10px;">agent</a> <a href="../../tags/aligenie/" style="font-size: 10px;">aligenie</a> <a href="../../tags/aliyun/" style="font-size: 11px;">aliyun</a> <a href="../../tags/alpine/" style="font-size: 10px;">alpine</a> <a href="../../tags/annotation/" style="font-size: 10px;">annotation</a> <a href="../../tags/aop/" style="font-size: 10px;">aop</a> <a href="../../tags/authy/" style="font-size: 10px;">authy</a> <a href="../../tags/autofs/" style="font-size: 10px;">autofs</a> <a href="../../tags/backup/" style="font-size: 10px;">backup</a> <a href="../../tags/baidupan/" style="font-size: 10px;">baidupan</a> <a href="../../tags/bash/" style="font-size: 11px;">bash</a> <a href="../../tags/bitwarden/" style="font-size: 10px;">bitwarden</a> <a href="../../tags/boot/" style="font-size: 10.5px;">boot</a> <a href="../../tags/brew/" style="font-size: 10.5px;">brew</a> <a href="../../tags/browser/" style="font-size: 10px;">browser</a> <a href="../../tags/caddy2/" style="font-size: 10.5px;">caddy2</a> <a href="../../tags/cdn/" style="font-size: 10px;">cdn</a> <a href="../../tags/centos/" style="font-size: 15px;">centos</a> <a href="../../tags/cert/" style="font-size: 10.5px;">cert</a> <a href="../../tags/certbot/" style="font-size: 10px;">certbot</a> <a href="../../tags/charles/" style="font-size: 10px;">charles</a> <a href="../../tags/chat/" style="font-size: 10px;">chat</a> <a href="../../tags/chrome/" style="font-size: 11px;">chrome</a> <a href="../../tags/classloader/" style="font-size: 10px;">classloader</a> <a href="../../tags/client/" style="font-size: 11px;">client</a> <a href="../../tags/clone/" style="font-size: 10.5px;">clone</a> <a href="../../tags/closures/" style="font-size: 10px;">closures</a> <a href="../../tags/cloudflare/" style="font-size: 10.5px;">cloudflare</a> <a href="../../tags/cmd/" style="font-size: 10px;">cmd</a> <a href="../../tags/command/" style="font-size: 10px;">command</a> <a href="../../tags/commit/" style="font-size: 10px;">commit</a> <a href="../../tags/container/" style="font-size: 10px;">container</a> <a href="../../tags/crontab/" style="font-size: 10px;">crontab</a> <a href="../../tags/ctyun/" style="font-size: 10.5px;">ctyun</a> <a href="../../tags/ddsm/" style="font-size: 10px;">ddsm</a> <a href="../../tags/demo/" style="font-size: 10px;">demo</a> <a href="../../tags/dependency/" style="font-size: 10px;">dependency</a> <a href="../../tags/deploy/" style="font-size: 10px;">deploy</a> <a href="../../tags/developer/" style="font-size: 10px;">developer</a> <a href="../../tags/devtools/" style="font-size: 10px;">devtools</a> <a href="../../tags/dll/" style="font-size: 10px;">dll</a> <a href="../../tags/dns/" style="font-size: 11px;">dns</a> <a href="../../tags/docker/" style="font-size: 14px;">docker</a> <a href="../../tags/domain/" style="font-size: 10px;">domain</a> <a href="../../tags/download/" style="font-size: 10px;">download</a> <a href="../../tags/draw/" style="font-size: 10.5px;">draw</a> <a href="../../tags/drawio/" style="font-size: 10px;">drawio</a> <a href="../../tags/dsm/" style="font-size: 13.5px;">dsm</a> <a href="../../tags/dump/" style="font-size: 10px;">dump</a> <a href="../../tags/dylib/" style="font-size: 10px;">dylib</a> <a href="../../tags/edge/" style="font-size: 11px;">edge</a> <a href="../../tags/exception/" style="font-size: 10.5px;">exception</a> <a href="../../tags/export/" style="font-size: 10px;">export</a> <a href="../../tags/fail2ban/" style="font-size: 10px;">fail2ban</a> <a href="../../tags/feign/" style="font-size: 10px;">feign</a> <a href="../../tags/firewall-cmd/" style="font-size: 10.5px;">firewall-cmd</a> <a href="../../tags/flow/" style="font-size: 10px;">flow</a> <a href="../../tags/frp/" style="font-size: 10.5px;">frp</a> <a href="../../tags/frpc/" style="font-size: 11.5px;">frpc</a> <a href="../../tags/frps/" style="font-size: 10.5px;">frps</a> <a href="../../tags/fuckgfw/" style="font-size: 11.5px;">fuckgfw</a> <a href="../../tags/function/" style="font-size: 10px;">function</a> <a href="../../tags/gcc/" style="font-size: 10px;">gcc</a> <a href="../../tags/gfw/" style="font-size: 10.5px;">gfw</a> <a href="../../tags/git/" style="font-size: 12.5px;">git</a> <a href="../../tags/github/" style="font-size: 13px;">github</a> <a href="../../tags/golang/" style="font-size: 10px;">golang</a> <a href="../../tags/gperftools/" style="font-size: 10px;">gperftools</a> <a href="../../tags/gridea/" style="font-size: 10.5px;">gridea</a> <a href="../../tags/grub/" style="font-size: 10.5px;">grub</a> <a href="../../tags/gvt-g/" style="font-size: 10px;">gvt-g</a> <a href="../../tags/hacs/" style="font-size: 10px;">hacs</a> <a href="../../tags/havcs/" style="font-size: 10.5px;">havcs</a> <a href="../../tags/heap/" style="font-size: 10px;">heap</a> <a href="../../tags/hello/" style="font-size: 10.5px;">hello</a> <a href="../../tags/hexo/" style="font-size: 11px;">hexo</a> <a href="../../tags/hibernate/" style="font-size: 10.5px;">hibernate</a> <a href="../../tags/hidpi/" style="font-size: 10px;">hidpi</a> <a href="../../tags/hoisting/" style="font-size: 10px;">hoisting</a> <a href="../../tags/homeassistant/" style="font-size: 12px;">homeassistant</a> <a href="../../tags/hosts/" style="font-size: 10px;">hosts</a> <a href="../../tags/html/" style="font-size: 10.5px;">html</a> <a href="../../tags/htmlparser/" style="font-size: 10px;">htmlparser</a> <a href="../../tags/https/" style="font-size: 11px;">https</a> <a href="../../tags/idea/" style="font-size: 10px;">idea</a> <a href="../../tags/image/" style="font-size: 10px;">image</a> <a href="../../tags/img/" style="font-size: 10.5px;">img</a> <a href="../../tags/img2kvm/" style="font-size: 10px;">img2kvm</a> <a href="../../tags/import/" style="font-size: 10px;">import</a> <a href="../../tags/index/" style="font-size: 10px;">index</a> <a href="../../tags/install/" style="font-size: 12.5px;">install</a> <a href="../../tags/intel/" style="font-size: 10.5px;">intel</a> <a href="../../tags/io/" style="font-size: 10px;">io</a> <a href="../../tags/ios/" style="font-size: 10px;">ios</a> <a href="../../tags/ip/" style="font-size: 10px;">ip</a> <a href="../../tags/iptables/" style="font-size: 10px;">iptables</a> <a href="../../tags/iptv/" style="font-size: 10.5px;">iptv</a> <a href="../../tags/ipv6/" style="font-size: 10px;">ipv6</a> <a href="../../tags/iso/" style="font-size: 10px;">iso</a> <a href="../../tags/java/" style="font-size: 12px;">java</a> <a href="../../tags/javascript/" style="font-size: 10.5px;">javascript</a> <a href="../../tags/jetbrains/" style="font-size: 10px;">jetbrains</a> <a href="../../tags/jni/" style="font-size: 10px;">jni</a> <a href="../../tags/jnilib/" style="font-size: 10px;">jnilib</a> <a href="../../tags/jpa/" style="font-size: 10px;">jpa</a> <a href="../../tags/js/" style="font-size: 11px;">js</a> <a href="../../tags/json/" style="font-size: 10.5px;">json</a> <a href="../../tags/jsonb/" style="font-size: 10px;">jsonb</a> <a href="../../tags/jupter/" style="font-size: 10px;">jupter</a> <a href="../../tags/jupyterlab/" style="font-size: 10px;">jupyterlab</a> <a href="../../tags/jvm/" style="font-size: 10.5px;">jvm</a> <a href="../../tags/k8s/" style="font-size: 10.5px;">k8s</a> <a href="../../tags/kernel/" style="font-size: 10px;">kernel</a> <a href="../../tags/key/" style="font-size: 10px;">key</a> <a href="../../tags/kid/" style="font-size: 10px;">kid</a> <a href="../../tags/kms/" style="font-size: 10px;">kms</a> <a href="../../tags/kodi/" style="font-size: 10px;">kodi</a> <a href="../../tags/koolproxy/" style="font-size: 10.5px;">koolproxy</a> <a href="../../tags/koolproxyr/" style="font-size: 10.5px;">koolproxyr</a> <a href="../../tags/kvm/" style="font-size: 10.5px;">kvm</a> <a href="../../tags/lan/" style="font-size: 10px;">lan</a> <a href="../../tags/lastpass/" style="font-size: 10px;">lastpass</a> <a href="../../tags/launchctl/" style="font-size: 10px;">launchctl</a> <a href="../../tags/learning/" style="font-size: 10px;">learning</a> <a href="../../tags/lede/" style="font-size: 10px;">lede</a> <a href="../../tags/letsencrypt/" style="font-size: 11px;">letsencrypt</a> <a href="../../tags/linux/" style="font-size: 11.5px;">linux</a> <a href="../../tags/live/" style="font-size: 10px;">live</a> <a href="../../tags/low-code/" style="font-size: 10px;">low-code</a> <a href="../../tags/lvm/" style="font-size: 10px;">lvm</a> <a href="../../tags/lxc/" style="font-size: 10px;">lxc</a> <a href="../../tags/m3u8/" style="font-size: 10px;">m3u8</a> <a href="../../tags/mac/" style="font-size: 10.5px;">mac</a> <a href="../../tags/macos/" style="font-size: 10px;">macos</a> <a href="../../tags/mariadb/" style="font-size: 10px;">mariadb</a> <a href="../../tags/markdown/" style="font-size: 10px;">markdown</a> <a href="../../tags/maven/" style="font-size: 10.5px;">maven</a> <a href="../../tags/md5/" style="font-size: 10.5px;">md5</a> <a href="../../tags/microcode/" style="font-size: 10px;">microcode</a> <a href="../../tags/mirror/" style="font-size: 10.5px;">mirror</a> <a href="../../tags/modem/" style="font-size: 10px;">modem</a> <a href="../../tags/modules/" style="font-size: 10px;">modules</a> <a href="../../tags/monitor/" style="font-size: 10px;">monitor</a> <a href="../../tags/mount/" style="font-size: 10px;">mount</a> <a href="../../tags/mstsc/" style="font-size: 10px;">mstsc</a> <a href="../../tags/mysql/" style="font-size: 10px;">mysql</a> <a href="../../tags/n2n/" style="font-size: 13.5px;">n2n</a> <a href="../../tags/n5105/" style="font-size: 10px;">n5105</a> <a href="../../tags/nas/" style="font-size: 10px;">nas</a> <a href="../../tags/network/" style="font-size: 14px;">network</a> <a href="../../tags/nfs/" style="font-size: 10px;">nfs</a> <a href="../../tags/node/" style="font-size: 10.5px;">node</a> <a href="../../tags/node-red/" style="font-size: 10.5px;">node-red</a> <a href="../../tags/nodejs/" style="font-size: 11.5px;">nodejs</a> <a href="../../tags/nohup/" style="font-size: 10.5px;">nohup</a> <a href="../../tags/notepad/" style="font-size: 10px;">notepad++</a> <a href="../../tags/npm/" style="font-size: 12.5px;">npm</a> <a href="../../tags/nssm/" style="font-size: 10.5px;">nssm</a> <a href="../../tags/ntp/" style="font-size: 10px;">ntp</a> <a href="../../tags/oop/" style="font-size: 10px;">oop</a> <a href="../../tags/openfeign/" style="font-size: 10px;">openfeign</a> <a href="../../tags/openssl/" style="font-size: 10.5px;">openssl</a> <a href="../../tags/os/" style="font-size: 10px;">os</a> <a href="../../tags/otp/" style="font-size: 10px;">otp</a> <a href="../../tags/ovz/" style="font-size: 10px;">ovz</a> <a href="../../tags/p14/" style="font-size: 10px;">p14</a> <a href="../../tags/packet-capture/" style="font-size: 10px;">packet capture</a> <a href="../../tags/pat/" style="font-size: 10px;">pat</a> <a href="../../tags/pdf/" style="font-size: 10px;">pdf</a> <a href="../../tags/pem/" style="font-size: 10.5px;">pem</a> <a href="../../tags/perf/" style="font-size: 10px;">perf</a> <a href="../../tags/ping/" style="font-size: 10px;">ping</a> <a href="../../tags/pip/" style="font-size: 10px;">pip</a> <a href="../../tags/plugin/" style="font-size: 10px;">plugin</a> <a href="../../tags/png/" style="font-size: 10px;">png</a> <a href="../../tags/powerbutton/" style="font-size: 10px;">powerbutton</a> <a href="../../tags/print/" style="font-size: 10px;">print</a> <a href="../../tags/pro/" style="font-size: 10px;">pro</a> <a href="../../tags/proxy/" style="font-size: 10.5px;">proxy</a> <a href="../../tags/pve/" style="font-size: 17px;">pve</a> <a href="../../tags/pvekclean/" style="font-size: 11.5px;">pvekclean</a> <a href="../../tags/python/" style="font-size: 14.5px;">python</a> <a href="../../tags/qcow2/" style="font-size: 10px;">qcow2</a> <a href="../../tags/qemu/" style="font-size: 10.5px;">qemu</a> <a href="../../tags/qemu-guest-agent/" style="font-size: 10px;">qemu-guest-agent</a> <a href="../../tags/rar/" style="font-size: 10px;">rar</a> <a href="../../tags/reboot/" style="font-size: 10px;">reboot</a> <a href="../../tags/reflog/" style="font-size: 10px;">reflog</a> <a href="../../tags/remote/" style="font-size: 10px;">remote</a> <a href="../../tags/remote-desktop/" style="font-size: 10.5px;">remote desktop</a> <a href="../../tags/renew/" style="font-size: 10px;">renew</a> <a href="../../tags/repo/" style="font-size: 10px;">repo</a> <a href="../../tags/resize/" style="font-size: 10px;">resize</a> <a href="../../tags/retina/" style="font-size: 10px;">retina</a> <a href="../../tags/root/" style="font-size: 10px;">root</a> <a href="../../tags/route/" style="font-size: 10px;">route</a> <a href="../../tags/router/" style="font-size: 10.5px;">router</a> <a href="../../tags/rule/" style="font-size: 10px;">rule</a> <a href="../../tags/rules/" style="font-size: 10px;">rules</a> <a href="../../tags/runtime/" style="font-size: 10px;">runtime</a> <a href="../../tags/safari/" style="font-size: 10px;">safari</a> <a href="../../tags/sata/" style="font-size: 10px;">sata</a> <a href="../../tags/scipy-notebook/" style="font-size: 10px;">scipy-notebook</a> <a href="../../tags/scoping/" style="font-size: 10px;">scoping</a> <a href="../../tags/scp/" style="font-size: 10px;">scp</a> <a href="../../tags/server/" style="font-size: 10.5px;">server</a> <a href="../../tags/slmgr/" style="font-size: 10px;">slmgr</a> <a href="../../tags/so/" style="font-size: 10px;">so</a> <a href="../../tags/socks/" style="font-size: 10px;">socks</a> <a href="../../tags/source/" style="font-size: 10px;">source</a> <a href="../../tags/spk/" style="font-size: 10px;">spk</a> <a href="../../tags/spring/" style="font-size: 11.5px;">spring</a> <a href="../../tags/springboot/" style="font-size: 12.5px;">springboot</a> <a href="../../tags/springfox/" style="font-size: 11px;">springfox</a> <a href="../../tags/ssh/" style="font-size: 12px;">ssh</a> <a href="../../tags/ssl/" style="font-size: 10.5px;">ssl</a> <a href="../../tags/stash/" style="font-size: 10px;">stash</a> <a href="../../tags/string/" style="font-size: 10px;">string</a> <a href="../../tags/supernode/" style="font-size: 10.5px;">supernode</a> <a href="../../tags/svg/" style="font-size: 10px;">svg</a> <a href="../../tags/svn/" style="font-size: 10px;">svn</a> <a href="../../tags/swagger/" style="font-size: 11.5px;">swagger</a> <a href="../../tags/sync/" style="font-size: 10px;">sync</a> <a href="../../tags/synology/" style="font-size: 10.5px;">synology</a> <a href="../../tags/systemctl/" style="font-size: 11px;">systemctl</a> <a href="../../tags/systemd/" style="font-size: 11.5px;">systemd</a> <a href="../../tags/tap/" style="font-size: 10px;">tap</a> <a href="../../tags/tap-windows/" style="font-size: 10px;">tap-windows</a> <a href="../../tags/tapwindows/" style="font-size: 10px;">tapwindows</a> <a href="../../tags/telecom/" style="font-size: 10.5px;">telecom</a> <a href="../../tags/template/" style="font-size: 10px;">template</a> <a href="../../tags/terminal/" style="font-size: 10px;">terminal</a> <a href="../../tags/tls/" style="font-size: 10px;">tls</a> <a href="../../tags/token/" style="font-size: 10px;">token</a> <a href="../../tags/totp/" style="font-size: 10px;">totp</a> <a href="../../tags/tvbox/" style="font-size: 11px;">tvbox</a> <a href="../../tags/txt/" style="font-size: 10px;">txt</a> <a href="../../tags/ubuntu/" style="font-size: 12px;">ubuntu</a> <a href="../../tags/udisk/" style="font-size: 10px;">udisk</a> <a href="../../tags/ui/" style="font-size: 10px;">ui</a> <a href="../../tags/undertow/" style="font-size: 10px;">undertow</a> <a href="../../tags/uninstall/" style="font-size: 10px;">uninstall</a> <a href="../../tags/unlocker/" style="font-size: 10px;">unlocker</a> <a href="../../tags/upgrade/" style="font-size: 10.5px;">upgrade</a> <a href="../../tags/url/" style="font-size: 10px;">url</a> <a href="../../tags/v2ray/" style="font-size: 10.5px;">v2ray</a> <a href="../../tags/vhd/" style="font-size: 10px;">vhd</a> <a href="../../tags/vim/" style="font-size: 10px;">vim</a> <a href="../../tags/vlmcsd/" style="font-size: 10px;">vlmcsd</a> <a href="../../tags/vm/" style="font-size: 10.5px;">vm</a> <a href="../../tags/vmdk/" style="font-size: 10px;">vmdk</a> <a href="../../tags/web/" style="font-size: 12px;">web</a> <a href="../../tags/websocket/" style="font-size: 10.5px;">websocket</a> <a href="../../tags/wechat/" style="font-size: 10px;">wechat</a> <a href="../../tags/windows/" style="font-size: 12px;">windows</a> <a href="../../tags/with/" style="font-size: 10px;">with</a> <a href="../../tags/worker/" style="font-size: 10.5px;">worker</a> <a href="../../tags/wow/" style="font-size: 10px;">wow</a> <a href="../../tags/xiaoya/" style="font-size: 10px;">xiaoya</a> <a href="../../tags/xml/" style="font-size: 10px;">xml</a> <a href="../../tags/yum/" style="font-size: 10px;">yum</a> <a href="../../tags/zip/" style="font-size: 10px;">zip</a> <a href="../../tags/%E4%B8%AD%E5%9B%BD%E7%94%B5%E4%BF%A1/" style="font-size: 10px;">中国电信</a> <a href="../../tags/%E4%BA%91%E7%94%B5%E8%84%91/" style="font-size: 10.5px;">云电脑</a> <a href="../../tags/%E4%BA%A4%E6%8D%A2%E6%9C%BA/" style="font-size: 10px;">交换机</a> <a href="../../tags/%E4%BA%BA%E6%9C%BA%E5%8D%8F%E4%BD%9C/" style="font-size: 10px;">人机协作</a> <a href="../../tags/%E4%BB%A3%E7%90%86/" style="font-size: 10px;">代理</a> <a href="../../tags/%E4%BD%93%E6%A3%80/" style="font-size: 10px;">体检</a> <a href="../../tags/%E5%81%A5%E5%BA%B7%E6%A3%80%E6%9F%A5/" style="font-size: 15.5px;">健康检查</a> <a href="../../tags/%E5%85%89%E7%8C%AB/" style="font-size: 10.5px;">光猫</a> <a href="../../tags/%E5%85%AC%E7%BD%91IP/" style="font-size: 10px;">公网IP</a> <a href="../../tags/%E5%86%85%E5%AD%98/" style="font-size: 10px;">内存</a> <a href="../../tags/%E5%86%85%E7%BD%91IP/" style="font-size: 10px;">内网IP</a> <a href="../../tags/%E5%86%99%E4%BD%9C/" style="font-size: 11px;">写作</a> <a href="../../tags/%E5%8D%87%E7%BA%A7/" style="font-size: 11.5px;">升级</a> <a href="../../tags/%E5%8D%8F%E4%BD%9C/" style="font-size: 10px;">协作</a> <a href="../../tags/%E5%8D%9A%E5%AE%A2/" style="font-size: 10.5px;">博客</a> <a href="../../tags/%E5%8F%8D%E5%90%91%E4%BB%A3%E7%90%86/" style="font-size: 10px;">反向代理</a> <a href="../../tags/%E5%90%AF%E5%8A%A8/" style="font-size: 10px;">启动</a> <a href="../../tags/%E5%A4%8F%E4%BB%A4%E6%97%B6/" style="font-size: 10px;">夏令时</a> <a href="../../tags/%E5%A4%9A%E6%99%BA%E8%83%BD%E4%BD%93/" style="font-size: 11px;">多智能体</a> <a href="../../tags/%E5%A4%9A%E8%8A%82%E7%82%B9/" style="font-size: 10px;">多节点</a> <a href="../../tags/%E5%A4%9A%E8%8A%82%E7%82%B9%E7%AE%A1%E7%90%86/" style="font-size: 10px;">多节点管理</a> <a href="../../tags/%E5%A4%A9%E7%8C%AB%E7%B2%BE%E7%81%B5/" style="font-size: 10px;">天猫精灵</a> <a href="../../tags/%E5%A4%A9%E7%BF%BC%E4%BA%91/" style="font-size: 10.5px;">天翼云</a> <a href="../../tags/%E5%AE%89%E5%85%A8/" style="font-size: 16.5px;">安全</a> <a href="../../tags/%E5%AE%89%E8%A3%85/" style="font-size: 10.5px;">安装</a> <a href="../../tags/%E5%AE%9A%E6%97%B6%E4%BB%BB%E5%8A%A1/" style="font-size: 10px;">定时任务</a> <a href="../../tags/%E5%AE%B9%E5%99%A8/" style="font-size: 13px;">容器</a> <a href="../../tags/%E5%AE%B9%E5%99%A8%E7%BD%91%E7%BB%9C/" style="font-size: 10px;">容器网络</a> <a href="../../tags/%E5%AF%BC%E5%85%A5/" style="font-size: 10px;">导入</a> <a href="../../tags/%E5%B0%8F%E7%B1%B3/" style="font-size: 10px;">小米</a> <a href="../../tags/%E5%B8%B8%E7%94%A8%E8%BD%AF%E4%BB%B6/" style="font-size: 10px;">常用软件</a> <a href="../../tags/%E5%B9%BF%E5%91%8A%E5%B1%8F%E8%94%BD/" style="font-size: 10px;">广告屏蔽</a> <a href="../../tags/%E5%BA%8F%E5%88%97%E5%8F%B7/" style="font-size: 10px;">序列号</a> <a href="../../tags/%E5%BA%94%E7%94%A8%E5%B8%82%E5%9C%BA/" style="font-size: 10px;">应用市场</a> <a href="../../tags/%E5%BC%82%E5%B8%B8/" style="font-size: 10px;">异常</a> <a href="../../tags/%E6%84%9F%E6%82%9F/" style="font-size: 10px;">感悟</a> <a href="../../tags/%E6%89%93%E5%B7%A5/" style="font-size: 18.5px;">打工</a> <a href="../../tags/%E6%89%93%E5%B7%A5%E4%BA%BA/" style="font-size: 10px;">打工人</a> <a href="../../tags/%E6%8A%80%E6%9C%AF/" style="font-size: 19.5px;">技术</a> <a href="../../tags/%E6%8A%93%E5%8C%85/" style="font-size: 10px;">抓包</a> <a href="../../tags/%E6%8E%92%E6%9F%A5/" style="font-size: 10px;">排查</a> <a href="../../tags/%E6%8F%8F%E8%BF%B0%E6%96%87%E4%BB%B6/" style="font-size: 10px;">描述文件</a> <a href="../../tags/%E6%95%85%E9%9A%9C/" style="font-size: 10px;">故障</a> <a href="../../tags/%E6%95%85%E9%9A%9C%E6%8E%92%E6%9F%A5/" style="font-size: 10px;">故障排查</a> <a href="../../tags/%E6%95%88%E7%8E%87/" style="font-size: 10px;">效率</a> <a href="../../tags/%E6%95%88%E7%8E%87%E5%B7%A5%E5%85%B7/" style="font-size: 10px;">效率工具</a> <a href="../../tags/%E6%97%A0%E6%9C%8D%E5%8A%A1%E5%99%A8/" style="font-size: 10px;">无服务器</a> <a href="../../tags/%E6%97%A5%E8%AE%B0/" style="font-size: 19px;">日记</a> <a href="../../tags/%E6%97%B6%E5%8C%BA/" style="font-size: 10px;">时区</a> <a href="../../tags/%E6%98%BE%E5%8D%A1%E8%99%9A%E6%8B%9F%E5%8C%96/" style="font-size: 10px;">显卡虚拟化</a> <a href="../../tags/%E6%99%BA%E8%83%BD%E5%AE%B6%E5%B1%85/" style="font-size: 10px;">智能家居</a> <a href="../../tags/%E6%99%BA%E8%83%BD%E9%9F%B3%E7%AE%B1/" style="font-size: 10px;">智能音箱</a> <a href="../../tags/%E6%9C%8D%E5%8A%A1%E7%AE%A1%E7%90%86/" style="font-size: 10px;">服务管理</a> <a href="../../tags/%E6%9E%B6%E6%9E%84/" style="font-size: 10px;">架构</a> <a href="../../tags/%E6%A2%AF%E5%AD%90/" style="font-size: 10px;">梯子</a> <a href="../../tags/%E6%A8%A1%E5%9D%97/" style="font-size: 10px;">模块</a> <a href="../../tags/%E6%B5%81%E7%A8%8B/" style="font-size: 10px;">流程</a> <a href="../../tags/%E6%B5%81%E7%A8%8B%E5%9B%BE/" style="font-size: 10px;">流程图</a> <a href="../../tags/%E6%B5%8F%E8%A7%88%E5%99%A8/" style="font-size: 10.5px;">浏览器</a> <a href="../../tags/%E6%BC%AB%E6%B8%B8/" style="font-size: 10px;">漫游</a> <a href="../../tags/%E6%BF%80%E6%B4%BB/" style="font-size: 10px;">激活</a> <a href="../../tags/%E7%81%AB%E7%BB%92/" style="font-size: 10px;">火绒</a> <a href="../../tags/%E7%8E%84%E5%AD%A6/" style="font-size: 10px;">玄学</a> <a href="../../tags/%E7%94%9F%E6%B4%BB/" style="font-size: 10px;">生活</a> <a href="../../tags/%E7%94%B5%E4%BF%A1/" style="font-size: 10.5px;">电信</a> <a href="../../tags/%E7%94%BB%E5%9B%BE/" style="font-size: 10px;">画图</a> <a href="../../tags/%E7%9B%91%E6%8E%A7/" style="font-size: 13px;">监控</a> <a href="../../tags/%E7%9B%B4%E6%92%AD%E6%BA%90/" style="font-size: 10px;">直播源</a> <a href="../../tags/%E7%AB%AF%E5%8F%A3%E6%89%AB%E6%8F%8F/" style="font-size: 10px;">端口扫描</a> <a href="../../tags/%E7%AE%A1%E7%90%86/" style="font-size: 10px;">管理</a> <a href="../../tags/%E7%BB%AD%E6%9C%9F/" style="font-size: 10px;">续期</a> <a href="../../tags/%E7%BD%91%E5%85%B3/" style="font-size: 10px;">网关</a> <a href="../../tags/%E7%BD%91%E7%BB%9C/" style="font-size: 15px;">网络</a> <a href="../../tags/%E7%BD%91%E7%BB%9C%E9%A3%8E%E6%9A%B4/" style="font-size: 10px;">网络风暴</a> <a href="../../tags/%E7%BE%A4%E6%99%96/" style="font-size: 10.5px;">群晖</a> <a href="../../tags/%E8%84%9A%E6%9C%AC/" style="font-size: 10px;">脚本</a> <a href="../../tags/%E8%85%BE%E8%AE%AF/" style="font-size: 10px;">腾讯</a> <a href="../../tags/%E8%87%AA%E5%8A%A8%E5%8C%96/" style="font-size: 17px;">自动化</a> <a href="../../tags/%E8%99%9A%E6%8B%9F%E6%9C%BA/" style="font-size: 12px;">虚拟机</a> <a href="../../tags/%E8%AE%A4%E8%AF%81/" style="font-size: 10px;">认证</a> <a href="../../tags/%E8%AF%81%E4%B9%A6/" style="font-size: 10px;">证书</a> <a href="../../tags/%E8%AF%AD%E9%9B%80/" style="font-size: 10px;">语雀</a> <a href="../../tags/%E8%B6%85%E6%97%B6/" style="font-size: 10px;">超时</a> <a href="../../tags/%E8%B7%AF%E7%94%B1/" style="font-size: 10px;">路由</a> <a href="../../tags/%E8%B7%AF%E7%94%B1%E5%99%A8/" style="font-size: 10px;">路由器</a> <a href="../../tags/%E8%BD%AF%E4%BB%B6%E7%AE%A1%E5%AE%B6/" style="font-size: 10px;">软件管家</a> <a href="../../tags/%E8%BD%AF%E8%B7%AF%E7%94%B1/" style="font-size: 10.5px;">软路由</a> <a href="../../tags/%E8%BF%90%E7%BB%B4/" style="font-size: 20px;">运维</a> <a href="../../tags/%E8%BF%90%E7%BB%B4%E7%9B%91%E6%8E%A7/" style="font-size: 10.5px;">运维监控</a> <a href="../../tags/%E9%80%9A%E4%BF%A1%E6%9C%BA%E5%88%B6/" style="font-size: 10px;">通信机制</a> <a href="../../tags/%E9%83%A8%E7%BD%B2/" style="font-size: 12.5px;">部署</a> <a href="../../tags/%E9%85%8D%E7%BD%AE/" style="font-size: 10px;">配置</a> <a href="../../tags/%E9%92%89%E9%92%89/" style="font-size: 10.5px;">钉钉</a> <a href="../../tags/%E9%95%9C%E5%83%8F/" style="font-size: 11px;">镜像</a> <a href="../../tags/%E9%95%9C%E5%83%8F%E6%BA%90/" style="font-size: 10px;">镜像源</a> <a href="../../tags/%E9%97%A8%E7%AA%97%E4%BC%A0%E6%84%9F%E5%99%A8/" style="font-size: 10px;">门窗传感器</a> <a href="../../tags/%E9%97%AE%E9%A2%98%E6%8E%92%E6%9F%A5/" style="font-size: 18px;">问题排查</a> <a href="../../tags/%E9%98%B2%E7%81%AB%E5%A2%99/" style="font-size: 11.5px;">防火墙</a> <a href="../../tags/%E9%98%BF%E9%87%8C%E4%BA%91/" style="font-size: 11.5px;">阿里云</a> <a href="../../tags/%E9%98%BF%E9%87%8C%E6%BA%90/" style="font-size: 10.5px;">阿里源</a> <a href="../../tags/%E9%9B%86%E5%AE%A2/" style="font-size: 10.5px;">集客</a>
+    </div>
+    
+      <script>
+        var maxTagcloud = parseInt(17);
+        var tags_length = parseInt(428);
+        var tags_arr = [];
+        for(var i = 0; i < tags_length; i++){
+          tags_arr.push(i);
+        }
+        tags_arr.sort(function (l, r) {
+          return Math.random() > 0.5 ? -1 : 1;
+        });
+        tags_arr = tags_arr.slice(0, maxTagcloud < tags_length ? tags_length - maxTagcloud : 0);
+        for(var tag_i = 0; tag_i < tags_arr.length; tag_i++){
+          document.getElementById("randomtagcloud").children[tags_arr[tag_i]].style.display = 'none';
+        }
+      </script>
+    
+  </div>
+
+    
+        
+        <!-- 一言 -->
+<div class="nexmoe-widget-wrap">
+  <h3 class="nexmoe-widget-title">
+    Hitokoto
+  </h3>
+  <div class="nexmoe-widget">
+    <ul class="hitokoto-box">
+      <li id="hitokoto_text_parent" class="hitokoto-text" hitokotoCategory="">
+        <a href="#" id="hitokoto_text">
+          
+        </a>
+        <a href="#" id="hitokoto_error_text" style="display: none;">
+          
+        </a>
+      </li>
+    </ul>
+  </div>
+</div>
+
+<script>
+  let hitokotoText = document.getElementById('hitokoto_text')
+  let hitokotoErroText = document.getElementById('hitokoto_error_text')
+  let hitokotoCategory = document.getElementById('hitokoto_text_parent').getAttribute('hitokotoCategory')
+  window.addEventListener('load', function () {
+    let url = 'https://v1.hitokoto.cn'
+    if (hitokotoCategory) {
+      url += '?c=' + hitokotoCategory
+    }
+    fetch(url)
+      .then(response => response.json())
+      .then(data => {
+        hitokotoText.innerText = "「 " + data.hitokoto + " 」 from " + data.from
+        hitokotoText.href = 'https://hitokoto.cn/?uuid=' + data.uuid
+      })
+      .catch((reason) => {
+        console.error(11, reason)
+        hitokotoText.style.display = 'none'
+        hitokotoErroText.style.display = 'block'
+      })
+  })
+</script>
+    
+        
+        
+  <div class="nexmoe-widget-wrap">
+    <h3 class="nexmoe-widget-title">Archive</h3>
+    <div class="nexmoe-widget">
+      <ul class="archive-list"><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2026/">2026</a><span class="archive-list-count">102</span></li><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2025/">2025</a><span class="archive-list-count">2</span></li><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2024/">2024</a><span class="archive-list-count">19</span></li><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2023/">2023</a><span class="archive-list-count">18</span></li><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2022/">2022</a><span class="archive-list-count">4</span></li><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2021/">2021</a><span class="archive-list-count">114</span></li><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2018/">2018</a><span class="archive-list-count">1</span></li></ul>
+    </div>
+  </div>
+
+
+
+    
+        
+        
+  <div class="nexmoe-widget-wrap">
+    <h3 class="nexmoe-widget-title">Recent Posts</h3>
+    <div class="nexmoe-widget">
+      <ul>
+        
+          <li>
+            <a href="../../post/2026-04-13-docker-container-network-card-death-troubleshooting/">记一次Docker容器内部网卡&#34;假死&#34;故障排查：从表象到根因</a>
+          </li>
+        
+          <li>
+            <a href="../../post/2026-04-13-monday-morning-server-inspection-anxiety/">周一早上睁开眼的第一件事：我的服务器还活着吗？</a>
+          </li>
+        
+          <li>
+            <a href="../../post/2026-04-12-vm-internal-network-troubleshooting/">记一次虚拟机内部网络卡死的完整排查：连续第五次复发的根因分析</a>
+          </li>
+        
+          <li>
+            <a href="../../post/2026-04-12-server-keeps-crashing-fifth-time/">服务器又双叒叕卡死了：论一个打工人的第五次心路历程</a>
+          </li>
+        
+          <li>
+            <a href="../../post/2026-04-11-prometheus-silent-scraping-failure/">记一次Prometheus监控&#34;沉默失效&#34;排查：targets显示up但数据停止更新</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+
+    
+        
+        <div class="nexmoe-widget-wrap">
+    <div class="nexmoe-widget nexmoe-link">
+		<ul>
+        
+            <li>
+                <a href="https://blog.example.com/" target="_blank" >
+                    <img src="/images/avatar.webp" alt="魔都水滴Blog"></img>
+                    <p>魔都水滴Blog</p>
+                </a>
+            </li>
+        
+		</ul>
+    </div>
+</div>
+<style>
+.nexmoe-widget-wrap .nexmoe-link ul li a {
+    text-align : center;
+}
+.nexmoe-widget-wrap .nexmoe-link ul li a img {
+    max-width : 100%;
+}
+.nexmoe-widget-wrap .nexmoe-link ul li a p {
+    margin: 10px 0;
+}
+</style>
+
+    
+   
+    <div class="nexmoe-copyright">
+        &copy; 2026 Margrop
+        Powered by <a href="http://hexo.io/" target="_blank">Hexo</a>
+        & <a href="https://github.com/theme-nexmoe/hexo-theme-nexmoe" target="_blank">Nexmoe</a>
+        
+    </div>
+</div><!-- .nexmoe-drawer --></div><div id="nexmoe-content"><div class="nexmoe-primary"><div class="nexmoe-post">
+  <article>
+    
+        <div class="nexmoe-post-cover absolute" style="padding-top: 56.25%;"> 
+            <img src="https://picsum.photos/seed/tech0413/1280/720" alt="记一次Docker容器内部网卡&#34;假死&#34;故障排查：从表象到根因" loading="lazy">
+            <h1>记一次Docker容器内部网卡&#34;假死&#34;故障排查：从表象到根因</h1>
+        </div>
+    
+    
+    <div class="nexmoe-post-meta">
+    <div class="nexmoe-rainbow">
+        <a class="nexmoefont icon-calendar-fill">2026年04月13日</a>
+        
+            <a class="nexmoefont icon-appstore-fill -link" href="../../categories/ai-tech/">ai_tech</a>
+        
+        
+    <a><i class="nexmoefont icon-areachart"></i>约46k字</a>
+    <a><i class="nexmoefont icon-time-circle-fill"></i>预计需要1:05分钟</a>
+
+    </div>
+    
+    
+    
+    
+    
+</div>
+
+    <h1 id="记一次Docker容器内部网卡”假死”故障排查：从表象到根因"><a href="#记一次Docker容器内部网卡”假死”故障排查：从表象到根因" class="headerlink" title="记一次Docker容器内部网卡”假死”故障排查：从表象到根因"></a>记一次Docker容器内部网卡”假死”故障排查：从表象到根因</h1><h2 id="前言"><a href="#前言" class="headerlink" title="前言"></a>前言</h2><p>Docker容器的网络问题，是运维工作中最常见也最让人头疼的问题之一。相比于虚拟机或物理机，容器的网络模型更加复杂——它涉及Docker的网络驱动（bridge、host、overlay、macvlan等）、宿主机的网络配置、容器内部的iptables规则，以及Linux内核的网络栈。任何一个环节出问题，都可能导致容器内部网络完全不可用。</p>
+<p>今天我们要聊的，是一个特殊的问题：<strong>Docker容器的网卡”假死”——容器进程正常运行，从容器外部可以ping通容器的IP，但容器内部完全无法访问网络。</strong></p>
+<p>这种情况排查起来特别棘手，因为它的表象和真正的网络故障不同，需要用到特殊的排查方法。本文将详细记录一次完整的排查过程，供遇到类似问题的同学参考。</p>
+<h2 id="问题背景"><a href="#问题背景" class="headerlink" title="问题背景"></a>问题背景</h2><h3 id="业务场景"><a href="#业务场景" class="headerlink" title="业务场景"></a>业务场景</h3><p>我们在某台服务器上运行了多个Docker容器，提供不同的服务：</p>
+<ul>
+<li><strong>openapi-svr容器</strong>：提供OpenAPI服务，监听端口8080</li>
+<li><strong>bot-svr容器</strong>：提供机器人服务，监听端口8081</li>
+<li><strong>postgres容器</strong>：提供PostgreSQL数据库，端口5432</li>
+<li><strong>redis容器</strong>：提供Redis缓存，端口6379</li>
+</ul>
+<p>这些容器通过Docker bridge网络互通，容器之间通过服务名（如<code>openapi-svr</code>、<code>bot-svr</code>）进行DNS解析和通信。</p>
+<h3 id="问题现象"><a href="#问题现象" class="headerlink" title="问题现象"></a>问题现象</h3><p>某天早上，运维监控发现以下异常：</p>
+<ol>
+<li><p><strong>从宿主机可以正常访问容器内的服务</strong></p>
+<ul>
+<li><code>curl http://127.0.0.1:8080/api/health</code> 返回正常</li>
+<li><code>docker exec openapi-svr curl localhost:8080/api/health</code> 也正常</li>
+</ul>
+</li>
+<li><p><strong>但从容器内部访问其他容器的服务全部超时</strong></p>
+<ul>
+<li><code>docker exec openapi-svr curl http://bot-svr:8081/api/health</code> 超时</li>
+<li><code>docker exec openapi-svr ping bot-svr</code> 不通</li>
+<li><code>docker exec openapi-svr ping 8.8.8.8</code> 也不通</li>
+</ul>
+</li>
+<li><p><strong>容器的进程和端口都正常</strong></p>
+<ul>
+<li><code>docker ps</code> 显示所有容器状态为Up</li>
+<li><code>docker exec openapi-svr netstat -tlnp</code> 显示服务端口在监听</li>
+</ul>
+</li>
+<li><p><strong>重启容器可以临时解决问题，但过几天又会复发</strong></p>
+</li>
+</ol>
+<h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3><table>
+<thead>
+<tr>
+<th>项目</th>
+<th>值</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Docker 版本</td>
+<td>24.0.7</td>
+</tr>
+<tr>
+<td>容器网络模式</td>
+<td>bridge（默认）</td>
+</tr>
+<tr>
+<td>宿主机系统</td>
+<td>Ubuntu 22.04 LTS</td>
+</tr>
+<tr>
+<td>问题容器数量</td>
+<td>多个（使用bridge网络的容器）</td>
+</tr>
+<tr>
+<td>复发频率</td>
+<td>约每周1-2次</td>
+</tr>
+<tr>
+<td>临时解决方案</td>
+<td>重启容器</td>
+</tr>
+</tbody></table>
+<h2 id="问题分析"><a href="#问题分析" class="headerlink" title="问题分析"></a>问题分析</h2><h3 id="初步分析：为什么是”假死”？"><a href="#初步分析：为什么是”假死”？" class="headerlink" title="初步分析：为什么是”假死”？"></a>初步分析：为什么是”假死”？</h3><p>从问题现象来看，这是一个非常典型的”网卡假死”问题：</p>
+<ul>
+<li><strong>容器进程正常</strong>：服务进程还在运行，端口还在监听</li>
+<li><strong>容器外部访问正常</strong>：从宿主机可以正常访问</li>
+<li><strong>容器内部访问异常</strong>：从容器内部无法访问任何网络地址</li>
+</ul>
+<p>这种情况通常意味着：<strong>容器的网络接口（通常是eth0）虽然在容器命名空间中存在，但已经失去了网络通信能力。</strong></p>
+<p>这就好像你的电脑网卡灯还亮着，操作系统也显示网卡已连接，但实际上网络已经不通了。</p>
+<h3 id="可能的原因"><a href="#可能的原因" class="headerlink" title="可能的原因"></a>可能的原因</h3><ol>
+<li><p><strong>Docker bridge网络的问题</strong>：Docker的bridge网络通过veth pair（虚拟以太网对）连接容器和宿主机。如果veth pair的一端出现问题，可能导致容器内部网络中断。</p>
+</li>
+<li><p><strong>iptables规则问题</strong>：Docker会自动在宿主机上配置iptables规则，进行NAT和包过滤。如果这些规则被意外修改或损坏，可能导致容器网络中断。</p>
+</li>
+<li><p><strong>内核网络栈问题</strong>：Linux内核的网络栈在某些情况下可能出现异常，比如内存泄漏导致的网络缓冲区满，或者某些corner case的bug。</p>
+</li>
+<li><p><strong>容器资源限制问题</strong>：如果容器达到了某些资源限制（如网络连接数限制），可能导致网络不可用。</p>
+</li>
+<li><p><strong>DNS解析问题</strong>：虽然DNS服务器本身是正常的，但如果容器的DNS配置丢失或损坏，也可能导致所有基于服务名的访问失败。</p>
+</li>
+</ol>
+<h2 id="排查过程"><a href="#排查过程" class="headerlink" title="排查过程"></a>排查过程</h2><h3 id="第一步：确认问题的范围和现象"><a href="#第一步：确认问题的范围和现象" class="headerlink" title="第一步：确认问题的范围和现象"></a>第一步：确认问题的范围和现象</h3><p>首先，在宿主机上确认问题的范围：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 查看所有运行中的容器</span><br>docker ps<br><br><span class="hljs-comment"># 查看容器网络状态</span><br>docker network <span class="hljs-built_in">ls</span><br>docker network inspect bridge<br><br><span class="hljs-comment"># 测试从宿主机访问容器</span><br>curl http://127.0.0.1:8080/api/health<br>curl http://127.0.0.1:8081/api/health<br><br><span class="hljs-comment"># 测试容器之间的连通性（使用docker exec）</span><br>docker <span class="hljs-built_in">exec</span> openapi-svr ping -c 3 8.8.8.8<br>docker <span class="hljs-built_in">exec</span> openapi-svr ping -c 3 bot-svr<br>docker <span class="hljs-built_in">exec</span> <span class="hljs-built_in">exec</span> openapi-svr ping -c 3 172.17.0.2<br></code></pre></td></tr></table></figure>
+
+<p><strong>观察到</strong>：</p>
+<ul>
+<li>从宿主机访问容器服务：正常</li>
+<li>从容器内ping 8.8.8.8：不通</li>
+<li>从容器内ping容器IP：不通</li>
+<li>从容器内ping服务名：不通</li>
+</ul>
+<p>这说明问题范围很广，不仅仅是DNS问题。</p>
+<h3 id="第二步：检查容器的网络接口"><a href="#第二步：检查容器的网络接口" class="headerlink" title="第二步：检查容器的网络接口"></a>第二步：检查容器的网络接口</h3><p>使用<code>docker exec</code>进入容器，检查容器内部的网络配置：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 进入容器</span><br>docker <span class="hljs-built_in">exec</span> -it openapi-svr /bin/bash<br><br><span class="hljs-comment"># 查看网络接口</span><br>ip addr show<br><br><span class="hljs-comment"># 查看路由表</span><br>ip route show<br><br><span class="hljs-comment"># 查看DNS配置</span><br><span class="hljs-built_in">cat</span> /etc/resolv.conf<br><br><span class="hljs-comment"># 查看网络接口统计（是否有大量错误或丢包）</span><br>ip -s <span class="hljs-built_in">link</span> show eth0<br><br><span class="hljs-comment"># 查看ARP表</span><br>arp -a<br></code></pre></td></tr></table></figure>
+
+<p><strong>观察到</strong>：</p>
+<ul>
+<li><code>eth0</code>接口存在，状态是<code>UP</code></li>
+<li>IP地址配置正确（如172.17.0.2）</li>
+<li>路由表有默认网关</li>
+<li>DNS配置指向了正确的DNS服务器（通常是Docker内置的127.0.0.11）</li>
+<li>但<code>ip -s link show eth0</code>显示有大量<code>RX errors</code>和<code>dropped</code></li>
+</ul>
+<p>这就是关键线索了！<strong>网卡的接收（RX）有大量错误和丢包</strong>，说明数据包根本没有正确到达应用层。</p>
+<h3 id="第三步：检查Docker-bridge网络的状态"><a href="#第三步：检查Docker-bridge网络的状态" class="headerlink" title="第三步：检查Docker bridge网络的状态"></a>第三步：检查Docker bridge网络的状态</h3><p>回到宿主机，检查Docker bridge网络的状态：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 查看docker0网桥</span><br>ip <span class="hljs-built_in">link</span> show docker0<br>ip addr show docker0<br><br><span class="hljs-comment"># 查看连接到这个网桥的veth设备</span><br>bridge <span class="hljs-built_in">link</span> show<br><br><span class="hljs-comment"># 或者用brctl（需要安装bridge-utils）</span><br>brctl show<br><br><span class="hljs-comment"># 查看网桥上的STP状态</span><br>bridge <span class="hljs-built_in">link</span> show | grep -i stp<br></code></pre></td></tr></table></figure>
+
+<p><strong>观察到</strong>：docker0网桥状态正常，所有veth设备都连接正常。</p>
+<h3 id="第四步：检查iptables规则"><a href="#第四步：检查iptables规则" class="headerlink" title="第四步：检查iptables规则"></a>第四步：检查iptables规则</h3><p>Docker会自动配置iptables规则，检查这些规则是否正常：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 查看Docker的NAT规则</span><br>iptables -t nat -L -n -v | <span class="hljs-built_in">head</span> -50<br><br><span class="hljs-comment"># 查看Filter规则</span><br>iptables -L -n -v | <span class="hljs-built_in">head</span> -50<br><br><span class="hljs-comment"># 检查FORWARD链</span><br>iptables -L FORWARD -n -v<br><br><span class="hljs-comment"># 检查是否有DROP或REJECT规则</span><br>iptables -L -n | grep -i drop<br></code></pre></td></tr></table></figure>
+
+<p><strong>观察到</strong>：iptables规则看起来正常，没有异常的DROP规则。</p>
+<h3 id="第五步：检查内核网络缓冲区"><a href="#第五步：检查内核网络缓冲区" class="headerlink" title="第五步：检查内核网络缓冲区"></a>第五步：检查内核网络缓冲区</h3><p>网络丢包和错误可能与内核缓冲区有关：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 查看网络缓冲区（netstat）</span><br>netstat -s | grep -i error<br>netstat -s | grep -i drop<br><br><span class="hljs-comment"># 查看详细的网卡统计</span><br><span class="hljs-built_in">cat</span> /proc/net/dev<br><br><span class="hljs-comment"># 查看内存缓冲区</span><br><span class="hljs-built_in">cat</span> /proc/sys/net/core/rmem_max<br><span class="hljs-built_in">cat</span> /proc/sys/net/core/wmem_max<br><span class="hljs-built_in">cat</span> /proc/sys/net/core/netdev_max_backlog<br><br><span class="hljs-comment"># 查看socket缓冲区</span><br>ss -s<br></code></pre></td></tr></table></figure>
+
+<p><strong>观察到</strong>：部分网卡的错误计数较高，但还不足以解释完全无法通信的问题。</p>
+<h3 id="第六步：尝试修复容器网络"><a href="#第六步：尝试修复容器网络" class="headerlink" title="第六步：尝试修复容器网络"></a>第六步：尝试修复容器网络</h3><p>在找到根因之前，可以尝试一些修复方法：</p>
+<h4 id="方法一：重启容器（最简单有效）"><a href="#方法一：重启容器（最简单有效）" class="headerlink" title="方法一：重启容器（最简单有效）"></a>方法一：重启容器（最简单有效）</h4><figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 停止并重启容器</span><br>docker restart openapi-svr<br><br><span class="hljs-comment"># 或者先stop再start</span><br>docker stop openapi-svr<br>docker start openapi-svr<br></code></pre></td></tr></table></figure>
+
+<p><strong>注意</strong>：重启容器会导致IP地址变化（除非使用固定IP或网络别名）。</p>
+<h4 id="方法二：断开并重新连接网络"><a href="#方法二：断开并重新连接网络" class="headerlink" title="方法二：断开并重新连接网络"></a>方法二：断开并重新连接网络</h4><figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 断开容器的网络连接</span><br>docker network disconnect bridge openapi-svr<br><br><span class="hljs-comment"># 重新连接</span><br>docker network connect bridge openapi-svr<br><br><span class="hljs-comment"># 或者强制重新连接</span><br>docker network disconnect -f bridge openapi-svr<br>docker network connect bridge openapi-svr<br></code></pre></td></tr></table></figure>
+
+<h4 id="方法三：重建整个Docker网络"><a href="#方法三：重建整个Docker网络" class="headerlink" title="方法三：重建整个Docker网络"></a>方法三：重建整个Docker网络</h4><figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 查看当前网络配置</span><br>docker network inspect bridge<br><br><span class="hljs-comment"># 备份配置</span><br><span class="hljs-built_in">cp</span> -r /var/lib/docker/network /var/lib/docker/network.bak<br><br><span class="hljs-comment"># 重启Docker服务（会重建所有网络）</span><br>systemctl restart docker<br><br><span class="hljs-comment"># 验证</span><br>docker network inspect bridge<br></code></pre></td></tr></table></figure>
+
+<p><strong>观察到</strong>：方法一（重启容器）可以临时解决问题，但过几天又复发。</p>
+<h3 id="第七步：深入分析根因"><a href="#第七步：深入分析根因" class="headerlink" title="第七步：深入分析根因"></a>第七步：深入分析根因</h3><p>经过多轮排查，我们发现了一些规律：</p>
+<ol>
+<li><strong>问题通常发生在容器运行较长时间后</strong></li>
+<li><strong>重启Docker服务可以更长时间地解决问题</strong></li>
+<li><strong>多个容器同时出现问题，而不是单个容器</strong></li>
+</ol>
+<p>这暗示问题可能在Docker daemon层面，或者是宿主机的网络配置层面。</p>
+<p>检查Docker daemon的日志：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 查看Docker daemon日志</span><br>journalctl -u docker -n 200 --since <span class="hljs-string">&quot;1 hour ago&quot;</span><br><br><span class="hljs-comment"># 查看Docker的debug日志</span><br>grep -i error /var/log/docker.log<br>grep -i warn /var/log/docker.log<br></code></pre></td></tr></table></figure>
+
+<p>发现了以下关键日志：</p>
+<figure class="highlight abnf"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><code class="hljs abnf"><span class="hljs-attribute">level</span><span class="hljs-operator">=</span>info msg<span class="hljs-operator">=</span><span class="hljs-string">&quot;libcontainerd: started new containerd-shim process&quot;</span><br><span class="hljs-attribute">level</span><span class="hljs-operator">=</span>warn msg<span class="hljs-operator">=</span><span class="hljs-string">&quot;fatal: bridge network device didn&#x27;t geteth0&quot;</span><br><span class="hljs-attribute">level</span><span class="hljs-operator">=</span>error msg<span class="hljs-operator">=</span><span class="hljs-string">&quot;network namespace cleanup failed&quot;</span><br></code></pre></td></tr></table></figure>
+
+<p>这条”bridge network device didn’t geteth0”日志非常关键！它说明在某些情况下，容器启动时没有正确获取到eth0网络接口。</p>
+<p>进一步检查宿主机的dmesg：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><code class="hljs bash">dmesg | grep -i <span class="hljs-string">&quot;veth&quot;</span><br>dmesg | grep -i <span class="hljs-string">&quot;docker&quot;</span><br></code></pre></td></tr></table></figure>
+
+<p>发现了一些网络设备的异常日志。</p>
+<h2 id="根因分析"><a href="#根因分析" class="headerlink" title="根因分析"></a>根因分析</h2><h3 id="直接原因"><a href="#直接原因" class="headerlink" title="直接原因"></a>直接原因</h3><p><strong>Docker容器在启动或运行过程中，veth pair（虚拟以太网对）的容器端（eth0）出现了异常</strong>，导致容器虽然能看到eth0接口（状态UP），但实际上网络通信已经完全中断。</p>
+<h3 id="深层原因"><a href="#深层原因" class="headerlink" title="深层原因"></a>深层原因</h3><ol>
+<li><p><strong>Docker daemon在处理大量容器网络操作时，存在竞态条件（race condition）</strong></p>
+<ul>
+<li>当容器频繁启动、停止、或重新连接网络时，veth pair的创建和销毁可能不同步</li>
+<li>这种竞态条件在容器数量多、负载高的环境下更容易触发</li>
+</ul>
+</li>
+<li><p><strong>宿主机内核网络栈在高并发场景下可能出现内存问题</strong></p>
+<ul>
+<li>网络缓冲区的内存分配可能失败或泄漏</li>
+<li>导致某些数据包无法正常处理</li>
+</ul>
+</li>
+<li><p><strong>Docker版本可能存在已知bug</strong></p>
+<ul>
+<li>Docker 24.0.7在某些场景下有网络相关的bug报告</li>
+<li>建议升级到最新稳定版本</li>
+</ul>
+</li>
+</ol>
+<h2 id="解决方案"><a href="#解决方案" class="headerlink" title="解决方案"></a>解决方案</h2><h3 id="紧急修复：临时恢复容器网络"><a href="#紧急修复：临时恢复容器网络" class="headerlink" title="紧急修复：临时恢复容器网络"></a>紧急修复：临时恢复容器网络</h3><p>如果容器已经出现”假死”，可以尝试以下方法临时恢复：</p>
+<h4 id="方法一：重启单个容器"><a href="#方法一：重启单个容器" class="headerlink" title="方法一：重启单个容器"></a>方法一：重启单个容器</h4><figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><code class="hljs bash">docker restart &lt;container_name&gt;<br></code></pre></td></tr></table></figure>
+
+<h4 id="方法二：断开并重连容器网络"><a href="#方法二：断开并重连容器网络" class="headerlink" title="方法二：断开并重连容器网络"></a>方法二：断开并重连容器网络</h4><figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><code class="hljs bash">docker network disconnect -f bridge &lt;container_name&gt;<br>docker network connect bridge &lt;container_name&gt;<br></code></pre></td></tr></table></figure>
+
+<h4 id="方法三：重启Docker服务（最彻底）"><a href="#方法三：重启Docker服务（最彻底）" class="headerlink" title="方法三：重启Docker服务（最彻底）"></a>方法三：重启Docker服务（最彻底）</h4><figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 保存当前运行的容器状态</span><br>docker ps &gt; /tmp/docker_ps_backup.txt<br><br><span class="hljs-comment"># 重启Docker daemon</span><br>systemctl restart docker<br><br><span class="hljs-comment"># 等待服务恢复</span><br><span class="hljs-built_in">sleep</span> 10<br><br><span class="hljs-comment"># 验证容器状态</span><br>docker ps<br></code></pre></td></tr></table></figure>
+
+<h3 id="长期方案：防止问题再次发生"><a href="#长期方案：防止问题再次发生" class="headerlink" title="长期方案：防止问题再次发生"></a>长期方案：防止问题再次发生</h3><h4 id="方案一：升级Docker到最新版本"><a href="#方案一：升级Docker到最新版本" class="headerlink" title="方案一：升级Docker到最新版本"></a>方案一：升级Docker到最新版本</h4><figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 查看当前版本</span><br>docker --version<br><br><span class="hljs-comment"># 升级Docker（Ubuntu）</span><br>apt update<br>apt upgrade docker.io<br><br><span class="hljs-comment"># 或者使用官方脚本安装最新版本</span><br>curl -fsSL https://get.docker.com | sh<br><br><span class="hljs-comment"># 重启Docker</span><br>systemctl restart docker<br></code></pre></td></tr></table></figure>
+
+<h4 id="方案二：使用Docker的健康检查和自动恢复"><a href="#方案二：使用Docker的健康检查和自动恢复" class="headerlink" title="方案二：使用Docker的健康检查和自动恢复"></a>方案二：使用Docker的健康检查和自动恢复</h4><p>在Docker Compose配置中添加健康检查：</p>
+<figure class="highlight yaml"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br></pre></td><td class="code"><pre><code class="hljs yaml"><span class="hljs-attr">services:</span><br>  <span class="hljs-attr">openapi-svr:</span><br>    <span class="hljs-attr">image:</span> <span class="hljs-string">openapi-svr:latest</span><br>    <span class="hljs-attr">healthcheck:</span><br>      <span class="hljs-attr">test:</span> [<span class="hljs-string">&quot;CMD&quot;</span>, <span class="hljs-string">&quot;curl&quot;</span>, <span class="hljs-string">&quot;-f&quot;</span>, <span class="hljs-string">&quot;http://localhost:8080/api/health&quot;</span>]<br>      <span class="hljs-attr">interval:</span> <span class="hljs-string">30s</span><br>      <span class="hljs-attr">timeout:</span> <span class="hljs-string">10s</span><br>      <span class="hljs-attr">retries:</span> <span class="hljs-number">3</span><br>      <span class="hljs-attr">start_period:</span> <span class="hljs-string">40s</span><br>    <span class="hljs-attr">restart:</span> <span class="hljs-string">unless-stopped</span><br>    <span class="hljs-attr">networks:</span><br>      <span class="hljs-bullet">-</span> <span class="hljs-string">backend</span><br><br><span class="hljs-attr">networks:</span><br>  <span class="hljs-attr">backend:</span><br>    <span class="hljs-attr">driver:</span> <span class="hljs-string">bridge</span><br>    <span class="hljs-attr">enable_ipv6:</span> <span class="hljs-literal">false</span><br></code></pre></td></tr></table></figure>
+
+<p>这样，当健康检查连续失败3次后，Docker会自动重启容器。</p>
+<h4 id="方案三：使用监控脚本自动检测和修复"><a href="#方案三：使用监控脚本自动检测和修复" class="headerlink" title="方案三：使用监控脚本自动检测和修复"></a>方案三：使用监控脚本自动检测和修复</h4><p>创建一个监控脚本，自动检测并修复网络问题：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-meta">#!/bin/bash</span><br><span class="hljs-comment"># docker-network-monitor.sh</span><br><br>CONTAINERS=(<span class="hljs-string">&quot;openapi-svr&quot;</span> <span class="hljs-string">&quot;bot-svr&quot;</span> <span class="hljs-string">&quot;postgres&quot;</span> <span class="hljs-string">&quot;redis&quot;</span>)<br>LOG_FILE=<span class="hljs-string">&quot;/var/log/docker-network-monitor.log&quot;</span><br><br><span class="hljs-function"><span class="hljs-title">log</span></span>() &#123;<br>    <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;[<span class="hljs-subst">$(date &#x27;+%Y-%m-%d %H:%M:%S&#x27;)</span>] <span class="hljs-variable">$1</span>&quot;</span> &gt;&gt; <span class="hljs-variable">$LOG_FILE</span><br>&#125;<br><br><span class="hljs-function"><span class="hljs-title">check_container_network</span></span>() &#123;<br>    <span class="hljs-built_in">local</span> container=<span class="hljs-variable">$1</span><br>    <span class="hljs-comment"># 检查容器网络连通性</span><br>    <span class="hljs-keyword">if</span> docker <span class="hljs-built_in">exec</span> <span class="hljs-variable">$container</span> ping -c 1 -W 2 8.8.8.8 &gt; /dev/null 2&gt;&amp;1; <span class="hljs-keyword">then</span><br>        <span class="hljs-built_in">return</span> 0<br>    <span class="hljs-keyword">else</span><br>        <span class="hljs-built_in">return</span> 1<br>    <span class="hljs-keyword">fi</span><br>&#125;<br><br><span class="hljs-keyword">for</span> container <span class="hljs-keyword">in</span> <span class="hljs-string">&quot;<span class="hljs-variable">$&#123;CONTAINERS[@]&#125;</span>&quot;</span>; <span class="hljs-keyword">do</span><br>    <span class="hljs-keyword">if</span> ! check_container_network <span class="hljs-variable">$container</span>; <span class="hljs-keyword">then</span><br>        <span class="hljs-built_in">log</span> <span class="hljs-string">&quot;WARNING: <span class="hljs-variable">$container</span> network is down, attempting to fix...&quot;</span><br>        <br>        <span class="hljs-comment"># 尝试断开并重连网络</span><br>        docker network disconnect -f bridge <span class="hljs-variable">$container</span><br>        <span class="hljs-built_in">sleep</span> 2<br>        docker network connect bridge <span class="hljs-variable">$container</span><br>        <br>        <span class="hljs-comment"># 再次检查</span><br>        <span class="hljs-built_in">sleep</span> 5<br>        <span class="hljs-keyword">if</span> check_container_network <span class="hljs-variable">$container</span>; <span class="hljs-keyword">then</span><br>            <span class="hljs-built_in">log</span> <span class="hljs-string">&quot;SUCCESS: <span class="hljs-variable">$container</span> network recovered&quot;</span><br>        <span class="hljs-keyword">else</span><br>            <span class="hljs-built_in">log</span> <span class="hljs-string">&quot;ERROR: Failed to recover <span class="hljs-variable">$container</span>, restarting container...&quot;</span><br>            docker restart <span class="hljs-variable">$container</span><br>        <span class="hljs-keyword">fi</span><br>    <span class="hljs-keyword">else</span><br>        <span class="hljs-built_in">log</span> <span class="hljs-string">&quot;OK: <span class="hljs-variable">$container</span> network is healthy&quot;</span><br>    <span class="hljs-keyword">fi</span><br><span class="hljs-keyword">done</span><br></code></pre></td></tr></table></figure>
+
+<p>添加到cron定时任务（每5分钟检查一次）：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><code class="hljs bash">crontab -e<br><span class="hljs-comment"># 添加以下行</span><br>*/5 * * * * /path/to/docker-network-monitor.sh &gt;&gt; /var/log/docker-network-monitor-cron.log 2&gt;&amp;1<br></code></pre></td></tr></table></figure>
+
+<h4 id="方案四：配置更高的内核网络参数"><a href="#方案四：配置更高的内核网络参数" class="headerlink" title="方案四：配置更高的内核网络参数"></a>方案四：配置更高的内核网络参数</h4><p>调整Linux内核的网络参数，减少网络问题的发生：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 编辑sysctl配置</span><br><span class="hljs-built_in">cat</span> &gt;&gt; /etc/sysctl.conf &lt;&lt; <span class="hljs-string">EOF</span><br><span class="hljs-string"># Docker网络优化</span><br><span class="hljs-string">net.core.rmem_max = 16777216</span><br><span class="hljs-string">net.core.wmem_max = 16777216</span><br><span class="hljs-string">net.core.netdev_max_backlog = 5000</span><br><span class="hljs-string">net.core.somaxconn = 1024</span><br><span class="hljs-string">net.ipv4.tcp_rmem = 4096 87380 16777216</span><br><span class="hljs-string">net.ipv4.tcp_wmem = 4096 65536 16777216</span><br><span class="hljs-string">net.ipv4.tcp_max_syn_backlog = 8096</span><br><span class="hljs-string">EOF</span><br><br><span class="hljs-comment"># 应用配置</span><br>sysctl -p<br></code></pre></td></tr></table></figure>
+
+<h4 id="方案五：定期清理Docker网络资源"><a href="#方案五：定期清理Docker网络资源" class="headerlink" title="方案五：定期清理Docker网络资源"></a>方案五：定期清理Docker网络资源</h4><p>定期清理无用的网络资源，防止资源泄漏：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-meta">#!/bin/bash</span><br><span class="hljs-comment"># docker-network-cleanup.sh</span><br><br><span class="hljs-comment"># 清理未使用的网络</span><br>docker network prune -f<br><br><span class="hljs-comment"># 清理无用的veth设备</span><br>ip <span class="hljs-built_in">link</span> show | grep veth | <span class="hljs-keyword">while</span> <span class="hljs-built_in">read</span> line; <span class="hljs-keyword">do</span><br>    veth=$(<span class="hljs-built_in">echo</span> <span class="hljs-variable">$line</span> | awk -F@ <span class="hljs-string">&#x27;&#123;print $1&#125;&#x27;</span> | awk <span class="hljs-string">&#x27;&#123;print $2&#125;&#x27;</span>)<br>    <span class="hljs-keyword">if</span> [ -n <span class="hljs-string">&quot;<span class="hljs-variable">$veth</span>&quot;</span> ]; <span class="hljs-keyword">then</span><br>        <span class="hljs-keyword">if</span> ! ip <span class="hljs-built_in">link</span> show <span class="hljs-variable">$veth</span> &gt; /dev/null 2&gt;&amp;1; <span class="hljs-keyword">then</span><br>            <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;Found orphaned veth: <span class="hljs-variable">$veth</span>&quot;</span><br>        <span class="hljs-keyword">fi</span><br>    <span class="hljs-keyword">fi</span><br><span class="hljs-keyword">done</span><br><br><span class="hljs-comment"># 记录Docker网络状态</span><br>docker network inspect bridge &gt; /tmp/docker_bridge_$(<span class="hljs-built_in">date</span> +%Y%m%d).json<br></code></pre></td></tr></table></figure>
+
+<p>添加到cron（每天凌晨执行）：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><code class="hljs bash">crontab -e<br><span class="hljs-comment"># 添加</span><br>0 3 * * * /path/to/docker-network-cleanup.sh &gt;&gt; /var/log/docker-cleanup.log 2&gt;&amp;1<br></code></pre></td></tr></table></figure>
+
+<h2 id="一键排查脚本"><a href="#一键排查脚本" class="headerlink" title="一键排查脚本"></a>一键排查脚本</h2><p>如果你遇到了类似的Docker容器网络问题，可以使用以下脚本进行快速排查：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br><span class="line">59</span><br><span class="line">60</span><br><span class="line">61</span><br><span class="line">62</span><br><span class="line">63</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-meta">#!/bin/bash</span><br><span class="hljs-comment"># docker-network-debug.sh</span><br><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;=== Docker 容器网络问题排查脚本 ===&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;&quot;</span><br><br><span class="hljs-comment"># 1. 检查Docker服务状态</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;[1/7] 检查Docker服务状态...&quot;</span><br>systemctl is-active docker &amp;&amp; <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;✅ Docker 服务运行正常&quot;</span> || <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;❌ Docker 服务未运行&quot;</span><br>docker --version<br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;&quot;</span><br><br><span class="hljs-comment"># 2. 检查容器运行状态</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;[2/7] 检查容器运行状态...&quot;</span><br>RUNNING=$(docker ps -q | <span class="hljs-built_in">wc</span> -l)<br>TOTAL=$(docker ps -aq | <span class="hljs-built_in">wc</span> -l)<br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;   运行中容器: <span class="hljs-variable">$RUNNING</span> / <span class="hljs-variable">$TOTAL</span>&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;&quot;</span><br><br><span class="hljs-comment"># 3. 检查Docker网络</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;[3/7] 检查Docker网络...&quot;</span><br>docker network <span class="hljs-built_in">ls</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;&quot;</span><br><br><span class="hljs-comment"># 4. 检查bridge网络详情</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;[4/7] 检查bridge网络详情...&quot;</span><br>docker network inspect bridge | jq <span class="hljs-string">&#x27;.[0].IPAM.Config[0]&#x27;</span> 2&gt;/dev/null || <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;   无法获取bridge网络信息&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;&quot;</span><br><br><span class="hljs-comment"># 5. 检查容器网络连通性</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;[5/7] 检查容器网络连通性...&quot;</span><br><span class="hljs-keyword">for</span> container <span class="hljs-keyword">in</span> $(docker ps -q); <span class="hljs-keyword">do</span><br>    name=$(docker inspect --format=<span class="hljs-string">&#x27;&#123;&#123;.Name&#125;&#125;&#x27;</span> <span class="hljs-variable">$container</span> | sed <span class="hljs-string">&#x27;s/\///&#x27;</span>)<br>    <span class="hljs-keyword">if</span> docker <span class="hljs-built_in">exec</span> <span class="hljs-variable">$container</span> ping -c 1 -W 2 8.8.8.8 &gt; /dev/null 2&gt;&amp;1; <span class="hljs-keyword">then</span><br>        <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;   ✅ <span class="hljs-variable">$name</span>: 网络正常&quot;</span><br>    <span class="hljs-keyword">else</span><br>        <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;   ❌ <span class="hljs-variable">$name</span>: 网络异常&quot;</span><br>    <span class="hljs-keyword">fi</span><br><span class="hljs-keyword">done</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;&quot;</span><br><br><span class="hljs-comment"># 6. 检查容器内部网络接口</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;[6/7] 检查容器内部网络接口...&quot;</span><br><span class="hljs-keyword">for</span> container <span class="hljs-keyword">in</span> $(docker ps -q | <span class="hljs-built_in">head</span> -3); <span class="hljs-keyword">do</span><br>    name=$(docker inspect --format=<span class="hljs-string">&#x27;&#123;&#123;.Name&#125;&#125;&#x27;</span> <span class="hljs-variable">$container</span> | sed <span class="hljs-string">&#x27;s/\///&#x27;</span>)<br>    <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;   === <span class="hljs-variable">$name</span> ===&quot;</span><br>    docker <span class="hljs-built_in">exec</span> <span class="hljs-variable">$container</span> ip -s <span class="hljs-built_in">link</span> show eth0 2&gt;/dev/null | <span class="hljs-built_in">head</span> -5 || <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;   无法获取网络接口信息&quot;</span><br><span class="hljs-keyword">done</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;&quot;</span><br><br><span class="hljs-comment"># 7. 检查iptables规则</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;[7/7] 检查iptables规则...&quot;</span><br>FORWARD=$(iptables -L FORWARD -n -v | grep -c <span class="hljs-string">&quot;DOCKER&quot;</span> || <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;0&quot;</span>)<br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;   Docker FORWARD链规则数: <span class="hljs-variable">$FORWARD</span>&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;&quot;</span><br><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;=== 排查完成 ===&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;如果发现问题，建议尝试以下方法：&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;1. 重启容器: docker restart &lt;container_name&gt;&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;2. 重启Docker服务: systemctl restart docker&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;3. 检查Docker日志: journalctl -u docker -n 50&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;4. 检查内核日志: dmesg | grep -i docker&quot;</span><br></code></pre></td></tr></table></figure>
+
+<h2 id="常见问题解答"><a href="#常见问题解答" class="headerlink" title="常见问题解答"></a>常见问题解答</h2><h3 id="Q1：Docker容器的网络和宿主机的网络有什么关系？"><a href="#Q1：Docker容器的网络和宿主机的网络有什么关系？" class="headerlink" title="Q1：Docker容器的网络和宿主机的网络有什么关系？"></a>Q1：Docker容器的网络和宿主机的网络有什么关系？</h3><p>A：Docker容器默认使用bridge网络模式。在这种模式下：</p>
+<ul>
+<li>Docker会在宿主机上创建一个名为<code>docker0</code>的虚拟网桥</li>
+<li>每个容器会有一对veth（虚拟以太网对），一端在容器内（通常是eth0），另一端连接在docker0网桥上</li>
+<li>容器通过docker0网桥与宿主机和其他容器通信</li>
+<li>宿主机通过NAT让容器访问外部网络</li>
+</ul>
+<h3 id="Q2：为什么从宿主机可以访问容器，但从容器内部不能访问外部网络？"><a href="#Q2：为什么从宿主机可以访问容器，但从容器内部不能访问外部网络？" class="headerlink" title="Q2：为什么从宿主机可以访问容器，但从容器内部不能访问外部网络？"></a>Q2：为什么从宿主机可以访问容器，但从容器内部不能访问外部网络？</h3><p>A：这通常说明：</p>
+<ul>
+<li>docker0网桥本身是正常的</li>
+<li>问题出在容器的eth0接口或veth pair的容器端</li>
+<li>可能是容器内部的网络栈出现了异常</li>
+</ul>
+<h3 id="Q3：重启容器会改变IP地址吗？"><a href="#Q3：重启容器会改变IP地址吗？" class="headerlink" title="Q3：重启容器会改变IP地址吗？"></a>Q3：重启容器会改变IP地址吗？</h3><p>A：默认情况下，Docker会为容器分配动态IP地址。重启后IP地址可能会变化。如果需要固定IP，可以使用<code>--ip</code>参数或创建自定义网络。</p>
+<h3 id="Q4：如何防止容器网络假死后无人发现？"><a href="#Q4：如何防止容器网络假死后无人发现？" class="headerlink" title="Q4：如何防止容器网络假死后无人发现？"></a>Q4：如何防止容器网络假死后无人发现？</h3><p>A：建议配置以下监控：</p>
+<ol>
+<li>容器健康检查（healthcheck）</li>
+<li>定期从容器内部测试网络连通性</li>
+<li>监控veth pair的状态</li>
+<li>监控docker0网桥的流量和错误统计</li>
+</ol>
+<h3 id="Q5：Docker的bridge、host、overlay网络模式有什么区别？"><a href="#Q5：Docker的bridge、host、overlay网络模式有什么区别？" class="headerlink" title="Q5：Docker的bridge、host、overlay网络模式有什么区别？"></a>Q5：Docker的bridge、host、overlay网络模式有什么区别？</h3><p>A：</p>
+<ul>
+<li><strong>bridge</strong>：默认模式，容器在自己的网络命名空间中，通过NAT与外部通信</li>
+<li><strong>host</strong>：容器直接使用宿主机的网络命名空间，没有网络隔离</li>
+<li><strong>overlay</strong>：用于Docker Swarm多个主机之间的容器通信</li>
+<li><strong>macvlan</strong>：让容器拥有独立的MAC地址，看起来像物理机</li>
+</ul>
+<h3 id="Q6：如何查看某个容器的veth-pair在宿主机上对应的接口？"><a href="#Q6：如何查看某个容器的veth-pair在宿主机上对应的接口？" class="headerlink" title="Q6：如何查看某个容器的veth pair在宿主机上对应的接口？"></a>Q6：如何查看某个容器的veth pair在宿主机上对应的接口？</h3><p>A：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 获取容器的PID</span><br>PID=$(docker inspect --format=<span class="hljs-string">&#x27;&#123;&#123;.State.Pid&#125;&#125;&#x27;</span> &lt;container_name&gt;)<br><br><span class="hljs-comment"># 查看宿主机上对应的veth设备</span><br><span class="hljs-built_in">ls</span> -la /proc/<span class="hljs-variable">$PID</span>/ns/net<br><br><span class="hljs-comment"># 或者使用ip命令</span><br>ip <span class="hljs-built_in">link</span> show | grep veth<br><br><span class="hljs-comment"># 通过容器ID找到对应的veth</span><br>docker inspect --format=<span class="hljs-string">&#x27;&#123;&#123;range .NetworkSettings.Networks&#125;&#125;&#123;&#123;.MacAddress&#125;&#125;&#123;&#123;end&#125;&#125;&#x27;</span> &lt;container_name&gt;<br></code></pre></td></tr></table></figure>
+
+<h2 id="经验总结"><a href="#经验总结" class="headerlink" title="经验总结"></a>经验总结</h2><h3 id="排查技巧"><a href="#排查技巧" class="headerlink" title="排查技巧"></a>排查技巧</h3><ol>
+<li><strong>从外到内，分层排查</strong>：先从宿主机开始，逐步深入到容器内部</li>
+<li><strong>关注网络接口统计</strong>：<code>ip -s link show</code>可以显示网卡的错误和丢包统计</li>
+<li><strong>查看日志是关键</strong>：Docker daemon日志、dmesg、内核日志往往包含关键线索</li>
+<li><strong>记录复现步骤</strong>：问题是否稳定复现，对诊断很重要</li>
+</ol>
+<h3 id="预防措施"><a href="#预防措施" class="headerlink" title="预防措施"></a>预防措施</h3><ol>
+<li><strong>配置健康检查</strong>：使用Docker的healthcheck指令，让Docker自动检测并恢复异常容器</li>
+<li><strong>监控网络指标</strong>：定期检查docker0网桥和veth设备的统计信息</li>
+<li><strong>定期清理资源</strong>：清理无用的网络、容器和镜像，防止资源泄漏</li>
+<li><strong>升级到稳定版本</strong>：使用Docker最新稳定版本，避免已知bug</li>
+</ol>
+<h3 id="运维建议"><a href="#运维建议" class="headerlink" title="运维建议"></a>运维建议</h3><ol>
+<li>**不要依赖”重启大法”**：虽然重启能临时解决问题，但找到根因才能彻底修复</li>
+<li><strong>做好日志收集</strong>：Docker日志、内核日志、系统日志都应该收集和分析</li>
+<li><strong>理解网络模型</strong>：深入理解Docker的网络模型，才能更好地排查问题</li>
+<li><strong>自动化监控和恢复</strong>：将重复性的检查和修复工作自动化，减少人工干预</li>
+</ol>
+<h2 id="延伸阅读"><a href="#延伸阅读" class="headerlink" title="延伸阅读"></a>延伸阅读</h2><ul>
+<li><a target="_blank" rel="noopener" href="https://docs.docker.com/network/">Docker官方文档 - 网络</a></li>
+<li><a target="_blank" rel="noopener" href="https://docs.docker.com/config/containers/troubleshooting_cnetworking/">Docker网络疑难排解指南</a></li>
+<li><a target="_blank" rel="noopener" href="https://developers.redhat.com/blog/2018/10/22/introduction-to-linux-nic-filterning">Linux网络虚拟化详解</a></li>
+<li><a target="_blank" rel="noopener" href="https://docs.docker.com/network/network-drivers/">Docker网络驱动比较</a></li>
+</ul>
+<h2 id="结语"><a href="#结语" class="headerlink" title="结语"></a>结语</h2><p>Docker容器网络”假死”的问题，排查起来确实比较棘手，因为它涉及多个层面的网络组件。但只要掌握了正确的排查方法，从表象到根因，一步步分析，就能找到问题的真正原因。</p>
+<p>本文记录的排查过程，希望能为遇到类似问题的同学提供一些参考。记住，排查网络问题最重要的是<strong>分层分析</strong>和<strong>日志追踪</strong>——先确认问题的范围，再逐层深入，最后找到根因。</p>
+<p>当然，最重要的还是<strong>预防胜于治疗</strong>。做好健康检查、配置监控告警、定期清理资源，这些日常工作虽然繁琐，但在关键时刻能救你一命。</p>
+<p>祝你永无网络问题！</p>
+<hr>
+<p><em>作者：小六，一个今天终于搞清楚Docker容器网络假死问题根因的技术人</em></p>
+
+    
+  </article>
+
+  
+      
+    <div class="nexmoe-post-copyright">
+        <strong>Author：</strong>Margrop<br>
+        <strong>Link：</strong><a href="http://blog.margrop.com/post/2026-04-13-docker-container-network-card-death-troubleshooting/" title="http:&#x2F;&#x2F;blog.margrop.com&#x2F;post&#x2F;2026-04-13-docker-container-network-card-death-troubleshooting&#x2F;" target="_blank" rel="noopener">http:&#x2F;&#x2F;blog.margrop.com&#x2F;post&#x2F;2026-04-13-docker-container-network-card-death-troubleshooting&#x2F;</a><br>
+        
+            <strong>版权声明：</strong>本文采用 <a href="https://creativecommons.org/licenses/by-nc-sa/3.0/cn/deed.zh" target="_blank">CC BY-NC-SA 3.0 CN</a> 协议进行许可
+
+        
+    </div>
+
+
+  
+  
+  <div class="nexmoe-post-meta nexmoe-rainbow">
+   
+    
+        <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/Docker/" rel="tag">Docker</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/%E5%AE%B9%E5%99%A8/" rel="tag">容器</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/%E6%8A%80%E6%9C%AF/" rel="tag">技术</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/%E7%BD%91%E7%BB%9C/" rel="tag">网络</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/%E8%BF%90%E7%BB%B4/" rel="tag">运维</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/%E9%97%AE%E9%A2%98%E6%8E%92%E6%9F%A5/" rel="tag">问题排查</a>
+    
+</div>
+  
+  
+    <script async src="../../js/copy-codeblock.js?v=1776085606560"></script>
+  
+
+  
+      <div class="nexmoe-post-footer">
+          <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+<script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+<div id="gitalk-container"></div>
+<script>
+  const gitalk = new Gitalk({
+    clientID: 'Ov23lib2oiNKjG5B7I1N',
+    clientSecret: '0a94653f17a7b9630d85b275008da4b38e0259dd',
+    repo: 'margropcomment.margrop.io',      // The repository of store comments,
+    owner: 'margrop',
+    admin: ['margrop'],
+    pagerDirection: 'last',
+    id: window.location.pathname.substring(0, 49), // 使用 pathname 的前49个字符作为 id
+    title: document.title,
+    language: 'zh-CN', // 根据需要设置语言
+    distractionFreeMode: false
+  })
+  gitalk.render('gitalk-container')
+</script>
+
+      </div>
+  
+</div></div><div class="nexmoe-post-right">    <div class="nexmoe-fixed">
+        <div class="nexmoe-tool">
+
+            
+
+            
+            
+            <button class="mdui-fab catalog" style="overflow:unset;">
+                <i class="nexmoefont icon-i-catalog"></i>
+                <div class="nexmoe-toc">
+                    <ol class="toc"><li class="toc-item toc-level-1"><a class="toc-link" href="#%E8%AE%B0%E4%B8%80%E6%AC%A1Docker%E5%AE%B9%E5%99%A8%E5%86%85%E9%83%A8%E7%BD%91%E5%8D%A1%E2%80%9D%E5%81%87%E6%AD%BB%E2%80%9D%E6%95%85%E9%9A%9C%E6%8E%92%E6%9F%A5%EF%BC%9A%E4%BB%8E%E8%A1%A8%E8%B1%A1%E5%88%B0%E6%A0%B9%E5%9B%A0"><span class="toc-number">1.</span> <span class="toc-text">记一次Docker容器内部网卡”假死”故障排查：从表象到根因</span></a><ol class="toc-child"><li class="toc-item toc-level-2"><a class="toc-link" href="#%E5%89%8D%E8%A8%80"><span class="toc-number">1.1.</span> <span class="toc-text">前言</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E9%97%AE%E9%A2%98%E8%83%8C%E6%99%AF"><span class="toc-number">1.2.</span> <span class="toc-text">问题背景</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#%E4%B8%9A%E5%8A%A1%E5%9C%BA%E6%99%AF"><span class="toc-number">1.2.1.</span> <span class="toc-text">业务场景</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E9%97%AE%E9%A2%98%E7%8E%B0%E8%B1%A1"><span class="toc-number">1.2.2.</span> <span class="toc-text">问题现象</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E7%8E%AF%E5%A2%83%E4%BF%A1%E6%81%AF"><span class="toc-number">1.2.3.</span> <span class="toc-text">环境信息</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E9%97%AE%E9%A2%98%E5%88%86%E6%9E%90"><span class="toc-number">1.3.</span> <span class="toc-text">问题分析</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#%E5%88%9D%E6%AD%A5%E5%88%86%E6%9E%90%EF%BC%9A%E4%B8%BA%E4%BB%80%E4%B9%88%E6%98%AF%E2%80%9D%E5%81%87%E6%AD%BB%E2%80%9D%EF%BC%9F"><span class="toc-number">1.3.1.</span> <span class="toc-text">初步分析：为什么是”假死”？</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E5%8F%AF%E8%83%BD%E7%9A%84%E5%8E%9F%E5%9B%A0"><span class="toc-number">1.3.2.</span> <span class="toc-text">可能的原因</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E6%8E%92%E6%9F%A5%E8%BF%87%E7%A8%8B"><span class="toc-number">1.4.</span> <span class="toc-text">排查过程</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#%E7%AC%AC%E4%B8%80%E6%AD%A5%EF%BC%9A%E7%A1%AE%E8%AE%A4%E9%97%AE%E9%A2%98%E7%9A%84%E8%8C%83%E5%9B%B4%E5%92%8C%E7%8E%B0%E8%B1%A1"><span class="toc-number">1.4.1.</span> <span class="toc-text">第一步：确认问题的范围和现象</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E7%AC%AC%E4%BA%8C%E6%AD%A5%EF%BC%9A%E6%A3%80%E6%9F%A5%E5%AE%B9%E5%99%A8%E7%9A%84%E7%BD%91%E7%BB%9C%E6%8E%A5%E5%8F%A3"><span class="toc-number">1.4.2.</span> <span class="toc-text">第二步：检查容器的网络接口</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E7%AC%AC%E4%B8%89%E6%AD%A5%EF%BC%9A%E6%A3%80%E6%9F%A5Docker-bridge%E7%BD%91%E7%BB%9C%E7%9A%84%E7%8A%B6%E6%80%81"><span class="toc-number">1.4.3.</span> <span class="toc-text">第三步：检查Docker bridge网络的状态</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E7%AC%AC%E5%9B%9B%E6%AD%A5%EF%BC%9A%E6%A3%80%E6%9F%A5iptables%E8%A7%84%E5%88%99"><span class="toc-number">1.4.4.</span> <span class="toc-text">第四步：检查iptables规则</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E7%AC%AC%E4%BA%94%E6%AD%A5%EF%BC%9A%E6%A3%80%E6%9F%A5%E5%86%85%E6%A0%B8%E7%BD%91%E7%BB%9C%E7%BC%93%E5%86%B2%E5%8C%BA"><span class="toc-number">1.4.5.</span> <span class="toc-text">第五步：检查内核网络缓冲区</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E7%AC%AC%E5%85%AD%E6%AD%A5%EF%BC%9A%E5%B0%9D%E8%AF%95%E4%BF%AE%E5%A4%8D%E5%AE%B9%E5%99%A8%E7%BD%91%E7%BB%9C"><span class="toc-number">1.4.6.</span> <span class="toc-text">第六步：尝试修复容器网络</span></a><ol class="toc-child"><li class="toc-item toc-level-4"><a class="toc-link" href="#%E6%96%B9%E6%B3%95%E4%B8%80%EF%BC%9A%E9%87%8D%E5%90%AF%E5%AE%B9%E5%99%A8%EF%BC%88%E6%9C%80%E7%AE%80%E5%8D%95%E6%9C%89%E6%95%88%EF%BC%89"><span class="toc-number">1.4.6.1.</span> <span class="toc-text">方法一：重启容器（最简单有效）</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#%E6%96%B9%E6%B3%95%E4%BA%8C%EF%BC%9A%E6%96%AD%E5%BC%80%E5%B9%B6%E9%87%8D%E6%96%B0%E8%BF%9E%E6%8E%A5%E7%BD%91%E7%BB%9C"><span class="toc-number">1.4.6.2.</span> <span class="toc-text">方法二：断开并重新连接网络</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#%E6%96%B9%E6%B3%95%E4%B8%89%EF%BC%9A%E9%87%8D%E5%BB%BA%E6%95%B4%E4%B8%AADocker%E7%BD%91%E7%BB%9C"><span class="toc-number">1.4.6.3.</span> <span class="toc-text">方法三：重建整个Docker网络</span></a></li></ol></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E7%AC%AC%E4%B8%83%E6%AD%A5%EF%BC%9A%E6%B7%B1%E5%85%A5%E5%88%86%E6%9E%90%E6%A0%B9%E5%9B%A0"><span class="toc-number">1.4.7.</span> <span class="toc-text">第七步：深入分析根因</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E6%A0%B9%E5%9B%A0%E5%88%86%E6%9E%90"><span class="toc-number">1.5.</span> <span class="toc-text">根因分析</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#%E7%9B%B4%E6%8E%A5%E5%8E%9F%E5%9B%A0"><span class="toc-number">1.5.1.</span> <span class="toc-text">直接原因</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E6%B7%B1%E5%B1%82%E5%8E%9F%E5%9B%A0"><span class="toc-number">1.5.2.</span> <span class="toc-text">深层原因</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E8%A7%A3%E5%86%B3%E6%96%B9%E6%A1%88"><span class="toc-number">1.6.</span> <span class="toc-text">解决方案</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#%E7%B4%A7%E6%80%A5%E4%BF%AE%E5%A4%8D%EF%BC%9A%E4%B8%B4%E6%97%B6%E6%81%A2%E5%A4%8D%E5%AE%B9%E5%99%A8%E7%BD%91%E7%BB%9C"><span class="toc-number">1.6.1.</span> <span class="toc-text">紧急修复：临时恢复容器网络</span></a><ol class="toc-child"><li class="toc-item toc-level-4"><a class="toc-link" href="#%E6%96%B9%E6%B3%95%E4%B8%80%EF%BC%9A%E9%87%8D%E5%90%AF%E5%8D%95%E4%B8%AA%E5%AE%B9%E5%99%A8"><span class="toc-number">1.6.1.1.</span> <span class="toc-text">方法一：重启单个容器</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#%E6%96%B9%E6%B3%95%E4%BA%8C%EF%BC%9A%E6%96%AD%E5%BC%80%E5%B9%B6%E9%87%8D%E8%BF%9E%E5%AE%B9%E5%99%A8%E7%BD%91%E7%BB%9C"><span class="toc-number">1.6.1.2.</span> <span class="toc-text">方法二：断开并重连容器网络</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#%E6%96%B9%E6%B3%95%E4%B8%89%EF%BC%9A%E9%87%8D%E5%90%AFDocker%E6%9C%8D%E5%8A%A1%EF%BC%88%E6%9C%80%E5%BD%BB%E5%BA%95%EF%BC%89"><span class="toc-number">1.6.1.3.</span> <span class="toc-text">方法三：重启Docker服务（最彻底）</span></a></li></ol></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E9%95%BF%E6%9C%9F%E6%96%B9%E6%A1%88%EF%BC%9A%E9%98%B2%E6%AD%A2%E9%97%AE%E9%A2%98%E5%86%8D%E6%AC%A1%E5%8F%91%E7%94%9F"><span class="toc-number">1.6.2.</span> <span class="toc-text">长期方案：防止问题再次发生</span></a><ol class="toc-child"><li class="toc-item toc-level-4"><a class="toc-link" href="#%E6%96%B9%E6%A1%88%E4%B8%80%EF%BC%9A%E5%8D%87%E7%BA%A7Docker%E5%88%B0%E6%9C%80%E6%96%B0%E7%89%88%E6%9C%AC"><span class="toc-number">1.6.2.1.</span> <span class="toc-text">方案一：升级Docker到最新版本</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#%E6%96%B9%E6%A1%88%E4%BA%8C%EF%BC%9A%E4%BD%BF%E7%94%A8Docker%E7%9A%84%E5%81%A5%E5%BA%B7%E6%A3%80%E6%9F%A5%E5%92%8C%E8%87%AA%E5%8A%A8%E6%81%A2%E5%A4%8D"><span class="toc-number">1.6.2.2.</span> <span class="toc-text">方案二：使用Docker的健康检查和自动恢复</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#%E6%96%B9%E6%A1%88%E4%B8%89%EF%BC%9A%E4%BD%BF%E7%94%A8%E7%9B%91%E6%8E%A7%E8%84%9A%E6%9C%AC%E8%87%AA%E5%8A%A8%E6%A3%80%E6%B5%8B%E5%92%8C%E4%BF%AE%E5%A4%8D"><span class="toc-number">1.6.2.3.</span> <span class="toc-text">方案三：使用监控脚本自动检测和修复</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#%E6%96%B9%E6%A1%88%E5%9B%9B%EF%BC%9A%E9%85%8D%E7%BD%AE%E6%9B%B4%E9%AB%98%E7%9A%84%E5%86%85%E6%A0%B8%E7%BD%91%E7%BB%9C%E5%8F%82%E6%95%B0"><span class="toc-number">1.6.2.4.</span> <span class="toc-text">方案四：配置更高的内核网络参数</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#%E6%96%B9%E6%A1%88%E4%BA%94%EF%BC%9A%E5%AE%9A%E6%9C%9F%E6%B8%85%E7%90%86Docker%E7%BD%91%E7%BB%9C%E8%B5%84%E6%BA%90"><span class="toc-number">1.6.2.5.</span> <span class="toc-text">方案五：定期清理Docker网络资源</span></a></li></ol></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%B8%80%E9%94%AE%E6%8E%92%E6%9F%A5%E8%84%9A%E6%9C%AC"><span class="toc-number">1.7.</span> <span class="toc-text">一键排查脚本</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E5%B8%B8%E8%A7%81%E9%97%AE%E9%A2%98%E8%A7%A3%E7%AD%94"><span class="toc-number">1.8.</span> <span class="toc-text">常见问题解答</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#Q1%EF%BC%9ADocker%E5%AE%B9%E5%99%A8%E7%9A%84%E7%BD%91%E7%BB%9C%E5%92%8C%E5%AE%BF%E4%B8%BB%E6%9C%BA%E7%9A%84%E7%BD%91%E7%BB%9C%E6%9C%89%E4%BB%80%E4%B9%88%E5%85%B3%E7%B3%BB%EF%BC%9F"><span class="toc-number">1.8.1.</span> <span class="toc-text">Q1：Docker容器的网络和宿主机的网络有什么关系？</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#Q2%EF%BC%9A%E4%B8%BA%E4%BB%80%E4%B9%88%E4%BB%8E%E5%AE%BF%E4%B8%BB%E6%9C%BA%E5%8F%AF%E4%BB%A5%E8%AE%BF%E9%97%AE%E5%AE%B9%E5%99%A8%EF%BC%8C%E4%BD%86%E4%BB%8E%E5%AE%B9%E5%99%A8%E5%86%85%E9%83%A8%E4%B8%8D%E8%83%BD%E8%AE%BF%E9%97%AE%E5%A4%96%E9%83%A8%E7%BD%91%E7%BB%9C%EF%BC%9F"><span class="toc-number">1.8.2.</span> <span class="toc-text">Q2：为什么从宿主机可以访问容器，但从容器内部不能访问外部网络？</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#Q3%EF%BC%9A%E9%87%8D%E5%90%AF%E5%AE%B9%E5%99%A8%E4%BC%9A%E6%94%B9%E5%8F%98IP%E5%9C%B0%E5%9D%80%E5%90%97%EF%BC%9F"><span class="toc-number">1.8.3.</span> <span class="toc-text">Q3：重启容器会改变IP地址吗？</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#Q4%EF%BC%9A%E5%A6%82%E4%BD%95%E9%98%B2%E6%AD%A2%E5%AE%B9%E5%99%A8%E7%BD%91%E7%BB%9C%E5%81%87%E6%AD%BB%E5%90%8E%E6%97%A0%E4%BA%BA%E5%8F%91%E7%8E%B0%EF%BC%9F"><span class="toc-number">1.8.4.</span> <span class="toc-text">Q4：如何防止容器网络假死后无人发现？</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#Q5%EF%BC%9ADocker%E7%9A%84bridge%E3%80%81host%E3%80%81overlay%E7%BD%91%E7%BB%9C%E6%A8%A1%E5%BC%8F%E6%9C%89%E4%BB%80%E4%B9%88%E5%8C%BA%E5%88%AB%EF%BC%9F"><span class="toc-number">1.8.5.</span> <span class="toc-text">Q5：Docker的bridge、host、overlay网络模式有什么区别？</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#Q6%EF%BC%9A%E5%A6%82%E4%BD%95%E6%9F%A5%E7%9C%8B%E6%9F%90%E4%B8%AA%E5%AE%B9%E5%99%A8%E7%9A%84veth-pair%E5%9C%A8%E5%AE%BF%E4%B8%BB%E6%9C%BA%E4%B8%8A%E5%AF%B9%E5%BA%94%E7%9A%84%E6%8E%A5%E5%8F%A3%EF%BC%9F"><span class="toc-number">1.8.6.</span> <span class="toc-text">Q6：如何查看某个容器的veth pair在宿主机上对应的接口？</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E7%BB%8F%E9%AA%8C%E6%80%BB%E7%BB%93"><span class="toc-number">1.9.</span> <span class="toc-text">经验总结</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#%E6%8E%92%E6%9F%A5%E6%8A%80%E5%B7%A7"><span class="toc-number">1.9.1.</span> <span class="toc-text">排查技巧</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E9%A2%84%E9%98%B2%E6%8E%AA%E6%96%BD"><span class="toc-number">1.9.2.</span> <span class="toc-text">预防措施</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E8%BF%90%E7%BB%B4%E5%BB%BA%E8%AE%AE"><span class="toc-number">1.9.3.</span> <span class="toc-text">运维建议</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E5%BB%B6%E4%BC%B8%E9%98%85%E8%AF%BB"><span class="toc-number">1.10.</span> <span class="toc-text">延伸阅读</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E7%BB%93%E8%AF%AD"><span class="toc-number">1.11.</span> <span class="toc-text">结语</span></a></li></ol></li></ol>
+                </div>
+            </button>
+            
+
+            
+
+            <a href="#nexmoe-content" class="backtop toc-link" aria-label="Back To Top" title="top"><button class="mdui-fab mdui-ripple"><i class="nexmoefont icon-caret-top"></i></button></a>
+        </div>
+    </div>
+</div></div><div id="nexmoe-footer"><!--!--></div><div id="nexmoe-search-space"><div class="search-container"><div class="search-header"><div class="search-input-container"><input class="search-input" type="text" placeholder="Search" onInput="sinput();"></div><a class="search-close" onclick="sclose();">×</a></div><div class="search-body"></div></div></div><div><script src="https://cdn.jsdelivr.net/npm/mathjax@latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+<script>MathJax.Hub.Config({
+    tex2jax: {
+        inlineMath: [ ['$','$'], ["\\(","\\)"] ],
+        processEscapes: true,
+        skipTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code']
+    }
+});
+MathJax.Hub.Queue(function() {
+    var all = MathJax.Hub.getAllJax(), i;
+    for(i=0; i < all.length; i += 1) {
+        all[i].SourceElement().parentNode.className += ' has-jax';
+    }
+});</script>
+</div></body></html>
