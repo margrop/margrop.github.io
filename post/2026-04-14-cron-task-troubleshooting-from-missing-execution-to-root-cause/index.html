@@ -1,0 +1,891 @@
+<!doctype html>
+<html lang="cn"><head>
+<title>记一次定时任务（Cron）故障排查：从&#34;任务没执行&#34;到根因分析 - 魔都水滴</title>
+<meta charset="UTF-8">
+<meta name="keywords" content="">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5">
+
+<link rel="shortcut icon" href="/favicon.ico" type="image/x-icon" />
+<meta name="description" content="记一次定时任务（Cron）故障排查：从”任务没执行”到根因分析前言定时任务（Cron）是运维自动化中最基础也最重要的组件之一。相比于复杂的监控系统或服务编排，Cron 看似简单——无非就是”到了某个时间，自动执行某个命令”。但正是因为它足够简单，反而最容易被忽视，直到出了问题才发现：原来我的定时任务根本没在执行。 今天要聊的，就是这样一次排查经历：定时任务配置了、日志也写了、进程也在跑，但就是没有">
+<meta property="og:type" content="article">
+<meta property="og:title" content="记一次定时任务（Cron）故障排查：从&quot;任务没执行&quot;到根因分析">
+<meta property="og:url" content="http://blog.margrop.com/post/2026-04-14-cron-task-troubleshooting-from-missing-execution-to-root-cause/index.html">
+<meta property="og:site_name" content="魔都水滴">
+<meta property="og:description" content="记一次定时任务（Cron）故障排查：从”任务没执行”到根因分析前言定时任务（Cron）是运维自动化中最基础也最重要的组件之一。相比于复杂的监控系统或服务编排，Cron 看似简单——无非就是”到了某个时间，自动执行某个命令”。但正是因为它足够简单，反而最容易被忽视，直到出了问题才发现：原来我的定时任务根本没在执行。 今天要聊的，就是这样一次排查经历：定时任务配置了、日志也写了、进程也在跑，但就是没有">
+<meta property="og:locale">
+<meta property="article:published_time" content="2026-04-14T13:30:00.000Z">
+<meta property="article:modified_time" content="2026-04-14T13:05:10.613Z">
+<meta property="article:author" content="Margrop">
+<meta property="article:tag" content="运维">
+<meta property="article:tag" content="自动化">
+<meta property="article:tag" content="技术">
+<meta property="article:tag" content="问题排查">
+<meta property="article:tag" content="定时任务">
+<meta property="article:tag" content="Cron">
+<meta name="twitter:card" content="summary">
+
+<link rel="stylesheet" href="../../lib/fancybox/fancybox.css">
+<link rel="stylesheet" href="../../lib/mdui_043tiny/mdui.css">
+
+
+<link rel="stylesheet" href="../../lib/iconfont/iconfont.css?v=1776171928984">
+
+<link rel="stylesheet" href="../../css/style.css?v=1776171928984">
+
+
+
+
+    
+        <link rel="stylesheet" href="../../custom.css?v=1776171928984">
+    
+
+
+
+<script src="../../lib/mdui_043tiny/mdui.js" async></script>
+<script src="../../lib/fancybox/fancybox.umd.js" async></script>
+<script src="../../lib/lax.min.js" async></script>
+
+
+<script async src="../../js/app.js?v=1776171928985"></script>
+
+ 
+
+<script charset="UTF-8" id="LA_COLLECT" src="//sdk.51.la/js-sdk-pro.min.js"></script>
+<script>LA.init({id:"23bDEwNOu1L8NhV1",ck:"23bDEwNOu1L8NhV1"})</script>
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-4NGHEP8LEV"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+
+  gtag('config', 'G-4NGHEP8LEV');
+</script>
+
+
+<link rel="stylesheet"  href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/atom-one-dark.min.css">
+<meta name="generator" content="Hexo 7.3.0"><link rel="alternate" href="atom.xml" title="魔都水滴" type="application/atom+xml">
+</head><body class="nexmoe mdui-drawer-body-left"><div id="nexmoe-background"><div class="nexmoe-bg" style="background-image: url(/images/background.webp)"></div><div class="mdui-appbar mdui-shadow-0"><div class="mdui-toolbar"><a class="mdui-btn mdui-btn-icon mdui-ripple" mdui-drawer="{target: &#039;#drawer&#039;, swipe: true}" title="menu"><i class="mdui-icon nexmoefont icon-menu"></i></a><div class="mdui-toolbar-spacer"></div><a class="mdui-btn mdui-btn-icon" href="../../index.html" title="Margrop"><img src="/images/avatar.webp" alt="Margrop"></a></div></div></div><div id="nexmoe-header"><div class="nexmoe-drawer mdui-drawer" id="drawer">
+    <div class="nexmoe-avatar mdui-ripple">
+        <a href="../../index.html" title="Margrop">
+            <img src="/images/avatar.webp" alt="Margrop" alt="Margrop">
+        </a>
+    </div>
+    <div class="nexmoe-count">
+        <div><span>Articles</span>262</div>
+        <div><span>Tags</span>428</div>
+        <div><span>Categories</span>23</div>
+    </div>
+    <div class="nexmoe-list mdui-list" mdui-collapse="{accordion: true}">
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" href="../../index.html" title="回到首页">
+            <i class="mdui-list-item-icon nexmoefont icon-home"></i>
+            <div class="mdui-list-item-content">
+                回到首页
+            </div>
+        </a>
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" href="../../post/archives/" title="文章归档">
+            <i class="mdui-list-item-icon nexmoefont icon-container"></i>
+            <div class="mdui-list-item-content">
+                文章归档
+            </div>
+        </a>
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" target="_blank" rel="noopener" href="https://example.com/" title="下载">
+            <i class="mdui-list-item-icon nexmoefont icon-container"></i>
+            <div class="mdui-list-item-content">
+                下载
+            </div>
+        </a>
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" href="../../post/favorites/" title="常用链接">
+            <i class="mdui-list-item-icon nexmoefont icon-unorderedlist"></i>
+            <div class="mdui-list-item-content">
+                常用链接
+            </div>
+        </a>
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" href="../../post/github-project-stars/" title="GithubStars">
+            <i class="mdui-list-item-icon nexmoefont icon-github"></i>
+            <div class="mdui-list-item-content">
+                GithubStars
+            </div>
+        </a>
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" href="../../post/donate/" title="给我赞助">
+            <i class="mdui-list-item-icon nexmoefont icon-coffee"></i>
+            <div class="mdui-list-item-content">
+                给我赞助
+            </div>
+        </a>
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" href="../../post/about/" title="关于博主">
+            <i class="mdui-list-item-icon nexmoefont icon-info-circle"></i>
+            <div class="mdui-list-item-content">
+                关于博主
+            </div>
+        </a>
+        
+    </div>
+    
+    
+        
+        <div class="nexmoe-widget-wrap">
+    <div class="nexmoe-widget nexmoe-search">
+         
+            <form id="search_form" action_e="https://cn.bing.com/search?q=site:example.com" onsubmit="return search();">
+                <label><input id="search_value" name="q" type="search" placeholder="Search"></label>
+            </form>
+         
+    </div>
+</div>
+
+
+
+
+    
+        
+        <div class="nexmoe-widget-wrap">
+	<div class="nexmoe-widget nexmoe-social">
+		<a
+			class="mdui-ripple"
+			href="http://qm.qq.com/cgi-bin/qm/qr?_wv=1027&k=weD8TANNWdCOveAMcdmoAxOKt5owKkDS"
+			target="_blank"
+			mdui-tooltip="{content: 'QQ群'}"
+			style="
+				color: rgb(249, 174, 8);
+				background-color: rgba(249, 174, 8, .1);
+			"
+		>
+			<i
+				class="nexmoefont icon-QQ"
+			></i> </a
+		><a
+			class="mdui-ripple"
+			href="https://github.com/margrop/"
+			target="_blank"
+			mdui-tooltip="{content: 'GitHub'}"
+			style="
+				color: rgb(25, 23, 23);
+				background-color: rgba(25, 23, 23, .1);
+			"
+		>
+			<i
+				class="nexmoefont icon-github"
+			></i> </a
+		><a
+			class="mdui-ripple"
+			href="../../atom.xml"
+			target="_blank"
+			mdui-tooltip="{content: 'RSS'}"
+			style="
+				color: rgb(247, 132, 34);
+				background-color: rgba(247, 132, 34, .1);
+			"
+		>
+			<i
+				class="nexmoefont icon-rss"
+			></i> </a
+		>
+	</div>
+</div>
+
+    
+        
+        
+  <div class="nexmoe-widget-wrap">
+    <h3 class="nexmoe-widget-title">Categories</h3>
+    <div class="nexmoe-widget">
+
+      <ul class="category-list">
+
+        
+
+
+        
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/Adblocker/">Adblocker</a>
+          <span class="category-list-count">1</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/Android/">Android</a>
+          <span class="category-list-count">2</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/CentOS/">CentOS</a>
+          <span class="category-list-count">6</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/Container/">Container</a>
+          <span class="category-list-count">10</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/Git/">Git</a>
+          <span class="category-list-count">7</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/HomeAssistant/">HomeAssistant</a>
+          <span class="category-list-count">1</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/MacOS/">MacOS</a>
+          <span class="category-list-count">11</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/PVE/">PVE</a>
+          <span class="category-list-count">19</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/SmartHome/">SmartHome</a>
+          <span class="category-list-count">5</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/Synology/">Synology</a>
+          <span class="category-list-count">4</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/Ubuntu/">Ubuntu</a>
+          <span class="category-list-count">4</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/Windows/">Windows</a>
+          <span class="category-list-count">3</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/ai-diary/">ai_diary</a>
+          <span class="category-list-count">54</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/ai-tech/">ai_tech</a>
+          <span class="category-list-count">50</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/develop/">develop</a>
+          <span class="category-list-count">28</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/fuckgfw/">fuckgfw</a>
+          <span class="category-list-count">2</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/n2n/">n2n</a>
+          <span class="category-list-count">9</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/">network</a>
+          <span class="category-list-count">112</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/notes/">notes</a>
+          <span class="category-list-count">10</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/others/">others</a>
+          <span class="category-list-count">3</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/router/">router</a>
+          <span class="category-list-count">7</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/sport/">sport</a>
+          <span class="category-list-count">4</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/tvbox/">tvbox</a>
+          <span class="category-list-count">3</span>
+        </li>
+
+        
+      </ul>
+
+    </div>
+  </div>
+
+
+    
+        
+        
+  <div class="nexmoe-widget-wrap">
+    <div id="randomtagcloud" class="nexmoe-widget tagcloud nexmoe-rainbow">
+      <a href="../../tags/1password/" style="font-size: 10px;">1password</a> <a href="../../tags/AC/" style="font-size: 10.48px;">AC</a> <a href="../../tags/ACP/" style="font-size: 10px;">ACP</a> <a href="../../tags/AI/" style="font-size: 11.43px;">AI</a> <a href="../../tags/AP/" style="font-size: 10.95px;">AP</a> <a href="../../tags/API/" style="font-size: 10.48px;">API</a> <a href="../../tags/AppDaemon/" style="font-size: 10px;">AppDaemon</a> <a href="../../tags/Aqara/" style="font-size: 10px;">Aqara</a> <a href="../../tags/CI-CD/" style="font-size: 10.48px;">CI/CD</a> <a href="../../tags/Caddy/" style="font-size: 10px;">Caddy</a> <a href="../../tags/Cloudflare/" style="font-size: 10px;">Cloudflare</a> <a href="../../tags/Cookie-%E8%AE%A4%E8%AF%81/" style="font-size: 10px;">Cookie 认证</a> <a href="../../tags/Cron/" style="font-size: 11.43px;">Cron</a> <a href="../../tags/D1/" style="font-size: 10px;">D1</a> <a href="../../tags/Date/" style="font-size: 10px;">Date</a> <a href="../../tags/Diagrams-net/" style="font-size: 10px;">Diagrams.net</a> <a href="../../tags/Docker/" style="font-size: 15.71px;">Docker</a> <a href="../../tags/Docker-Compose/" style="font-size: 10px;">Docker Compose</a> <a href="../../tags/Electerm/" style="font-size: 10px;">Electerm</a> <a href="../../tags/Gateway/" style="font-size: 10.48px;">Gateway</a> <a href="../../tags/GitHub-Actions/" style="font-size: 10.48px;">GitHub Actions</a> <a href="../../tags/HA/" style="font-size: 10px;">HA</a> <a href="../../tags/HADashboard/" style="font-size: 10px;">HADashboard</a> <a href="../../tags/Hexo/" style="font-size: 10.95px;">Hexo</a> <a href="../../tags/HomeAssistant/" style="font-size: 10px;">HomeAssistant</a> <a href="../../tags/IP/" style="font-size: 10px;">IP</a> <a href="../../tags/IPv4/" style="font-size: 10px;">IPv4</a> <a href="../../tags/Java/" style="font-size: 11.9px;">Java</a> <a href="../../tags/LVM%E2%80%91Thin/" style="font-size: 10.48px;">LVM‑Thin</a> <a href="../../tags/Linux/" style="font-size: 12.38px;">Linux</a> <a href="../../tags/MacOS/" style="font-size: 10.95px;">MacOS</a> <a href="../../tags/Markdown/" style="font-size: 10px;">Markdown</a> <a href="../../tags/MiniMax/" style="font-size: 10px;">MiniMax</a> <a href="../../tags/Multi-Agent/" style="font-size: 10px;">Multi-Agent</a> <a href="../../tags/MySQL/" style="font-size: 10.95px;">MySQL</a> <a href="../../tags/NAS/" style="font-size: 10.95px;">NAS</a> <a href="../../tags/Nginx/" style="font-size: 10px;">Nginx</a> <a href="../../tags/Node-js/" style="font-size: 10px;">Node.js</a> <a href="../../tags/OpenAI/" style="font-size: 10px;">OpenAI</a> <a href="../../tags/OpenClaw/" style="font-size: 17.62px;">OpenClaw</a> <a href="../../tags/OpenResty/" style="font-size: 10px;">OpenResty</a> <a href="../../tags/PPPoE/" style="font-size: 10px;">PPPoE</a> <a href="../../tags/Portainer/" style="font-size: 10px;">Portainer</a> <a href="../../tags/PostgreSQL/" style="font-size: 10px;">PostgreSQL</a> <a href="../../tags/ProcessOn/" style="font-size: 10px;">ProcessOn</a> <a href="../../tags/Prometheus/" style="font-size: 10.95px;">Prometheus</a> <a href="../../tags/Proxmox-VE/" style="font-size: 16.67px;">Proxmox VE</a> <a href="../../tags/SOCKS5/" style="font-size: 10px;">SOCKS5</a> <a href="../../tags/SSL/" style="font-size: 10px;">SSL</a> <a href="../../tags/Session/" style="font-size: 10px;">Session</a> <a href="../../tags/Shell/" style="font-size: 10.48px;">Shell</a> <a href="../../tags/Subagent/" style="font-size: 10px;">Subagent</a> <a href="../../tags/TTS/" style="font-size: 10px;">TTS</a> <a href="../../tags/TimeMachine/" style="font-size: 10px;">TimeMachine</a> <a href="../../tags/UML/" style="font-size: 10px;">UML</a> <a href="../../tags/Uptime-Kuma/" style="font-size: 10.48px;">Uptime Kuma</a> <a href="../../tags/VPN/" style="font-size: 10px;">VPN</a> <a href="../../tags/VPS/" style="font-size: 10.48px;">VPS</a> <a href="../../tags/Web/" style="font-size: 10px;">Web</a> <a href="../../tags/Windows/" style="font-size: 10px;">Windows</a> <a href="../../tags/Workers/" style="font-size: 10px;">Workers</a> <a href="../../tags/activate/" style="font-size: 10.48px;">activate</a> <a href="../../tags/ad/" style="font-size: 10px;">ad</a> <a href="../../tags/adb/" style="font-size: 10px;">adb</a> <a href="../../tags/adblock/" style="font-size: 10.48px;">adblock</a> <a href="../../tags/agent/" style="font-size: 10px;">agent</a> <a href="../../tags/aligenie/" style="font-size: 10px;">aligenie</a> <a href="../../tags/aliyun/" style="font-size: 10.95px;">aliyun</a> <a href="../../tags/alpine/" style="font-size: 10px;">alpine</a> <a href="../../tags/annotation/" style="font-size: 10px;">annotation</a> <a href="../../tags/aop/" style="font-size: 10px;">aop</a> <a href="../../tags/authy/" style="font-size: 10px;">authy</a> <a href="../../tags/autofs/" style="font-size: 10px;">autofs</a> <a href="../../tags/backup/" style="font-size: 10px;">backup</a> <a href="../../tags/baidupan/" style="font-size: 10px;">baidupan</a> <a href="../../tags/bash/" style="font-size: 10.95px;">bash</a> <a href="../../tags/bitwarden/" style="font-size: 10px;">bitwarden</a> <a href="../../tags/boot/" style="font-size: 10.48px;">boot</a> <a href="../../tags/brew/" style="font-size: 10.48px;">brew</a> <a href="../../tags/browser/" style="font-size: 10px;">browser</a> <a href="../../tags/caddy2/" style="font-size: 10.48px;">caddy2</a> <a href="../../tags/cdn/" style="font-size: 10px;">cdn</a> <a href="../../tags/centos/" style="font-size: 14.76px;">centos</a> <a href="../../tags/cert/" style="font-size: 10.48px;">cert</a> <a href="../../tags/certbot/" style="font-size: 10px;">certbot</a> <a href="../../tags/charles/" style="font-size: 10px;">charles</a> <a href="../../tags/chat/" style="font-size: 10px;">chat</a> <a href="../../tags/chrome/" style="font-size: 10.95px;">chrome</a> <a href="../../tags/classloader/" style="font-size: 10px;">classloader</a> <a href="../../tags/client/" style="font-size: 10.95px;">client</a> <a href="../../tags/clone/" style="font-size: 10.48px;">clone</a> <a href="../../tags/closures/" style="font-size: 10px;">closures</a> <a href="../../tags/cloudflare/" style="font-size: 10.48px;">cloudflare</a> <a href="../../tags/cmd/" style="font-size: 10px;">cmd</a> <a href="../../tags/command/" style="font-size: 10px;">command</a> <a href="../../tags/commit/" style="font-size: 10px;">commit</a> <a href="../../tags/container/" style="font-size: 10px;">container</a> <a href="../../tags/crontab/" style="font-size: 10px;">crontab</a> <a href="../../tags/ctyun/" style="font-size: 10.48px;">ctyun</a> <a href="../../tags/ddsm/" style="font-size: 10px;">ddsm</a> <a href="../../tags/demo/" style="font-size: 10px;">demo</a> <a href="../../tags/dependency/" style="font-size: 10px;">dependency</a> <a href="../../tags/deploy/" style="font-size: 10px;">deploy</a> <a href="../../tags/developer/" style="font-size: 10px;">developer</a> <a href="../../tags/devtools/" style="font-size: 10px;">devtools</a> <a href="../../tags/dll/" style="font-size: 10px;">dll</a> <a href="../../tags/dns/" style="font-size: 10.95px;">dns</a> <a href="../../tags/docker/" style="font-size: 13.81px;">docker</a> <a href="../../tags/domain/" style="font-size: 10px;">domain</a> <a href="../../tags/download/" style="font-size: 10px;">download</a> <a href="../../tags/draw/" style="font-size: 10.48px;">draw</a> <a href="../../tags/drawio/" style="font-size: 10px;">drawio</a> <a href="../../tags/dsm/" style="font-size: 13.33px;">dsm</a> <a href="../../tags/dump/" style="font-size: 10px;">dump</a> <a href="../../tags/dylib/" style="font-size: 10px;">dylib</a> <a href="../../tags/edge/" style="font-size: 10.95px;">edge</a> <a href="../../tags/exception/" style="font-size: 10.48px;">exception</a> <a href="../../tags/export/" style="font-size: 10px;">export</a> <a href="../../tags/fail2ban/" style="font-size: 10px;">fail2ban</a> <a href="../../tags/feign/" style="font-size: 10px;">feign</a> <a href="../../tags/firewall-cmd/" style="font-size: 10.48px;">firewall-cmd</a> <a href="../../tags/flow/" style="font-size: 10px;">flow</a> <a href="../../tags/frp/" style="font-size: 10.48px;">frp</a> <a href="../../tags/frpc/" style="font-size: 11.43px;">frpc</a> <a href="../../tags/frps/" style="font-size: 10.48px;">frps</a> <a href="../../tags/fuckgfw/" style="font-size: 11.43px;">fuckgfw</a> <a href="../../tags/function/" style="font-size: 10px;">function</a> <a href="../../tags/gcc/" style="font-size: 10px;">gcc</a> <a href="../../tags/gfw/" style="font-size: 10.48px;">gfw</a> <a href="../../tags/git/" style="font-size: 12.38px;">git</a> <a href="../../tags/github/" style="font-size: 12.86px;">github</a> <a href="../../tags/golang/" style="font-size: 10px;">golang</a> <a href="../../tags/gperftools/" style="font-size: 10px;">gperftools</a> <a href="../../tags/gridea/" style="font-size: 10.48px;">gridea</a> <a href="../../tags/grub/" style="font-size: 10.48px;">grub</a> <a href="../../tags/gvt-g/" style="font-size: 10px;">gvt-g</a> <a href="../../tags/hacs/" style="font-size: 10px;">hacs</a> <a href="../../tags/havcs/" style="font-size: 10.48px;">havcs</a> <a href="../../tags/heap/" style="font-size: 10px;">heap</a> <a href="../../tags/hello/" style="font-size: 10.48px;">hello</a> <a href="../../tags/hexo/" style="font-size: 10.95px;">hexo</a> <a href="../../tags/hibernate/" style="font-size: 10.48px;">hibernate</a> <a href="../../tags/hidpi/" style="font-size: 10px;">hidpi</a> <a href="../../tags/hoisting/" style="font-size: 10px;">hoisting</a> <a href="../../tags/homeassistant/" style="font-size: 11.9px;">homeassistant</a> <a href="../../tags/hosts/" style="font-size: 10px;">hosts</a> <a href="../../tags/html/" style="font-size: 10.48px;">html</a> <a href="../../tags/htmlparser/" style="font-size: 10px;">htmlparser</a> <a href="../../tags/https/" style="font-size: 10.95px;">https</a> <a href="../../tags/idea/" style="font-size: 10px;">idea</a> <a href="../../tags/image/" style="font-size: 10px;">image</a> <a href="../../tags/img/" style="font-size: 10.48px;">img</a> <a href="../../tags/img2kvm/" style="font-size: 10px;">img2kvm</a> <a href="../../tags/import/" style="font-size: 10px;">import</a> <a href="../../tags/index/" style="font-size: 10px;">index</a> <a href="../../tags/install/" style="font-size: 12.38px;">install</a> <a href="../../tags/intel/" style="font-size: 10.48px;">intel</a> <a href="../../tags/io/" style="font-size: 10px;">io</a> <a href="../../tags/ios/" style="font-size: 10px;">ios</a> <a href="../../tags/ip/" style="font-size: 10px;">ip</a> <a href="../../tags/iptables/" style="font-size: 10px;">iptables</a> <a href="../../tags/iptv/" style="font-size: 10.48px;">iptv</a> <a href="../../tags/ipv6/" style="font-size: 10px;">ipv6</a> <a href="../../tags/iso/" style="font-size: 10px;">iso</a> <a href="../../tags/java/" style="font-size: 11.9px;">java</a> <a href="../../tags/javascript/" style="font-size: 10.48px;">javascript</a> <a href="../../tags/jetbrains/" style="font-size: 10px;">jetbrains</a> <a href="../../tags/jni/" style="font-size: 10px;">jni</a> <a href="../../tags/jnilib/" style="font-size: 10px;">jnilib</a> <a href="../../tags/jpa/" style="font-size: 10px;">jpa</a> <a href="../../tags/js/" style="font-size: 10.95px;">js</a> <a href="../../tags/json/" style="font-size: 10.48px;">json</a> <a href="../../tags/jsonb/" style="font-size: 10px;">jsonb</a> <a href="../../tags/jupter/" style="font-size: 10px;">jupter</a> <a href="../../tags/jupyterlab/" style="font-size: 10px;">jupyterlab</a> <a href="../../tags/jvm/" style="font-size: 10.48px;">jvm</a> <a href="../../tags/k8s/" style="font-size: 10.48px;">k8s</a> <a href="../../tags/kernel/" style="font-size: 10px;">kernel</a> <a href="../../tags/key/" style="font-size: 10px;">key</a> <a href="../../tags/kid/" style="font-size: 10px;">kid</a> <a href="../../tags/kms/" style="font-size: 10px;">kms</a> <a href="../../tags/kodi/" style="font-size: 10px;">kodi</a> <a href="../../tags/koolproxy/" style="font-size: 10.48px;">koolproxy</a> <a href="../../tags/koolproxyr/" style="font-size: 10.48px;">koolproxyr</a> <a href="../../tags/kvm/" style="font-size: 10.48px;">kvm</a> <a href="../../tags/lan/" style="font-size: 10px;">lan</a> <a href="../../tags/lastpass/" style="font-size: 10px;">lastpass</a> <a href="../../tags/launchctl/" style="font-size: 10px;">launchctl</a> <a href="../../tags/learning/" style="font-size: 10px;">learning</a> <a href="../../tags/lede/" style="font-size: 10px;">lede</a> <a href="../../tags/letsencrypt/" style="font-size: 10.95px;">letsencrypt</a> <a href="../../tags/linux/" style="font-size: 11.43px;">linux</a> <a href="../../tags/live/" style="font-size: 10px;">live</a> <a href="../../tags/low-code/" style="font-size: 10px;">low-code</a> <a href="../../tags/lvm/" style="font-size: 10px;">lvm</a> <a href="../../tags/lxc/" style="font-size: 10px;">lxc</a> <a href="../../tags/m3u8/" style="font-size: 10px;">m3u8</a> <a href="../../tags/mac/" style="font-size: 10.48px;">mac</a> <a href="../../tags/macos/" style="font-size: 10px;">macos</a> <a href="../../tags/mariadb/" style="font-size: 10px;">mariadb</a> <a href="../../tags/markdown/" style="font-size: 10px;">markdown</a> <a href="../../tags/maven/" style="font-size: 10.48px;">maven</a> <a href="../../tags/md5/" style="font-size: 10.48px;">md5</a> <a href="../../tags/microcode/" style="font-size: 10px;">microcode</a> <a href="../../tags/mirror/" style="font-size: 10.48px;">mirror</a> <a href="../../tags/modem/" style="font-size: 10px;">modem</a> <a href="../../tags/modules/" style="font-size: 10px;">modules</a> <a href="../../tags/monitor/" style="font-size: 10px;">monitor</a> <a href="../../tags/mount/" style="font-size: 10px;">mount</a> <a href="../../tags/mstsc/" style="font-size: 10px;">mstsc</a> <a href="../../tags/mysql/" style="font-size: 10px;">mysql</a> <a href="../../tags/n2n/" style="font-size: 13.33px;">n2n</a> <a href="../../tags/n5105/" style="font-size: 10px;">n5105</a> <a href="../../tags/nas/" style="font-size: 10px;">nas</a> <a href="../../tags/network/" style="font-size: 13.81px;">network</a> <a href="../../tags/nfs/" style="font-size: 10px;">nfs</a> <a href="../../tags/node/" style="font-size: 10.48px;">node</a> <a href="../../tags/node-red/" style="font-size: 10.48px;">node-red</a> <a href="../../tags/nodejs/" style="font-size: 11.43px;">nodejs</a> <a href="../../tags/nohup/" style="font-size: 10.48px;">nohup</a> <a href="../../tags/notepad/" style="font-size: 10px;">notepad++</a> <a href="../../tags/npm/" style="font-size: 12.38px;">npm</a> <a href="../../tags/nssm/" style="font-size: 10.48px;">nssm</a> <a href="../../tags/ntp/" style="font-size: 10px;">ntp</a> <a href="../../tags/oop/" style="font-size: 10px;">oop</a> <a href="../../tags/openfeign/" style="font-size: 10px;">openfeign</a> <a href="../../tags/openssl/" style="font-size: 10.48px;">openssl</a> <a href="../../tags/os/" style="font-size: 10px;">os</a> <a href="../../tags/otp/" style="font-size: 10px;">otp</a> <a href="../../tags/ovz/" style="font-size: 10px;">ovz</a> <a href="../../tags/p14/" style="font-size: 10px;">p14</a> <a href="../../tags/packet-capture/" style="font-size: 10px;">packet capture</a> <a href="../../tags/pat/" style="font-size: 10px;">pat</a> <a href="../../tags/pdf/" style="font-size: 10px;">pdf</a> <a href="../../tags/pem/" style="font-size: 10.48px;">pem</a> <a href="../../tags/perf/" style="font-size: 10px;">perf</a> <a href="../../tags/ping/" style="font-size: 10px;">ping</a> <a href="../../tags/pip/" style="font-size: 10px;">pip</a> <a href="../../tags/plugin/" style="font-size: 10px;">plugin</a> <a href="../../tags/png/" style="font-size: 10px;">png</a> <a href="../../tags/powerbutton/" style="font-size: 10px;">powerbutton</a> <a href="../../tags/print/" style="font-size: 10px;">print</a> <a href="../../tags/pro/" style="font-size: 10px;">pro</a> <a href="../../tags/proxy/" style="font-size: 10.48px;">proxy</a> <a href="../../tags/pve/" style="font-size: 16.67px;">pve</a> <a href="../../tags/pvekclean/" style="font-size: 11.43px;">pvekclean</a> <a href="../../tags/python/" style="font-size: 14.29px;">python</a> <a href="../../tags/qcow2/" style="font-size: 10px;">qcow2</a> <a href="../../tags/qemu/" style="font-size: 10.48px;">qemu</a> <a href="../../tags/qemu-guest-agent/" style="font-size: 10px;">qemu-guest-agent</a> <a href="../../tags/rar/" style="font-size: 10px;">rar</a> <a href="../../tags/reboot/" style="font-size: 10px;">reboot</a> <a href="../../tags/reflog/" style="font-size: 10px;">reflog</a> <a href="../../tags/remote/" style="font-size: 10px;">remote</a> <a href="../../tags/remote-desktop/" style="font-size: 10.48px;">remote desktop</a> <a href="../../tags/renew/" style="font-size: 10px;">renew</a> <a href="../../tags/repo/" style="font-size: 10px;">repo</a> <a href="../../tags/resize/" style="font-size: 10px;">resize</a> <a href="../../tags/retina/" style="font-size: 10px;">retina</a> <a href="../../tags/root/" style="font-size: 10px;">root</a> <a href="../../tags/route/" style="font-size: 10px;">route</a> <a href="../../tags/router/" style="font-size: 10.48px;">router</a> <a href="../../tags/rule/" style="font-size: 10px;">rule</a> <a href="../../tags/rules/" style="font-size: 10px;">rules</a> <a href="../../tags/runtime/" style="font-size: 10px;">runtime</a> <a href="../../tags/safari/" style="font-size: 10px;">safari</a> <a href="../../tags/sata/" style="font-size: 10px;">sata</a> <a href="../../tags/scipy-notebook/" style="font-size: 10px;">scipy-notebook</a> <a href="../../tags/scoping/" style="font-size: 10px;">scoping</a> <a href="../../tags/scp/" style="font-size: 10px;">scp</a> <a href="../../tags/server/" style="font-size: 10.48px;">server</a> <a href="../../tags/slmgr/" style="font-size: 10px;">slmgr</a> <a href="../../tags/so/" style="font-size: 10px;">so</a> <a href="../../tags/socks/" style="font-size: 10px;">socks</a> <a href="../../tags/source/" style="font-size: 10px;">source</a> <a href="../../tags/spk/" style="font-size: 10px;">spk</a> <a href="../../tags/spring/" style="font-size: 11.43px;">spring</a> <a href="../../tags/springboot/" style="font-size: 12.38px;">springboot</a> <a href="../../tags/springfox/" style="font-size: 10.95px;">springfox</a> <a href="../../tags/ssh/" style="font-size: 11.9px;">ssh</a> <a href="../../tags/ssl/" style="font-size: 10.48px;">ssl</a> <a href="../../tags/stash/" style="font-size: 10px;">stash</a> <a href="../../tags/string/" style="font-size: 10px;">string</a> <a href="../../tags/supernode/" style="font-size: 10.48px;">supernode</a> <a href="../../tags/svg/" style="font-size: 10px;">svg</a> <a href="../../tags/svn/" style="font-size: 10px;">svn</a> <a href="../../tags/swagger/" style="font-size: 11.43px;">swagger</a> <a href="../../tags/sync/" style="font-size: 10px;">sync</a> <a href="../../tags/synology/" style="font-size: 10.48px;">synology</a> <a href="../../tags/systemctl/" style="font-size: 10.95px;">systemctl</a> <a href="../../tags/systemd/" style="font-size: 11.43px;">systemd</a> <a href="../../tags/tap/" style="font-size: 10px;">tap</a> <a href="../../tags/tap-windows/" style="font-size: 10px;">tap-windows</a> <a href="../../tags/tapwindows/" style="font-size: 10px;">tapwindows</a> <a href="../../tags/telecom/" style="font-size: 10.48px;">telecom</a> <a href="../../tags/template/" style="font-size: 10px;">template</a> <a href="../../tags/terminal/" style="font-size: 10px;">terminal</a> <a href="../../tags/tls/" style="font-size: 10px;">tls</a> <a href="../../tags/token/" style="font-size: 10px;">token</a> <a href="../../tags/totp/" style="font-size: 10px;">totp</a> <a href="../../tags/tvbox/" style="font-size: 10.95px;">tvbox</a> <a href="../../tags/txt/" style="font-size: 10px;">txt</a> <a href="../../tags/ubuntu/" style="font-size: 11.9px;">ubuntu</a> <a href="../../tags/udisk/" style="font-size: 10px;">udisk</a> <a href="../../tags/ui/" style="font-size: 10px;">ui</a> <a href="../../tags/undertow/" style="font-size: 10px;">undertow</a> <a href="../../tags/uninstall/" style="font-size: 10px;">uninstall</a> <a href="../../tags/unlocker/" style="font-size: 10px;">unlocker</a> <a href="../../tags/upgrade/" style="font-size: 10.48px;">upgrade</a> <a href="../../tags/url/" style="font-size: 10px;">url</a> <a href="../../tags/v2ray/" style="font-size: 10.48px;">v2ray</a> <a href="../../tags/vhd/" style="font-size: 10px;">vhd</a> <a href="../../tags/vim/" style="font-size: 10px;">vim</a> <a href="../../tags/vlmcsd/" style="font-size: 10px;">vlmcsd</a> <a href="../../tags/vm/" style="font-size: 10.48px;">vm</a> <a href="../../tags/vmdk/" style="font-size: 10px;">vmdk</a> <a href="../../tags/web/" style="font-size: 11.9px;">web</a> <a href="../../tags/websocket/" style="font-size: 10.48px;">websocket</a> <a href="../../tags/wechat/" style="font-size: 10px;">wechat</a> <a href="../../tags/windows/" style="font-size: 11.9px;">windows</a> <a href="../../tags/with/" style="font-size: 10px;">with</a> <a href="../../tags/worker/" style="font-size: 10.48px;">worker</a> <a href="../../tags/wow/" style="font-size: 10px;">wow</a> <a href="../../tags/xiaoya/" style="font-size: 10px;">xiaoya</a> <a href="../../tags/xml/" style="font-size: 10px;">xml</a> <a href="../../tags/yum/" style="font-size: 10px;">yum</a> <a href="../../tags/zip/" style="font-size: 10px;">zip</a> <a href="../../tags/%E4%B8%AD%E5%9B%BD%E7%94%B5%E4%BF%A1/" style="font-size: 10px;">中国电信</a> <a href="../../tags/%E4%BA%91%E7%94%B5%E8%84%91/" style="font-size: 10.48px;">云电脑</a> <a href="../../tags/%E4%BA%A4%E6%8D%A2%E6%9C%BA/" style="font-size: 10px;">交换机</a> <a href="../../tags/%E4%BA%BA%E6%9C%BA%E5%8D%8F%E4%BD%9C/" style="font-size: 10px;">人机协作</a> <a href="../../tags/%E4%BB%A3%E7%90%86/" style="font-size: 10px;">代理</a> <a href="../../tags/%E4%BD%93%E6%A3%80/" style="font-size: 10px;">体检</a> <a href="../../tags/%E5%81%A5%E5%BA%B7%E6%A3%80%E6%9F%A5/" style="font-size: 15.24px;">健康检查</a> <a href="../../tags/%E5%85%89%E7%8C%AB/" style="font-size: 10.48px;">光猫</a> <a href="../../tags/%E5%85%AC%E7%BD%91IP/" style="font-size: 10px;">公网IP</a> <a href="../../tags/%E5%86%85%E5%AD%98/" style="font-size: 10px;">内存</a> <a href="../../tags/%E5%86%85%E7%BD%91IP/" style="font-size: 10px;">内网IP</a> <a href="../../tags/%E5%86%99%E4%BD%9C/" style="font-size: 10.95px;">写作</a> <a href="../../tags/%E5%8D%87%E7%BA%A7/" style="font-size: 11.43px;">升级</a> <a href="../../tags/%E5%8D%8F%E4%BD%9C/" style="font-size: 10px;">协作</a> <a href="../../tags/%E5%8D%9A%E5%AE%A2/" style="font-size: 10.95px;">博客</a> <a href="../../tags/%E5%8F%8D%E5%90%91%E4%BB%A3%E7%90%86/" style="font-size: 10px;">反向代理</a> <a href="../../tags/%E5%90%AF%E5%8A%A8/" style="font-size: 10px;">启动</a> <a href="../../tags/%E5%A4%8F%E4%BB%A4%E6%97%B6/" style="font-size: 10px;">夏令时</a> <a href="../../tags/%E5%A4%9A%E6%99%BA%E8%83%BD%E4%BD%93/" style="font-size: 10.95px;">多智能体</a> <a href="../../tags/%E5%A4%9A%E8%8A%82%E7%82%B9/" style="font-size: 10px;">多节点</a> <a href="../../tags/%E5%A4%9A%E8%8A%82%E7%82%B9%E7%AE%A1%E7%90%86/" style="font-size: 10px;">多节点管理</a> <a href="../../tags/%E5%A4%A9%E7%8C%AB%E7%B2%BE%E7%81%B5/" style="font-size: 10px;">天猫精灵</a> <a href="../../tags/%E5%A4%A9%E7%BF%BC%E4%BA%91/" style="font-size: 10.48px;">天翼云</a> <a href="../../tags/%E5%AE%89%E5%85%A8/" style="font-size: 16.19px;">安全</a> <a href="../../tags/%E5%AE%89%E8%A3%85/" style="font-size: 10.48px;">安装</a> <a href="../../tags/%E5%AE%9A%E6%97%B6%E4%BB%BB%E5%8A%A1/" style="font-size: 10.48px;">定时任务</a> <a href="../../tags/%E5%AE%B9%E5%99%A8/" style="font-size: 12.86px;">容器</a> <a href="../../tags/%E5%AE%B9%E5%99%A8%E7%BD%91%E7%BB%9C/" style="font-size: 10px;">容器网络</a> <a href="../../tags/%E5%AF%BC%E5%85%A5/" style="font-size: 10px;">导入</a> <a href="../../tags/%E5%B0%8F%E7%B1%B3/" style="font-size: 10px;">小米</a> <a href="../../tags/%E5%B8%B8%E7%94%A8%E8%BD%AF%E4%BB%B6/" style="font-size: 10px;">常用软件</a> <a href="../../tags/%E5%B9%BF%E5%91%8A%E5%B1%8F%E8%94%BD/" style="font-size: 10px;">广告屏蔽</a> <a href="../../tags/%E5%BA%8F%E5%88%97%E5%8F%B7/" style="font-size: 10px;">序列号</a> <a href="../../tags/%E5%BA%94%E7%94%A8%E5%B8%82%E5%9C%BA/" style="font-size: 10px;">应用市场</a> <a href="../../tags/%E5%BC%82%E5%B8%B8/" style="font-size: 10px;">异常</a> <a href="../../tags/%E6%84%9F%E6%82%9F/" style="font-size: 10px;">感悟</a> <a href="../../tags/%E6%89%93%E5%B7%A5/" style="font-size: 18.57px;">打工</a> <a href="../../tags/%E6%89%93%E5%B7%A5%E4%BA%BA/" style="font-size: 10px;">打工人</a> <a href="../../tags/%E6%8A%80%E6%9C%AF/" style="font-size: 19.52px;">技术</a> <a href="../../tags/%E6%8A%93%E5%8C%85/" style="font-size: 10px;">抓包</a> <a href="../../tags/%E6%8E%92%E6%9F%A5/" style="font-size: 10px;">排查</a> <a href="../../tags/%E6%8F%8F%E8%BF%B0%E6%96%87%E4%BB%B6/" style="font-size: 10px;">描述文件</a> <a href="../../tags/%E6%95%85%E9%9A%9C/" style="font-size: 10px;">故障</a> <a href="../../tags/%E6%95%85%E9%9A%9C%E6%8E%92%E6%9F%A5/" style="font-size: 10px;">故障排查</a> <a href="../../tags/%E6%95%88%E7%8E%87/" style="font-size: 10.48px;">效率</a> <a href="../../tags/%E6%95%88%E7%8E%87%E5%B7%A5%E5%85%B7/" style="font-size: 10px;">效率工具</a> <a href="../../tags/%E6%97%A0%E6%9C%8D%E5%8A%A1%E5%99%A8/" style="font-size: 10px;">无服务器</a> <a href="../../tags/%E6%97%A5%E8%AE%B0/" style="font-size: 19.05px;">日记</a> <a href="../../tags/%E6%97%B6%E5%8C%BA/" style="font-size: 10px;">时区</a> <a href="../../tags/%E6%98%BE%E5%8D%A1%E8%99%9A%E6%8B%9F%E5%8C%96/" style="font-size: 10px;">显卡虚拟化</a> <a href="../../tags/%E6%99%BA%E8%83%BD%E5%AE%B6%E5%B1%85/" style="font-size: 10px;">智能家居</a> <a href="../../tags/%E6%99%BA%E8%83%BD%E9%9F%B3%E7%AE%B1/" style="font-size: 10px;">智能音箱</a> <a href="../../tags/%E6%9C%8D%E5%8A%A1%E7%AE%A1%E7%90%86/" style="font-size: 10px;">服务管理</a> <a href="../../tags/%E6%9E%B6%E6%9E%84/" style="font-size: 10px;">架构</a> <a href="../../tags/%E6%A2%AF%E5%AD%90/" style="font-size: 10px;">梯子</a> <a href="../../tags/%E6%A8%A1%E5%9D%97/" style="font-size: 10px;">模块</a> <a href="../../tags/%E6%B5%81%E7%A8%8B/" style="font-size: 10px;">流程</a> <a href="../../tags/%E6%B5%81%E7%A8%8B%E5%9B%BE/" style="font-size: 10px;">流程图</a> <a href="../../tags/%E6%B5%8F%E8%A7%88%E5%99%A8/" style="font-size: 10.48px;">浏览器</a> <a href="../../tags/%E6%BC%AB%E6%B8%B8/" style="font-size: 10px;">漫游</a> <a href="../../tags/%E6%BF%80%E6%B4%BB/" style="font-size: 10px;">激活</a> <a href="../../tags/%E7%81%AB%E7%BB%92/" style="font-size: 10px;">火绒</a> <a href="../../tags/%E7%8E%84%E5%AD%A6/" style="font-size: 10px;">玄学</a> <a href="../../tags/%E7%94%9F%E6%B4%BB/" style="font-size: 10px;">生活</a> <a href="../../tags/%E7%94%B5%E4%BF%A1/" style="font-size: 10.48px;">电信</a> <a href="../../tags/%E7%94%BB%E5%9B%BE/" style="font-size: 10px;">画图</a> <a href="../../tags/%E7%9B%91%E6%8E%A7/" style="font-size: 12.86px;">监控</a> <a href="../../tags/%E7%9B%B4%E6%92%AD%E6%BA%90/" style="font-size: 10px;">直播源</a> <a href="../../tags/%E7%AB%AF%E5%8F%A3%E6%89%AB%E6%8F%8F/" style="font-size: 10px;">端口扫描</a> <a href="../../tags/%E7%AE%A1%E7%90%86/" style="font-size: 10px;">管理</a> <a href="../../tags/%E7%BB%AD%E6%9C%9F/" style="font-size: 10px;">续期</a> <a href="../../tags/%E7%BD%91%E5%85%B3/" style="font-size: 10px;">网关</a> <a href="../../tags/%E7%BD%91%E7%BB%9C/" style="font-size: 14.76px;">网络</a> <a href="../../tags/%E7%BD%91%E7%BB%9C%E9%A3%8E%E6%9A%B4/" style="font-size: 10px;">网络风暴</a> <a href="../../tags/%E7%BE%A4%E6%99%96/" style="font-size: 10.48px;">群晖</a> <a href="../../tags/%E8%84%9A%E6%9C%AC/" style="font-size: 10px;">脚本</a> <a href="../../tags/%E8%85%BE%E8%AE%AF/" style="font-size: 10px;">腾讯</a> <a href="../../tags/%E8%87%AA%E5%8A%A8%E5%8C%96/" style="font-size: 17.14px;">自动化</a> <a href="../../tags/%E8%99%9A%E6%8B%9F%E6%9C%BA/" style="font-size: 11.9px;">虚拟机</a> <a href="../../tags/%E8%AE%A4%E8%AF%81/" style="font-size: 10px;">认证</a> <a href="../../tags/%E8%AF%81%E4%B9%A6/" style="font-size: 10px;">证书</a> <a href="../../tags/%E8%AF%AD%E9%9B%80/" style="font-size: 10px;">语雀</a> <a href="../../tags/%E8%B6%85%E6%97%B6/" style="font-size: 10px;">超时</a> <a href="../../tags/%E8%B7%AF%E7%94%B1/" style="font-size: 10px;">路由</a> <a href="../../tags/%E8%B7%AF%E7%94%B1%E5%99%A8/" style="font-size: 10px;">路由器</a> <a href="../../tags/%E8%BD%AF%E4%BB%B6%E7%AE%A1%E5%AE%B6/" style="font-size: 10px;">软件管家</a> <a href="../../tags/%E8%BD%AF%E8%B7%AF%E7%94%B1/" style="font-size: 10.48px;">软路由</a> <a href="../../tags/%E8%BF%90%E7%BB%B4/" style="font-size: 20px;">运维</a> <a href="../../tags/%E8%BF%90%E7%BB%B4%E7%9B%91%E6%8E%A7/" style="font-size: 10.48px;">运维监控</a> <a href="../../tags/%E9%80%9A%E4%BF%A1%E6%9C%BA%E5%88%B6/" style="font-size: 10px;">通信机制</a> <a href="../../tags/%E9%83%A8%E7%BD%B2/" style="font-size: 12.38px;">部署</a> <a href="../../tags/%E9%85%8D%E7%BD%AE/" style="font-size: 10px;">配置</a> <a href="../../tags/%E9%92%89%E9%92%89/" style="font-size: 10.48px;">钉钉</a> <a href="../../tags/%E9%95%9C%E5%83%8F/" style="font-size: 10.95px;">镜像</a> <a href="../../tags/%E9%95%9C%E5%83%8F%E6%BA%90/" style="font-size: 10px;">镜像源</a> <a href="../../tags/%E9%97%A8%E7%AA%97%E4%BC%A0%E6%84%9F%E5%99%A8/" style="font-size: 10px;">门窗传感器</a> <a href="../../tags/%E9%97%AE%E9%A2%98%E6%8E%92%E6%9F%A5/" style="font-size: 18.1px;">问题排查</a> <a href="../../tags/%E9%98%B2%E7%81%AB%E5%A2%99/" style="font-size: 11.43px;">防火墙</a> <a href="../../tags/%E9%98%BF%E9%87%8C%E4%BA%91/" style="font-size: 11.43px;">阿里云</a> <a href="../../tags/%E9%98%BF%E9%87%8C%E6%BA%90/" style="font-size: 10.48px;">阿里源</a> <a href="../../tags/%E9%9B%86%E5%AE%A2/" style="font-size: 10.48px;">集客</a>
+    </div>
+    
+      <script>
+        var maxTagcloud = parseInt(17);
+        var tags_length = parseInt(428);
+        var tags_arr = [];
+        for(var i = 0; i < tags_length; i++){
+          tags_arr.push(i);
+        }
+        tags_arr.sort(function (l, r) {
+          return Math.random() > 0.5 ? -1 : 1;
+        });
+        tags_arr = tags_arr.slice(0, maxTagcloud < tags_length ? tags_length - maxTagcloud : 0);
+        for(var tag_i = 0; tag_i < tags_arr.length; tag_i++){
+          document.getElementById("randomtagcloud").children[tags_arr[tag_i]].style.display = 'none';
+        }
+      </script>
+    
+  </div>
+
+    
+        
+        <!-- 一言 -->
+<div class="nexmoe-widget-wrap">
+  <h3 class="nexmoe-widget-title">
+    Hitokoto
+  </h3>
+  <div class="nexmoe-widget">
+    <ul class="hitokoto-box">
+      <li id="hitokoto_text_parent" class="hitokoto-text" hitokotoCategory="">
+        <a href="#" id="hitokoto_text">
+          
+        </a>
+        <a href="#" id="hitokoto_error_text" style="display: none;">
+          
+        </a>
+      </li>
+    </ul>
+  </div>
+</div>
+
+<script>
+  let hitokotoText = document.getElementById('hitokoto_text')
+  let hitokotoErroText = document.getElementById('hitokoto_error_text')
+  let hitokotoCategory = document.getElementById('hitokoto_text_parent').getAttribute('hitokotoCategory')
+  window.addEventListener('load', function () {
+    let url = 'https://v1.hitokoto.cn'
+    if (hitokotoCategory) {
+      url += '?c=' + hitokotoCategory
+    }
+    fetch(url)
+      .then(response => response.json())
+      .then(data => {
+        hitokotoText.innerText = "「 " + data.hitokoto + " 」 from " + data.from
+        hitokotoText.href = 'https://hitokoto.cn/?uuid=' + data.uuid
+      })
+      .catch((reason) => {
+        console.error(11, reason)
+        hitokotoText.style.display = 'none'
+        hitokotoErroText.style.display = 'block'
+      })
+  })
+</script>
+    
+        
+        
+  <div class="nexmoe-widget-wrap">
+    <h3 class="nexmoe-widget-title">Archive</h3>
+    <div class="nexmoe-widget">
+      <ul class="archive-list"><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2026/">2026</a><span class="archive-list-count">104</span></li><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2025/">2025</a><span class="archive-list-count">2</span></li><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2024/">2024</a><span class="archive-list-count">19</span></li><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2023/">2023</a><span class="archive-list-count">18</span></li><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2022/">2022</a><span class="archive-list-count">4</span></li><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2021/">2021</a><span class="archive-list-count">114</span></li><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2018/">2018</a><span class="archive-list-count">1</span></li></ul>
+    </div>
+  </div>
+
+
+
+    
+        
+        
+  <div class="nexmoe-widget-wrap">
+    <h3 class="nexmoe-widget-title">Recent Posts</h3>
+    <div class="nexmoe-widget">
+      <ul>
+        
+          <li>
+            <a href="../../post/2026-04-14-cron-task-troubleshooting-from-missing-execution-to-root-cause/">记一次定时任务（Cron）故障排查：从&#34;任务没执行&#34;到根因分析</a>
+          </li>
+        
+          <li>
+            <a href="../../post/2026-04-14-when-scheduled-tasks-started-writing-my-blog/">当定时任务开始帮我写博客：我是如何把&#34;每天写作&#34;变成自动化的</a>
+          </li>
+        
+          <li>
+            <a href="../../post/2026-04-13-docker-container-network-card-death-troubleshooting/">记一次Docker容器内部网卡&#34;假死&#34;故障排查：从表象到根因</a>
+          </li>
+        
+          <li>
+            <a href="../../post/2026-04-13-monday-morning-server-inspection-anxiety/">周一早上睁开眼的第一件事：我的服务器还活着吗？</a>
+          </li>
+        
+          <li>
+            <a href="../../post/2026-04-12-vm-internal-network-troubleshooting/">记一次虚拟机内部网络卡死的完整排查：连续第五次复发的根因分析</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+
+    
+        
+        <div class="nexmoe-widget-wrap">
+    <div class="nexmoe-widget nexmoe-link">
+		<ul>
+        
+            <li>
+                <a href="https://blog.example.com/" target="_blank" >
+                    <img src="/images/avatar.webp" alt="魔都水滴Blog"></img>
+                    <p>魔都水滴Blog</p>
+                </a>
+            </li>
+        
+		</ul>
+    </div>
+</div>
+<style>
+.nexmoe-widget-wrap .nexmoe-link ul li a {
+    text-align : center;
+}
+.nexmoe-widget-wrap .nexmoe-link ul li a img {
+    max-width : 100%;
+}
+.nexmoe-widget-wrap .nexmoe-link ul li a p {
+    margin: 10px 0;
+}
+</style>
+
+    
+   
+    <div class="nexmoe-copyright">
+        &copy; 2026 Margrop
+        Powered by <a href="http://hexo.io/" target="_blank">Hexo</a>
+        & <a href="https://github.com/theme-nexmoe/hexo-theme-nexmoe" target="_blank">Nexmoe</a>
+        
+    </div>
+</div><!-- .nexmoe-drawer --></div><div id="nexmoe-content"><div class="nexmoe-primary"><div class="nexmoe-post">
+  <article>
+    
+        <div class="nexmoe-post-cover absolute" style="padding-top: 56.25%;"> 
+            <img src="https://picsum.photos/seed/tech0414/1280/720" alt="记一次定时任务（Cron）故障排查：从&#34;任务没执行&#34;到根因分析" loading="lazy">
+            <h1>记一次定时任务（Cron）故障排查：从&#34;任务没执行&#34;到根因分析</h1>
+        </div>
+    
+    
+    <div class="nexmoe-post-meta">
+    <div class="nexmoe-rainbow">
+        <a class="nexmoefont icon-calendar-fill">2026年04月14日</a>
+        
+            <a class="nexmoefont icon-appstore-fill -link" href="../../categories/ai-tech/">ai_tech</a>
+        
+        
+    <a><i class="nexmoefont icon-areachart"></i>约39k字</a>
+    <a><i class="nexmoefont icon-time-circle-fill"></i>预计需要55 分钟</a>
+
+    </div>
+    
+    
+    
+    
+    
+</div>
+
+    <h1 id="记一次定时任务（Cron）故障排查：从”任务没执行”到根因分析"><a href="#记一次定时任务（Cron）故障排查：从”任务没执行”到根因分析" class="headerlink" title="记一次定时任务（Cron）故障排查：从”任务没执行”到根因分析"></a>记一次定时任务（Cron）故障排查：从”任务没执行”到根因分析</h1><h2 id="前言"><a href="#前言" class="headerlink" title="前言"></a>前言</h2><p>定时任务（Cron）是运维自动化中最基础也最重要的组件之一。相比于复杂的监控系统或服务编排，Cron 看似简单——无非就是”到了某个时间，自动执行某个命令”。但正是因为它足够简单，反而最容易被忽视，直到出了问题才发现：<strong>原来我的定时任务根本没在执行。</strong></p>
+<p>今天要聊的，就是这样一次排查经历：定时任务配置了、日志也写了、进程也在跑，但就是没有按预期执行。通过这次排查，我发现 Cron 定时任务里有太多”坑”是新手下容易踩到的，非常值得整理成一篇技术文章。</p>
+<h2 id="问题背景"><a href="#问题背景" class="headerlink" title="问题背景"></a>问题背景</h2><h3 id="业务场景"><a href="#业务场景" class="headerlink" title="业务场景"></a>业务场景</h3><p>我们有一套自动化运维体系，核心依赖多个 Cron 定时任务：</p>
+<ul>
+<li><strong>凌晨3点</strong>：健康检查任务，检查所有 Gateway 节点和容器状态</li>
+<li><strong>凌晨4点</strong>：安全扫描任务，检查配置漏洞和权限问题</li>
+<li><strong>凌晨5点</strong>：配置同步任务，VM151 和 VM152 配置一致性检查</li>
+<li><strong>早上7点</strong>：博客发布预检任务，确认今天的文章状态</li>
+<li><strong>每天任意时刻</strong>：按需执行的备份、清理任务</li>
+</ul>
+<p>这些任务通过 OpenClaw 的 cron 功能统一管理，配合系统的 systemd cron 实现。</p>
+<h3 id="问题现象"><a href="#问题现象" class="headerlink" title="问题现象"></a>问题现象</h3><p>某天早上 9 点，我像往常一样检查定时任务的执行报告，发现以下异常：</p>
+<ol>
+<li><p><strong>博客预检任务显示”未执行”</strong></p>
+<ul>
+<li>任务配置了每天早上 7 点执行</li>
+<li>实际执行日志里没有今天的记录</li>
+<li>手动触发可以正常执行</li>
+</ul>
+</li>
+<li><p><strong>健康检查任务执行时间异常</strong></p>
+<ul>
+<li>配置是凌晨 3 点执行</li>
+<li>实际执行时间是凌晨 6 点</li>
+<li>差了整整 3 个小时</li>
+</ul>
+</li>
+<li><p><strong>部分任务执行成功、部分失败，但没有告警</strong></p>
+<ul>
+<li>VM151 和 VM152 的配置同步任务都执行了</li>
+<li>但结果不一致（一台成功、一台失败）</li>
+<li>失败的任务没有发送告警通知</li>
+</ul>
+</li>
+</ol>
+<h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3><table>
+<thead>
+<tr>
+<th>项目</th>
+<th>值</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Cron 管理工具</td>
+<td>OpenClaw Gateway cron + 系统 crontab</td>
+</tr>
+<tr>
+<td>定时任务数量</td>
+<td>约 20 个</td>
+</tr>
+<tr>
+<td>目标服务器</td>
+<td>VM151、VM152、p14</td>
+</tr>
+<tr>
+<td>任务执行方式</td>
+<td>OpenClaw agent 托管 + system cron 兜底</td>
+</tr>
+<tr>
+<td>告警方式</td>
+<td>钉钉消息推送</td>
+</tr>
+</tbody></table>
+<h2 id="问题分析"><a href="#问题分析" class="headerlink" title="问题分析"></a>问题分析</h2><h3 id="问题一：任务”未执行”但手动可以执行"><a href="#问题一：任务”未执行”但手动可以执行" class="headerlink" title="问题一：任务”未执行”但手动可以执行"></a>问题一：任务”未执行”但手动可以执行</h3><p>这种情况是最常见的 Cron 问题之一。通常有以下几种可能的原因：</p>
+<ol>
+<li><p><strong>Cron 表达式写错了</strong></p>
+<ul>
+<li>用了错误的分隔符（分、时、日、月、周）</li>
+<li>或者时间值超出了有效范围</li>
+</ul>
+</li>
+<li><p><strong>时区问题</strong></p>
+<ul>
+<li>系统的时区和 Cron 指定的时区不一致</li>
+<li>导致任务在”错误的时间”执行</li>
+</ul>
+</li>
+<li><p><strong>Cron 服务没有启动</strong></p>
+<ul>
+<li><code>systemctl status cron</code> 显示 inactive</li>
+<li>或者 OpenClaw Gateway 进程重启后 cron 服务没有自动恢复</li>
+</ul>
+</li>
+<li><p><strong>任务冲突</strong></p>
+<ul>
+<li>多个任务同时执行，某个任务抢占了资源</li>
+<li>导致其他任务被跳过</li>
+</ul>
+</li>
+<li><p><strong>依赖条件未满足</strong></p>
+<ul>
+<li>任务有前置条件（如网络要通、某个服务要先启动）</li>
+<li>前置条件不满足时任务被静默跳过</li>
+</ul>
+</li>
+</ol>
+<h3 id="问题二：执行时间偏差-3-小时"><a href="#问题二：执行时间偏差-3-小时" class="headerlink" title="问题二：执行时间偏差 3 小时"></a>问题二：执行时间偏差 3 小时</h3><p>这个问题比较有意思。如果是固定偏差（比如总是差 N 小时），通常是因为<strong>时区配置错误</strong>。</p>
+<p>假设任务配置的 Cron 表达式是 <code>0 3 * * *</code>（凌晨 3 点执行），系统时区是 UTC，但任务配置里写的是北京时间。那实际执行时间就会是 UTC 3:00 &#x3D; 北京时间 11:00，差了 8 个小时。</p>
+<p>但这里是差了 3 小时，不是整点差。这又是另一种可能的原因了——<strong>夏令时（DST）切换</strong>。</p>
+<p>某些时区会在特定日期切换夏令时，切换前后会有 1-2 小时的时间偏移。如果系统在切换前保存了某个状态，切换后就可能出现时间偏差。</p>
+<h3 id="问题三：失败任务没有告警"><a href="#问题三：失败任务没有告警" class="headerlink" title="问题三：失败任务没有告警"></a>问题三：失败任务没有告警</h3><p>这个问题暴露了自动化任务的一个常见缺陷：<strong>成功有日志，失败没人管。</strong></p>
+<p>很多定时任务写的是”成功后记录日志”，但”失败后”只有错误输出，没有告警通知机制。这在单机场景下问题不大，但如果多台机器、多个任务，一旦某个任务静默失败了，可能很久都不会被发现。</p>
+<h2 id="排查过程"><a href="#排查过程" class="headerlink" title="排查过程"></a>排查过程</h2><h3 id="第一步：确认-Cron-服务状态"><a href="#第一步：确认-Cron-服务状态" class="headerlink" title="第一步：确认 Cron 服务状态"></a>第一步：确认 Cron 服务状态</h3><p>在所有目标服务器上检查 Cron 服务状态：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 检查 systemd cron 状态</span><br>systemctl status cronie<br><span class="hljs-comment"># 或</span><br>systemctl status cron<br><br><span class="hljs-comment"># 检查 cron 进程是否在运行</span><br>ps aux | grep -E <span class="hljs-string">&#x27;cron|crontab&#x27;</span><br><br><span class="hljs-comment"># 检查 cron 日志</span><br>grep CRON /var/log/syslog<br><span class="hljs-comment"># 或</span><br>journalctl -u cronie -n 50<br></code></pre></td></tr></table></figure>
+
+<p><strong>观察到</strong>：Cron 服务正常运行，进程存在。</p>
+<h3 id="第二步：检查-Crontab-配置"><a href="#第二步：检查-Crontab-配置" class="headerlink" title="第二步：检查 Crontab 配置"></a>第二步：检查 Crontab 配置</h3><p>查看系统级和用户级的 Crontab 配置：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 查看系统级 crontab</span><br><span class="hljs-built_in">cat</span> /etc/crontab<br><br><span class="hljs-comment"># 查看 root 用户的 crontab</span><br>crontab -l<br><br><span class="hljs-comment"># 查看所有用户的 crontab</span><br><span class="hljs-keyword">for</span> user <span class="hljs-keyword">in</span> $(<span class="hljs-built_in">cut</span> -d: -f1 /etc/passwd); <span class="hljs-keyword">do</span> <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;=== <span class="hljs-variable">$user</span> ===&quot;</span> &amp;&amp; crontab -u <span class="hljs-variable">$user</span> -l 2&gt;/dev/null; <span class="hljs-keyword">done</span><br><br><span class="hljs-comment"># 查看 OpenClaw 的 cron 配置</span><br><span class="hljs-built_in">cat</span> ~/.openclaw/config.yml | grep -A 20 <span class="hljs-string">&#x27;cron&#x27;</span><br></code></pre></td></tr></table></figure>
+
+<p><strong>观察到</strong>：Crontab 配置了任务，但 Cron 表达式疑似有问题。</p>
+<h3 id="第三步：检查-OpenClaw-cron-任务的实际执行时间"><a href="#第三步：检查-OpenClaw-cron-任务的实际执行时间" class="headerlink" title="第三步：检查 OpenClaw cron 任务的实际执行时间"></a>第三步：检查 OpenClaw cron 任务的实际执行时间</h3><p>登录 OpenClaw Gateway，查看 cron 任务的执行历史：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 查看 cron 任务列表</span><br>openclaw cron list<br><br><span class="hljs-comment"># 查看某个任务的历史执行记录</span><br>openclaw cron runs &lt;job-id&gt;<br><br><span class="hljs-comment"># 查看任务下一次执行时间</span><br>openclaw cron next &lt;job-id&gt;<br></code></pre></td></tr></table></figure>
+
+<p>发现：博客预检任务的 Cron 表达式是 <code>0 7 * * *</code>（每周每天早上 7 点），但实际配置的时间是”工作日早上 7 点”，应该写成 <code>0 7 * * 1-5</code>。</p>
+<h3 id="第四步：检查时区配置"><a href="#第四步：检查时区配置" class="headerlink" title="第四步：检查时区配置"></a>第四步：检查时区配置</h3><figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 查看系统当前时区</span><br>timedatectl | grep <span class="hljs-string">&quot;Time zone&quot;</span><br><br><span class="hljs-comment"># 查看 /etc/localtime 链接</span><br><span class="hljs-built_in">ls</span> -la /etc/localtime<br><br><span class="hljs-comment"># 查看 /usr/share/zoneinfo 下的时区文件</span><br>zdump /usr/share/zoneinfo/Asia/Shanghai<br><br><span class="hljs-comment"># 验证任务执行时的时间</span><br><span class="hljs-built_in">date</span><br></code></pre></td></tr></table></figure>
+
+<p><strong>观察到</strong>：系统时区配置正确（Asia&#x2F;Shanghai），但 OpenClaw Gateway 启动时的时区没有正确加载。</p>
+<h3 id="第五步：验证任务冲突"><a href="#第五步：验证任务冲突" class="headerlink" title="第五步：验证任务冲突"></a>第五步：验证任务冲突</h3><p>检查同一时间点是否有多个任务同时执行：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 查看 Cron 执行日志，筛选出同一时间点的任务</span><br>grep <span class="hljs-string">&quot;2026-04-14 06:&quot;</span> /var/log/cron.log<br><br><span class="hljs-comment"># 或者查看 OpenClaw cron 的并发配置</span><br>openclaw config get cron.concurrency<br></code></pre></td></tr></table></figure>
+
+<p><strong>观察到</strong>：博客预检任务和健康检查任务配置在同一时间窗口执行，存在资源竞争。</p>
+<h3 id="第六步：深入分析”失败无告警”问题"><a href="#第六步：深入分析”失败无告警”问题" class="headerlink" title="第六步：深入分析”失败无告警”问题"></a>第六步：深入分析”失败无告警”问题</h3><p>检查钉钉通知的配置：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 查看 OpenClaw 告警配置</span><br>openclaw config get notifications<br><br><span class="hljs-comment"># 查看钉钉 channel 配置</span><br>openclaw config get channels.dingtalk<br><br><span class="hljs-comment"># 测试告警通知是否正常工作</span><br>openclaw notify <span class="hljs-built_in">test</span> <span class="hljs-string">&quot;这是一条测试消息&quot;</span><br></code></pre></td></tr></table></figure>
+
+<p><strong>观察到</strong>：钉钉通知配置存在 but 失败的任务没有触发通知，因为任务内部没有捕获错误并调用通知接口。</p>
+<h2 id="根因分析"><a href="#根因分析" class="headerlink" title="根因分析"></a>根因分析</h2><h3 id="根因一：Cron-表达式理解错误"><a href="#根因一：Cron-表达式理解错误" class="headerlink" title="根因一：Cron 表达式理解错误"></a>根因一：Cron 表达式理解错误</h3><p>博客预检任务配置的 Cron 表达式是 <code>0 7 * * *</code>，意思是”每天早上 7 点执行”。但实际需求是”工作日早上 7 点”，正确写法应该是 <code>0 7 * * 1-5</code>。</p>
+<p>这是 Cron 表达式中最容易混淆的地方之一：</p>
+<ul>
+<li><code>* * * * *</code> 五个字段分别是：<strong>分、时、日、月、周</strong></li>
+<li>周字段中，<code>0</code> &#x3D; 周日，<code>1-5</code> &#x3D; 周一到周五</li>
+<li><code>*</code> 表示”每”（每一天&#x2F;每一月&#x2F;每一周）</li>
+</ul>
+<h3 id="根因二：OpenClaw-Gateway-时区加载问题"><a href="#根因二：OpenClaw-Gateway-时区加载问题" class="headerlink" title="根因二：OpenClaw Gateway 时区加载问题"></a>根因二：OpenClaw Gateway 时区加载问题</h3><p>健康检查任务执行时间偏差 3 小时的问题，是因为 Gateway 启动时没有正确加载系统时区。OpenClaw 内部使用 UTC 时间，但输出日志时转换成了本地时间，但转换逻辑存在 bug，导致 3 小时偏差。</p>
+<h3 id="根因三：任务失败没有告警"><a href="#根因三：任务失败没有告警" class="headerlink" title="根因三：任务失败没有告警"></a>根因三：任务失败没有告警</h3><p>OpenClaw cron 任务在执行失败时，会将错误信息写入任务日志，但不会自动触发钉钉通知。这是因为：</p>
+<ul>
+<li>任务本身的错误处理逻辑没有调用通知接口</li>
+<li>cron 的 delivery 配置里只设置了 <code>announce</code> 模式，没有配置 <code>failureAlert</code></li>
+</ul>
+<h3 id="根因四：任务并发冲突"><a href="#根因四：任务并发冲突" class="headerlink" title="根因四：任务并发冲突"></a>根因四：任务并发冲突</h3><p>博客预检任务和健康检查任务都在早上 7 点执行，当健康检查任务耗时较长时，可能抢占系统资源，导致博客预检任务超时或失败。</p>
+<h2 id="解决方案"><a href="#解决方案" class="headerlink" title="解决方案"></a>解决方案</h2><h3 id="方案一：修正-Cron-表达式"><a href="#方案一：修正-Cron-表达式" class="headerlink" title="方案一：修正 Cron 表达式"></a>方案一：修正 Cron 表达式</h3><p>将博客预检任务的 Cron 表达式从 <code>0 7 * * *</code> 改为 <code>0 7 * * 1-5</code>：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 通过 OpenClaw CLI 修改</span><br>openclaw cron update &lt;job-id&gt; --schedule <span class="hljs-string">&quot;0 7 * * 1-5&quot;</span><br><br><span class="hljs-comment"># 或者直接编辑配置文件</span><br><span class="hljs-comment"># crontab -e</span><br><span class="hljs-comment"># 0 7 * * 1-5 /path/to/blog-precheck.sh</span><br></code></pre></td></tr></table></figure>
+
+<p><strong>注意</strong>：修改后需要重启 cron 服务或等待下一次任务调度才能生效。</p>
+<h3 id="方案二：修复-OpenClaw-Gateway-时区问题"><a href="#方案二：修复-OpenClaw-Gateway-时区问题" class="headerlink" title="方案二：修复 OpenClaw Gateway 时区问题"></a>方案二：修复 OpenClaw Gateway 时区问题</h3><p>在 Gateway 启动脚本中添加时区环境变量：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 编辑 OpenClaw Gateway 的 systemd service 文件</span><br><span class="hljs-built_in">sudo</span> systemctl edit openclaw-gateway<br><br><span class="hljs-comment"># 添加以下内容</span><br>[Service]<br>Environment=<span class="hljs-string">&quot;TZ=Asia/Shanghai&quot;</span><br><br><span class="hljs-comment"># 重新加载配置</span><br><span class="hljs-built_in">sudo</span> systemctl daemon-reload<br><br><span class="hljs-comment"># 重启服务</span><br><span class="hljs-built_in">sudo</span> systemctl restart openclaw-gateway<br><br><span class="hljs-comment"># 验证时区是否生效</span><br>openclaw config get gateway.timezone<br><span class="hljs-comment"># 应该显示 Asia/Shanghai</span><br></code></pre></td></tr></table></figure>
+
+<p>或者在 OpenClaw 配置文件中直接指定：</p>
+<figure class="highlight yaml"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><code class="hljs yaml"><span class="hljs-attr">gateway:</span><br>  <span class="hljs-attr">timezone:</span> <span class="hljs-string">Asia/Shanghai</span><br>  <span class="hljs-attr">log:</span><br>    <span class="hljs-attr">timestamp:</span> <span class="hljs-literal">true</span><br>    <span class="hljs-attr">format:</span> <span class="hljs-string">&quot;%Y-%m-%d %H:%M:%S %Z&quot;</span><br></code></pre></td></tr></table></figure>
+
+<h3 id="方案三：配置任务失败告警"><a href="#方案三：配置任务失败告警" class="headerlink" title="方案三：配置任务失败告警"></a>方案三：配置任务失败告警</h3><p>在 OpenClaw cron 任务配置中添加失败告警：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 创建任务时添加失败告警配置</span><br>openclaw cron add \<br>  --name <span class="hljs-string">&quot;博客预检&quot;</span> \<br>  --schedule <span class="hljs-string">&quot;0 7 * * 1-5&quot;</span> \<br>  --payload <span class="hljs-string">&#x27;&#123;&quot;kind&quot;:&quot;agentTurn&quot;,&quot;message&quot;:&quot;执行博客预检&quot;&#125;&#x27;</span> \<br>  --delivery <span class="hljs-string">&#x27;&#123;&quot;mode&quot;:&quot;announce&quot;,&quot;channel&quot;:&quot;wecom&quot;&#125;&#x27;</span> \<br>  --failureAlert <span class="hljs-string">&#x27;&#123;&quot;after&quot;:1,&quot;channel&quot;:&quot;wecom&quot;,&quot;mode&quot;:&quot;announce&quot;,&quot;cooldownMs&quot;:300000&#125;&#x27;</span><br></code></pre></td></tr></table></figure>
+
+<p>或者通过配置文件修改：</p>
+<figure class="highlight yaml"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br></pre></td><td class="code"><pre><code class="hljs yaml"><span class="hljs-attr">cron:</span><br>  <span class="hljs-attr">jobs:</span><br>    <span class="hljs-bullet">-</span> <span class="hljs-attr">id:</span> <span class="hljs-string">blog-precheck</span><br>      <span class="hljs-attr">name:</span> <span class="hljs-string">博客预检</span><br>      <span class="hljs-attr">schedule:</span> <span class="hljs-string">&quot;0 7 * * 1-5&quot;</span><br>      <span class="hljs-attr">payload:</span><br>        <span class="hljs-attr">kind:</span> <span class="hljs-string">agentTurn</span><br>        <span class="hljs-attr">message:</span> <span class="hljs-string">&quot;执行博客预检&quot;</span><br>      <span class="hljs-attr">delivery:</span><br>        <span class="hljs-attr">mode:</span> <span class="hljs-string">announce</span><br>        <span class="hljs-attr">channel:</span> <span class="hljs-string">wecom</span><br>      <span class="hljs-attr">failureAlert:</span><br>        <span class="hljs-attr">after:</span> <span class="hljs-number">1</span>  <span class="hljs-comment"># 失败1次就告警</span><br>        <span class="hljs-attr">channel:</span> <span class="hljs-string">wecom</span><br>        <span class="hljs-attr">mode:</span> <span class="hljs-string">announce</span><br>        <span class="hljs-attr">cooldownMs:</span> <span class="hljs-number">300000</span>  <span class="hljs-comment"># 5分钟冷却时间</span><br></code></pre></td></tr></table></figure>
+
+<h3 id="方案四：错开任务执行时间"><a href="#方案四：错开任务执行时间" class="headerlink" title="方案四：错开任务执行时间"></a>方案四：错开任务执行时间</h3><p>将冲突的任务错开执行时间：</p>
+<figure class="highlight yaml"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br></pre></td><td class="code"><pre><code class="hljs yaml"><span class="hljs-comment"># 调整后的执行时间</span><br><span class="hljs-attr">jobs:</span><br>  <span class="hljs-bullet">-</span> <span class="hljs-attr">name:</span> <span class="hljs-string">健康检查</span><br>    <span class="hljs-attr">schedule:</span> <span class="hljs-string">&quot;0 5 * * *&quot;</span>  <span class="hljs-comment"># 从凌晨 3 点改到凌晨 5 点</span><br>  <br>  <span class="hljs-bullet">-</span> <span class="hljs-attr">name:</span> <span class="hljs-string">博客预检</span><br>    <span class="hljs-attr">schedule:</span> <span class="hljs-string">&quot;0 7 * * 1-5&quot;</span>  <span class="hljs-comment"># 保持早上 7 点</span><br>  <br>  <span class="hljs-bullet">-</span> <span class="hljs-attr">name:</span> <span class="hljs-string">配置同步</span><br>    <span class="hljs-attr">schedule:</span> <span class="hljs-string">&quot;0 6 * * *&quot;</span>  <span class="hljs-comment"># 放在两者的中间</span><br></code></pre></td></tr></table></figure>
+
+<h3 id="方案五：添加任务执行状态监控"><a href="#方案五：添加任务执行状态监控" class="headerlink" title="方案五：添加任务执行状态监控"></a>方案五：添加任务执行状态监控</h3><p>创建一个”任务执行状态监控”任务，专门检查其他任务是否正常执行：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 创建监控任务</span><br>openclaw cron add \<br>  --name <span class="hljs-string">&quot;Cron任务健康监控&quot;</span> \<br>  --schedule <span class="hljs-string">&quot;0 8 * * *&quot;</span> \<br>  --payload <span class="hljs-string">&#x27;&#123;&quot;kind&quot;:&quot;agentTurn&quot;,&quot;message&quot;:&quot;检查所有cron任务上次执行时间，如果有超过24小时未执行的任务则告警&quot;&#125;&#x27;</span><br></code></pre></td></tr></table></figure>
+
+<h2 id="一键排查脚本"><a href="#一键排查脚本" class="headerlink" title="一键排查脚本"></a>一键排查脚本</h2><p>如果遇到了 Cron 任务不执行的问题，可以用以下脚本进行快速排查：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br><span class="line">59</span><br><span class="line">60</span><br><span class="line">61</span><br><span class="line">62</span><br><span class="line">63</span><br><span class="line">64</span><br><span class="line">65</span><br><span class="line">66</span><br><span class="line">67</span><br><span class="line">68</span><br><span class="line">69</span><br><span class="line">70</span><br><span class="line">71</span><br><span class="line">72</span><br><span class="line">73</span><br><span class="line">74</span><br><span class="line">75</span><br><span class="line">76</span><br><span class="line">77</span><br><span class="line">78</span><br><span class="line">79</span><br><span class="line">80</span><br><span class="line">81</span><br><span class="line">82</span><br><span class="line">83</span><br><span class="line">84</span><br><span class="line">85</span><br><span class="line">86</span><br><span class="line">87</span><br><span class="line">88</span><br><span class="line">89</span><br><span class="line">90</span><br><span class="line">91</span><br><span class="line">92</span><br><span class="line">93</span><br><span class="line">94</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-meta">#!/bin/bash</span><br><span class="hljs-comment"># cron-debug.sh - Cron 故障排查脚本</span><br><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;=== Cron 定时任务故障排查 ===&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;&quot;</span><br><br><span class="hljs-comment"># 1. 检查 Cron 服务状态</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;[1/8] 检查 Cron 服务状态...&quot;</span><br><span class="hljs-keyword">if</span> systemctl is-active cronie &gt; /dev/null 2&gt;&amp;1; <span class="hljs-keyword">then</span><br>    <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;✅ Cron 服务运行正常&quot;</span><br><span class="hljs-keyword">elif</span> systemctl is-active cron &gt; /dev/null 2&gt;&amp;1; <span class="hljs-keyword">then</span><br>    <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;✅ Cron 服务运行正常&quot;</span><br><span class="hljs-keyword">else</span><br>    <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;❌ Cron 服务未运行!&quot;</span><br>    systemctl status cron | <span class="hljs-built_in">head</span> -5<br><span class="hljs-keyword">fi</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;&quot;</span><br><br><span class="hljs-comment"># 2. 检查 Crontab 配置</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;[2/8] 检查 Crontab 配置...&quot;</span><br>crontab_count=$(crontab -l 2&gt;/dev/null | grep -v <span class="hljs-string">&quot;^#&quot;</span> | grep -v <span class="hljs-string">&quot;^$&quot;</span> | <span class="hljs-built_in">wc</span> -l)<br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;   当前用户 crontab 任务数: <span class="hljs-variable">$crontab_count</span>&quot;</span><br><span class="hljs-keyword">if</span> [ <span class="hljs-variable">$crontab_count</span> -eq 0 ]; <span class="hljs-keyword">then</span><br>    <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;⚠️ 没有找到 crontab 任务&quot;</span><br><span class="hljs-keyword">fi</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;&quot;</span><br><br><span class="hljs-comment"># 3. 检查系统 Crontab</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;[3/8] 检查系统 Crontab...&quot;</span><br><span class="hljs-keyword">if</span> [ -f /etc/crontab ]; <span class="hljs-keyword">then</span><br>    system_count=$(grep -v <span class="hljs-string">&quot;^#&quot;</span> /etc/crontab | grep -v <span class="hljs-string">&quot;^$&quot;</span> | <span class="hljs-built_in">wc</span> -l)<br>    <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;   系统 crontab 任务数: <span class="hljs-variable">$system_count</span>&quot;</span><br><span class="hljs-keyword">else</span><br>    <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;   /etc/crontab 不存在&quot;</span><br><span class="hljs-keyword">fi</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;&quot;</span><br><br><span class="hljs-comment"># 4. 检查定时任务脚本权限</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;[4/8] 检查定时任务脚本权限...&quot;</span><br>SCRIPT_DIR=<span class="hljs-string">&quot;/usr/local/bin&quot;</span><br><span class="hljs-keyword">if</span> [ -d <span class="hljs-string">&quot;<span class="hljs-variable">$SCRIPT_DIR</span>&quot;</span> ]; <span class="hljs-keyword">then</span><br>    <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;   === <span class="hljs-variable">$SCRIPT_DIR</span> 目录下的脚本 ===&quot;</span><br>    <span class="hljs-built_in">ls</span> -la <span class="hljs-string">&quot;<span class="hljs-variable">$SCRIPT_DIR</span>&quot;</span>/*.sh 2&gt;/dev/null | awk <span class="hljs-string">&#x27;&#123;print $1, $9&#125;&#x27;</span> || <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;   没有找到 .sh 脚本&quot;</span><br><span class="hljs-keyword">fi</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;&quot;</span><br><br><span class="hljs-comment"># 5. 检查 Cron 日志</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;[5/8] 检查 Cron 执行日志（最近 1 小时）...&quot;</span><br><span class="hljs-keyword">if</span> [ -f /var/log/syslog ]; <span class="hljs-keyword">then</span><br>    grep <span class="hljs-string">&quot;CRON&quot;</span> /var/log/syslog | <span class="hljs-built_in">tail</span> -10 | awk <span class="hljs-string">&#x27;&#123;print $1, $2, $3, $NF&#125;&#x27;</span><br><span class="hljs-keyword">elif</span> [ -f /var/log/cron.log ]; <span class="hljs-keyword">then</span><br>    grep <span class="hljs-string">&quot;CRON&quot;</span> /var/log/cron.log | <span class="hljs-built_in">tail</span> -10 | awk <span class="hljs-string">&#x27;&#123;print $1, $2, $3, $NF&#125;&#x27;</span><br><span class="hljs-keyword">else</span><br>    journalctl -u cronie --since <span class="hljs-string">&quot;1 hour ago&quot;</span> | grep CRON | <span class="hljs-built_in">tail</span> -5<br><span class="hljs-keyword">fi</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;&quot;</span><br><br><span class="hljs-comment"># 6. 检查系统时区</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;[6/8] 检查系统时区...&quot;</span><br>TZ=$(timedatectl | grep <span class="hljs-string">&quot;Time zone&quot;</span> | awk <span class="hljs-string">&#x27;&#123;print $3, $4, $5&#125;&#x27;</span>)<br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;   当前时区: <span class="hljs-variable">$TZ</span>&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;&quot;</span><br><br><span class="hljs-comment"># 7. 检查磁盘空间</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;[7/8] 检查磁盘空间...&quot;</span><br>ROOT_USAGE=$(<span class="hljs-built_in">df</span> -h / | <span class="hljs-built_in">tail</span> -1 | awk <span class="hljs-string">&#x27;&#123;print $5&#125;&#x27;</span>)<br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;   根分区使用率: <span class="hljs-variable">$ROOT_USAGE</span>&quot;</span><br><span class="hljs-keyword">if</span> [ <span class="hljs-string">&quot;<span class="hljs-variable">$&#123;ROOT_USAGE%\%&#125;</span>&quot;</span> -gt 90 ]; <span class="hljs-keyword">then</span><br>    <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;⚠️ 磁盘空间不足，可能影响 Cron 执行!&quot;</span><br><span class="hljs-keyword">fi</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;&quot;</span><br><br><span class="hljs-comment"># 8. 检查 OpenClaw cron 状态（如果安装了）</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;[8/8] 检查 OpenClaw cron 状态...&quot;</span><br><span class="hljs-keyword">if</span> <span class="hljs-built_in">command</span> -v openclaw &amp;&gt; /dev/null; <span class="hljs-keyword">then</span><br>    <span class="hljs-keyword">if</span> openclaw cron list &amp;&gt; /dev/null; <span class="hljs-keyword">then</span><br>        <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;✅ OpenClaw cron 可用&quot;</span><br>        openclaw cron list 2&gt;/dev/null | <span class="hljs-built_in">head</span> -10<br>    <span class="hljs-keyword">else</span><br>        <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;⚠️ OpenClaw cron 无法访问&quot;</span><br>    <span class="hljs-keyword">fi</span><br><span class="hljs-keyword">else</span><br>    <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;⚠️ OpenClaw 未安装&quot;</span><br><span class="hljs-keyword">fi</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;&quot;</span><br><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;=== 排查完成 ===&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;常见问题及解决方案：&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;1. Cron 服务未运行: systemctl start cronie&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;2. 任务未执行: 检查 crontab 配置和脚本权限&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;3. 时区问题: timedatectl set-timezone Asia/Shanghai&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;4. 磁盘满: 清理日志文件 df -h / &amp;&amp; du -sh /var/log/*&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;5. 脚本无执行权限: chmod +x /path/to/script.sh&quot;</span><br></code></pre></td></tr></table></figure>
+
+<h2 id="常见问题解答"><a href="#常见问题解答" class="headerlink" title="常见问题解答"></a>常见问题解答</h2><h3 id="Q1：Cron-表达式怎么写？"><a href="#Q1：Cron-表达式怎么写？" class="headerlink" title="Q1：Cron 表达式怎么写？"></a>Q1：Cron 表达式怎么写？</h3><p>A：Cron 表达式有 5 个字段，格式为 <code>分 时 日 月 周</code>，示例：</p>
+<table>
+<thead>
+<tr>
+<th>表达式</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>0 * * * *</code></td>
+<td>每小时整点执行</td>
+</tr>
+<tr>
+<td><code>0 3 * * *</code></td>
+<td>每天凌晨 3 点执行</td>
+</tr>
+<tr>
+<td><code>0 7 * * 1-5</code></td>
+<td>工作日早上 7 点执行</td>
+</tr>
+<tr>
+<td><code>*/5 * * * *</code></td>
+<td>每 5 分钟执行一次</td>
+</tr>
+<tr>
+<td><code>0 0 1 * *</code></td>
+<td>每月 1 号凌晨执行</td>
+</tr>
+<tr>
+<td><code>0 0 * * 0</code></td>
+<td>每周日凌晨执行</td>
+</tr>
+</tbody></table>
+<h3 id="Q2：Cron-任务以哪个用户执行？"><a href="#Q2：Cron-任务以哪个用户执行？" class="headerlink" title="Q2：Cron 任务以哪个用户执行？"></a>Q2：Cron 任务以哪个用户执行？</h3><p>A：系统 Crontab（<code>/etc/crontab</code>）会指定 <code>USER</code> 字段，用户 Crontab（<code>crontab -e</code>）以当前用户身份执行。OpenClaw cron 默认以 Gateway 进程的用户身份执行。</p>
+<h3 id="Q3：任务执行了但没有输出？"><a href="#Q3：任务执行了但没有输出？" class="headerlink" title="Q3：任务执行了但没有输出？"></a>Q3：任务执行了但没有输出？</h3><p>A：可能是输出被丢弃了。在 Crontab 中，添加输出重定向：</p>
+<figure class="highlight basic"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><code class="hljs basic"><span class="hljs-symbol">0 </span><span class="hljs-number">7</span> * * * /path/<span class="hljs-keyword">to</span>/script.sh &gt;&gt; /var/<span class="hljs-keyword">log</span>/script.<span class="hljs-keyword">log</span> <span class="hljs-number">2</span>&gt;&amp;<span class="hljs-number">1</span><br></code></pre></td></tr></table></figure>
+
+<h3 id="Q4：如何调试-Cron-任务？"><a href="#Q4：如何调试-Cron-任务？" class="headerlink" title="Q4：如何调试 Cron 任务？"></a>Q4：如何调试 Cron 任务？</h3><p>A：最有效的方法是在脚本开头添加调试输出：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-meta">#!/bin/bash</span><br><span class="hljs-built_in">set</span> -x  <span class="hljs-comment"># 开启调试模式</span><br><span class="hljs-built_in">exec</span> &gt; /tmp/debug.log 2&gt;&amp;1  <span class="hljs-comment"># 输出重定向到文件</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;脚本开始执行: <span class="hljs-subst">$(date)</span>&quot;</span><br></code></pre></td></tr></table></figure>
+
+<h3 id="Q5：Cron-任务和-systemd-timer-哪个更好？"><a href="#Q5：Cron-任务和-systemd-timer-哪个更好？" class="headerlink" title="Q5：Cron 任务和 systemd timer 哪个更好？"></a>Q5：Cron 任务和 systemd timer 哪个更好？</h3><p>A：各有优劣。Cron 更简单易用，systemd timer 更强大（支持依赖、节流、重试等）。对于简单任务用 Cron，对于复杂任务用 systemd timer。</p>
+<h3 id="Q6：任务执行成功了但没有收到通知？"><a href="#Q6：任务执行成功了但没有收到通知？" class="headerlink" title="Q6：任务执行成功了但没有收到通知？"></a>Q6：任务执行成功了但没有收到通知？</h3><p>A：检查通知配置是否正确，确保任务在执行成功时也触发了通知：</p>
+<figure class="highlight yaml"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><code class="hljs yaml"><span class="hljs-attr">delivery:</span><br>  <span class="hljs-attr">mode:</span> <span class="hljs-string">announce</span><br>  <span class="hljs-attr">onSuccess:</span> <span class="hljs-literal">true</span>  <span class="hljs-comment"># 执行成功时通知</span><br>  <span class="hljs-attr">onFailure:</span> <span class="hljs-literal">true</span>  <span class="hljs-comment"># 执行失败时通知</span><br></code></pre></td></tr></table></figure>
+
+<h2 id="经验总结"><a href="#经验总结" class="headerlink" title="经验总结"></a>经验总结</h2><h3 id="排查心得"><a href="#排查心得" class="headerlink" title="排查心得"></a>排查心得</h3><ol>
+<li><p><strong>先确认 Cron 服务是否在运行</strong><br>这是最容易忽略的一步。很多”任务没执行”的问题，实际上是 Cron 服务本身就没启动。</p>
+</li>
+<li><p><strong>检查时间是否正确</strong><br>包括系统时区、Cron 表达式时区（如果有）、NTP 同步状态。时间不对，一切都错。</p>
+</li>
+<li><p><strong>查看 Cron 日志</strong><br><code>/var/log/syslog</code> 或 <code>journalctl -u cronie</code> 里通常会有任务执行的详细记录，包括是否执行、执行结果等。</p>
+</li>
+<li><p><strong>检查脚本权限</strong><br>Cron 任务的脚本必须有执行权限（<code>chmod +x</code>）。还要确保脚本所在目录的权限正确。</p>
+</li>
+<li><p><strong>测试脚本能否手动执行</strong><br>把 Cron 表达式去掉，直接运行脚本。如果手动能执行但 Cron 里不行，那问题多半在 Cron 配置或环境变量上。</p>
+</li>
+</ol>
+<h3 id="配置最佳实践"><a href="#配置最佳实践" class="headerlink" title="配置最佳实践"></a>配置最佳实践</h3><ol>
+<li><p><strong>Cron 表达式要准确</strong><br>用 <code>crontab.guru</code> 或类似工具验证表达式是否符合预期。</p>
+</li>
+<li><p><strong>任务要有日志输出</strong><br>至少要输出到文件，方便排查问题。</p>
+</li>
+<li><p><strong>任务要有告警机制</strong><br>成功和失败都要有通知，不能只有成功通知。</p>
+</li>
+<li><p><strong>错开任务执行时间</strong><br>不要让多个任务同时执行，容易资源竞争。</p>
+</li>
+<li><p><strong>配置任务监控</strong><br>定期检查任务是否正常执行，不要只依赖告警。</p>
+</li>
+<li><p><strong>记录任务执行结果</strong><br>用数据库或文件记录每次执行的时间、结果、耗时，方便历史分析和趋势预测。</p>
+</li>
+</ol>
+<h2 id="延伸阅读"><a href="#延伸阅读" class="headerlink" title="延伸阅读"></a>延伸阅读</h2><ul>
+<li><a target="_blank" rel="noopener" href="https://crontab.guru/">Crontab.guru</a> - 在线 Cron 表达式验证工具</li>
+<li><a href="/docs/cron">OpenClaw Cron 文档</a></li>
+<li><a target="_blank" rel="noopener" href="https://www.redhat.com/sysadmin/linux-cron">Linux 系统定时任务最佳实践</a></li>
+<li><a target="_blank" rel="noopener" href="https://www.shellhacks.com/systemd-timer-vs-cron/">systemd timer vs cron</a></li>
+</ul>
+<h2 id="结语"><a href="#结语" class="headerlink" title="结语"></a>结语</h2><p>Cron 定时任务虽然简单，但踩坑的地方不少。本文记录了一次从”任务没执行”到”找到根因”的完整排查过程，希望能给遇到类似问题的同学一些参考。</p>
+<p>排查 Cron 问题的核心是<strong>分步验证</strong>：</p>
+<ol>
+<li>Cron 服务是否在运行？</li>
+<li>Crontab 配置是否正确？</li>
+<li>脚本是否能手动执行？</li>
+<li>时间&#x2F;时区是否正确？</li>
+<li>权限&#x2F;环境变量是否正确？</li>
+</ol>
+<p>顺着这个思路，大多数问题都能快速定位。</p>
+<p>最后送大家一句话：<strong>Cron 任务不执行？别慌，先检查服务。</strong></p>
+<p>祝你永远不被 Cron 问题困扰。</p>
+<hr>
+<p><em>作者：小六，一个今天终于搞清楚 Cron 表达式怎么写的技术人</em></p>
+
+    
+  </article>
+
+  
+      
+    <div class="nexmoe-post-copyright">
+        <strong>Author：</strong>Margrop<br>
+        <strong>Link：</strong><a href="http://blog.margrop.com/post/2026-04-14-cron-task-troubleshooting-from-missing-execution-to-root-cause/" title="http:&#x2F;&#x2F;blog.margrop.com&#x2F;post&#x2F;2026-04-14-cron-task-troubleshooting-from-missing-execution-to-root-cause&#x2F;" target="_blank" rel="noopener">http:&#x2F;&#x2F;blog.margrop.com&#x2F;post&#x2F;2026-04-14-cron-task-troubleshooting-from-missing-execution-to-root-cause&#x2F;</a><br>
+        
+            <strong>版权声明：</strong>本文采用 <a href="https://creativecommons.org/licenses/by-nc-sa/3.0/cn/deed.zh" target="_blank">CC BY-NC-SA 3.0 CN</a> 协议进行许可
+
+        
+    </div>
+
+
+  
+  
+  <div class="nexmoe-post-meta nexmoe-rainbow">
+   
+    
+        <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/Cron/" rel="tag">Cron</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/%E5%AE%9A%E6%97%B6%E4%BB%BB%E5%8A%A1/" rel="tag">定时任务</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/%E6%8A%80%E6%9C%AF/" rel="tag">技术</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/%E8%87%AA%E5%8A%A8%E5%8C%96/" rel="tag">自动化</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/%E8%BF%90%E7%BB%B4/" rel="tag">运维</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/%E9%97%AE%E9%A2%98%E6%8E%92%E6%9F%A5/" rel="tag">问题排查</a>
+    
+</div>
+  
+  
+    <script async src="../../js/copy-codeblock.js?v=1776171927130"></script>
+  
+
+  
+      <div class="nexmoe-post-footer">
+          <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+<script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+<div id="gitalk-container"></div>
+<script>
+  const gitalk = new Gitalk({
+    clientID: 'Ov23lib2oiNKjG5B7I1N',
+    clientSecret: '0a94653f17a7b9630d85b275008da4b38e0259dd',
+    repo: 'margropcomment.margrop.io',      // The repository of store comments,
+    owner: 'margrop',
+    admin: ['margrop'],
+    pagerDirection: 'last',
+    id: window.location.pathname.substring(0, 49), // 使用 pathname 的前49个字符作为 id
+    title: document.title,
+    language: 'zh-CN', // 根据需要设置语言
+    distractionFreeMode: false
+  })
+  gitalk.render('gitalk-container')
+</script>
+
+      </div>
+  
+</div></div><div class="nexmoe-post-right">    <div class="nexmoe-fixed">
+        <div class="nexmoe-tool">
+
+            
+
+            
+            
+            <button class="mdui-fab catalog" style="overflow:unset;">
+                <i class="nexmoefont icon-i-catalog"></i>
+                <div class="nexmoe-toc">
+                    <ol class="toc"><li class="toc-item toc-level-1"><a class="toc-link" href="#%E8%AE%B0%E4%B8%80%E6%AC%A1%E5%AE%9A%E6%97%B6%E4%BB%BB%E5%8A%A1%EF%BC%88Cron%EF%BC%89%E6%95%85%E9%9A%9C%E6%8E%92%E6%9F%A5%EF%BC%9A%E4%BB%8E%E2%80%9D%E4%BB%BB%E5%8A%A1%E6%B2%A1%E6%89%A7%E8%A1%8C%E2%80%9D%E5%88%B0%E6%A0%B9%E5%9B%A0%E5%88%86%E6%9E%90"><span class="toc-number">1.</span> <span class="toc-text">记一次定时任务（Cron）故障排查：从”任务没执行”到根因分析</span></a><ol class="toc-child"><li class="toc-item toc-level-2"><a class="toc-link" href="#%E5%89%8D%E8%A8%80"><span class="toc-number">1.1.</span> <span class="toc-text">前言</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E9%97%AE%E9%A2%98%E8%83%8C%E6%99%AF"><span class="toc-number">1.2.</span> <span class="toc-text">问题背景</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#%E4%B8%9A%E5%8A%A1%E5%9C%BA%E6%99%AF"><span class="toc-number">1.2.1.</span> <span class="toc-text">业务场景</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E9%97%AE%E9%A2%98%E7%8E%B0%E8%B1%A1"><span class="toc-number">1.2.2.</span> <span class="toc-text">问题现象</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E7%8E%AF%E5%A2%83%E4%BF%A1%E6%81%AF"><span class="toc-number">1.2.3.</span> <span class="toc-text">环境信息</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E9%97%AE%E9%A2%98%E5%88%86%E6%9E%90"><span class="toc-number">1.3.</span> <span class="toc-text">问题分析</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#%E9%97%AE%E9%A2%98%E4%B8%80%EF%BC%9A%E4%BB%BB%E5%8A%A1%E2%80%9D%E6%9C%AA%E6%89%A7%E8%A1%8C%E2%80%9D%E4%BD%86%E6%89%8B%E5%8A%A8%E5%8F%AF%E4%BB%A5%E6%89%A7%E8%A1%8C"><span class="toc-number">1.3.1.</span> <span class="toc-text">问题一：任务”未执行”但手动可以执行</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E9%97%AE%E9%A2%98%E4%BA%8C%EF%BC%9A%E6%89%A7%E8%A1%8C%E6%97%B6%E9%97%B4%E5%81%8F%E5%B7%AE-3-%E5%B0%8F%E6%97%B6"><span class="toc-number">1.3.2.</span> <span class="toc-text">问题二：执行时间偏差 3 小时</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E9%97%AE%E9%A2%98%E4%B8%89%EF%BC%9A%E5%A4%B1%E8%B4%A5%E4%BB%BB%E5%8A%A1%E6%B2%A1%E6%9C%89%E5%91%8A%E8%AD%A6"><span class="toc-number">1.3.3.</span> <span class="toc-text">问题三：失败任务没有告警</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E6%8E%92%E6%9F%A5%E8%BF%87%E7%A8%8B"><span class="toc-number">1.4.</span> <span class="toc-text">排查过程</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#%E7%AC%AC%E4%B8%80%E6%AD%A5%EF%BC%9A%E7%A1%AE%E8%AE%A4-Cron-%E6%9C%8D%E5%8A%A1%E7%8A%B6%E6%80%81"><span class="toc-number">1.4.1.</span> <span class="toc-text">第一步：确认 Cron 服务状态</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E7%AC%AC%E4%BA%8C%E6%AD%A5%EF%BC%9A%E6%A3%80%E6%9F%A5-Crontab-%E9%85%8D%E7%BD%AE"><span class="toc-number">1.4.2.</span> <span class="toc-text">第二步：检查 Crontab 配置</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E7%AC%AC%E4%B8%89%E6%AD%A5%EF%BC%9A%E6%A3%80%E6%9F%A5-OpenClaw-cron-%E4%BB%BB%E5%8A%A1%E7%9A%84%E5%AE%9E%E9%99%85%E6%89%A7%E8%A1%8C%E6%97%B6%E9%97%B4"><span class="toc-number">1.4.3.</span> <span class="toc-text">第三步：检查 OpenClaw cron 任务的实际执行时间</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E7%AC%AC%E5%9B%9B%E6%AD%A5%EF%BC%9A%E6%A3%80%E6%9F%A5%E6%97%B6%E5%8C%BA%E9%85%8D%E7%BD%AE"><span class="toc-number">1.4.4.</span> <span class="toc-text">第四步：检查时区配置</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E7%AC%AC%E4%BA%94%E6%AD%A5%EF%BC%9A%E9%AA%8C%E8%AF%81%E4%BB%BB%E5%8A%A1%E5%86%B2%E7%AA%81"><span class="toc-number">1.4.5.</span> <span class="toc-text">第五步：验证任务冲突</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E7%AC%AC%E5%85%AD%E6%AD%A5%EF%BC%9A%E6%B7%B1%E5%85%A5%E5%88%86%E6%9E%90%E2%80%9D%E5%A4%B1%E8%B4%A5%E6%97%A0%E5%91%8A%E8%AD%A6%E2%80%9D%E9%97%AE%E9%A2%98"><span class="toc-number">1.4.6.</span> <span class="toc-text">第六步：深入分析”失败无告警”问题</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E6%A0%B9%E5%9B%A0%E5%88%86%E6%9E%90"><span class="toc-number">1.5.</span> <span class="toc-text">根因分析</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#%E6%A0%B9%E5%9B%A0%E4%B8%80%EF%BC%9ACron-%E8%A1%A8%E8%BE%BE%E5%BC%8F%E7%90%86%E8%A7%A3%E9%94%99%E8%AF%AF"><span class="toc-number">1.5.1.</span> <span class="toc-text">根因一：Cron 表达式理解错误</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E6%A0%B9%E5%9B%A0%E4%BA%8C%EF%BC%9AOpenClaw-Gateway-%E6%97%B6%E5%8C%BA%E5%8A%A0%E8%BD%BD%E9%97%AE%E9%A2%98"><span class="toc-number">1.5.2.</span> <span class="toc-text">根因二：OpenClaw Gateway 时区加载问题</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E6%A0%B9%E5%9B%A0%E4%B8%89%EF%BC%9A%E4%BB%BB%E5%8A%A1%E5%A4%B1%E8%B4%A5%E6%B2%A1%E6%9C%89%E5%91%8A%E8%AD%A6"><span class="toc-number">1.5.3.</span> <span class="toc-text">根因三：任务失败没有告警</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E6%A0%B9%E5%9B%A0%E5%9B%9B%EF%BC%9A%E4%BB%BB%E5%8A%A1%E5%B9%B6%E5%8F%91%E5%86%B2%E7%AA%81"><span class="toc-number">1.5.4.</span> <span class="toc-text">根因四：任务并发冲突</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E8%A7%A3%E5%86%B3%E6%96%B9%E6%A1%88"><span class="toc-number">1.6.</span> <span class="toc-text">解决方案</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#%E6%96%B9%E6%A1%88%E4%B8%80%EF%BC%9A%E4%BF%AE%E6%AD%A3-Cron-%E8%A1%A8%E8%BE%BE%E5%BC%8F"><span class="toc-number">1.6.1.</span> <span class="toc-text">方案一：修正 Cron 表达式</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E6%96%B9%E6%A1%88%E4%BA%8C%EF%BC%9A%E4%BF%AE%E5%A4%8D-OpenClaw-Gateway-%E6%97%B6%E5%8C%BA%E9%97%AE%E9%A2%98"><span class="toc-number">1.6.2.</span> <span class="toc-text">方案二：修复 OpenClaw Gateway 时区问题</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E6%96%B9%E6%A1%88%E4%B8%89%EF%BC%9A%E9%85%8D%E7%BD%AE%E4%BB%BB%E5%8A%A1%E5%A4%B1%E8%B4%A5%E5%91%8A%E8%AD%A6"><span class="toc-number">1.6.3.</span> <span class="toc-text">方案三：配置任务失败告警</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E6%96%B9%E6%A1%88%E5%9B%9B%EF%BC%9A%E9%94%99%E5%BC%80%E4%BB%BB%E5%8A%A1%E6%89%A7%E8%A1%8C%E6%97%B6%E9%97%B4"><span class="toc-number">1.6.4.</span> <span class="toc-text">方案四：错开任务执行时间</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E6%96%B9%E6%A1%88%E4%BA%94%EF%BC%9A%E6%B7%BB%E5%8A%A0%E4%BB%BB%E5%8A%A1%E6%89%A7%E8%A1%8C%E7%8A%B6%E6%80%81%E7%9B%91%E6%8E%A7"><span class="toc-number">1.6.5.</span> <span class="toc-text">方案五：添加任务执行状态监控</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%B8%80%E9%94%AE%E6%8E%92%E6%9F%A5%E8%84%9A%E6%9C%AC"><span class="toc-number">1.7.</span> <span class="toc-text">一键排查脚本</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E5%B8%B8%E8%A7%81%E9%97%AE%E9%A2%98%E8%A7%A3%E7%AD%94"><span class="toc-number">1.8.</span> <span class="toc-text">常见问题解答</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#Q1%EF%BC%9ACron-%E8%A1%A8%E8%BE%BE%E5%BC%8F%E6%80%8E%E4%B9%88%E5%86%99%EF%BC%9F"><span class="toc-number">1.8.1.</span> <span class="toc-text">Q1：Cron 表达式怎么写？</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#Q2%EF%BC%9ACron-%E4%BB%BB%E5%8A%A1%E4%BB%A5%E5%93%AA%E4%B8%AA%E7%94%A8%E6%88%B7%E6%89%A7%E8%A1%8C%EF%BC%9F"><span class="toc-number">1.8.2.</span> <span class="toc-text">Q2：Cron 任务以哪个用户执行？</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#Q3%EF%BC%9A%E4%BB%BB%E5%8A%A1%E6%89%A7%E8%A1%8C%E4%BA%86%E4%BD%86%E6%B2%A1%E6%9C%89%E8%BE%93%E5%87%BA%EF%BC%9F"><span class="toc-number">1.8.3.</span> <span class="toc-text">Q3：任务执行了但没有输出？</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#Q4%EF%BC%9A%E5%A6%82%E4%BD%95%E8%B0%83%E8%AF%95-Cron-%E4%BB%BB%E5%8A%A1%EF%BC%9F"><span class="toc-number">1.8.4.</span> <span class="toc-text">Q4：如何调试 Cron 任务？</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#Q5%EF%BC%9ACron-%E4%BB%BB%E5%8A%A1%E5%92%8C-systemd-timer-%E5%93%AA%E4%B8%AA%E6%9B%B4%E5%A5%BD%EF%BC%9F"><span class="toc-number">1.8.5.</span> <span class="toc-text">Q5：Cron 任务和 systemd timer 哪个更好？</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#Q6%EF%BC%9A%E4%BB%BB%E5%8A%A1%E6%89%A7%E8%A1%8C%E6%88%90%E5%8A%9F%E4%BA%86%E4%BD%86%E6%B2%A1%E6%9C%89%E6%94%B6%E5%88%B0%E9%80%9A%E7%9F%A5%EF%BC%9F"><span class="toc-number">1.8.6.</span> <span class="toc-text">Q6：任务执行成功了但没有收到通知？</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E7%BB%8F%E9%AA%8C%E6%80%BB%E7%BB%93"><span class="toc-number">1.9.</span> <span class="toc-text">经验总结</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#%E6%8E%92%E6%9F%A5%E5%BF%83%E5%BE%97"><span class="toc-number">1.9.1.</span> <span class="toc-text">排查心得</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E9%85%8D%E7%BD%AE%E6%9C%80%E4%BD%B3%E5%AE%9E%E8%B7%B5"><span class="toc-number">1.9.2.</span> <span class="toc-text">配置最佳实践</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E5%BB%B6%E4%BC%B8%E9%98%85%E8%AF%BB"><span class="toc-number">1.10.</span> <span class="toc-text">延伸阅读</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E7%BB%93%E8%AF%AD"><span class="toc-number">1.11.</span> <span class="toc-text">结语</span></a></li></ol></li></ol>
+                </div>
+            </button>
+            
+
+            
+
+            <a href="#nexmoe-content" class="backtop toc-link" aria-label="Back To Top" title="top"><button class="mdui-fab mdui-ripple"><i class="nexmoefont icon-caret-top"></i></button></a>
+        </div>
+    </div>
+</div></div><div id="nexmoe-footer"><!--!--></div><div id="nexmoe-search-space"><div class="search-container"><div class="search-header"><div class="search-input-container"><input class="search-input" type="text" placeholder="Search" onInput="sinput();"></div><a class="search-close" onclick="sclose();">×</a></div><div class="search-body"></div></div></div><div><script src="https://cdn.jsdelivr.net/npm/mathjax@latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+<script>MathJax.Hub.Config({
+    tex2jax: {
+        inlineMath: [ ['$','$'], ["\\(","\\)"] ],
+        processEscapes: true,
+        skipTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code']
+    }
+});
+MathJax.Hub.Queue(function() {
+    var all = MathJax.Hub.getAllJax(), i;
+    for(i=0; i < all.length; i += 1) {
+        all[i].SourceElement().parentNode.className += ' has-jax';
+    }
+});</script>
+</div></body></html>
