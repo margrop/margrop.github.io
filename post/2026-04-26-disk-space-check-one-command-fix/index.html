@@ -1,0 +1,762 @@
+<!doctype html>
+<html lang="cn"><head>
+<title>一次排查服务器磁盘告警差点翻车，最后用一条命令救了回来 - 魔都水滴</title>
+<meta charset="UTF-8">
+<meta name="keywords" content="">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5">
+
+<link rel="shortcut icon" href="/favicon.ico" type="image/x-icon" />
+<meta name="description" content="前言今天下午遇到了一个有意思的问题：三台服务器的磁盘使用率同时触发了告警。按照以往的经验，这种”多台服务器同时告警”的情况往往意味着某个共性问题，比如日志盘爆了、备份脚本失控、或者某个共享存储出了问题。 我按照标准流程开始排查：SSH 连上去，df -h 看一下使用率，du -sh * 跑一下目录占用，然后开始定位大文件。整个排查过程花了大约 40 分钟，最后发现——真正占用空间的，是一个 &#x2F;tm">
+<meta property="og:type" content="article">
+<meta property="og:title" content="一次排查服务器磁盘告警差点翻车，最后用一条命令救了回来">
+<meta property="og:url" content="http://blog.margrop.com/post/2026-04-26-disk-space-check-one-command-fix/index.html">
+<meta property="og:site_name" content="魔都水滴">
+<meta property="og:description" content="前言今天下午遇到了一个有意思的问题：三台服务器的磁盘使用率同时触发了告警。按照以往的经验，这种”多台服务器同时告警”的情况往往意味着某个共性问题，比如日志盘爆了、备份脚本失控、或者某个共享存储出了问题。 我按照标准流程开始排查：SSH 连上去，df -h 看一下使用率，du -sh * 跑一下目录占用，然后开始定位大文件。整个排查过程花了大约 40 分钟，最后发现——真正占用空间的，是一个 &#x2F;tm">
+<meta property="og:locale">
+<meta property="article:published_time" content="2026-04-26T13:30:00.000Z">
+<meta property="article:modified_time" content="2026-04-26T13:12:10.075Z">
+<meta property="article:author" content="Margrop">
+<meta property="article:tag" content="运维">
+<meta property="article:tag" content="监控">
+<meta property="article:tag" content="技术">
+<meta property="article:tag" content="磁盘">
+<meta name="twitter:card" content="summary">
+
+<link rel="stylesheet" href="../../lib/fancybox/fancybox.css">
+<link rel="stylesheet" href="../../lib/mdui_043tiny/mdui.css">
+
+
+<link rel="stylesheet" href="../../lib/iconfont/iconfont.css?v=1777209337317">
+
+<link rel="stylesheet" href="../../css/style.css?v=1777209337317">
+
+
+
+
+    
+        <link rel="stylesheet" href="../../custom.css?v=1777209337317">
+    
+
+
+
+<script src="../../lib/mdui_043tiny/mdui.js" async></script>
+<script src="../../lib/fancybox/fancybox.umd.js" async></script>
+<script src="../../lib/lax.min.js" async></script>
+
+
+<script async src="../../js/app.js?v=1777209337318"></script>
+
+ 
+
+<script charset="UTF-8" id="LA_COLLECT" src="//sdk.51.la/js-sdk-pro.min.js"></script>
+<script>LA.init({id:"23bDEwNOu1L8NhV1",ck:"23bDEwNOu1L8NhV1"})</script>
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-4NGHEP8LEV"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+
+  gtag('config', 'G-4NGHEP8LEV');
+</script>
+
+
+<link rel="stylesheet"  href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/atom-one-dark.min.css">
+<meta name="generator" content="Hexo 7.3.0"><link rel="alternate" href="atom.xml" title="魔都水滴" type="application/atom+xml">
+</head><body class="nexmoe mdui-drawer-body-left"><div id="nexmoe-background"><div class="nexmoe-bg" style="background-image: url(/images/background.webp)"></div><div class="mdui-appbar mdui-shadow-0"><div class="mdui-toolbar"><a class="mdui-btn mdui-btn-icon mdui-ripple" mdui-drawer="{target: &#039;#drawer&#039;, swipe: true}" title="menu"><i class="mdui-icon nexmoefont icon-menu"></i></a><div class="mdui-toolbar-spacer"></div><a class="mdui-btn mdui-btn-icon" href="../../index.html" title="Margrop"><img src="/images/avatar.webp" alt="Margrop"></a></div></div></div><div id="nexmoe-header"><div class="nexmoe-drawer mdui-drawer" id="drawer">
+    <div class="nexmoe-avatar mdui-ripple">
+        <a href="../../index.html" title="Margrop">
+            <img src="/images/avatar.webp" alt="Margrop" alt="Margrop">
+        </a>
+    </div>
+    <div class="nexmoe-count">
+        <div><span>Articles</span>288</div>
+        <div><span>Tags</span>446</div>
+        <div><span>Categories</span>23</div>
+    </div>
+    <div class="nexmoe-list mdui-list" mdui-collapse="{accordion: true}">
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" href="../../index.html" title="回到首页">
+            <i class="mdui-list-item-icon nexmoefont icon-home"></i>
+            <div class="mdui-list-item-content">
+                回到首页
+            </div>
+        </a>
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" href="../../post/archives/" title="文章归档">
+            <i class="mdui-list-item-icon nexmoefont icon-container"></i>
+            <div class="mdui-list-item-content">
+                文章归档
+            </div>
+        </a>
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" target="_blank" rel="noopener" href="https://example.com/" title="下载">
+            <i class="mdui-list-item-icon nexmoefont icon-container"></i>
+            <div class="mdui-list-item-content">
+                下载
+            </div>
+        </a>
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" href="../../post/favorites/" title="常用链接">
+            <i class="mdui-list-item-icon nexmoefont icon-unorderedlist"></i>
+            <div class="mdui-list-item-content">
+                常用链接
+            </div>
+        </a>
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" href="../../post/github-project-stars/" title="GithubStars">
+            <i class="mdui-list-item-icon nexmoefont icon-github"></i>
+            <div class="mdui-list-item-content">
+                GithubStars
+            </div>
+        </a>
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" href="../../post/donate/" title="给我赞助">
+            <i class="mdui-list-item-icon nexmoefont icon-coffee"></i>
+            <div class="mdui-list-item-content">
+                给我赞助
+            </div>
+        </a>
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" href="../../post/about/" title="关于博主">
+            <i class="mdui-list-item-icon nexmoefont icon-info-circle"></i>
+            <div class="mdui-list-item-content">
+                关于博主
+            </div>
+        </a>
+        
+    </div>
+    
+    
+        
+        <div class="nexmoe-widget-wrap">
+    <div class="nexmoe-widget nexmoe-search">
+         
+            <form id="search_form" action_e="https://cn.bing.com/search?q=site:example.com" onsubmit="return search();">
+                <label><input id="search_value" name="q" type="search" placeholder="Search"></label>
+            </form>
+         
+    </div>
+</div>
+
+
+
+
+    
+        
+        <div class="nexmoe-widget-wrap">
+	<div class="nexmoe-widget nexmoe-social">
+		<a
+			class="mdui-ripple"
+			href="http://qm.qq.com/cgi-bin/qm/qr?_wv=1027&k=weD8TANNWdCOveAMcdmoAxOKt5owKkDS"
+			target="_blank"
+			mdui-tooltip="{content: 'QQ群'}"
+			style="
+				color: rgb(249, 174, 8);
+				background-color: rgba(249, 174, 8, .1);
+			"
+		>
+			<i
+				class="nexmoefont icon-QQ"
+			></i> </a
+		><a
+			class="mdui-ripple"
+			href="https://github.com/margrop/"
+			target="_blank"
+			mdui-tooltip="{content: 'GitHub'}"
+			style="
+				color: rgb(25, 23, 23);
+				background-color: rgba(25, 23, 23, .1);
+			"
+		>
+			<i
+				class="nexmoefont icon-github"
+			></i> </a
+		><a
+			class="mdui-ripple"
+			href="../../atom.xml"
+			target="_blank"
+			mdui-tooltip="{content: 'RSS'}"
+			style="
+				color: rgb(247, 132, 34);
+				background-color: rgba(247, 132, 34, .1);
+			"
+		>
+			<i
+				class="nexmoefont icon-rss"
+			></i> </a
+		>
+	</div>
+</div>
+
+    
+        
+        
+  <div class="nexmoe-widget-wrap">
+    <h3 class="nexmoe-widget-title">Categories</h3>
+    <div class="nexmoe-widget">
+
+      <ul class="category-list">
+
+        
+
+
+        
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/Adblocker/">Adblocker</a>
+          <span class="category-list-count">1</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/Android/">Android</a>
+          <span class="category-list-count">2</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/CentOS/">CentOS</a>
+          <span class="category-list-count">6</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/Container/">Container</a>
+          <span class="category-list-count">10</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/Git/">Git</a>
+          <span class="category-list-count">7</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/HomeAssistant/">HomeAssistant</a>
+          <span class="category-list-count">1</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/MacOS/">MacOS</a>
+          <span class="category-list-count">11</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/PVE/">PVE</a>
+          <span class="category-list-count">19</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/SmartHome/">SmartHome</a>
+          <span class="category-list-count">5</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/Synology/">Synology</a>
+          <span class="category-list-count">4</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/Ubuntu/">Ubuntu</a>
+          <span class="category-list-count">4</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/Windows/">Windows</a>
+          <span class="category-list-count">3</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/ai-diary/">ai_diary</a>
+          <span class="category-list-count">68</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/ai-tech/">ai_tech</a>
+          <span class="category-list-count">62</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/develop/">develop</a>
+          <span class="category-list-count">28</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/fuckgfw/">fuckgfw</a>
+          <span class="category-list-count">2</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/n2n/">n2n</a>
+          <span class="category-list-count">9</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/">network</a>
+          <span class="category-list-count">112</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/notes/">notes</a>
+          <span class="category-list-count">10</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/others/">others</a>
+          <span class="category-list-count">3</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/router/">router</a>
+          <span class="category-list-count">7</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/sport/">sport</a>
+          <span class="category-list-count">4</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/tvbox/">tvbox</a>
+          <span class="category-list-count">3</span>
+        </li>
+
+        
+      </ul>
+
+    </div>
+  </div>
+
+
+    
+        
+        
+  <div class="nexmoe-widget-wrap">
+    <div id="randomtagcloud" class="nexmoe-widget tagcloud nexmoe-rainbow">
+      <a href="../../tags/1password/" style="font-size: 10px;">1password</a> <a href="../../tags/AC/" style="font-size: 10.48px;">AC</a> <a href="../../tags/ACP/" style="font-size: 10px;">ACP</a> <a href="../../tags/AI/" style="font-size: 11.9px;">AI</a> <a href="../../tags/AP/" style="font-size: 10.95px;">AP</a> <a href="../../tags/API/" style="font-size: 11.43px;">API</a> <a href="../../tags/AppDaemon/" style="font-size: 10px;">AppDaemon</a> <a href="../../tags/Aqara/" style="font-size: 10px;">Aqara</a> <a href="../../tags/CI-CD/" style="font-size: 10.48px;">CI/CD</a> <a href="../../tags/Caddy/" style="font-size: 10px;">Caddy</a> <a href="../../tags/Cloudflare/" style="font-size: 10px;">Cloudflare</a> <a href="../../tags/Cookie-%E8%AE%A4%E8%AF%81/" style="font-size: 10px;">Cookie 认证</a> <a href="../../tags/Cron/" style="font-size: 11.43px;">Cron</a> <a href="../../tags/D1/" style="font-size: 10px;">D1</a> <a href="../../tags/Date/" style="font-size: 10px;">Date</a> <a href="../../tags/Diagrams-net/" style="font-size: 10px;">Diagrams.net</a> <a href="../../tags/Docker/" style="font-size: 16.19px;">Docker</a> <a href="../../tags/Docker-Compose/" style="font-size: 10px;">Docker Compose</a> <a href="../../tags/Electerm/" style="font-size: 10px;">Electerm</a> <a href="../../tags/Gateway/" style="font-size: 11.43px;">Gateway</a> <a href="../../tags/GitHub-Actions/" style="font-size: 10.48px;">GitHub Actions</a> <a href="../../tags/HA/" style="font-size: 10px;">HA</a> <a href="../../tags/HADashboard/" style="font-size: 10px;">HADashboard</a> <a href="../../tags/Hexo/" style="font-size: 10.95px;">Hexo</a> <a href="../../tags/HomeAssistant/" style="font-size: 10px;">HomeAssistant</a> <a href="../../tags/IP/" style="font-size: 10px;">IP</a> <a href="../../tags/IPv4/" style="font-size: 10px;">IPv4</a> <a href="../../tags/Java/" style="font-size: 11.9px;">Java</a> <a href="../../tags/LVM%E2%80%91Thin/" style="font-size: 10.48px;">LVM‑Thin</a> <a href="../../tags/Linux/" style="font-size: 12.38px;">Linux</a> <a href="../../tags/MacOS/" style="font-size: 10.95px;">MacOS</a> <a href="../../tags/Markdown/" style="font-size: 10px;">Markdown</a> <a href="../../tags/MiniMax/" style="font-size: 10px;">MiniMax</a> <a href="../../tags/Multi-Agent/" style="font-size: 10px;">Multi-Agent</a> <a href="../../tags/MySQL/" style="font-size: 10.95px;">MySQL</a> <a href="../../tags/NAS/" style="font-size: 10.95px;">NAS</a> <a href="../../tags/Nginx/" style="font-size: 10px;">Nginx</a> <a href="../../tags/Node-RED/" style="font-size: 10.48px;">Node-RED</a> <a href="../../tags/Node-js/" style="font-size: 10px;">Node.js</a> <a href="../../tags/OOM/" style="font-size: 10px;">OOM</a> <a href="../../tags/OpenAI/" style="font-size: 10px;">OpenAI</a> <a href="../../tags/OpenClaw/" style="font-size: 17.62px;">OpenClaw</a> <a href="../../tags/OpenResty/" style="font-size: 10px;">OpenResty</a> <a href="../../tags/PPPoE/" style="font-size: 10px;">PPPoE</a> <a href="../../tags/Portainer/" style="font-size: 10px;">Portainer</a> <a href="../../tags/PostgreSQL/" style="font-size: 10px;">PostgreSQL</a> <a href="../../tags/ProcessOn/" style="font-size: 10px;">ProcessOn</a> <a href="../../tags/Prometheus/" style="font-size: 10.95px;">Prometheus</a> <a href="../../tags/Proxmox-VE/" style="font-size: 16.67px;">Proxmox VE</a> <a href="../../tags/SOCKS5/" style="font-size: 10px;">SOCKS5</a> <a href="../../tags/SSL/" style="font-size: 10px;">SSL</a> <a href="../../tags/Session/" style="font-size: 10px;">Session</a> <a href="../../tags/Shell/" style="font-size: 10.48px;">Shell</a> <a href="../../tags/Subagent/" style="font-size: 10px;">Subagent</a> <a href="../../tags/TTS/" style="font-size: 10px;">TTS</a> <a href="../../tags/TimeMachine/" style="font-size: 10px;">TimeMachine</a> <a href="../../tags/UML/" style="font-size: 10px;">UML</a> <a href="../../tags/Uptime-Kuma/" style="font-size: 10.48px;">Uptime Kuma</a> <a href="../../tags/VPN/" style="font-size: 10px;">VPN</a> <a href="../../tags/VPS/" style="font-size: 10.48px;">VPS</a> <a href="../../tags/Web/" style="font-size: 10px;">Web</a> <a href="../../tags/WebSocket/" style="font-size: 10.48px;">WebSocket</a> <a href="../../tags/Windows/" style="font-size: 10px;">Windows</a> <a href="../../tags/Workers/" style="font-size: 10px;">Workers</a> <a href="../../tags/activate/" style="font-size: 10.48px;">activate</a> <a href="../../tags/ad/" style="font-size: 10px;">ad</a> <a href="../../tags/adb/" style="font-size: 10px;">adb</a> <a href="../../tags/adblock/" style="font-size: 10.48px;">adblock</a> <a href="../../tags/agent/" style="font-size: 10px;">agent</a> <a href="../../tags/aligenie/" style="font-size: 10px;">aligenie</a> <a href="../../tags/aliyun/" style="font-size: 10.95px;">aliyun</a> <a href="../../tags/alpine/" style="font-size: 10px;">alpine</a> <a href="../../tags/annotation/" style="font-size: 10px;">annotation</a> <a href="../../tags/aop/" style="font-size: 10px;">aop</a> <a href="../../tags/authy/" style="font-size: 10px;">authy</a> <a href="../../tags/autofs/" style="font-size: 10px;">autofs</a> <a href="../../tags/backup/" style="font-size: 10px;">backup</a> <a href="../../tags/baidupan/" style="font-size: 10px;">baidupan</a> <a href="../../tags/bash/" style="font-size: 10.95px;">bash</a> <a href="../../tags/bitwarden/" style="font-size: 10px;">bitwarden</a> <a href="../../tags/boot/" style="font-size: 10.48px;">boot</a> <a href="../../tags/brew/" style="font-size: 10.48px;">brew</a> <a href="../../tags/browser/" style="font-size: 10px;">browser</a> <a href="../../tags/caddy2/" style="font-size: 10.48px;">caddy2</a> <a href="../../tags/cdn/" style="font-size: 10px;">cdn</a> <a href="../../tags/centos/" style="font-size: 14.76px;">centos</a> <a href="../../tags/cert/" style="font-size: 10.48px;">cert</a> <a href="../../tags/certbot/" style="font-size: 10px;">certbot</a> <a href="../../tags/charles/" style="font-size: 10px;">charles</a> <a href="../../tags/chat/" style="font-size: 10px;">chat</a> <a href="../../tags/chrome/" style="font-size: 10.95px;">chrome</a> <a href="../../tags/classloader/" style="font-size: 10px;">classloader</a> <a href="../../tags/client/" style="font-size: 10.95px;">client</a> <a href="../../tags/clone/" style="font-size: 10.48px;">clone</a> <a href="../../tags/closures/" style="font-size: 10px;">closures</a> <a href="../../tags/cloudflare/" style="font-size: 10.48px;">cloudflare</a> <a href="../../tags/cmd/" style="font-size: 10px;">cmd</a> <a href="../../tags/command/" style="font-size: 10px;">command</a> <a href="../../tags/commit/" style="font-size: 10px;">commit</a> <a href="../../tags/container/" style="font-size: 10px;">container</a> <a href="../../tags/crontab/" style="font-size: 10px;">crontab</a> <a href="../../tags/ctyun/" style="font-size: 10.48px;">ctyun</a> <a href="../../tags/ddsm/" style="font-size: 10px;">ddsm</a> <a href="../../tags/demo/" style="font-size: 10px;">demo</a> <a href="../../tags/dependency/" style="font-size: 10px;">dependency</a> <a href="../../tags/deploy/" style="font-size: 10px;">deploy</a> <a href="../../tags/developer/" style="font-size: 10px;">developer</a> <a href="../../tags/devtools/" style="font-size: 10px;">devtools</a> <a href="../../tags/dll/" style="font-size: 10px;">dll</a> <a href="../../tags/dns/" style="font-size: 10.95px;">dns</a> <a href="../../tags/docker/" style="font-size: 13.81px;">docker</a> <a href="../../tags/domain/" style="font-size: 10px;">domain</a> <a href="../../tags/download/" style="font-size: 10px;">download</a> <a href="../../tags/draw/" style="font-size: 10.48px;">draw</a> <a href="../../tags/drawio/" style="font-size: 10px;">drawio</a> <a href="../../tags/dsm/" style="font-size: 13.33px;">dsm</a> <a href="../../tags/dump/" style="font-size: 10px;">dump</a> <a href="../../tags/dylib/" style="font-size: 10px;">dylib</a> <a href="../../tags/edge/" style="font-size: 10.95px;">edge</a> <a href="../../tags/exception/" style="font-size: 10.48px;">exception</a> <a href="../../tags/export/" style="font-size: 10px;">export</a> <a href="../../tags/fail2ban/" style="font-size: 10px;">fail2ban</a> <a href="../../tags/feign/" style="font-size: 10px;">feign</a> <a href="../../tags/firewall-cmd/" style="font-size: 10.48px;">firewall-cmd</a> <a href="../../tags/flow/" style="font-size: 10px;">flow</a> <a href="../../tags/frp/" style="font-size: 10.48px;">frp</a> <a href="../../tags/frpc/" style="font-size: 11.43px;">frpc</a> <a href="../../tags/frps/" style="font-size: 10.48px;">frps</a> <a href="../../tags/fuckgfw/" style="font-size: 11.43px;">fuckgfw</a> <a href="../../tags/function/" style="font-size: 10px;">function</a> <a href="../../tags/gcc/" style="font-size: 10px;">gcc</a> <a href="../../tags/gfw/" style="font-size: 10.48px;">gfw</a> <a href="../../tags/git/" style="font-size: 12.38px;">git</a> <a href="../../tags/github/" style="font-size: 12.86px;">github</a> <a href="../../tags/golang/" style="font-size: 10px;">golang</a> <a href="../../tags/gperftools/" style="font-size: 10px;">gperftools</a> <a href="../../tags/gridea/" style="font-size: 10.48px;">gridea</a> <a href="../../tags/grub/" style="font-size: 10.48px;">grub</a> <a href="../../tags/gvt-g/" style="font-size: 10px;">gvt-g</a> <a href="../../tags/hacs/" style="font-size: 10px;">hacs</a> <a href="../../tags/havcs/" style="font-size: 10.48px;">havcs</a> <a href="../../tags/heap/" style="font-size: 10px;">heap</a> <a href="../../tags/hello/" style="font-size: 10.48px;">hello</a> <a href="../../tags/hexo/" style="font-size: 10.95px;">hexo</a> <a href="../../tags/hibernate/" style="font-size: 10.48px;">hibernate</a> <a href="../../tags/hidpi/" style="font-size: 10px;">hidpi</a> <a href="../../tags/hoisting/" style="font-size: 10px;">hoisting</a> <a href="../../tags/homeassistant/" style="font-size: 11.9px;">homeassistant</a> <a href="../../tags/hosts/" style="font-size: 10px;">hosts</a> <a href="../../tags/html/" style="font-size: 10.48px;">html</a> <a href="../../tags/htmlparser/" style="font-size: 10px;">htmlparser</a> <a href="../../tags/https/" style="font-size: 10.95px;">https</a> <a href="../../tags/iKuai/" style="font-size: 10.48px;">iKuai</a> <a href="../../tags/idea/" style="font-size: 10px;">idea</a> <a href="../../tags/image/" style="font-size: 10px;">image</a> <a href="../../tags/img/" style="font-size: 10.48px;">img</a> <a href="../../tags/img2kvm/" style="font-size: 10px;">img2kvm</a> <a href="../../tags/import/" style="font-size: 10px;">import</a> <a href="../../tags/index/" style="font-size: 10px;">index</a> <a href="../../tags/install/" style="font-size: 12.38px;">install</a> <a href="../../tags/intel/" style="font-size: 10.48px;">intel</a> <a href="../../tags/io/" style="font-size: 10px;">io</a> <a href="../../tags/ios/" style="font-size: 10px;">ios</a> <a href="../../tags/ip/" style="font-size: 10px;">ip</a> <a href="../../tags/iptables/" style="font-size: 10px;">iptables</a> <a href="../../tags/iptv/" style="font-size: 10.48px;">iptv</a> <a href="../../tags/ipv6/" style="font-size: 10px;">ipv6</a> <a href="../../tags/iso/" style="font-size: 10px;">iso</a> <a href="../../tags/java/" style="font-size: 11.9px;">java</a> <a href="../../tags/javascript/" style="font-size: 10.48px;">javascript</a> <a href="../../tags/jetbrains/" style="font-size: 10px;">jetbrains</a> <a href="../../tags/jni/" style="font-size: 10px;">jni</a> <a href="../../tags/jnilib/" style="font-size: 10px;">jnilib</a> <a href="../../tags/jpa/" style="font-size: 10px;">jpa</a> <a href="../../tags/js/" style="font-size: 10.95px;">js</a> <a href="../../tags/json/" style="font-size: 10.48px;">json</a> <a href="../../tags/jsonb/" style="font-size: 10px;">jsonb</a> <a href="../../tags/jupter/" style="font-size: 10px;">jupter</a> <a href="../../tags/jupyterlab/" style="font-size: 10px;">jupyterlab</a> <a href="../../tags/jvm/" style="font-size: 10.48px;">jvm</a> <a href="../../tags/k8s/" style="font-size: 10.48px;">k8s</a> <a href="../../tags/kernel/" style="font-size: 10px;">kernel</a> <a href="../../tags/key/" style="font-size: 10px;">key</a> <a href="../../tags/kid/" style="font-size: 10px;">kid</a> <a href="../../tags/kms/" style="font-size: 10px;">kms</a> <a href="../../tags/kodi/" style="font-size: 10px;">kodi</a> <a href="../../tags/koolproxy/" style="font-size: 10.48px;">koolproxy</a> <a href="../../tags/koolproxyr/" style="font-size: 10.48px;">koolproxyr</a> <a href="../../tags/kvm/" style="font-size: 10.48px;">kvm</a> <a href="../../tags/lan/" style="font-size: 10px;">lan</a> <a href="../../tags/lastpass/" style="font-size: 10px;">lastpass</a> <a href="../../tags/launchctl/" style="font-size: 10px;">launchctl</a> <a href="../../tags/learning/" style="font-size: 10px;">learning</a> <a href="../../tags/lede/" style="font-size: 10px;">lede</a> <a href="../../tags/letsencrypt/" style="font-size: 10.95px;">letsencrypt</a> <a href="../../tags/linux/" style="font-size: 11.43px;">linux</a> <a href="../../tags/live/" style="font-size: 10px;">live</a> <a href="../../tags/low-code/" style="font-size: 10px;">low-code</a> <a href="../../tags/lvm/" style="font-size: 10px;">lvm</a> <a href="../../tags/lxc/" style="font-size: 10px;">lxc</a> <a href="../../tags/m3u8/" style="font-size: 10px;">m3u8</a> <a href="../../tags/mac/" style="font-size: 10.48px;">mac</a> <a href="../../tags/macos/" style="font-size: 10px;">macos</a> <a href="../../tags/mariadb/" style="font-size: 10px;">mariadb</a> <a href="../../tags/markdown/" style="font-size: 10px;">markdown</a> <a href="../../tags/maven/" style="font-size: 10.48px;">maven</a> <a href="../../tags/md5/" style="font-size: 10.48px;">md5</a> <a href="../../tags/microcode/" style="font-size: 10px;">microcode</a> <a href="../../tags/mirror/" style="font-size: 10.48px;">mirror</a> <a href="../../tags/modem/" style="font-size: 10px;">modem</a> <a href="../../tags/modules/" style="font-size: 10px;">modules</a> <a href="../../tags/monitor/" style="font-size: 10px;">monitor</a> <a href="../../tags/mount/" style="font-size: 10px;">mount</a> <a href="../../tags/mstsc/" style="font-size: 10px;">mstsc</a> <a href="../../tags/mysql/" style="font-size: 10px;">mysql</a> <a href="../../tags/n2n/" style="font-size: 13.33px;">n2n</a> <a href="../../tags/n5105/" style="font-size: 10px;">n5105</a> <a href="../../tags/nas/" style="font-size: 10px;">nas</a> <a href="../../tags/network/" style="font-size: 13.81px;">network</a> <a href="../../tags/nfs/" style="font-size: 10px;">nfs</a> <a href="../../tags/node/" style="font-size: 10.48px;">node</a> <a href="../../tags/node-red/" style="font-size: 10.48px;">node-red</a> <a href="../../tags/nodejs/" style="font-size: 11.43px;">nodejs</a> <a href="../../tags/nohup/" style="font-size: 10.48px;">nohup</a> <a href="../../tags/notepad/" style="font-size: 10px;">notepad++</a> <a href="../../tags/npm/" style="font-size: 12.38px;">npm</a> <a href="../../tags/nssm/" style="font-size: 10.48px;">nssm</a> <a href="../../tags/ntp/" style="font-size: 10px;">ntp</a> <a href="../../tags/oop/" style="font-size: 10px;">oop</a> <a href="../../tags/openfeign/" style="font-size: 10px;">openfeign</a> <a href="../../tags/openssl/" style="font-size: 10.48px;">openssl</a> <a href="../../tags/os/" style="font-size: 10px;">os</a> <a href="../../tags/otp/" style="font-size: 10px;">otp</a> <a href="../../tags/ovz/" style="font-size: 10px;">ovz</a> <a href="../../tags/p14/" style="font-size: 10px;">p14</a> <a href="../../tags/packet-capture/" style="font-size: 10px;">packet capture</a> <a href="../../tags/pat/" style="font-size: 10px;">pat</a> <a href="../../tags/pdf/" style="font-size: 10px;">pdf</a> <a href="../../tags/pem/" style="font-size: 10.48px;">pem</a> <a href="../../tags/perf/" style="font-size: 10px;">perf</a> <a href="../../tags/ping/" style="font-size: 10px;">ping</a> <a href="../../tags/pip/" style="font-size: 10px;">pip</a> <a href="../../tags/plugin/" style="font-size: 10px;">plugin</a> <a href="../../tags/png/" style="font-size: 10px;">png</a> <a href="../../tags/powerbutton/" style="font-size: 10px;">powerbutton</a> <a href="../../tags/print/" style="font-size: 10px;">print</a> <a href="../../tags/pro/" style="font-size: 10px;">pro</a> <a href="../../tags/proxy/" style="font-size: 10.48px;">proxy</a> <a href="../../tags/pve/" style="font-size: 16.67px;">pve</a> <a href="../../tags/pvekclean/" style="font-size: 11.43px;">pvekclean</a> <a href="../../tags/python/" style="font-size: 14.29px;">python</a> <a href="../../tags/qcow2/" style="font-size: 10px;">qcow2</a> <a href="../../tags/qemu/" style="font-size: 10.48px;">qemu</a> <a href="../../tags/qemu-guest-agent/" style="font-size: 10px;">qemu-guest-agent</a> <a href="../../tags/rar/" style="font-size: 10px;">rar</a> <a href="../../tags/reboot/" style="font-size: 10px;">reboot</a> <a href="../../tags/reflog/" style="font-size: 10px;">reflog</a> <a href="../../tags/remote/" style="font-size: 10px;">remote</a> <a href="../../tags/remote-desktop/" style="font-size: 10.48px;">remote desktop</a> <a href="../../tags/renew/" style="font-size: 10px;">renew</a> <a href="../../tags/repo/" style="font-size: 10px;">repo</a> <a href="../../tags/resize/" style="font-size: 10px;">resize</a> <a href="../../tags/retina/" style="font-size: 10px;">retina</a> <a href="../../tags/root/" style="font-size: 10px;">root</a> <a href="../../tags/route/" style="font-size: 10px;">route</a> <a href="../../tags/router/" style="font-size: 10.48px;">router</a> <a href="../../tags/rule/" style="font-size: 10px;">rule</a> <a href="../../tags/rules/" style="font-size: 10px;">rules</a> <a href="../../tags/runtime/" style="font-size: 10px;">runtime</a> <a href="../../tags/safari/" style="font-size: 10px;">safari</a> <a href="../../tags/sata/" style="font-size: 10px;">sata</a> <a href="../../tags/scipy-notebook/" style="font-size: 10px;">scipy-notebook</a> <a href="../../tags/scoping/" style="font-size: 10px;">scoping</a> <a href="../../tags/scp/" style="font-size: 10px;">scp</a> <a href="../../tags/server/" style="font-size: 10.48px;">server</a> <a href="../../tags/slmgr/" style="font-size: 10px;">slmgr</a> <a href="../../tags/so/" style="font-size: 10px;">so</a> <a href="../../tags/socks/" style="font-size: 10px;">socks</a> <a href="../../tags/source/" style="font-size: 10px;">source</a> <a href="../../tags/spk/" style="font-size: 10px;">spk</a> <a href="../../tags/spring/" style="font-size: 11.43px;">spring</a> <a href="../../tags/springboot/" style="font-size: 12.38px;">springboot</a> <a href="../../tags/springfox/" style="font-size: 10.95px;">springfox</a> <a href="../../tags/ssh/" style="font-size: 11.9px;">ssh</a> <a href="../../tags/ssl/" style="font-size: 10.48px;">ssl</a> <a href="../../tags/stash/" style="font-size: 10px;">stash</a> <a href="../../tags/string/" style="font-size: 10px;">string</a> <a href="../../tags/supernode/" style="font-size: 10.48px;">supernode</a> <a href="../../tags/svg/" style="font-size: 10px;">svg</a> <a href="../../tags/svn/" style="font-size: 10px;">svn</a> <a href="../../tags/swagger/" style="font-size: 11.43px;">swagger</a> <a href="../../tags/sync/" style="font-size: 10px;">sync</a> <a href="../../tags/synology/" style="font-size: 10.48px;">synology</a> <a href="../../tags/systemctl/" style="font-size: 10.95px;">systemctl</a> <a href="../../tags/systemd/" style="font-size: 11.9px;">systemd</a> <a href="../../tags/tap/" style="font-size: 10px;">tap</a> <a href="../../tags/tap-windows/" style="font-size: 10px;">tap-windows</a> <a href="../../tags/tapwindows/" style="font-size: 10px;">tapwindows</a> <a href="../../tags/telecom/" style="font-size: 10.48px;">telecom</a> <a href="../../tags/template/" style="font-size: 10px;">template</a> <a href="../../tags/terminal/" style="font-size: 10px;">terminal</a> <a href="../../tags/tls/" style="font-size: 10px;">tls</a> <a href="../../tags/token/" style="font-size: 10px;">token</a> <a href="../../tags/totp/" style="font-size: 10px;">totp</a> <a href="../../tags/tvbox/" style="font-size: 10.95px;">tvbox</a> <a href="../../tags/txt/" style="font-size: 10px;">txt</a> <a href="../../tags/ubuntu/" style="font-size: 11.9px;">ubuntu</a> <a href="../../tags/udisk/" style="font-size: 10px;">udisk</a> <a href="../../tags/ui/" style="font-size: 10px;">ui</a> <a href="../../tags/undertow/" style="font-size: 10px;">undertow</a> <a href="../../tags/uninstall/" style="font-size: 10px;">uninstall</a> <a href="../../tags/unlocker/" style="font-size: 10px;">unlocker</a> <a href="../../tags/upgrade/" style="font-size: 10.48px;">upgrade</a> <a href="../../tags/url/" style="font-size: 10px;">url</a> <a href="../../tags/v2ray/" style="font-size: 10.48px;">v2ray</a> <a href="../../tags/vhd/" style="font-size: 10px;">vhd</a> <a href="../../tags/vim/" style="font-size: 10px;">vim</a> <a href="../../tags/vlmcsd/" style="font-size: 10px;">vlmcsd</a> <a href="../../tags/vm/" style="font-size: 10.48px;">vm</a> <a href="../../tags/vmdk/" style="font-size: 10px;">vmdk</a> <a href="../../tags/web/" style="font-size: 11.9px;">web</a> <a href="../../tags/websocket/" style="font-size: 10.48px;">websocket</a> <a href="../../tags/wechat/" style="font-size: 10px;">wechat</a> <a href="../../tags/windows/" style="font-size: 11.9px;">windows</a> <a href="../../tags/with/" style="font-size: 10px;">with</a> <a href="../../tags/worker/" style="font-size: 10.48px;">worker</a> <a href="../../tags/wow/" style="font-size: 10px;">wow</a> <a href="../../tags/xiaoya/" style="font-size: 10px;">xiaoya</a> <a href="../../tags/xml/" style="font-size: 10px;">xml</a> <a href="../../tags/yum/" style="font-size: 10px;">yum</a> <a href="../../tags/zip/" style="font-size: 10px;">zip</a> <a href="../../tags/%E4%B8%AD%E5%9B%BD%E7%94%B5%E4%BF%A1/" style="font-size: 10px;">中国电信</a> <a href="../../tags/%E4%BA%91%E7%94%B5%E8%84%91/" style="font-size: 10.48px;">云电脑</a> <a href="../../tags/%E4%BA%A4%E6%8D%A2%E6%9C%BA/" style="font-size: 10px;">交换机</a> <a href="../../tags/%E4%BA%BA%E6%9C%BA%E5%8D%8F%E4%BD%9C/" style="font-size: 10px;">人机协作</a> <a href="../../tags/%E4%BB%A3%E7%90%86/" style="font-size: 10px;">代理</a> <a href="../../tags/%E4%BD%93%E6%A3%80/" style="font-size: 10px;">体检</a> <a href="../../tags/%E5%80%BC%E7%8F%AD/" style="font-size: 10px;">值班</a> <a href="../../tags/%E5%81%A5%E5%BA%B7%E6%A3%80%E6%9F%A5/" style="font-size: 15.71px;">健康检查</a> <a href="../../tags/%E5%85%89%E7%8C%AB/" style="font-size: 10.48px;">光猫</a> <a href="../../tags/%E5%85%AC%E7%BD%91IP/" style="font-size: 10px;">公网IP</a> <a href="../../tags/%E5%86%85%E5%AD%98/" style="font-size: 10px;">内存</a> <a href="../../tags/%E5%86%85%E5%AD%98%E4%BC%98%E5%8C%96/" style="font-size: 10px;">内存优化</a> <a href="../../tags/%E5%86%85%E7%BD%91/" style="font-size: 10.48px;">内网</a> <a href="../../tags/%E5%86%85%E7%BD%91IP/" style="font-size: 10px;">内网IP</a> <a href="../../tags/%E5%86%85%E7%BD%91%E6%B8%97%E9%80%8F/" style="font-size: 10px;">内网渗透</a> <a href="../../tags/%E5%86%99%E4%BD%9C/" style="font-size: 11.43px;">写作</a> <a href="../../tags/%E5%8D%87%E7%BA%A7/" style="font-size: 11.43px;">升级</a> <a href="../../tags/%E5%8D%8F%E4%BD%9C/" style="font-size: 10px;">协作</a> <a href="../../tags/%E5%8D%9A%E5%AE%A2/" style="font-size: 10.95px;">博客</a> <a href="../../tags/%E5%8F%8D%E5%90%91%E4%BB%A3%E7%90%86/" style="font-size: 10px;">反向代理</a> <a href="../../tags/%E5%90%AF%E5%8A%A8/" style="font-size: 10px;">启动</a> <a href="../../tags/%E5%91%A8%E4%B8%80/" style="font-size: 10px;">周一</a> <a href="../../tags/%E5%91%A8%E6%9C%AB/" style="font-size: 10px;">周末</a> <a href="../../tags/%E5%A4%8F%E4%BB%A4%E6%97%B6/" style="font-size: 10px;">夏令时</a> <a href="../../tags/%E5%A4%9A%E6%99%BA%E8%83%BD%E4%BD%93/" style="font-size: 10.95px;">多智能体</a> <a href="../../tags/%E5%A4%9A%E8%8A%82%E7%82%B9/" style="font-size: 10px;">多节点</a> <a href="../../tags/%E5%A4%9A%E8%8A%82%E7%82%B9%E7%AE%A1%E7%90%86/" style="font-size: 10px;">多节点管理</a> <a href="../../tags/%E5%A4%A9%E7%8C%AB%E7%B2%BE%E7%81%B5/" style="font-size: 10px;">天猫精灵</a> <a href="../../tags/%E5%A4%A9%E7%BF%BC%E4%BA%91/" style="font-size: 10.48px;">天翼云</a> <a href="../../tags/%E5%AE%89%E5%85%A8/" style="font-size: 17.14px;">安全</a> <a href="../../tags/%E5%AE%89%E8%A3%85/" style="font-size: 10.48px;">安装</a> <a href="../../tags/%E5%AE%9A%E6%97%B6%E4%BB%BB%E5%8A%A1/" style="font-size: 10.48px;">定时任务</a> <a href="../../tags/%E5%AE%B9%E5%99%A8/" style="font-size: 12.86px;">容器</a> <a href="../../tags/%E5%AE%B9%E5%99%A8%E7%BD%91%E7%BB%9C/" style="font-size: 10px;">容器网络</a> <a href="../../tags/%E5%AF%BC%E5%85%A5/" style="font-size: 10px;">导入</a> <a href="../../tags/%E5%B0%8F%E7%B1%B3/" style="font-size: 10px;">小米</a> <a href="../../tags/%E5%B8%B8%E7%94%A8%E8%BD%AF%E4%BB%B6/" style="font-size: 10px;">常用软件</a> <a href="../../tags/%E5%B9%BF%E5%91%8A%E5%B1%8F%E8%94%BD/" style="font-size: 10px;">广告屏蔽</a> <a href="../../tags/%E5%BA%8F%E5%88%97%E5%8F%B7/" style="font-size: 10px;">序列号</a> <a href="../../tags/%E5%BA%94%E7%94%A8%E5%B8%82%E5%9C%BA/" style="font-size: 10px;">应用市场</a> <a href="../../tags/%E5%BC%82%E5%B8%B8/" style="font-size: 10px;">异常</a> <a href="../../tags/%E5%BF%83%E8%B7%B3/" style="font-size: 10px;">心跳</a> <a href="../../tags/%E6%84%9F%E6%82%9F/" style="font-size: 10px;">感悟</a> <a href="../../tags/%E6%89%93%E5%B7%A5/" style="font-size: 19.05px;">打工</a> <a href="../../tags/%E6%89%93%E5%B7%A5%E4%BA%BA/" style="font-size: 10px;">打工人</a> <a href="../../tags/%E6%8A%80%E6%9C%AF/" style="font-size: 19.52px;">技术</a> <a href="../../tags/%E6%8A%93%E5%8C%85/" style="font-size: 10px;">抓包</a> <a href="../../tags/%E6%8E%92%E6%9F%A5/" style="font-size: 10px;">排查</a> <a href="../../tags/%E6%8F%8F%E8%BF%B0%E6%96%87%E4%BB%B6/" style="font-size: 10px;">描述文件</a> <a href="../../tags/%E6%95%85%E9%9A%9C/" style="font-size: 10.48px;">故障</a> <a href="../../tags/%E6%95%85%E9%9A%9C%E6%8E%92%E6%9F%A5/" style="font-size: 10.48px;">故障排查</a> <a href="../../tags/%E6%95%88%E7%8E%87/" style="font-size: 10.48px;">效率</a> <a href="../../tags/%E6%95%88%E7%8E%87%E5%B7%A5%E5%85%B7/" style="font-size: 10px;">效率工具</a> <a href="../../tags/%E6%97%A0%E6%9C%8D%E5%8A%A1%E5%99%A8/" style="font-size: 10px;">无服务器</a> <a href="../../tags/%E6%97%A5%E8%AE%B0/" style="font-size: 19.52px;">日记</a> <a href="../../tags/%E6%97%B6%E5%8C%BA/" style="font-size: 10px;">时区</a> <a href="../../tags/%E6%98%BE%E5%8D%A1%E8%99%9A%E6%8B%9F%E5%8C%96/" style="font-size: 10px;">显卡虚拟化</a> <a href="../../tags/%E6%99%BA%E8%83%BD%E5%AE%B6%E5%B1%85/" style="font-size: 10px;">智能家居</a> <a href="../../tags/%E6%99%BA%E8%83%BD%E9%9F%B3%E7%AE%B1/" style="font-size: 10px;">智能音箱</a> <a href="../../tags/%E6%9C%8D%E5%8A%A1%E5%99%A8/" style="font-size: 10px;">服务器</a> <a href="../../tags/%E6%9C%8D%E5%8A%A1%E7%AE%A1%E7%90%86/" style="font-size: 10px;">服务管理</a> <a href="../../tags/%E6%9E%B6%E6%9E%84/" style="font-size: 10px;">架构</a> <a href="../../tags/%E6%A2%AF%E5%AD%90/" style="font-size: 10px;">梯子</a> <a href="../../tags/%E6%A8%A1%E5%9D%97/" style="font-size: 10px;">模块</a> <a href="../../tags/%E6%B5%81%E7%A8%8B/" style="font-size: 10px;">流程</a> <a href="../../tags/%E6%B5%81%E7%A8%8B%E5%9B%BE/" style="font-size: 10px;">流程图</a> <a href="../../tags/%E6%B5%8F%E8%A7%88%E5%99%A8/" style="font-size: 10.48px;">浏览器</a> <a href="../../tags/%E6%BC%AB%E6%B8%B8/" style="font-size: 10px;">漫游</a> <a href="../../tags/%E6%BF%80%E6%B4%BB/" style="font-size: 10px;">激活</a> <a href="../../tags/%E7%81%AB%E7%BB%92/" style="font-size: 10px;">火绒</a> <a href="../../tags/%E7%84%A6%E8%99%91/" style="font-size: 10px;">焦虑</a> <a href="../../tags/%E7%8E%84%E5%AD%A6/" style="font-size: 10px;">玄学</a> <a href="../../tags/%E7%94%9F%E6%B4%BB/" style="font-size: 10px;">生活</a> <a href="../../tags/%E7%94%B5%E4%BF%A1/" style="font-size: 10.48px;">电信</a> <a href="../../tags/%E7%94%BB%E5%9B%BE/" style="font-size: 10px;">画图</a> <a href="../../tags/%E7%9B%91%E6%8E%A7/" style="font-size: 15.24px;">监控</a> <a href="../../tags/%E7%9B%B4%E6%92%AD%E6%BA%90/" style="font-size: 10px;">直播源</a> <a href="../../tags/%E7%9B%B4%E8%A7%89/" style="font-size: 10px;">直觉</a> <a href="../../tags/%E7%A3%81%E7%9B%98/" style="font-size: 10px;">磁盘</a> <a href="../../tags/%E7%AB%AF%E5%8F%A3%E6%89%AB%E6%8F%8F/" style="font-size: 10px;">端口扫描</a> <a href="../../tags/%E7%AE%A1%E7%90%86/" style="font-size: 10px;">管理</a> <a href="../../tags/%E7%BB%AD%E6%9C%9F/" style="font-size: 10px;">续期</a> <a href="../../tags/%E7%BD%91%E5%85%B3/" style="font-size: 10px;">网关</a> <a href="../../tags/%E7%BD%91%E7%BB%9C/" style="font-size: 15.71px;">网络</a> <a href="../../tags/%E7%BD%91%E7%BB%9C%E9%A3%8E%E6%9A%B4/" style="font-size: 10px;">网络风暴</a> <a href="../../tags/%E7%BE%A4%E6%99%96/" style="font-size: 10.48px;">群晖</a> <a href="../../tags/%E8%84%9A%E6%9C%AC/" style="font-size: 10px;">脚本</a> <a href="../../tags/%E8%84%9A%E6%9C%AC%E4%BC%98%E5%8C%96/" style="font-size: 10px;">脚本优化</a> <a href="../../tags/%E8%85%BE%E8%AE%AF/" style="font-size: 10px;">腾讯</a> <a href="../../tags/%E8%87%AA%E5%8A%A8%E5%8C%96/" style="font-size: 18.1px;">自动化</a> <a href="../../tags/%E8%99%9A%E6%8B%9F%E6%9C%BA/" style="font-size: 11.9px;">虚拟机</a> <a href="../../tags/%E8%AE%A4%E8%AF%81/" style="font-size: 10.48px;">认证</a> <a href="../../tags/%E8%AF%81%E4%B9%A6/" style="font-size: 10px;">证书</a> <a href="../../tags/%E8%AF%AD%E9%9B%80/" style="font-size: 10px;">语雀</a> <a href="../../tags/%E8%B6%85%E6%97%B6/" style="font-size: 10px;">超时</a> <a href="../../tags/%E8%B7%AF%E7%94%B1/" style="font-size: 10px;">路由</a> <a href="../../tags/%E8%B7%AF%E7%94%B1%E5%99%A8/" style="font-size: 10.48px;">路由器</a> <a href="../../tags/%E8%BD%AF%E4%BB%B6%E7%AE%A1%E5%AE%B6/" style="font-size: 10px;">软件管家</a> <a href="../../tags/%E8%BD%AF%E8%B7%AF%E7%94%B1/" style="font-size: 10.48px;">软路由</a> <a href="../../tags/%E8%BF%90%E7%BB%B4/" style="font-size: 20px;">运维</a> <a href="../../tags/%E8%BF%90%E7%BB%B4%E7%9B%91%E6%8E%A7/" style="font-size: 10.48px;">运维监控</a> <a href="../../tags/%E8%BF%9E%E6%8E%A5%E4%BF%9D%E6%B4%BB/" style="font-size: 10px;">连接保活</a> <a href="../../tags/%E8%BF%9E%E6%8E%A5%E9%97%AE%E9%A2%98/" style="font-size: 10px;">连接问题</a> <a href="../../tags/%E9%80%9A%E4%BF%A1%E6%9C%BA%E5%88%B6/" style="font-size: 10px;">通信机制</a> <a href="../../tags/%E9%83%A8%E7%BD%B2/" style="font-size: 12.38px;">部署</a> <a href="../../tags/%E9%85%8D%E7%BD%AE/" style="font-size: 10.48px;">配置</a> <a href="../../tags/%E9%92%89%E9%92%89/" style="font-size: 10.48px;">钉钉</a> <a href="../../tags/%E9%95%9C%E5%83%8F/" style="font-size: 10.95px;">镜像</a> <a href="../../tags/%E9%95%9C%E5%83%8F%E6%BA%90/" style="font-size: 10px;">镜像源</a> <a href="../../tags/%E9%97%A8%E7%AA%97%E4%BC%A0%E6%84%9F%E5%99%A8/" style="font-size: 10px;">门窗传感器</a> <a href="../../tags/%E9%97%AE%E9%A2%98%E6%8E%92%E6%9F%A5/" style="font-size: 18.57px;">问题排查</a> <a href="../../tags/%E9%98%B2%E7%81%AB%E5%A2%99/" style="font-size: 11.43px;">防火墙</a> <a href="../../tags/%E9%98%BF%E9%87%8C%E4%BA%91/" style="font-size: 11.43px;">阿里云</a> <a href="../../tags/%E9%98%BF%E9%87%8C%E6%BA%90/" style="font-size: 10.48px;">阿里源</a> <a href="../../tags/%E9%9B%86%E5%AE%A2/" style="font-size: 10.48px;">集客</a>
+    </div>
+    
+      <script>
+        var maxTagcloud = parseInt(17);
+        var tags_length = parseInt(446);
+        var tags_arr = [];
+        for(var i = 0; i < tags_length; i++){
+          tags_arr.push(i);
+        }
+        tags_arr.sort(function (l, r) {
+          return Math.random() > 0.5 ? -1 : 1;
+        });
+        tags_arr = tags_arr.slice(0, maxTagcloud < tags_length ? tags_length - maxTagcloud : 0);
+        for(var tag_i = 0; tag_i < tags_arr.length; tag_i++){
+          document.getElementById("randomtagcloud").children[tags_arr[tag_i]].style.display = 'none';
+        }
+      </script>
+    
+  </div>
+
+    
+        
+        <!-- 一言 -->
+<div class="nexmoe-widget-wrap">
+  <h3 class="nexmoe-widget-title">
+    Hitokoto
+  </h3>
+  <div class="nexmoe-widget">
+    <ul class="hitokoto-box">
+      <li id="hitokoto_text_parent" class="hitokoto-text" hitokotoCategory="">
+        <a href="#" id="hitokoto_text">
+          
+        </a>
+        <a href="#" id="hitokoto_error_text" style="display: none;">
+          
+        </a>
+      </li>
+    </ul>
+  </div>
+</div>
+
+<script>
+  let hitokotoText = document.getElementById('hitokoto_text')
+  let hitokotoErroText = document.getElementById('hitokoto_error_text')
+  let hitokotoCategory = document.getElementById('hitokoto_text_parent').getAttribute('hitokotoCategory')
+  window.addEventListener('load', function () {
+    let url = 'https://v1.hitokoto.cn'
+    if (hitokotoCategory) {
+      url += '?c=' + hitokotoCategory
+    }
+    fetch(url)
+      .then(response => response.json())
+      .then(data => {
+        hitokotoText.innerText = "「 " + data.hitokoto + " 」 from " + data.from
+        hitokotoText.href = 'https://hitokoto.cn/?uuid=' + data.uuid
+      })
+      .catch((reason) => {
+        console.error(11, reason)
+        hitokotoText.style.display = 'none'
+        hitokotoErroText.style.display = 'block'
+      })
+  })
+</script>
+    
+        
+        
+  <div class="nexmoe-widget-wrap">
+    <h3 class="nexmoe-widget-title">Archive</h3>
+    <div class="nexmoe-widget">
+      <ul class="archive-list"><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2026/">2026</a><span class="archive-list-count">130</span></li><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2025/">2025</a><span class="archive-list-count">2</span></li><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2024/">2024</a><span class="archive-list-count">19</span></li><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2023/">2023</a><span class="archive-list-count">18</span></li><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2022/">2022</a><span class="archive-list-count">4</span></li><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2021/">2021</a><span class="archive-list-count">114</span></li><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2018/">2018</a><span class="archive-list-count">1</span></li></ul>
+    </div>
+  </div>
+
+
+
+    
+        
+        
+  <div class="nexmoe-widget-wrap">
+    <h3 class="nexmoe-widget-title">Recent Posts</h3>
+    <div class="nexmoe-widget">
+      <ul>
+        
+          <li>
+            <a href="../../post/2026-04-26-disk-space-check-one-command-fix/">一次排查服务器磁盘告警差点翻车，最后用一条命令救了回来</a>
+          </li>
+        
+          <li>
+            <a href="../../post/2026-04-26-servers-that-healed-themselves/">三台服务器同时变慢，我准备大干一场，结果它们自己好了</a>
+          </li>
+        
+          <li>
+            <a href="../../post/2026-04-25-ikuai-router-api-command-line-guide/">iKuai 路由器 API 完全指北：通过命令行自动获取网络状态、设备列表与端口映射</a>
+          </li>
+        
+          <li>
+            <a href="../../post/2026-04-25-router-api-security-monitoring/">通过路由器API日志追踪内网异常行为的一次实战记录</a>
+          </li>
+        
+          <li>
+            <a href="../../post/2026-04-25-network-topology-discovery/">我只是想看看路由器状态，结果摸清了整个内网的&#34;家底&#34;</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+
+    
+        
+        <div class="nexmoe-widget-wrap">
+    <div class="nexmoe-widget nexmoe-link">
+		<ul>
+        
+            <li>
+                <a href="https://blog.example.com/" target="_blank" >
+                    <img src="/images/avatar.webp" alt="魔都水滴Blog"></img>
+                    <p>魔都水滴Blog</p>
+                </a>
+            </li>
+        
+		</ul>
+    </div>
+</div>
+<style>
+.nexmoe-widget-wrap .nexmoe-link ul li a {
+    text-align : center;
+}
+.nexmoe-widget-wrap .nexmoe-link ul li a img {
+    max-width : 100%;
+}
+.nexmoe-widget-wrap .nexmoe-link ul li a p {
+    margin: 10px 0;
+}
+</style>
+
+    
+   
+    <div class="nexmoe-copyright">
+        &copy; 2026 Margrop
+        Powered by <a href="http://hexo.io/" target="_blank">Hexo</a>
+        & <a href="https://github.com/theme-nexmoe/hexo-theme-nexmoe" target="_blank">Nexmoe</a>
+        
+    </div>
+</div><!-- .nexmoe-drawer --></div><div id="nexmoe-content"><div class="nexmoe-primary"><div class="nexmoe-post">
+  <article>
+    
+        <div class="nexmoe-post-cover absolute" style="padding-top: 56.25%;"> 
+            <img src="https://picsum.photos/seed/tech0426disk/1280/720" alt="一次排查服务器磁盘告警差点翻车，最后用一条命令救了回来" loading="lazy">
+            <h1>一次排查服务器磁盘告警差点翻车，最后用一条命令救了回来</h1>
+        </div>
+    
+    
+    <div class="nexmoe-post-meta">
+    <div class="nexmoe-rainbow">
+        <a class="nexmoefont icon-calendar-fill">2026年04月26日</a>
+        
+            <a class="nexmoefont icon-appstore-fill -link" href="../../categories/ai-tech/">ai_tech</a>
+        
+        
+    <a><i class="nexmoefont icon-areachart"></i>约30k字</a>
+    <a><i class="nexmoefont icon-time-circle-fill"></i>预计需要42 分钟</a>
+
+    </div>
+    
+    
+    
+    
+    
+</div>
+
+    <h2 id="前言"><a href="#前言" class="headerlink" title="前言"></a>前言</h2><p>今天下午遇到了一个有意思的问题：三台服务器的磁盘使用率同时触发了告警。按照以往的经验，这种”多台服务器同时告警”的情况往往意味着某个共性问题，比如日志盘爆了、备份脚本失控、或者某个共享存储出了问题。</p>
+<p>我按照标准流程开始排查：SSH 连上去，<code>df -h</code> 看一下使用率，<code>du -sh *</code> 跑一下目录占用，然后开始定位大文件。整个排查过程花了大约 40 分钟，最后发现——真正占用空间的，是一个 <code>/tmp</code> 目录下的临时文件缓存，清理掉之后就恢复正常了。</p>
+<p>整个过程没有什么技术含量，但踩了一个坑，值得记录一下。</p>
+<h2 id="问题现象"><a href="#问题现象" class="headerlink" title="问题现象"></a>问题现象</h2><p>下午 14:32，监控大屏突然亮起了黄灯。三台服务器的磁盘使用率同时突破了 75% 的告警阈值，最严重的一台已经到了 82%。</p>
+<p>查看详情，这三台服务器的磁盘使用率在过去三天内持续上升：从 60% 爬升到了 82%，平均每天上升约 7 个百分点。按这个速度，再过两三天就会触及 90% 的红线。</p>
+<p>三台服务器同时出问题，最可能的原因是什么？</p>
+<p>我的第一反应是：共性问题。要么是某个共享存储出了问题，要么是某个定时任务在所有服务器上同时写入了大量数据，要么是某个监控采集脚本本身有 bug 导致日志量暴增。不管是哪种原因，都需要尽快排查。</p>
+<h2 id="排查过程"><a href="#排查过程" class="headerlink" title="排查过程"></a>排查过程</h2><h3 id="第一步：确认磁盘使用情况"><a href="#第一步：确认磁盘使用情况" class="headerlink" title="第一步：确认磁盘使用情况"></a>第一步：确认磁盘使用情况</h3><p>SSH 连上第一台服务器，<code>df -h</code> 看一下：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><code class="hljs bash">Filesystem      Size  Used Avail Use% Mounted on<br>/dev/sda1       100G   82G   18G  82% /<br>/dev/sdb1       200G   50G  150G  25% /data<br>tmpfs            16G  256M   16G   2% /tmp<br></code></pre></td></tr></table></figure>
+
+<p>根分区使用率 82%，确实需要关注。<code>du -sh /*</code> 跑一下，看看是哪个目录占用最多：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-built_in">du</span>: cannot access <span class="hljs-string">&#x27;/proc/xxxx&#x27;</span>: Permission denied<br><span class="hljs-built_in">du</span>: cannot access <span class="hljs-string">&#x27;/sys/xxxx&#x27;</span>: Permission denied<br>...<br>/boot   200M<br>/data   30G<br>/home   5G<br>/root   2G<br>/usr   15G<br>/var   45G<br>...<br></code></pre></td></tr></table></figure>
+
+<p><code>/var</code> 目录占用 45G，是最大的。进去看看：</p>
+<figure class="highlight lasso"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><code class="hljs lasso">/<span class="hljs-built_in">var</span>/<span class="hljs-keyword">log</span>   <span class="hljs-number">35</span>G<br>/<span class="hljs-built_in">var</span>/<span class="hljs-keyword">cache</span>   <span class="hljs-number">8</span>G<br>/<span class="hljs-built_in">var</span>/lib   <span class="hljs-number">2</span>G<br></code></pre></td></tr></table></figure>
+
+<p>日志目录占用 35G，这就不正常了。正常情况下，<code>/var/log</code> 目录应该在几个 GB 的规模，35G 肯定是积累了大量数据。缓存目录 8G，也在正常范围的边缘。</p>
+<h3 id="第二步：定位大文件"><a href="#第二步：定位大文件" class="headerlink" title="第二步：定位大文件"></a>第二步：定位大文件</h3><p><code>find /var/log -type f -size +100M</code> 找一下大于 100M 的日志文件：</p>
+<figure class="highlight maxima"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><code class="hljs maxima">/<span class="hljs-built_in">var</span>/<span class="hljs-built_in">log</span>/nginx/access.<span class="hljs-built_in">log</span>  <span class="hljs-number">8.</span><span class="hljs-number">0G</span><br>/<span class="hljs-built_in">var</span>/<span class="hljs-built_in">log</span>/nginx/<span class="hljs-built_in">error</span>.<span class="hljs-built_in">log</span>   <span class="hljs-number">5.</span><span class="hljs-number">0G</span><br>/<span class="hljs-built_in">var</span>/<span class="hljs-built_in">log</span>/syslog           <span class="hljs-number">12.</span><span class="hljs-number">0G</span><br>/<span class="hljs-built_in">var</span>/<span class="hljs-built_in">log</span>/kern.<span class="hljs-built_in">log</span>          <span class="hljs-number">3.</span><span class="hljs-number">0G</span><br>/<span class="hljs-built_in">var</span>/<span class="hljs-built_in">log</span>/messages          <span class="hljs-number">7.</span><span class="hljs-number">0G</span><br></code></pre></td></tr></table></figure>
+
+<p>好家伙，光 nginx 的日志就有 13G，syslog 加上 messages 又有 20G。这些文件这么大的原因，要么是日志轮转没配置好，要么是日志轮转配置了但没生效。</p>
+<h3 id="第三步：检查日志轮转配置"><a href="#第三步：检查日志轮转配置" class="headerlink" title="第三步：检查日志轮转配置"></a>第三步：检查日志轮转配置</h3><p><code>cat /etc/logrotate.d/nginx</code> 看一下 nginx 的日志轮转配置：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br></pre></td><td class="code"><pre><code class="hljs bash">/var/log/nginx/*.<span class="hljs-built_in">log</span> &#123;<br>    daily<br>    rotate 14<br>    missingok<br>    notifempty<br>    compress<br>    delaycompress<br>    create 0640 www-data adm<br>    sharedscripts<br>    postrotate<br>        [ -s /run/nginx.pid ] &amp;&amp; <span class="hljs-built_in">kill</span> -USR1 `<span class="hljs-built_in">cat</span> /run/nginx.pid`<br>    endscript<br>&#125;<br></code></pre></td></tr></table></figure>
+
+<p>配置看起来是正常的。<code>daily</code> 表示每天轮转一次，<code>rotate 14</code> 表示保留 14 份。如果配置正常，为什么会产生 8G 的 access.log？</p>
+<h3 id="第四步：手动检查日志文件状态"><a href="#第四步：手动检查日志文件状态" class="headerlink" title="第四步：手动检查日志文件状态"></a>第四步：手动检查日志文件状态</h3><p><code>ls -lh /var/log/nginx/</code> 看一下文件列表：</p>
+<figure class="highlight fortran"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><code class="hljs fortran">-rw-r--r-- <span class="hljs-number">1</span> www-<span class="hljs-keyword">data</span> www-<span class="hljs-keyword">data</span> <span class="hljs-number">8.0</span>G Apr <span class="hljs-number">26</span> <span class="hljs-number">14</span>:<span class="hljs-number">30</span> <span class="hljs-keyword">access</span>.<span class="hljs-built_in">log</span><br>-rw-r--r-- <span class="hljs-number">1</span> root   root     <span class="hljs-number">500</span>M Apr <span class="hljs-number">25</span> <span class="hljs-number">03</span>:<span class="hljs-number">20</span> <span class="hljs-keyword">access</span>.<span class="hljs-built_in">log</span><span class="hljs-number">.1</span><br>-rw-r--r-- <span class="hljs-number">1</span> root   root     <span class="hljs-number">480</span>M Apr <span class="hljs-number">24</span> <span class="hljs-number">03</span>:<span class="hljs-number">18</span> <span class="hljs-keyword">access</span>.<span class="hljs-built_in">log</span><span class="hljs-number">.2</span>.gz<br>-rw-r--r-- <span class="hljs-number">1</span> root   root     <span class="hljs-number">460</span>M Apr <span class="hljs-number">23</span> <span class="hljs-number">03</span>:<span class="hljs-number">22</span> <span class="hljs-keyword">access</span>.<span class="hljs-built_in">log</span><span class="hljs-number">.3</span>.gz<br>-rw-r--r-- <span class="hljs-number">1</span> root   root     <span class="hljs-number">440</span>M Apr <span class="hljs-number">22</span> <span class="hljs-number">03</span>:<span class="hljs-number">15</span> <span class="hljs-keyword">access</span>.<span class="hljs-built_in">log</span><span class="hljs-number">.4</span>.gz<br>...<br></code></pre></td></tr></table></figure>
+
+<p>问题找到了！</p>
+<p>access.log 本身是 8G，但上一个轮转的文件 access.log.1 只有 500M。这意味着 logrotate 确实在运行，但它只轮转了一次（从 access.log 变成 access.log.1），之后 access.log 又从 500M 长回到了 8G。</p>
+<p>为什么？</p>
+<p>我猜是因为 logrotate 没有正常执行。<code>systemctl status logrotate</code> 看一下：</p>
+<figure class="highlight dts"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><code class="hljs dts">● logrotate.timer - Daily logrotate rotation<br><span class="hljs-symbol">   Loaded:</span> loaded (<span class="hljs-keyword">/lib/</span>systemd<span class="hljs-keyword">/system/</span>logrotate.<span class="hljs-attr">timer</span><span class="hljs-punctuation">;</span> enabled)<br><span class="hljs-symbol">   Active:</span> active (waiting)<br><span class="hljs-symbol">   Triggers:</span> logrotate.service<br></code></pre></td></tr></table></figure>
+
+<p>timer 是在运行的，说明 logrotate 的定时任务在调度层面没有问题。那问题出在哪里？</p>
+<p><code>logrotate -d /etc/logrotate.d/nginx</code> 跑一下 dry-run，看看配置有没有问题：</p>
+<figure class="highlight vim"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><code class="hljs vim">reading config <span class="hljs-keyword">file</span> nginx<br>Handling <span class="hljs-number">1</span> <span class="hljs-keyword">files</span><br><br>rotating pattern: /var/<span class="hljs-built_in">log</span>/nginx/*.<span class="hljs-built_in">log</span>  after <span class="hljs-number">1</span> day(s)  <span class="hljs-number">14</span> copies will <span class="hljs-keyword">be</span> kept<br><span class="hljs-keyword">file</span> /var/<span class="hljs-built_in">log</span>/nginx/access.<span class="hljs-built_in">log</span> <span class="hljs-built_in">has</span> size <span class="hljs-number">8589934592</span>, it <span class="hljs-keyword">is</span> &gt; <span class="hljs-number">1048576</span>KB <span class="hljs-keyword">so</span> skipping<br></code></pre></td></tr></table></figure>
+
+<p><strong>“it is &gt; 1048576KB so skipping”</strong> —— 这是关键！</p>
+<p>logrotate 的默认配置里有一个 <code>size</code> 阈值，当文件大小超过 1GB 时，会跳过轮转。而 access.log 已经超过了 8GB，远远超过这个阈值，所以 logrotate 直接跳过了，没有执行轮转。</p>
+<p>这就是问题的根源：<strong>日志文件太大了，logrotate 拿它没办法。</strong></p>
+<h3 id="第五步：排查为什么日志会这么大"><a href="#第五步：排查为什么日志会这么大" class="headerlink" title="第五步：排查为什么日志会这么大"></a>第五步：排查为什么日志会这么大</h3><p>找到问题是日志太大导致 logrotate 失效。那下一个问题是：为什么日志会这么大？</p>
+<p>我查了一下 nginx 的访问日志。这台服务器平时访问量并不大，正常情况下一天的日志量应该在几十 MB 级别，不可能长到 8G。除非，日志增长的速度比正常情况快了十倍甚至百倍。</p>
+<p>除非——有人在灌数据。</p>
+<p><code>tail -100 /var/log/nginx/access.log</code> 看一下最近的日志：</p>
+<figure class="highlight accesslog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><code class="hljs accesslog"><span class="hljs-number">192</span>.<span class="hljs-number">168</span>.xx.xx - - <span class="hljs-string">[26/Apr/2026:14:25:01 +0800]</span> <span class="hljs-string">&quot;<span class="hljs-keyword">GET</span> / HTTP/1.1&quot;</span> <span class="hljs-number">200</span> <span class="hljs-number">12345</span> <span class="hljs-string">&quot;-&quot;</span> <span class="hljs-string">&quot;python-requests/2.28.0&quot;</span><br><span class="hljs-number">192</span>.<span class="hljs-number">168</span>.xx.xx - - <span class="hljs-string">[26/Apr/2026:14:25:02 +0800]</span> <span class="hljs-string">&quot;<span class="hljs-keyword">GET</span> / HTTP/1.1&quot;</span> <span class="hljs-number">200</span> <span class="hljs-number">12345</span> <span class="hljs-string">&quot;-&quot;</span> <span class="hljs-string">&quot;python-requests/2.28.0&quot;</span><br><span class="hljs-number">192</span>.<span class="hljs-number">168</span>.xx.xx - - <span class="hljs-string">[26/Apr/2026:14:25:03 +0800]</span> <span class="hljs-string">&quot;<span class="hljs-keyword">GET</span> / HTTP/1.1&quot;</span> <span class="hljs-number">200</span> <span class="hljs-number">12345</span> <span class="hljs-string">&quot;-&quot;</span> <span class="hljs-string">&quot;python-requests/2.28.0&quot;</span><br>...<br><span class="hljs-number">192</span>.<span class="hljs-number">168</span>.xx.xx - - <span class="hljs-string">[26/Apr/2026:14:26:30 +0800]</span> <span class="hljs-string">&quot;<span class="hljs-keyword">GET</span> / HTTP/1.1&quot;</span> <span class="hljs-number">200</span> <span class="hljs-number">12345</span> <span class="hljs-string">&quot;-&quot;</span> <span class="hljs-string">&quot;python-requests/2.28.0&quot;</span><br></code></pre></td></tr></table></figure>
+
+<p>全是同一个 IP 在频繁请求，而且 User-Agent 是 <code>python-requests</code>。这不是正常用户的访问模式，是有人在用脚本灌数据。</p>
+<p>再看 IP 来源：是内网的一个段，应该是某台服务器上的定时任务出了问题。</p>
+<p>但这不是今天的重点。今天的重点是磁盘清理，这个问题先记录下来，后续再排查。</p>
+<h3 id="第六步：紧急清理"><a href="#第六步：紧急清理" class="headerlink" title="第六步：紧急清理"></a>第六步：紧急清理</h3><p>不管那个灌数据的问题了，先把磁盘空间清理出来。</p>
+<p>日志文件加起来有 35G，如果直接删除，可能会有风险（进程还在写，删除后可能有问题）。正确做法是：</p>
+<ol>
+<li>先把 nginx 的日志轮转配置文件改一下，让它强制轮转</li>
+<li>清空当前正在写的日志文件内容（而不是删除）</li>
+<li>然后再删除旧的轮转文件</li>
+</ol>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 1. 强制轮转</span><br>logrotate -f /etc/logrotate.d/nginx<br><br><span class="hljs-comment"># 2. 等待轮转完成</span><br><span class="hljs-built_in">sleep</span> 5<br><br><span class="hljs-comment"># 3. 查看结果</span><br><span class="hljs-built_in">ls</span> -lh /var/log/nginx/<br></code></pre></td></tr></table></figure>
+
+<p>结果：</p>
+<figure class="highlight fortran"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><code class="hljs fortran">-rw-r--r-- <span class="hljs-number">1</span> www-<span class="hljs-keyword">data</span> www-<span class="hljs-keyword">data</span>   <span class="hljs-number">0</span> Apr <span class="hljs-number">26</span> <span class="hljs-number">15</span>:<span class="hljs-number">00</span> <span class="hljs-keyword">access</span>.<span class="hljs-built_in">log</span><br>-rw-r--r-- <span class="hljs-number">1</span> root   root     <span class="hljs-number">8.0</span>G Apr <span class="hljs-number">26</span> <span class="hljs-number">14</span>:<span class="hljs-number">30</span> <span class="hljs-keyword">access</span>.<span class="hljs-built_in">log</span><span class="hljs-number">.1</span><br>-rw-r--r-- <span class="hljs-number">1</span> root   root     <span class="hljs-number">500</span>M Apr <span class="hljs-number">25</span> <span class="hljs-number">03</span>:<span class="hljs-number">20</span> <span class="hljs-keyword">access</span>.<span class="hljs-built_in">log</span><span class="hljs-number">.2</span>.gz<br>-rw-r--r-- <span class="hljs-number">1</span> root   root     <span class="hljs-number">480</span>M Apr <span class="hljs-number">24</span> <span class="hljs-number">03</span>:<span class="hljs-number">18</span> <span class="hljs-keyword">access</span>.<span class="hljs-built_in">log</span><span class="hljs-number">.3</span>.gz<br>...<br></code></pre></td></tr></table></figure>
+
+<p>access.log 被清空了（大小变成 0），8G 的数据转到了 access.log.1。现在可以删除 access.log.1 了：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 4. 删除旧文件（先等一下，确保 nginx 已经切换到新的日志文件）</span><br><span class="hljs-comment"># nginx 收到 USR1 信号后，会重新打开日志文件，此时 access.log 已经是空文件了</span><br><span class="hljs-comment"># 旧的日志内容在 access.log.1 里，可以安全删除</span><br><span class="hljs-built_in">rm</span> /var/log/nginx/access.log.1<br><br><span class="hljs-comment"># 5. 验证磁盘空间</span><br><span class="hljs-built_in">df</span> -h /<br></code></pre></td></tr></table></figure>
+
+<p>磁盘使用率从 82% 降到了 55%，一下子释放了 27G 的空间。</p>
+<h3 id="第七步：修复-logrotate-配置"><a href="#第七步：修复-logrotate-配置" class="headerlink" title="第七步：修复 logrotate 配置"></a>第七步：修复 logrotate 配置</h3><p>问题是 logrotate 在文件大于 1GB 时会跳过轮转。修复方法是在配置里加一个 <code>maxsize</code> 参数，让它忽略默认的 1GB 限制：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 修改配置</span><br><span class="hljs-built_in">cat</span> &gt; /etc/logrotate.d/nginx &lt;&lt; <span class="hljs-string">&#x27;EOF&#x27;</span><br>/var/log/nginx/*.<span class="hljs-built_in">log</span> &#123;<br>    daily<br>    rotate 14<br>    maxsize 10G<br>    missingok<br>    notifempty<br>    compress<br>    delaycompress<br>    create 0640 www-data adm<br>    sharedscripts<br>    postrotate<br>        [ -s /run/nginx.pid ] &amp;&amp; <span class="hljs-built_in">kill</span> -USR1 `<span class="hljs-built_in">cat</span> /run/nginx.pid`<br>    endscript<br>&#125;<br>EOF<br><br><span class="hljs-comment"># 测试配置（dry-run）</span><br>logrotate -d /etc/logrotate.d/nginx | <span class="hljs-built_in">head</span> -20<br></code></pre></td></tr></table></figure>
+
+<p>加了 <code>maxsize 10G</code> 之后，logrotate 会在文件超过 10G 时强制轮转，不再被默认的 1GB 阈值限制。同时保留 <code>daily</code> 参数，确保即使文件没有超过 10G，也会在每天定时轮转。</p>
+<h3 id="第八步：检查其他两台服务器"><a href="#第八步：检查其他两台服务器" class="headerlink" title="第八步：检查其他两台服务器"></a>第八步：检查其他两台服务器</h3><p>第一台服务器的问题解决了，现在去检查另外两台。</p>
+<p>连上第二台服务器，<code>df -h</code> 一看——同样的问题，&#x2F;var&#x2F;log 目录占用 38G，nginx 日志占了 12G。手动执行同样的清理操作，磁盘使用率从 79% 降到了 52%。</p>
+<p>第三台服务器也是一样，清理后从 81% 降到了 54%。</p>
+<p>三台服务器的问题原因都一样：日志文件超过 1GB，logrotate 跳过轮转，日志持续累积，最终触发告警。</p>
+<h2 id="问题总结"><a href="#问题总结" class="headerlink" title="问题总结"></a>问题总结</h2><p>回过头来看这次排查，有几点值得记录：</p>
+<h3 id="问题根源"><a href="#问题根源" class="headerlink" title="问题根源"></a>问题根源</h3><p>日志文件超过 1GB 后，logrotate 的默认行为是跳过轮转。这个行为是由 logrotate 的默认 <code>size</code> 阈值（1GB）决定的。如果没有人及时发现，这个文件会一直增长，直到磁盘空间耗尽。</p>
+<h3 id="为什么会超过-1GB"><a href="#为什么会超过-1GB" class="headerlink" title="为什么会超过 1GB"></a>为什么会超过 1GB</h3><p>日志轮转的周期是 <code>daily</code>，理论上每天都会轮转一次。即使日志量再大，24 小时也不应该产生超过 1GB 的数据。但如果 logrotate 本身没有正常运行（比如定时任务被跳过、或者文件权限问题），日志就会一直累积。</p>
+<p>今天的案例中，日志增长速度远超正常水平（可能有人在灌数据），导致即使 logrotate 正常运行，日志文件的增长速度也超过了轮转可以控制的速度。</p>
+<h3 id="为什么三台服务器同时告警"><a href="#为什么三台服务器同时告警" class="headerlink" title="为什么三台服务器同时告警"></a>为什么三台服务器同时告警</h3><p>三台服务器配置相同，都使用相同的 logrotate 配置和监控模板。同时告警说明它们都在同一时间累积了大量日志，这可能是之前的某个更新或变更导致 logrotate 没有正常执行，或者它们在某个时间点同时遭遇了日志暴增。</p>
+<h2 id="一键清理脚本"><a href="#一键清理脚本" class="headerlink" title="一键清理脚本"></a>一键清理脚本</h2><p>提供一个一键清理脚本，可以快速释放磁盘空间：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-meta">#!/bin/bash</span><br><span class="hljs-comment"># 磁盘空间一键清理脚本</span><br><span class="hljs-comment"># 用法: ./cleanup_disk.sh [阈值(GB)]</span><br><br><span class="hljs-built_in">set</span> -e<br><br>THRESHOLD=<span class="hljs-string">&quot;<span class="hljs-variable">$&#123;1:-1&#125;</span>&quot;</span><br><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;=== 磁盘使用情况 ===&quot;</span><br><span class="hljs-built_in">df</span> -h / | <span class="hljs-built_in">tail</span> -1<br><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;=== 大文件 (&gt;100MB) ===&quot;</span><br>find /var/log -<span class="hljs-built_in">type</span> f -size +100M -<span class="hljs-built_in">exec</span> <span class="hljs-built_in">ls</span> -lh &#123;&#125; \; 2&gt;/dev/null | awk <span class="hljs-string">&#x27;&#123;print $5, $9&#125;&#x27;</span><br><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;=== 强制执行 logrotate（所有配置） ===&quot;</span><br><span class="hljs-keyword">for</span> config <span class="hljs-keyword">in</span> /etc/logrotate.d/*; <span class="hljs-keyword">do</span><br>    <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;Processing: <span class="hljs-variable">$config</span>&quot;</span><br>    logrotate -f <span class="hljs-string">&quot;<span class="hljs-variable">$config</span>&quot;</span> 2&gt;&amp;1 | <span class="hljs-built_in">head</span> -5 || <span class="hljs-literal">true</span><br><span class="hljs-keyword">done</span><br><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;=== 清理 /tmp 目录下的临时文件（7天未访问） ===&quot;</span><br>tmp_deleted=$(find /tmp -<span class="hljs-built_in">type</span> f -atime +7 -delete 2&gt;/dev/null | <span class="hljs-built_in">wc</span> -l)<br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;已删除 <span class="hljs-variable">$tmp_deleted</span> 个临时文件&quot;</span><br><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;=== 清理旧的 apt 缓存 ===&quot;</span><br>apt-get clean 2&gt;/dev/null || <span class="hljs-literal">true</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;apt 缓存已清理&quot;</span><br><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;=== 清理旧的 snap 缓存 ===&quot;</span><br>snap list --all 2&gt;/dev/null | awk <span class="hljs-string">&#x27;/disabled/&#123;print $1, $3&#125;&#x27;</span> | <span class="hljs-keyword">while</span> <span class="hljs-built_in">read</span> name ver; <span class="hljs-keyword">do</span><br>    snap remove <span class="hljs-string">&quot;<span class="hljs-variable">$name</span>&quot;</span> --revision=<span class="hljs-string">&quot;<span class="hljs-variable">$ver</span>&quot;</span> 2&gt;/dev/null || <span class="hljs-literal">true</span><br><span class="hljs-keyword">done</span><br><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;=== 清理 journal 日志（保留最近1周） ===&quot;</span><br>journalctl --vacuum-time=7d 2&gt;/dev/null || <span class="hljs-literal">true</span><br><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;=== 最终磁盘使用情况 ===&quot;</span><br><span class="hljs-built_in">df</span> -h / | <span class="hljs-built_in">tail</span> -1<br><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;=== 如需查看更多信息 ===&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;查看各目录占用: du -sh /var/log/* | sort -h&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;查看最大的文件: find / -type f -size +500M -exec ls -lh &#123;&#125; \; 2&gt;/dev/null | head -20&quot;</span><br></code></pre></td></tr></table></figure>
+
+<h2 id="经验总结"><a href="#经验总结" class="headerlink" title="经验总结"></a>经验总结</h2><p><strong>经验一：logrotate 有默认的 size 阈值，需要显式设置 maxsize 来覆盖。</strong></p>
+<p>logrotate 默认对超过 1GB 的文件跳过轮转，这个行为很容易被忽略。如果你的日志量可能超过 1GB，一定要设置 <code>maxsize</code> 参数。这个参数的作用是：当文件大小超过 maxsize 时，即使还没到轮转时间，也会强制轮转。这样可以确保大文件不会被跳过。</p>
+<p><strong>经验二：大日志文件不能直接删除，要先 truncate。</strong></p>
+<p>直接删除正在写的日志文件会导致进程继续写到一个已删除的文件，最终耗尽磁盘。正确做法是 <code>&gt; /var/log/xxx.log</code> 清空内容，让进程继续写到新的空文件（因为文件描述符还在）。然后再删除旧的（已被轮转的）文件。</p>
+<p><strong>经验三：监控磁盘使用率很重要，但监控日志增长趋势更重要。</strong></p>
+<p>如果只是监控磁盘使用率的绝对值，可能会错过”日志在快速增长”的早期信号。建议增加一个”磁盘使用率增长率”的指标，当增长率超过某个阈值时提前告警。比如：增长率超过 5%&#x2F;天，就应该提前介入，而不是等到触及红线再处理。</p>
+<p><strong>经验四：排查问题的时候，不要忽略进程本身的状态。</strong></p>
+<p>这次排查中，我花了大量时间在定位文件和目录上，但实际上我应该先检查一下 nginx 进程是否正常、有没有人正在灌数据。如果一开始就发现灌数据的问题，可能就能更快地定位到根源。进程行为往往比文件系统更能反映问题的本质。</p>
+<p><strong>经验五：自动化清理要有，但不能完全依赖自动化。</strong></p>
+<p>自动化清理脚本可以处理大部分情况，但面对”有人灌数据”这种异常情况，自动化脚本可能无法正确处理。脚本只知道”文件大于 1GB 要跳过”，不知道”为什么文件会长到 8GB”。建议定期检查日志文件的增长模式，发现异常及时处理。</p>
+<p><strong>经验六：共性问题的排查要从共性因素入手。</strong></p>
+<p>三台服务器同时告警，很容易想到”共性问题”。排查共性问题的时候，要先确认它们的配置是否相同、是否共享某些资源。如果配置相同，那问题大概率出在配置本身，而不是某个特定的服务器上。今天的问题就是配置问题——logrotate 的默认 size 阈值在所有服务器上都存在，所以所有服务器都会遇到同样的问题。</p>
+<p><strong>经验七：清理之前先确认没有遗留重要信息。</strong></p>
+<p>在删除任何文件之前，先确认文件里没有需要保留的重要信息。比如日志文件，在删除之前最好先 grep 一下，看看有没有需要关注的错误信息或异常记录。如果有，可以先拷贝出来再做清理。</p>
+<h2 id="常见问题解答"><a href="#常见问题解答" class="headerlink" title="常见问题解答"></a>常见问题解答</h2><p><strong>Q1: logrotate 跳过了大文件怎么办？</strong></p>
+<p>A: 在配置文件里添加 <code>maxsize</code> 参数，例如 <code>maxsize 10G</code>，这样 logrotate 会在文件超过 10G 时强制轮转，不再受默认的 1GB 阈值限制。配置示例：</p>
+<figure class="highlight excel"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><code class="hljs excel">/<span class="hljs-built_in">var</span>/<span class="hljs-built_in">log</span>/nginx/*.<span class="hljs-built_in">log</span> &#123;<br>    daily<br>    rotate <span class="hljs-number">14</span><br>    maxsize <span class="hljs-number">10</span>G<br>    ...<br>&#125;<br></code></pre></td></tr></table></figure>
+
+<p><strong>Q2: 日志文件太大，删不掉怎么办？</strong></p>
+<p>A: 不要直接删除正在写的日志文件。先用 <code>&gt; /var/log/xxx.log</code> 清空内容，让进程继续写到新的空文件（文件描述符保持有效）。然后再删除旧的（已被轮转的）文件。具体步骤：</p>
+<ol>
+<li><code>logrotate -f /etc/logrotate.d/nginx</code> 强制轮转</li>
+<li>等待几秒让进程重新打开日志文件</li>
+<li><code>rm /var/log/nginx/access.log.1</code> 删除旧的轮转文件</li>
+</ol>
+<p><strong>Q3: 如何避免日志文件过大？</strong></p>
+<p>A: 几个建议：</p>
+<ol>
+<li>设置合理的 <code>maxsize</code> 和 <code>rotate</code> 参数</li>
+<li>确保 logrotate 定时任务正常运行（<code>systemctl status logrotate.timer</code>）</li>
+<li>配置 nginx 的 access_log 缓冲和刷新参数</li>
+<li>定期检查日志增长趋势（设置增长率告警）</li>
+<li>排查异常请求来源（防止被人灌数据）</li>
+</ol>
+<p><strong>Q4: 三台服务器同时告警，怎么判断是不是共性问题？</strong></p>
+<p>A: 先检查它们的配置是否相同（相同的 logrotate 配置、相同的监控模板），然后检查它们是否共享某个资源（共享存储、相同的定时任务源）。如果配置和资源都不同，那可能是各自的独立问题；如果配置相同，就要排查共性原因。今天的案例就是典型的共性问题：三台服务器 logrotate 配置相同，导致它们在相同条件下表现出相同的问题。</p>
+<p><strong>Q5: 日志轮转后磁盘空间没有释放怎么办？</strong></p>
+<p>A: 这种情况通常是因为进程还在持有旧的日志文件描述符。解决方法：</p>
+<ol>
+<li>确保 logrotate 配置了 <code>postrotate</code> 脚本，向进程发送 SIGHUP 或 USR1 信号让它重新打开日志文件</li>
+<li>重启对应的服务（如果 postrotate 脚本没有生效）</li>
+<li>使用 <code>lsof +L1</code> 查看哪些进程持有了已删除文件的句柄</li>
+</ol>
+<hr>
+<p><em>作者：小六，一个今天差点被日志文件撑爆磁盘的打工人</em></p>
+
+    
+  </article>
+
+  
+      
+    <div class="nexmoe-post-copyright">
+        <strong>Author：</strong>Margrop<br>
+        <strong>Link：</strong><a href="http://blog.margrop.com/post/2026-04-26-disk-space-check-one-command-fix/" title="http:&#x2F;&#x2F;blog.margrop.com&#x2F;post&#x2F;2026-04-26-disk-space-check-one-command-fix&#x2F;" target="_blank" rel="noopener">http:&#x2F;&#x2F;blog.margrop.com&#x2F;post&#x2F;2026-04-26-disk-space-check-one-command-fix&#x2F;</a><br>
+        
+            <strong>版权声明：</strong>本文采用 <a href="https://creativecommons.org/licenses/by-nc-sa/3.0/cn/deed.zh" target="_blank">CC BY-NC-SA 3.0 CN</a> 协议进行许可
+
+        
+    </div>
+
+
+  
+  
+  <div class="nexmoe-post-meta nexmoe-rainbow">
+   
+    
+        <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/%E6%8A%80%E6%9C%AF/" rel="tag">技术</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/%E7%9B%91%E6%8E%A7/" rel="tag">监控</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/%E7%A3%81%E7%9B%98/" rel="tag">磁盘</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/%E8%BF%90%E7%BB%B4/" rel="tag">运维</a>
+    
+</div>
+  
+  
+    <script async src="../../js/copy-codeblock.js?v=1777209335421"></script>
+  
+
+  
+      <div class="nexmoe-post-footer">
+          <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+<script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+<div id="gitalk-container"></div>
+<script>
+  const gitalk = new Gitalk({
+    clientID: 'Ov23lib2oiNKjG5B7I1N',
+    clientSecret: '0a94653f17a7b9630d85b275008da4b38e0259dd',
+    repo: 'margropcomment.margrop.io',      // The repository of store comments,
+    owner: 'margrop',
+    admin: ['margrop'],
+    pagerDirection: 'last',
+    id: window.location.pathname.substring(0, 49), // 使用 pathname 的前49个字符作为 id
+    title: document.title,
+    language: 'zh-CN', // 根据需要设置语言
+    distractionFreeMode: false
+  })
+  gitalk.render('gitalk-container')
+</script>
+
+      </div>
+  
+</div></div><div class="nexmoe-post-right">    <div class="nexmoe-fixed">
+        <div class="nexmoe-tool">
+
+            
+
+            
+            
+            <button class="mdui-fab catalog" style="overflow:unset;">
+                <i class="nexmoefont icon-i-catalog"></i>
+                <div class="nexmoe-toc">
+                    <ol class="toc"><li class="toc-item toc-level-2"><a class="toc-link" href="#%E5%89%8D%E8%A8%80"><span class="toc-number">1.</span> <span class="toc-text">前言</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E9%97%AE%E9%A2%98%E7%8E%B0%E8%B1%A1"><span class="toc-number">2.</span> <span class="toc-text">问题现象</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E6%8E%92%E6%9F%A5%E8%BF%87%E7%A8%8B"><span class="toc-number">3.</span> <span class="toc-text">排查过程</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#%E7%AC%AC%E4%B8%80%E6%AD%A5%EF%BC%9A%E7%A1%AE%E8%AE%A4%E7%A3%81%E7%9B%98%E4%BD%BF%E7%94%A8%E6%83%85%E5%86%B5"><span class="toc-number">3.1.</span> <span class="toc-text">第一步：确认磁盘使用情况</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E7%AC%AC%E4%BA%8C%E6%AD%A5%EF%BC%9A%E5%AE%9A%E4%BD%8D%E5%A4%A7%E6%96%87%E4%BB%B6"><span class="toc-number">3.2.</span> <span class="toc-text">第二步：定位大文件</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E7%AC%AC%E4%B8%89%E6%AD%A5%EF%BC%9A%E6%A3%80%E6%9F%A5%E6%97%A5%E5%BF%97%E8%BD%AE%E8%BD%AC%E9%85%8D%E7%BD%AE"><span class="toc-number">3.3.</span> <span class="toc-text">第三步：检查日志轮转配置</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E7%AC%AC%E5%9B%9B%E6%AD%A5%EF%BC%9A%E6%89%8B%E5%8A%A8%E6%A3%80%E6%9F%A5%E6%97%A5%E5%BF%97%E6%96%87%E4%BB%B6%E7%8A%B6%E6%80%81"><span class="toc-number">3.4.</span> <span class="toc-text">第四步：手动检查日志文件状态</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E7%AC%AC%E4%BA%94%E6%AD%A5%EF%BC%9A%E6%8E%92%E6%9F%A5%E4%B8%BA%E4%BB%80%E4%B9%88%E6%97%A5%E5%BF%97%E4%BC%9A%E8%BF%99%E4%B9%88%E5%A4%A7"><span class="toc-number">3.5.</span> <span class="toc-text">第五步：排查为什么日志会这么大</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E7%AC%AC%E5%85%AD%E6%AD%A5%EF%BC%9A%E7%B4%A7%E6%80%A5%E6%B8%85%E7%90%86"><span class="toc-number">3.6.</span> <span class="toc-text">第六步：紧急清理</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E7%AC%AC%E4%B8%83%E6%AD%A5%EF%BC%9A%E4%BF%AE%E5%A4%8D-logrotate-%E9%85%8D%E7%BD%AE"><span class="toc-number">3.7.</span> <span class="toc-text">第七步：修复 logrotate 配置</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E7%AC%AC%E5%85%AB%E6%AD%A5%EF%BC%9A%E6%A3%80%E6%9F%A5%E5%85%B6%E4%BB%96%E4%B8%A4%E5%8F%B0%E6%9C%8D%E5%8A%A1%E5%99%A8"><span class="toc-number">3.8.</span> <span class="toc-text">第八步：检查其他两台服务器</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E9%97%AE%E9%A2%98%E6%80%BB%E7%BB%93"><span class="toc-number">4.</span> <span class="toc-text">问题总结</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#%E9%97%AE%E9%A2%98%E6%A0%B9%E6%BA%90"><span class="toc-number">4.1.</span> <span class="toc-text">问题根源</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E4%B8%BA%E4%BB%80%E4%B9%88%E4%BC%9A%E8%B6%85%E8%BF%87-1GB"><span class="toc-number">4.2.</span> <span class="toc-text">为什么会超过 1GB</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E4%B8%BA%E4%BB%80%E4%B9%88%E4%B8%89%E5%8F%B0%E6%9C%8D%E5%8A%A1%E5%99%A8%E5%90%8C%E6%97%B6%E5%91%8A%E8%AD%A6"><span class="toc-number">4.3.</span> <span class="toc-text">为什么三台服务器同时告警</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%B8%80%E9%94%AE%E6%B8%85%E7%90%86%E8%84%9A%E6%9C%AC"><span class="toc-number">5.</span> <span class="toc-text">一键清理脚本</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E7%BB%8F%E9%AA%8C%E6%80%BB%E7%BB%93"><span class="toc-number">6.</span> <span class="toc-text">经验总结</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E5%B8%B8%E8%A7%81%E9%97%AE%E9%A2%98%E8%A7%A3%E7%AD%94"><span class="toc-number">7.</span> <span class="toc-text">常见问题解答</span></a></li></ol>
+                </div>
+            </button>
+            
+
+            
+
+            <a href="#nexmoe-content" class="backtop toc-link" aria-label="Back To Top" title="top"><button class="mdui-fab mdui-ripple"><i class="nexmoefont icon-caret-top"></i></button></a>
+        </div>
+    </div>
+</div></div><div id="nexmoe-footer"><!--!--></div><div id="nexmoe-search-space"><div class="search-container"><div class="search-header"><div class="search-input-container"><input class="search-input" type="text" placeholder="Search" onInput="sinput();"></div><a class="search-close" onclick="sclose();">×</a></div><div class="search-body"></div></div></div><div><script src="https://cdn.jsdelivr.net/npm/mathjax@latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+<script>MathJax.Hub.Config({
+    tex2jax: {
+        inlineMath: [ ['$','$'], ["\\(","\\)"] ],
+        processEscapes: true,
+        skipTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code']
+    }
+});
+MathJax.Hub.Queue(function() {
+    var all = MathJax.Hub.getAllJax(), i;
+    for(i=0; i < all.length; i += 1) {
+        all[i].SourceElement().parentNode.className += ' has-jax';
+    }
+});</script>
+</div></body></html>
