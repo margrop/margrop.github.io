@@ -1,0 +1,879 @@
+<!doctype html>
+<html lang="cn"><head>
+<title>记一次 Docker 容器内存占用异常排查：从 docker system df 到容器级内存定位 - 魔都水滴</title>
+<meta charset="UTF-8">
+<meta name="keywords" content="">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5">
+
+<link rel="shortcut icon" href="/favicon.ico" type="image/x-icon" />
+<meta name="description" content="前言Docker 容器化已成为现代服务端部署的标准方式，但在实际运维过程中，容器内存占用异常是一个常见但排查起来需要一定耐心的问题。本文记录一次典型的 Docker 容器内存占用异常排查过程，从发现异常、定位根因到系统性修复，整理成一套可复用的排查方法论。 问题背景业务场景某虚拟化平台上运行着多台虚拟机（VM），其中 VM152 部署了 OpenClaw Gateway 及其依赖组件（Chrome">
+<meta property="og:type" content="article">
+<meta property="og:title" content="记一次 Docker 容器内存占用异常排查：从 docker system df 到容器级内存定位">
+<meta property="og:url" content="http://blog.margrop.com/post/2026-05-01-docker-container-memory-analysis/index.html">
+<meta property="og:site_name" content="魔都水滴">
+<meta property="og:description" content="前言Docker 容器化已成为现代服务端部署的标准方式，但在实际运维过程中，容器内存占用异常是一个常见但排查起来需要一定耐心的问题。本文记录一次典型的 Docker 容器内存占用异常排查过程，从发现异常、定位根因到系统性修复，整理成一套可复用的排查方法论。 问题背景业务场景某虚拟化平台上运行着多台虚拟机（VM），其中 VM152 部署了 OpenClaw Gateway 及其依赖组件（Chrome">
+<meta property="og:locale">
+<meta property="article:published_time" content="2026-05-01T13:30:00.000Z">
+<meta property="article:modified_time" content="2026-05-01T13:09:49.598Z">
+<meta property="article:author" content="Margrop">
+<meta property="article:tag" content="运维">
+<meta property="article:tag" content="监控">
+<meta property="article:tag" content="技术">
+<meta property="article:tag" content="问题排查">
+<meta property="article:tag" content="Docker">
+<meta property="article:tag" content="内存管理">
+<meta name="twitter:card" content="summary">
+
+<link rel="stylesheet" href="../../lib/fancybox/fancybox.css">
+<link rel="stylesheet" href="../../lib/mdui_043tiny/mdui.css">
+
+
+<link rel="stylesheet" href="../../lib/iconfont/iconfont.css?v=1777641009599">
+
+<link rel="stylesheet" href="../../css/style.css?v=1777641009599">
+
+
+
+
+    
+        <link rel="stylesheet" href="../../custom.css?v=1777641009599">
+    
+
+
+
+<script src="../../lib/mdui_043tiny/mdui.js" async></script>
+<script src="../../lib/fancybox/fancybox.umd.js" async></script>
+<script src="../../lib/lax.min.js" async></script>
+
+
+<script async src="../../js/app.js?v=1777641009599"></script>
+
+ 
+
+<script charset="UTF-8" id="LA_COLLECT" src="//sdk.51.la/js-sdk-pro.min.js"></script>
+<script>LA.init({id:"23bDEwNOu1L8NhV1",ck:"23bDEwNOu1L8NhV1"})</script>
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-4NGHEP8LEV"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+
+  gtag('config', 'G-4NGHEP8LEV');
+</script>
+
+
+<link rel="stylesheet"  href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/atom-one-dark.min.css">
+<meta name="generator" content="Hexo 7.3.0"><link rel="alternate" href="atom.xml" title="魔都水滴" type="application/atom+xml">
+</head><body class="nexmoe mdui-drawer-body-left"><div id="nexmoe-background"><div class="nexmoe-bg" style="background-image: url(/images/background.webp)"></div><div class="mdui-appbar mdui-shadow-0"><div class="mdui-toolbar"><a class="mdui-btn mdui-btn-icon mdui-ripple" mdui-drawer="{target: &#039;#drawer&#039;, swipe: true}" title="menu"><i class="mdui-icon nexmoefont icon-menu"></i></a><div class="mdui-toolbar-spacer"></div><a class="mdui-btn mdui-btn-icon" href="../../index.html" title="Margrop"><img src="/images/avatar.webp" alt="Margrop"></a></div></div></div><div id="nexmoe-header"><div class="nexmoe-drawer mdui-drawer" id="drawer">
+    <div class="nexmoe-avatar mdui-ripple">
+        <a href="../../index.html" title="Margrop">
+            <img src="/images/avatar.webp" alt="Margrop" alt="Margrop">
+        </a>
+    </div>
+    <div class="nexmoe-count">
+        <div><span>Articles</span>294</div>
+        <div><span>Tags</span>449</div>
+        <div><span>Categories</span>23</div>
+    </div>
+    <div class="nexmoe-list mdui-list" mdui-collapse="{accordion: true}">
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" href="../../index.html" title="回到首页">
+            <i class="mdui-list-item-icon nexmoefont icon-home"></i>
+            <div class="mdui-list-item-content">
+                回到首页
+            </div>
+        </a>
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" href="../../post/archives/" title="文章归档">
+            <i class="mdui-list-item-icon nexmoefont icon-container"></i>
+            <div class="mdui-list-item-content">
+                文章归档
+            </div>
+        </a>
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" target="_blank" rel="noopener" href="https://example.com/" title="下载">
+            <i class="mdui-list-item-icon nexmoefont icon-container"></i>
+            <div class="mdui-list-item-content">
+                下载
+            </div>
+        </a>
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" href="../../post/favorites/" title="常用链接">
+            <i class="mdui-list-item-icon nexmoefont icon-unorderedlist"></i>
+            <div class="mdui-list-item-content">
+                常用链接
+            </div>
+        </a>
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" href="../../post/github-project-stars/" title="GithubStars">
+            <i class="mdui-list-item-icon nexmoefont icon-github"></i>
+            <div class="mdui-list-item-content">
+                GithubStars
+            </div>
+        </a>
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" href="../../post/donate/" title="给我赞助">
+            <i class="mdui-list-item-icon nexmoefont icon-coffee"></i>
+            <div class="mdui-list-item-content">
+                给我赞助
+            </div>
+        </a>
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" href="../../post/about/" title="关于博主">
+            <i class="mdui-list-item-icon nexmoefont icon-info-circle"></i>
+            <div class="mdui-list-item-content">
+                关于博主
+            </div>
+        </a>
+        
+    </div>
+    
+    
+        
+        <div class="nexmoe-widget-wrap">
+    <div class="nexmoe-widget nexmoe-search">
+         
+            <form id="search_form" action_e="https://cn.bing.com/search?q=site:example.com" onsubmit="return search();">
+                <label><input id="search_value" name="q" type="search" placeholder="Search"></label>
+            </form>
+         
+    </div>
+</div>
+
+
+
+
+    
+        
+        <div class="nexmoe-widget-wrap">
+	<div class="nexmoe-widget nexmoe-social">
+		<a
+			class="mdui-ripple"
+			href="http://qm.qq.com/cgi-bin/qm/qr?_wv=1027&k=weD8TANNWdCOveAMcdmoAxOKt5owKkDS"
+			target="_blank"
+			mdui-tooltip="{content: 'QQ群'}"
+			style="
+				color: rgb(249, 174, 8);
+				background-color: rgba(249, 174, 8, .1);
+			"
+		>
+			<i
+				class="nexmoefont icon-QQ"
+			></i> </a
+		><a
+			class="mdui-ripple"
+			href="https://github.com/margrop/"
+			target="_blank"
+			mdui-tooltip="{content: 'GitHub'}"
+			style="
+				color: rgb(25, 23, 23);
+				background-color: rgba(25, 23, 23, .1);
+			"
+		>
+			<i
+				class="nexmoefont icon-github"
+			></i> </a
+		><a
+			class="mdui-ripple"
+			href="../../atom.xml"
+			target="_blank"
+			mdui-tooltip="{content: 'RSS'}"
+			style="
+				color: rgb(247, 132, 34);
+				background-color: rgba(247, 132, 34, .1);
+			"
+		>
+			<i
+				class="nexmoefont icon-rss"
+			></i> </a
+		>
+	</div>
+</div>
+
+    
+        
+        
+  <div class="nexmoe-widget-wrap">
+    <h3 class="nexmoe-widget-title">Categories</h3>
+    <div class="nexmoe-widget">
+
+      <ul class="category-list">
+
+        
+
+
+        
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/Adblocker/">Adblocker</a>
+          <span class="category-list-count">1</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/Android/">Android</a>
+          <span class="category-list-count">2</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/CentOS/">CentOS</a>
+          <span class="category-list-count">6</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/Container/">Container</a>
+          <span class="category-list-count">10</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/Git/">Git</a>
+          <span class="category-list-count">7</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/HomeAssistant/">HomeAssistant</a>
+          <span class="category-list-count">1</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/MacOS/">MacOS</a>
+          <span class="category-list-count">11</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/PVE/">PVE</a>
+          <span class="category-list-count">19</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/SmartHome/">SmartHome</a>
+          <span class="category-list-count">5</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/Synology/">Synology</a>
+          <span class="category-list-count">4</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/Ubuntu/">Ubuntu</a>
+          <span class="category-list-count">4</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/Windows/">Windows</a>
+          <span class="category-list-count">3</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/ai-diary/">ai_diary</a>
+          <span class="category-list-count">71</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/ai-tech/">ai_tech</a>
+          <span class="category-list-count">65</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/develop/">develop</a>
+          <span class="category-list-count">28</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/fuckgfw/">fuckgfw</a>
+          <span class="category-list-count">2</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/n2n/">n2n</a>
+          <span class="category-list-count">9</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/">network</a>
+          <span class="category-list-count">112</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/notes/">notes</a>
+          <span class="category-list-count">10</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/others/">others</a>
+          <span class="category-list-count">3</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/router/">router</a>
+          <span class="category-list-count">7</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/sport/">sport</a>
+          <span class="category-list-count">4</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/tvbox/">tvbox</a>
+          <span class="category-list-count">3</span>
+        </li>
+
+        
+      </ul>
+
+    </div>
+  </div>
+
+
+    
+        
+        
+  <div class="nexmoe-widget-wrap">
+    <div id="randomtagcloud" class="nexmoe-widget tagcloud nexmoe-rainbow">
+      <a href="../../tags/1password/" style="font-size: 10px;">1password</a> <a href="../../tags/AC/" style="font-size: 10.45px;">AC</a> <a href="../../tags/ACP/" style="font-size: 10px;">ACP</a> <a href="../../tags/AI/" style="font-size: 11.82px;">AI</a> <a href="../../tags/AP/" style="font-size: 10.91px;">AP</a> <a href="../../tags/API/" style="font-size: 11.36px;">API</a> <a href="../../tags/AppDaemon/" style="font-size: 10px;">AppDaemon</a> <a href="../../tags/Aqara/" style="font-size: 10px;">Aqara</a> <a href="../../tags/CI-CD/" style="font-size: 10.45px;">CI/CD</a> <a href="../../tags/Caddy/" style="font-size: 10px;">Caddy</a> <a href="../../tags/Cloudflare/" style="font-size: 10px;">Cloudflare</a> <a href="../../tags/Cookie-%E8%AE%A4%E8%AF%81/" style="font-size: 10px;">Cookie 认证</a> <a href="../../tags/Cron/" style="font-size: 11.36px;">Cron</a> <a href="../../tags/D1/" style="font-size: 10px;">D1</a> <a href="../../tags/Date/" style="font-size: 10px;">Date</a> <a href="../../tags/Diagrams-net/" style="font-size: 10px;">Diagrams.net</a> <a href="../../tags/Docker/" style="font-size: 15.91px;">Docker</a> <a href="../../tags/Docker-Compose/" style="font-size: 10px;">Docker Compose</a> <a href="../../tags/Electerm/" style="font-size: 10px;">Electerm</a> <a href="../../tags/Gateway/" style="font-size: 11.36px;">Gateway</a> <a href="../../tags/GitHub-Actions/" style="font-size: 10.45px;">GitHub Actions</a> <a href="../../tags/HA/" style="font-size: 10px;">HA</a> <a href="../../tags/HADashboard/" style="font-size: 10px;">HADashboard</a> <a href="../../tags/Hexo/" style="font-size: 10.91px;">Hexo</a> <a href="../../tags/HomeAssistant/" style="font-size: 10px;">HomeAssistant</a> <a href="../../tags/IP/" style="font-size: 10px;">IP</a> <a href="../../tags/IPv4/" style="font-size: 10px;">IPv4</a> <a href="../../tags/Java/" style="font-size: 11.82px;">Java</a> <a href="../../tags/LVM%E2%80%91Thin/" style="font-size: 10.45px;">LVM‑Thin</a> <a href="../../tags/Linux/" style="font-size: 12.27px;">Linux</a> <a href="../../tags/MacOS/" style="font-size: 10.91px;">MacOS</a> <a href="../../tags/Markdown/" style="font-size: 10px;">Markdown</a> <a href="../../tags/MiniMax/" style="font-size: 10px;">MiniMax</a> <a href="../../tags/Multi-Agent/" style="font-size: 10px;">Multi-Agent</a> <a href="../../tags/MySQL/" style="font-size: 10.91px;">MySQL</a> <a href="../../tags/NAS/" style="font-size: 10.91px;">NAS</a> <a href="../../tags/Nginx/" style="font-size: 10px;">Nginx</a> <a href="../../tags/Node-RED/" style="font-size: 10.45px;">Node-RED</a> <a href="../../tags/Node-js/" style="font-size: 10px;">Node.js</a> <a href="../../tags/OOM/" style="font-size: 10px;">OOM</a> <a href="../../tags/OpenAI/" style="font-size: 10px;">OpenAI</a> <a href="../../tags/OpenClaw/" style="font-size: 18.18px;">OpenClaw</a> <a href="../../tags/OpenResty/" style="font-size: 10px;">OpenResty</a> <a href="../../tags/PPPoE/" style="font-size: 10px;">PPPoE</a> <a href="../../tags/Portainer/" style="font-size: 10px;">Portainer</a> <a href="../../tags/PostgreSQL/" style="font-size: 10px;">PostgreSQL</a> <a href="../../tags/ProcessOn/" style="font-size: 10px;">ProcessOn</a> <a href="../../tags/Prometheus/" style="font-size: 10.91px;">Prometheus</a> <a href="../../tags/Proxmox-VE/" style="font-size: 16.82px;">Proxmox VE</a> <a href="../../tags/RPC/" style="font-size: 10px;">RPC</a> <a href="../../tags/SOCKS5/" style="font-size: 10px;">SOCKS5</a> <a href="../../tags/SSL/" style="font-size: 10px;">SSL</a> <a href="../../tags/Session/" style="font-size: 10px;">Session</a> <a href="../../tags/Shell/" style="font-size: 10.45px;">Shell</a> <a href="../../tags/Subagent/" style="font-size: 10px;">Subagent</a> <a href="../../tags/TTS/" style="font-size: 10px;">TTS</a> <a href="../../tags/TimeMachine/" style="font-size: 10px;">TimeMachine</a> <a href="../../tags/UML/" style="font-size: 10px;">UML</a> <a href="../../tags/Uptime-Kuma/" style="font-size: 10.45px;">Uptime Kuma</a> <a href="../../tags/VPN/" style="font-size: 10px;">VPN</a> <a href="../../tags/VPS/" style="font-size: 10.45px;">VPS</a> <a href="../../tags/Web/" style="font-size: 10px;">Web</a> <a href="../../tags/WebSocket/" style="font-size: 10.45px;">WebSocket</a> <a href="../../tags/Windows/" style="font-size: 10px;">Windows</a> <a href="../../tags/Workers/" style="font-size: 10px;">Workers</a> <a href="../../tags/activate/" style="font-size: 10.45px;">activate</a> <a href="../../tags/ad/" style="font-size: 10px;">ad</a> <a href="../../tags/adb/" style="font-size: 10px;">adb</a> <a href="../../tags/adblock/" style="font-size: 10.45px;">adblock</a> <a href="../../tags/agent/" style="font-size: 10px;">agent</a> <a href="../../tags/aligenie/" style="font-size: 10px;">aligenie</a> <a href="../../tags/aliyun/" style="font-size: 10.91px;">aliyun</a> <a href="../../tags/alpine/" style="font-size: 10px;">alpine</a> <a href="../../tags/annotation/" style="font-size: 10px;">annotation</a> <a href="../../tags/aop/" style="font-size: 10px;">aop</a> <a href="../../tags/authy/" style="font-size: 10px;">authy</a> <a href="../../tags/autofs/" style="font-size: 10px;">autofs</a> <a href="../../tags/backup/" style="font-size: 10px;">backup</a> <a href="../../tags/baidupan/" style="font-size: 10px;">baidupan</a> <a href="../../tags/bash/" style="font-size: 10.91px;">bash</a> <a href="../../tags/bitwarden/" style="font-size: 10px;">bitwarden</a> <a href="../../tags/boot/" style="font-size: 10.45px;">boot</a> <a href="../../tags/brew/" style="font-size: 10.45px;">brew</a> <a href="../../tags/browser/" style="font-size: 10px;">browser</a> <a href="../../tags/caddy2/" style="font-size: 10.45px;">caddy2</a> <a href="../../tags/cdn/" style="font-size: 10px;">cdn</a> <a href="../../tags/centos/" style="font-size: 14.55px;">centos</a> <a href="../../tags/cert/" style="font-size: 10.45px;">cert</a> <a href="../../tags/certbot/" style="font-size: 10px;">certbot</a> <a href="../../tags/charles/" style="font-size: 10px;">charles</a> <a href="../../tags/chat/" style="font-size: 10px;">chat</a> <a href="../../tags/chrome/" style="font-size: 10.91px;">chrome</a> <a href="../../tags/classloader/" style="font-size: 10px;">classloader</a> <a href="../../tags/client/" style="font-size: 10.91px;">client</a> <a href="../../tags/clone/" style="font-size: 10.45px;">clone</a> <a href="../../tags/closures/" style="font-size: 10px;">closures</a> <a href="../../tags/cloudflare/" style="font-size: 10.45px;">cloudflare</a> <a href="../../tags/cmd/" style="font-size: 10px;">cmd</a> <a href="../../tags/command/" style="font-size: 10px;">command</a> <a href="../../tags/commit/" style="font-size: 10px;">commit</a> <a href="../../tags/container/" style="font-size: 10px;">container</a> <a href="../../tags/crontab/" style="font-size: 10px;">crontab</a> <a href="../../tags/ctyun/" style="font-size: 10.45px;">ctyun</a> <a href="../../tags/ddsm/" style="font-size: 10px;">ddsm</a> <a href="../../tags/demo/" style="font-size: 10px;">demo</a> <a href="../../tags/dependency/" style="font-size: 10px;">dependency</a> <a href="../../tags/deploy/" style="font-size: 10px;">deploy</a> <a href="../../tags/developer/" style="font-size: 10px;">developer</a> <a href="../../tags/devtools/" style="font-size: 10px;">devtools</a> <a href="../../tags/dll/" style="font-size: 10px;">dll</a> <a href="../../tags/dns/" style="font-size: 10.91px;">dns</a> <a href="../../tags/docker/" style="font-size: 13.64px;">docker</a> <a href="../../tags/domain/" style="font-size: 10px;">domain</a> <a href="../../tags/download/" style="font-size: 10px;">download</a> <a href="../../tags/draw/" style="font-size: 10.45px;">draw</a> <a href="../../tags/drawio/" style="font-size: 10px;">drawio</a> <a href="../../tags/dsm/" style="font-size: 13.18px;">dsm</a> <a href="../../tags/dump/" style="font-size: 10px;">dump</a> <a href="../../tags/dylib/" style="font-size: 10px;">dylib</a> <a href="../../tags/edge/" style="font-size: 10.91px;">edge</a> <a href="../../tags/exception/" style="font-size: 10.45px;">exception</a> <a href="../../tags/export/" style="font-size: 10px;">export</a> <a href="../../tags/fail2ban/" style="font-size: 10px;">fail2ban</a> <a href="../../tags/feign/" style="font-size: 10px;">feign</a> <a href="../../tags/firewall-cmd/" style="font-size: 10.45px;">firewall-cmd</a> <a href="../../tags/flow/" style="font-size: 10px;">flow</a> <a href="../../tags/frp/" style="font-size: 10.45px;">frp</a> <a href="../../tags/frpc/" style="font-size: 11.36px;">frpc</a> <a href="../../tags/frps/" style="font-size: 10.45px;">frps</a> <a href="../../tags/fuckgfw/" style="font-size: 11.36px;">fuckgfw</a> <a href="../../tags/function/" style="font-size: 10px;">function</a> <a href="../../tags/gcc/" style="font-size: 10px;">gcc</a> <a href="../../tags/gfw/" style="font-size: 10.45px;">gfw</a> <a href="../../tags/git/" style="font-size: 12.27px;">git</a> <a href="../../tags/github/" style="font-size: 12.73px;">github</a> <a href="../../tags/golang/" style="font-size: 10px;">golang</a> <a href="../../tags/gperftools/" style="font-size: 10px;">gperftools</a> <a href="../../tags/gridea/" style="font-size: 10.45px;">gridea</a> <a href="../../tags/grub/" style="font-size: 10.45px;">grub</a> <a href="../../tags/gvt-g/" style="font-size: 10px;">gvt-g</a> <a href="../../tags/hacs/" style="font-size: 10px;">hacs</a> <a href="../../tags/havcs/" style="font-size: 10.45px;">havcs</a> <a href="../../tags/heap/" style="font-size: 10px;">heap</a> <a href="../../tags/hello/" style="font-size: 10.45px;">hello</a> <a href="../../tags/hexo/" style="font-size: 10.91px;">hexo</a> <a href="../../tags/hibernate/" style="font-size: 10.45px;">hibernate</a> <a href="../../tags/hidpi/" style="font-size: 10px;">hidpi</a> <a href="../../tags/hoisting/" style="font-size: 10px;">hoisting</a> <a href="../../tags/homeassistant/" style="font-size: 11.82px;">homeassistant</a> <a href="../../tags/hosts/" style="font-size: 10px;">hosts</a> <a href="../../tags/html/" style="font-size: 10.45px;">html</a> <a href="../../tags/htmlparser/" style="font-size: 10px;">htmlparser</a> <a href="../../tags/https/" style="font-size: 10.91px;">https</a> <a href="../../tags/iKuai/" style="font-size: 10.45px;">iKuai</a> <a href="../../tags/idea/" style="font-size: 10px;">idea</a> <a href="../../tags/image/" style="font-size: 10px;">image</a> <a href="../../tags/img/" style="font-size: 10.45px;">img</a> <a href="../../tags/img2kvm/" style="font-size: 10px;">img2kvm</a> <a href="../../tags/import/" style="font-size: 10px;">import</a> <a href="../../tags/index/" style="font-size: 10px;">index</a> <a href="../../tags/install/" style="font-size: 12.27px;">install</a> <a href="../../tags/intel/" style="font-size: 10.45px;">intel</a> <a href="../../tags/io/" style="font-size: 10px;">io</a> <a href="../../tags/ios/" style="font-size: 10px;">ios</a> <a href="../../tags/ip/" style="font-size: 10px;">ip</a> <a href="../../tags/iptables/" style="font-size: 10px;">iptables</a> <a href="../../tags/iptv/" style="font-size: 10.45px;">iptv</a> <a href="../../tags/ipv6/" style="font-size: 10px;">ipv6</a> <a href="../../tags/iso/" style="font-size: 10px;">iso</a> <a href="../../tags/java/" style="font-size: 11.82px;">java</a> <a href="../../tags/javascript/" style="font-size: 10.45px;">javascript</a> <a href="../../tags/jetbrains/" style="font-size: 10px;">jetbrains</a> <a href="../../tags/jni/" style="font-size: 10px;">jni</a> <a href="../../tags/jnilib/" style="font-size: 10px;">jnilib</a> <a href="../../tags/jpa/" style="font-size: 10px;">jpa</a> <a href="../../tags/js/" style="font-size: 10.91px;">js</a> <a href="../../tags/json/" style="font-size: 10.45px;">json</a> <a href="../../tags/jsonb/" style="font-size: 10px;">jsonb</a> <a href="../../tags/jupter/" style="font-size: 10px;">jupter</a> <a href="../../tags/jupyterlab/" style="font-size: 10px;">jupyterlab</a> <a href="../../tags/jvm/" style="font-size: 10.45px;">jvm</a> <a href="../../tags/k8s/" style="font-size: 10.45px;">k8s</a> <a href="../../tags/kernel/" style="font-size: 10px;">kernel</a> <a href="../../tags/key/" style="font-size: 10px;">key</a> <a href="../../tags/kid/" style="font-size: 10px;">kid</a> <a href="../../tags/kms/" style="font-size: 10px;">kms</a> <a href="../../tags/kodi/" style="font-size: 10px;">kodi</a> <a href="../../tags/koolproxy/" style="font-size: 10.45px;">koolproxy</a> <a href="../../tags/koolproxyr/" style="font-size: 10.45px;">koolproxyr</a> <a href="../../tags/kvm/" style="font-size: 10.45px;">kvm</a> <a href="../../tags/lan/" style="font-size: 10px;">lan</a> <a href="../../tags/lastpass/" style="font-size: 10px;">lastpass</a> <a href="../../tags/launchctl/" style="font-size: 10px;">launchctl</a> <a href="../../tags/learning/" style="font-size: 10px;">learning</a> <a href="../../tags/lede/" style="font-size: 10px;">lede</a> <a href="../../tags/letsencrypt/" style="font-size: 10.91px;">letsencrypt</a> <a href="../../tags/linux/" style="font-size: 11.36px;">linux</a> <a href="../../tags/live/" style="font-size: 10px;">live</a> <a href="../../tags/low-code/" style="font-size: 10px;">low-code</a> <a href="../../tags/lvm/" style="font-size: 10px;">lvm</a> <a href="../../tags/lxc/" style="font-size: 10px;">lxc</a> <a href="../../tags/m3u8/" style="font-size: 10px;">m3u8</a> <a href="../../tags/mac/" style="font-size: 10.45px;">mac</a> <a href="../../tags/macos/" style="font-size: 10px;">macos</a> <a href="../../tags/mariadb/" style="font-size: 10px;">mariadb</a> <a href="../../tags/markdown/" style="font-size: 10px;">markdown</a> <a href="../../tags/maven/" style="font-size: 10.45px;">maven</a> <a href="../../tags/md5/" style="font-size: 10.45px;">md5</a> <a href="../../tags/microcode/" style="font-size: 10px;">microcode</a> <a href="../../tags/mirror/" style="font-size: 10.45px;">mirror</a> <a href="../../tags/modem/" style="font-size: 10px;">modem</a> <a href="../../tags/modules/" style="font-size: 10px;">modules</a> <a href="../../tags/monitor/" style="font-size: 10px;">monitor</a> <a href="../../tags/mount/" style="font-size: 10px;">mount</a> <a href="../../tags/mstsc/" style="font-size: 10px;">mstsc</a> <a href="../../tags/mysql/" style="font-size: 10px;">mysql</a> <a href="../../tags/n2n/" style="font-size: 13.18px;">n2n</a> <a href="../../tags/n5105/" style="font-size: 10px;">n5105</a> <a href="../../tags/nas/" style="font-size: 10px;">nas</a> <a href="../../tags/network/" style="font-size: 13.64px;">network</a> <a href="../../tags/nfs/" style="font-size: 10px;">nfs</a> <a href="../../tags/node/" style="font-size: 10.45px;">node</a> <a href="../../tags/node-red/" style="font-size: 10.45px;">node-red</a> <a href="../../tags/nodejs/" style="font-size: 11.36px;">nodejs</a> <a href="../../tags/nohup/" style="font-size: 10.45px;">nohup</a> <a href="../../tags/notepad/" style="font-size: 10px;">notepad++</a> <a href="../../tags/npm/" style="font-size: 12.27px;">npm</a> <a href="../../tags/nssm/" style="font-size: 10.45px;">nssm</a> <a href="../../tags/ntp/" style="font-size: 10px;">ntp</a> <a href="../../tags/oop/" style="font-size: 10px;">oop</a> <a href="../../tags/openfeign/" style="font-size: 10px;">openfeign</a> <a href="../../tags/openssl/" style="font-size: 10.45px;">openssl</a> <a href="../../tags/os/" style="font-size: 10px;">os</a> <a href="../../tags/otp/" style="font-size: 10px;">otp</a> <a href="../../tags/ovz/" style="font-size: 10px;">ovz</a> <a href="../../tags/p14/" style="font-size: 10px;">p14</a> <a href="../../tags/packet-capture/" style="font-size: 10px;">packet capture</a> <a href="../../tags/pat/" style="font-size: 10px;">pat</a> <a href="../../tags/pdf/" style="font-size: 10px;">pdf</a> <a href="../../tags/pem/" style="font-size: 10.45px;">pem</a> <a href="../../tags/perf/" style="font-size: 10px;">perf</a> <a href="../../tags/ping/" style="font-size: 10px;">ping</a> <a href="../../tags/pip/" style="font-size: 10px;">pip</a> <a href="../../tags/plugin/" style="font-size: 10px;">plugin</a> <a href="../../tags/png/" style="font-size: 10px;">png</a> <a href="../../tags/powerbutton/" style="font-size: 10px;">powerbutton</a> <a href="../../tags/print/" style="font-size: 10px;">print</a> <a href="../../tags/pro/" style="font-size: 10px;">pro</a> <a href="../../tags/proxy/" style="font-size: 10.45px;">proxy</a> <a href="../../tags/pve/" style="font-size: 16.82px;">pve</a> <a href="../../tags/pvekclean/" style="font-size: 11.36px;">pvekclean</a> <a href="../../tags/python/" style="font-size: 14.09px;">python</a> <a href="../../tags/qcow2/" style="font-size: 10px;">qcow2</a> <a href="../../tags/qemu/" style="font-size: 10.45px;">qemu</a> <a href="../../tags/qemu-guest-agent/" style="font-size: 10px;">qemu-guest-agent</a> <a href="../../tags/rar/" style="font-size: 10px;">rar</a> <a href="../../tags/reboot/" style="font-size: 10px;">reboot</a> <a href="../../tags/reflog/" style="font-size: 10px;">reflog</a> <a href="../../tags/remote/" style="font-size: 10px;">remote</a> <a href="../../tags/remote-desktop/" style="font-size: 10.45px;">remote desktop</a> <a href="../../tags/renew/" style="font-size: 10px;">renew</a> <a href="../../tags/repo/" style="font-size: 10px;">repo</a> <a href="../../tags/resize/" style="font-size: 10px;">resize</a> <a href="../../tags/retina/" style="font-size: 10px;">retina</a> <a href="../../tags/root/" style="font-size: 10px;">root</a> <a href="../../tags/route/" style="font-size: 10px;">route</a> <a href="../../tags/router/" style="font-size: 10.45px;">router</a> <a href="../../tags/rule/" style="font-size: 10px;">rule</a> <a href="../../tags/rules/" style="font-size: 10px;">rules</a> <a href="../../tags/runtime/" style="font-size: 10px;">runtime</a> <a href="../../tags/safari/" style="font-size: 10px;">safari</a> <a href="../../tags/sata/" style="font-size: 10px;">sata</a> <a href="../../tags/scipy-notebook/" style="font-size: 10px;">scipy-notebook</a> <a href="../../tags/scoping/" style="font-size: 10px;">scoping</a> <a href="../../tags/scp/" style="font-size: 10px;">scp</a> <a href="../../tags/server/" style="font-size: 10.45px;">server</a> <a href="../../tags/slmgr/" style="font-size: 10px;">slmgr</a> <a href="../../tags/so/" style="font-size: 10px;">so</a> <a href="../../tags/socks/" style="font-size: 10px;">socks</a> <a href="../../tags/source/" style="font-size: 10px;">source</a> <a href="../../tags/spk/" style="font-size: 10px;">spk</a> <a href="../../tags/spring/" style="font-size: 11.36px;">spring</a> <a href="../../tags/springboot/" style="font-size: 12.27px;">springboot</a> <a href="../../tags/springfox/" style="font-size: 10.91px;">springfox</a> <a href="../../tags/ssh/" style="font-size: 11.82px;">ssh</a> <a href="../../tags/ssl/" style="font-size: 10.45px;">ssl</a> <a href="../../tags/stash/" style="font-size: 10px;">stash</a> <a href="../../tags/string/" style="font-size: 10px;">string</a> <a href="../../tags/supernode/" style="font-size: 10.45px;">supernode</a> <a href="../../tags/svg/" style="font-size: 10px;">svg</a> <a href="../../tags/svn/" style="font-size: 10px;">svn</a> <a href="../../tags/swagger/" style="font-size: 11.36px;">swagger</a> <a href="../../tags/sync/" style="font-size: 10px;">sync</a> <a href="../../tags/synology/" style="font-size: 10.45px;">synology</a> <a href="../../tags/systemctl/" style="font-size: 10.91px;">systemctl</a> <a href="../../tags/systemd/" style="font-size: 12.27px;">systemd</a> <a href="../../tags/tap/" style="font-size: 10px;">tap</a> <a href="../../tags/tap-windows/" style="font-size: 10px;">tap-windows</a> <a href="../../tags/tapwindows/" style="font-size: 10px;">tapwindows</a> <a href="../../tags/telecom/" style="font-size: 10.45px;">telecom</a> <a href="../../tags/template/" style="font-size: 10px;">template</a> <a href="../../tags/terminal/" style="font-size: 10px;">terminal</a> <a href="../../tags/tls/" style="font-size: 10px;">tls</a> <a href="../../tags/token/" style="font-size: 10px;">token</a> <a href="../../tags/totp/" style="font-size: 10px;">totp</a> <a href="../../tags/tvbox/" style="font-size: 10.91px;">tvbox</a> <a href="../../tags/txt/" style="font-size: 10px;">txt</a> <a href="../../tags/ubuntu/" style="font-size: 11.82px;">ubuntu</a> <a href="../../tags/udisk/" style="font-size: 10px;">udisk</a> <a href="../../tags/ui/" style="font-size: 10px;">ui</a> <a href="../../tags/undertow/" style="font-size: 10px;">undertow</a> <a href="../../tags/uninstall/" style="font-size: 10px;">uninstall</a> <a href="../../tags/unlocker/" style="font-size: 10px;">unlocker</a> <a href="../../tags/upgrade/" style="font-size: 10.45px;">upgrade</a> <a href="../../tags/url/" style="font-size: 10px;">url</a> <a href="../../tags/v2ray/" style="font-size: 10.45px;">v2ray</a> <a href="../../tags/vhd/" style="font-size: 10px;">vhd</a> <a href="../../tags/vim/" style="font-size: 10px;">vim</a> <a href="../../tags/vlmcsd/" style="font-size: 10px;">vlmcsd</a> <a href="../../tags/vm/" style="font-size: 10.45px;">vm</a> <a href="../../tags/vmdk/" style="font-size: 10px;">vmdk</a> <a href="../../tags/web/" style="font-size: 11.82px;">web</a> <a href="../../tags/websocket/" style="font-size: 10.45px;">websocket</a> <a href="../../tags/wechat/" style="font-size: 10px;">wechat</a> <a href="../../tags/windows/" style="font-size: 11.82px;">windows</a> <a href="../../tags/with/" style="font-size: 10px;">with</a> <a href="../../tags/worker/" style="font-size: 10.45px;">worker</a> <a href="../../tags/wow/" style="font-size: 10px;">wow</a> <a href="../../tags/xiaoya/" style="font-size: 10px;">xiaoya</a> <a href="../../tags/xml/" style="font-size: 10px;">xml</a> <a href="../../tags/yum/" style="font-size: 10px;">yum</a> <a href="../../tags/zip/" style="font-size: 10px;">zip</a> <a href="../../tags/%E4%B8%AD%E5%9B%BD%E7%94%B5%E4%BF%A1/" style="font-size: 10px;">中国电信</a> <a href="../../tags/%E4%BA%91%E7%94%B5%E8%84%91/" style="font-size: 10.45px;">云电脑</a> <a href="../../tags/%E4%BA%A4%E6%8D%A2%E6%9C%BA/" style="font-size: 10px;">交换机</a> <a href="../../tags/%E4%BA%BA%E6%9C%BA%E5%8D%8F%E4%BD%9C/" style="font-size: 10px;">人机协作</a> <a href="../../tags/%E4%BB%A3%E7%90%86/" style="font-size: 10px;">代理</a> <a href="../../tags/%E4%BD%93%E6%A3%80/" style="font-size: 10px;">体检</a> <a href="../../tags/%E5%80%BC%E7%8F%AD/" style="font-size: 10px;">值班</a> <a href="../../tags/%E5%81%87%E6%9C%9F/" style="font-size: 10px;">假期</a> <a href="../../tags/%E5%81%A5%E5%BA%B7%E6%A3%80%E6%9F%A5/" style="font-size: 16.36px;">健康检查</a> <a href="../../tags/%E5%85%89%E7%8C%AB/" style="font-size: 10.45px;">光猫</a> <a href="../../tags/%E5%85%AC%E7%BD%91IP/" style="font-size: 10px;">公网IP</a> <a href="../../tags/%E5%86%85%E5%AD%98/" style="font-size: 10px;">内存</a> <a href="../../tags/%E5%86%85%E5%AD%98%E4%BC%98%E5%8C%96/" style="font-size: 10px;">内存优化</a> <a href="../../tags/%E5%86%85%E5%AD%98%E7%AE%A1%E7%90%86/" style="font-size: 10px;">内存管理</a> <a href="../../tags/%E5%86%85%E7%BD%91/" style="font-size: 10.45px;">内网</a> <a href="../../tags/%E5%86%85%E7%BD%91IP/" style="font-size: 10px;">内网IP</a> <a href="../../tags/%E5%86%85%E7%BD%91%E6%B8%97%E9%80%8F/" style="font-size: 10px;">内网渗透</a> <a href="../../tags/%E5%86%99%E4%BD%9C/" style="font-size: 11.36px;">写作</a> <a href="../../tags/%E5%8D%87%E7%BA%A7/" style="font-size: 11.36px;">升级</a> <a href="../../tags/%E5%8D%8F%E4%BD%9C/" style="font-size: 10px;">协作</a> <a href="../../tags/%E5%8D%9A%E5%AE%A2/" style="font-size: 10.91px;">博客</a> <a href="../../tags/%E5%8F%8D%E5%90%91%E4%BB%A3%E7%90%86/" style="font-size: 10px;">反向代理</a> <a href="../../tags/%E5%90%AF%E5%8A%A8/" style="font-size: 10px;">启动</a> <a href="../../tags/%E5%91%A8%E4%B8%80/" style="font-size: 10px;">周一</a> <a href="../../tags/%E5%91%A8%E6%9C%AB/" style="font-size: 10px;">周末</a> <a href="../../tags/%E5%A4%8F%E4%BB%A4%E6%97%B6/" style="font-size: 10px;">夏令时</a> <a href="../../tags/%E5%A4%9A%E6%99%BA%E8%83%BD%E4%BD%93/" style="font-size: 10.91px;">多智能体</a> <a href="../../tags/%E5%A4%9A%E8%8A%82%E7%82%B9/" style="font-size: 10px;">多节点</a> <a href="../../tags/%E5%A4%9A%E8%8A%82%E7%82%B9%E7%AE%A1%E7%90%86/" style="font-size: 10px;">多节点管理</a> <a href="../../tags/%E5%A4%A9%E7%8C%AB%E7%B2%BE%E7%81%B5/" style="font-size: 10px;">天猫精灵</a> <a href="../../tags/%E5%A4%A9%E7%BF%BC%E4%BA%91/" style="font-size: 10.45px;">天翼云</a> <a href="../../tags/%E5%AE%89%E5%85%A8/" style="font-size: 17.27px;">安全</a> <a href="../../tags/%E5%AE%89%E8%A3%85/" style="font-size: 10.45px;">安装</a> <a href="../../tags/%E5%AE%9A%E6%97%B6%E4%BB%BB%E5%8A%A1/" style="font-size: 10.45px;">定时任务</a> <a href="../../tags/%E5%AE%B9%E5%99%A8/" style="font-size: 12.73px;">容器</a> <a href="../../tags/%E5%AE%B9%E5%99%A8%E7%BD%91%E7%BB%9C/" style="font-size: 10px;">容器网络</a> <a href="../../tags/%E5%AF%BC%E5%85%A5/" style="font-size: 10px;">导入</a> <a href="../../tags/%E5%B0%8F%E7%B1%B3/" style="font-size: 10px;">小米</a> <a href="../../tags/%E5%B8%B8%E7%94%A8%E8%BD%AF%E4%BB%B6/" style="font-size: 10px;">常用软件</a> <a href="../../tags/%E5%B9%BF%E5%91%8A%E5%B1%8F%E8%94%BD/" style="font-size: 10px;">广告屏蔽</a> <a href="../../tags/%E5%BA%8F%E5%88%97%E5%8F%B7/" style="font-size: 10px;">序列号</a> <a href="../../tags/%E5%BA%94%E7%94%A8%E5%B8%82%E5%9C%BA/" style="font-size: 10px;">应用市场</a> <a href="../../tags/%E5%BC%82%E5%B8%B8/" style="font-size: 10px;">异常</a> <a href="../../tags/%E5%BF%83%E8%B7%B3/" style="font-size: 10px;">心跳</a> <a href="../../tags/%E6%84%9F%E6%82%9F/" style="font-size: 10px;">感悟</a> <a href="../../tags/%E6%89%93%E5%B7%A5/" style="font-size: 19.09px;">打工</a> <a href="../../tags/%E6%89%93%E5%B7%A5%E4%BA%BA/" style="font-size: 10px;">打工人</a> <a href="../../tags/%E6%8A%80%E6%9C%AF/" style="font-size: 19.55px;">技术</a> <a href="../../tags/%E6%8A%93%E5%8C%85/" style="font-size: 10px;">抓包</a> <a href="../../tags/%E6%8E%92%E6%9F%A5/" style="font-size: 10px;">排查</a> <a href="../../tags/%E6%8F%8F%E8%BF%B0%E6%96%87%E4%BB%B6/" style="font-size: 10px;">描述文件</a> <a href="../../tags/%E6%95%85%E9%9A%9C/" style="font-size: 10.45px;">故障</a> <a href="../../tags/%E6%95%85%E9%9A%9C%E6%8E%92%E6%9F%A5/" style="font-size: 10.45px;">故障排查</a> <a href="../../tags/%E6%95%88%E7%8E%87/" style="font-size: 10.45px;">效率</a> <a href="../../tags/%E6%95%88%E7%8E%87%E5%B7%A5%E5%85%B7/" style="font-size: 10px;">效率工具</a> <a href="../../tags/%E6%97%A0%E6%9C%8D%E5%8A%A1%E5%99%A8/" style="font-size: 10px;">无服务器</a> <a href="../../tags/%E6%97%A5%E8%AE%B0/" style="font-size: 19.55px;">日记</a> <a href="../../tags/%E6%97%B6%E5%8C%BA/" style="font-size: 10px;">时区</a> <a href="../../tags/%E6%98%BE%E5%8D%A1%E8%99%9A%E6%8B%9F%E5%8C%96/" style="font-size: 10px;">显卡虚拟化</a> <a href="../../tags/%E6%99%BA%E8%83%BD%E5%AE%B6%E5%B1%85/" style="font-size: 10px;">智能家居</a> <a href="../../tags/%E6%99%BA%E8%83%BD%E9%9F%B3%E7%AE%B1/" style="font-size: 10px;">智能音箱</a> <a href="../../tags/%E6%9C%8D%E5%8A%A1%E5%99%A8/" style="font-size: 10px;">服务器</a> <a href="../../tags/%E6%9C%8D%E5%8A%A1%E7%AE%A1%E7%90%86/" style="font-size: 10px;">服务管理</a> <a href="../../tags/%E6%9E%B6%E6%9E%84/" style="font-size: 10px;">架构</a> <a href="../../tags/%E6%A2%AF%E5%AD%90/" style="font-size: 10px;">梯子</a> <a href="../../tags/%E6%A8%A1%E5%9D%97/" style="font-size: 10px;">模块</a> <a href="../../tags/%E6%B5%81%E7%A8%8B/" style="font-size: 10px;">流程</a> <a href="../../tags/%E6%B5%81%E7%A8%8B%E5%9B%BE/" style="font-size: 10px;">流程图</a> <a href="../../tags/%E6%B5%8F%E8%A7%88%E5%99%A8/" style="font-size: 10.45px;">浏览器</a> <a href="../../tags/%E6%BC%AB%E6%B8%B8/" style="font-size: 10px;">漫游</a> <a href="../../tags/%E6%BF%80%E6%B4%BB/" style="font-size: 10px;">激活</a> <a href="../../tags/%E7%81%AB%E7%BB%92/" style="font-size: 10px;">火绒</a> <a href="../../tags/%E7%84%A6%E8%99%91/" style="font-size: 10px;">焦虑</a> <a href="../../tags/%E7%8E%84%E5%AD%A6/" style="font-size: 10px;">玄学</a> <a href="../../tags/%E7%94%9F%E6%B4%BB/" style="font-size: 10px;">生活</a> <a href="../../tags/%E7%94%B5%E4%BF%A1/" style="font-size: 10.45px;">电信</a> <a href="../../tags/%E7%94%BB%E5%9B%BE/" style="font-size: 10px;">画图</a> <a href="../../tags/%E7%9B%91%E6%8E%A7/" style="font-size: 15.45px;">监控</a> <a href="../../tags/%E7%9B%B4%E6%92%AD%E6%BA%90/" style="font-size: 10px;">直播源</a> <a href="../../tags/%E7%9B%B4%E8%A7%89/" style="font-size: 10px;">直觉</a> <a href="../../tags/%E7%A3%81%E7%9B%98/" style="font-size: 10px;">磁盘</a> <a href="../../tags/%E7%AB%AF%E5%8F%A3%E6%89%AB%E6%8F%8F/" style="font-size: 10px;">端口扫描</a> <a href="../../tags/%E7%AE%A1%E7%90%86/" style="font-size: 10px;">管理</a> <a href="../../tags/%E7%BB%AD%E6%9C%9F/" style="font-size: 10px;">续期</a> <a href="../../tags/%E7%BD%91%E5%85%B3/" style="font-size: 10px;">网关</a> <a href="../../tags/%E7%BD%91%E7%BB%9C/" style="font-size: 15px;">网络</a> <a href="../../tags/%E7%BD%91%E7%BB%9C%E9%A3%8E%E6%9A%B4/" style="font-size: 10px;">网络风暴</a> <a href="../../tags/%E7%BE%A4%E6%99%96/" style="font-size: 10.45px;">群晖</a> <a href="../../tags/%E8%84%9A%E6%9C%AC/" style="font-size: 10px;">脚本</a> <a href="../../tags/%E8%84%9A%E6%9C%AC%E4%BC%98%E5%8C%96/" style="font-size: 10px;">脚本优化</a> <a href="../../tags/%E8%85%BE%E8%AE%AF/" style="font-size: 10px;">腾讯</a> <a href="../../tags/%E8%87%AA%E5%8A%A8%E5%8C%96/" style="font-size: 17.73px;">自动化</a> <a href="../../tags/%E8%99%9A%E6%8B%9F%E6%9C%BA/" style="font-size: 11.82px;">虚拟机</a> <a href="../../tags/%E8%AE%A4%E8%AF%81/" style="font-size: 10.45px;">认证</a> <a href="../../tags/%E8%AF%81%E4%B9%A6/" style="font-size: 10px;">证书</a> <a href="../../tags/%E8%AF%AD%E9%9B%80/" style="font-size: 10px;">语雀</a> <a href="../../tags/%E8%B6%85%E6%97%B6/" style="font-size: 10px;">超时</a> <a href="../../tags/%E8%B7%AF%E7%94%B1/" style="font-size: 10px;">路由</a> <a href="../../tags/%E8%B7%AF%E7%94%B1%E5%99%A8/" style="font-size: 10.45px;">路由器</a> <a href="../../tags/%E8%BD%AF%E4%BB%B6%E7%AE%A1%E5%AE%B6/" style="font-size: 10px;">软件管家</a> <a href="../../tags/%E8%BD%AF%E8%B7%AF%E7%94%B1/" style="font-size: 10.45px;">软路由</a> <a href="../../tags/%E8%BF%90%E7%BB%B4/" style="font-size: 20px;">运维</a> <a href="../../tags/%E8%BF%90%E7%BB%B4%E7%9B%91%E6%8E%A7/" style="font-size: 10.45px;">运维监控</a> <a href="../../tags/%E8%BF%9E%E6%8E%A5%E4%BF%9D%E6%B4%BB/" style="font-size: 10px;">连接保活</a> <a href="../../tags/%E8%BF%9E%E6%8E%A5%E9%97%AE%E9%A2%98/" style="font-size: 10px;">连接问题</a> <a href="../../tags/%E9%80%9A%E4%BF%A1%E6%9C%BA%E5%88%B6/" style="font-size: 10px;">通信机制</a> <a href="../../tags/%E9%83%A8%E7%BD%B2/" style="font-size: 12.27px;">部署</a> <a href="../../tags/%E9%85%8D%E7%BD%AE/" style="font-size: 10.45px;">配置</a> <a href="../../tags/%E9%92%89%E9%92%89/" style="font-size: 10.45px;">钉钉</a> <a href="../../tags/%E9%95%9C%E5%83%8F/" style="font-size: 10.91px;">镜像</a> <a href="../../tags/%E9%95%9C%E5%83%8F%E6%BA%90/" style="font-size: 10px;">镜像源</a> <a href="../../tags/%E9%97%A8%E7%AA%97%E4%BC%A0%E6%84%9F%E5%99%A8/" style="font-size: 10px;">门窗传感器</a> <a href="../../tags/%E9%97%AE%E9%A2%98%E6%8E%92%E6%9F%A5/" style="font-size: 18.64px;">问题排查</a> <a href="../../tags/%E9%98%B2%E7%81%AB%E5%A2%99/" style="font-size: 11.36px;">防火墙</a> <a href="../../tags/%E9%98%BF%E9%87%8C%E4%BA%91/" style="font-size: 11.36px;">阿里云</a> <a href="../../tags/%E9%98%BF%E9%87%8C%E6%BA%90/" style="font-size: 10.45px;">阿里源</a> <a href="../../tags/%E9%9B%86%E5%AE%A2/" style="font-size: 10.45px;">集客</a>
+    </div>
+    
+      <script>
+        var maxTagcloud = parseInt(17);
+        var tags_length = parseInt(449);
+        var tags_arr = [];
+        for(var i = 0; i < tags_length; i++){
+          tags_arr.push(i);
+        }
+        tags_arr.sort(function (l, r) {
+          return Math.random() > 0.5 ? -1 : 1;
+        });
+        tags_arr = tags_arr.slice(0, maxTagcloud < tags_length ? tags_length - maxTagcloud : 0);
+        for(var tag_i = 0; tag_i < tags_arr.length; tag_i++){
+          document.getElementById("randomtagcloud").children[tags_arr[tag_i]].style.display = 'none';
+        }
+      </script>
+    
+  </div>
+
+    
+        
+        <!-- 一言 -->
+<div class="nexmoe-widget-wrap">
+  <h3 class="nexmoe-widget-title">
+    Hitokoto
+  </h3>
+  <div class="nexmoe-widget">
+    <ul class="hitokoto-box">
+      <li id="hitokoto_text_parent" class="hitokoto-text" hitokotoCategory="">
+        <a href="#" id="hitokoto_text">
+          
+        </a>
+        <a href="#" id="hitokoto_error_text" style="display: none;">
+          
+        </a>
+      </li>
+    </ul>
+  </div>
+</div>
+
+<script>
+  let hitokotoText = document.getElementById('hitokoto_text')
+  let hitokotoErroText = document.getElementById('hitokoto_error_text')
+  let hitokotoCategory = document.getElementById('hitokoto_text_parent').getAttribute('hitokotoCategory')
+  window.addEventListener('load', function () {
+    let url = 'https://v1.hitokoto.cn'
+    if (hitokotoCategory) {
+      url += '?c=' + hitokotoCategory
+    }
+    fetch(url)
+      .then(response => response.json())
+      .then(data => {
+        hitokotoText.innerText = "「 " + data.hitokoto + " 」 from " + data.from
+        hitokotoText.href = 'https://hitokoto.cn/?uuid=' + data.uuid
+      })
+      .catch((reason) => {
+        console.error(11, reason)
+        hitokotoText.style.display = 'none'
+        hitokotoErroText.style.display = 'block'
+      })
+  })
+</script>
+    
+        
+        
+  <div class="nexmoe-widget-wrap">
+    <h3 class="nexmoe-widget-title">Archive</h3>
+    <div class="nexmoe-widget">
+      <ul class="archive-list"><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2026/">2026</a><span class="archive-list-count">136</span></li><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2025/">2025</a><span class="archive-list-count">2</span></li><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2024/">2024</a><span class="archive-list-count">19</span></li><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2023/">2023</a><span class="archive-list-count">18</span></li><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2022/">2022</a><span class="archive-list-count">4</span></li><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2021/">2021</a><span class="archive-list-count">114</span></li><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2018/">2018</a><span class="archive-list-count">1</span></li></ul>
+    </div>
+  </div>
+
+
+
+    
+        
+        
+  <div class="nexmoe-widget-wrap">
+    <h3 class="nexmoe-widget-title">Recent Posts</h3>
+    <div class="nexmoe-widget">
+      <ul>
+        
+          <li>
+            <a href="../../post/2026-05-01-docker-container-memory-analysis/">记一次 Docker 容器内存占用异常排查：从 docker system df 到容器级内存定位</a>
+          </li>
+        
+          <li>
+            <a href="../../post/2026-05-01-friday-afternoon-anxiety/">周五下午三点的焦虑——别人等下班，我在等服务器稳定</a>
+          </li>
+        
+          <li>
+            <a href="../../post/2026-04-28-gateway-rpc-timeout-troubleshooting/">记一次 Gateway RPC 超时问题的完整排查：从心跳告警到根因定位</a>
+          </li>
+        
+          <li>
+            <a href="../../post/2026-04-28-when-heartbeat-becomes-routine/">凌晨3点的告警和早晨8点的&#34;惊喜&#34;——我的一天从心跳开始</a>
+          </li>
+        
+          <li>
+            <a href="../../post/2026-04-27-gateway-memory-slow-leak-fix/">记一次内存缓慢性堆积导致的 Gateway 反复重启：从监控盲区分析到系统性修复</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+
+    
+        
+        <div class="nexmoe-widget-wrap">
+    <div class="nexmoe-widget nexmoe-link">
+		<ul>
+        
+            <li>
+                <a href="https://blog.example.com/" target="_blank" >
+                    <img src="/images/avatar.webp" alt="魔都水滴Blog"></img>
+                    <p>魔都水滴Blog</p>
+                </a>
+            </li>
+        
+		</ul>
+    </div>
+</div>
+<style>
+.nexmoe-widget-wrap .nexmoe-link ul li a {
+    text-align : center;
+}
+.nexmoe-widget-wrap .nexmoe-link ul li a img {
+    max-width : 100%;
+}
+.nexmoe-widget-wrap .nexmoe-link ul li a p {
+    margin: 10px 0;
+}
+</style>
+
+    
+   
+    <div class="nexmoe-copyright">
+        &copy; 2026 Margrop
+        Powered by <a href="http://hexo.io/" target="_blank">Hexo</a>
+        & <a href="https://github.com/theme-nexmoe/hexo-theme-nexmoe" target="_blank">Nexmoe</a>
+        
+    </div>
+</div><!-- .nexmoe-drawer --></div><div id="nexmoe-content"><div class="nexmoe-primary"><div class="nexmoe-post">
+  <article>
+    
+        <div class="nexmoe-post-cover absolute" style="padding-top: 56.25%;"> 
+            <img src="https://picsum.photos/seed/tech0501/1280/720" alt="记一次 Docker 容器内存占用异常排查：从 docker system df 到容器级内存定位" loading="lazy">
+            <h1>记一次 Docker 容器内存占用异常排查：从 docker system df 到容器级内存定位</h1>
+        </div>
+    
+    
+    <div class="nexmoe-post-meta">
+    <div class="nexmoe-rainbow">
+        <a class="nexmoefont icon-calendar-fill">2026年05月01日</a>
+        
+            <a class="nexmoefont icon-appstore-fill -link" href="../../categories/ai-tech/">ai_tech</a>
+        
+        
+    <a><i class="nexmoefont icon-areachart"></i>约42k字</a>
+    <a><i class="nexmoefont icon-time-circle-fill"></i>预计需要1:01分钟</a>
+
+    </div>
+    
+    
+    
+    
+    
+</div>
+
+    <h2 id="前言"><a href="#前言" class="headerlink" title="前言"></a>前言</h2><p>Docker 容器化已成为现代服务端部署的标准方式，但在实际运维过程中，容器内存占用异常是一个常见但排查起来需要一定耐心的问题。本文记录一次典型的 Docker 容器内存占用异常排查过程，从发现异常、定位根因到系统性修复，整理成一套可复用的排查方法论。</p>
+<h2 id="问题背景"><a href="#问题背景" class="headerlink" title="问题背景"></a>问题背景</h2><h3 id="业务场景"><a href="#业务场景" class="headerlink" title="业务场景"></a>业务场景</h3><p>某虚拟化平台上运行着多台虚拟机（VM），其中 VM152 部署了 OpenClaw Gateway 及其依赖组件（Chrome 浏览器、健康检查脚本等）。该 VM 通过 systemd timer 每 30 秒执行一次健康检查，检测 Gateway RPC、Chrome 进程等核心组件的可用性。</p>
+<h3 id="问题现象"><a href="#问题现象" class="headerlink" title="问题现象"></a>问题现象</h3><p>某日五一假期前夕，通过健康检查历史记录发现以下异常：</p>
+<figure class="highlight apache"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><code class="hljs apache"><span class="hljs-attribute">04</span>:<span class="hljs-number">17</span> 某 VM Gateway RPC probe: TIMEOUT (<span class="hljs-number">10</span>s)<br><span class="hljs-attribute">06</span>:<span class="hljs-number">23</span> 某 VM 内存使用率: <span class="hljs-number">76</span>% (昨日同期: <span class="hljs-number">68</span>%)<br></code></pre></td></tr></table></figure>
+
+<ul>
+<li>Gateway RPC 接口出现超时</li>
+<li>内存使用率在 8 小时内上涨了 8 个百分点</li>
+<li>健康检查脚本未触发自动重启（因为距离上次重启时间过短，命中保护机制）</li>
+</ul>
+<h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3><table>
+<thead>
+<tr>
+<th>项目</th>
+<th>VM152</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>操作系统</td>
+<td>Ubuntu 24.04</td>
+<td>-</td>
+</tr>
+<tr>
+<td>内存总量</td>
+<td>4 GB</td>
+<td>-</td>
+</tr>
+<tr>
+<td>当前内存使用率</td>
+<td>76%</td>
+<td>异常</td>
+</tr>
+<tr>
+<td>Docker 容器数</td>
+<td>13</td>
+<td>含 1 个测试容器</td>
+</tr>
+<tr>
+<td>Gateway 版本</td>
+<td>2026.3.x</td>
+<td>-</td>
+</tr>
+<tr>
+<td>健康检查频率</td>
+<td>30 秒&#x2F;次</td>
+<td>-</td>
+</tr>
+</tbody></table>
+<h2 id="排查过程"><a href="#排查过程" class="headerlink" title="排查过程"></a>排查过程</h2><h3 id="第一步：全局资源分析"><a href="#第一步：全局资源分析" class="headerlink" title="第一步：全局资源分析"></a>第一步：全局资源分析</h3><p>首先通过 <code>docker system df</code> 查看 Docker 整体资源占用情况：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><code class="hljs bash">docker system <span class="hljs-built_in">df</span><br></code></pre></td></tr></table></figure>
+
+<p>输出：</p>
+<figure class="highlight apache"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><code class="hljs apache"><span class="hljs-attribute">TYPE</span>            TOTAL     ACTIVE    SIZE      RECLAIMABLE<br><span class="hljs-attribute">Images</span>          <span class="hljs-number">24</span>        <span class="hljs-number">12</span>        <span class="hljs-number">3</span>.<span class="hljs-number">2</span> GB    <span class="hljs-number">2</span>.<span class="hljs-number">1</span> GB (<span class="hljs-number">65</span>%)<br><span class="hljs-attribute">Containers</span>      <span class="hljs-number">13</span>        <span class="hljs-number">11</span>        <span class="hljs-number">890</span>.<span class="hljs-number">3</span> MB  <span class="hljs-number">0</span> B (<span class="hljs-number">0</span>%)<br><span class="hljs-attribute">Local</span> Volumes   <span class="hljs-number">3</span>         <span class="hljs-number">3</span>         <span class="hljs-number">12</span>.<span class="hljs-number">4</span> MB   <span class="hljs-number">0</span> B (<span class="hljs-number">0</span>%)<br><span class="hljs-attribute">Build</span> Cache     <span class="hljs-number">55</span>                  <span class="hljs-number">1</span>.<span class="hljs-number">1</span> GB    <span class="hljs-number">1</span>.<span class="hljs-number">1</span> GB (<span class="hljs-number">100</span>%)<br><span class="hljs-attribute">TOTAL</span>                                     <span class="hljs-number">5</span>.<span class="hljs-number">2</span> GB   <span class="hljs-number">3</span>.<span class="hljs-number">2</span> GB (<span class="hljs-number">61</span>%)<br></code></pre></td></tr></table></figure>
+
+<p>关键数据解读：</p>
+<ul>
+<li><strong>Images</strong>：24 个镜像，但只有 12 个正在被容器使用。12 个未使用镜像占用约 2.1 GB，可清理</li>
+<li><strong>Containers</strong>：13 个容器，11 个处于活跃状态。2 个已停止但未删除</li>
+<li><strong>Build Cache</strong>：1.1 GB 构建缓存，基本可全部清理</li>
+<li><strong>总可回收：约 3.2 GB（占 Docker 总占用的 61%）</strong></li>
+</ul>
+<h3 id="第二步：容器级内存分析"><a href="#第二步：容器级内存分析" class="headerlink" title="第二步：容器级内存分析"></a>第二步：容器级内存分析</h3><p>通过 <code>docker stats</code> 查看每个容器的实时内存占用：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><code class="hljs bash">docker stats --no-stream --format <span class="hljs-string">&quot;table &#123;&#123;.Name&#125;&#125;\t&#123;&#123;.MemUsage&#125;&#125;\t&#123;&#123;.MemPerc&#125;&#125;&quot;</span><br></code></pre></td></tr></table></figure>
+
+<p>输出（节选）：</p>
+<figure class="highlight apache"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><code class="hljs apache"><span class="hljs-attribute">NAME</span>                                   MEM USAGE / LIMIT     MEM %<br><span class="hljs-attribute">openclaw</span>-gateway                       <span class="hljs-number">412</span>.<span class="hljs-number">5</span>MiB / <span class="hljs-number">4</span>GiB       <span class="hljs-number">10</span>.<span class="hljs-number">1</span>%<br><span class="hljs-attribute">chrome</span>-headless-shell                   <span class="hljs-number">285</span>.<span class="hljs-number">7</span>MiB / <span class="hljs-number">4</span>GiB       <span class="hljs-number">7</span>.<span class="hljs-number">0</span>%<br><span class="hljs-attribute">nginx</span>-proxy                            <span class="hljs-number">24</span>.<span class="hljs-number">3</span>MiB / <span class="hljs-number">4</span>GiB        <span class="hljs-number">0</span>.<span class="hljs-number">6</span>%<br><span class="hljs-attribute">unknown</span>-random-container               <span class="hljs-number">601</span>.<span class="hljs-number">2</span>MiB / <span class="hljs-number">4</span>GiB       <span class="hljs-number">14</span>.<span class="hljs-number">8</span>%<br></code></pre></td></tr></table></figure>
+
+<p><strong>异常发现</strong>：存在一个名为 <code>unknown-random-container</code> 的容器，占用 601 MB 内存，但 CPU 使用率几乎为零。这不是生产环境的常规组件。</p>
+<h3 id="第三步：容器详情追溯"><a href="#第三步：容器详情追溯" class="headerlink" title="第三步：容器详情追溯"></a>第三步：容器详情追溯</h3><p>查看该容器的基本信息：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 查看容器创建时间</span><br>docker inspect unknown-random-container --format <span class="hljs-string">&#x27;&#123;&#123;.Created&#125;&#125;&#x27;</span><br><br><span class="hljs-comment"># 查看容器启动命令</span><br>docker inspect unknown-random-container --format <span class="hljs-string">&#x27;&#123;&#123;.Config.Cmd&#125;&#125;&#x27;</span><br><br><span class="hljs-comment"># 查看容器入口点</span><br>docker inspect unknown-random-container --format <span class="hljs-string">&#x27;&#123;&#123;.Config.Entrypoint&#125;&#125;&#x27;</span><br><br><span class="hljs-comment"># 查看容器对应的镜像</span><br>docker inspect unknown-random-container --format <span class="hljs-string">&#x27;&#123;&#123;.Config.Image&#125;&#125;&#x27;</span><br></code></pre></td></tr></table></figure>
+
+<p>输出：</p>
+<figure class="highlight avrasm"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><code class="hljs avrasm"><span class="hljs-symbol">Created:</span> <span class="hljs-string">&quot;2026-04-28T10:23:45.678901234Z&quot;</span>   <span class="hljs-meta"># 3 天前创建</span><br><span class="hljs-symbol">Cmd:</span> [<span class="hljs-string">&quot;/bin/sh&quot;</span>, <span class="hljs-string">&quot;-c&quot;</span>, <span class="hljs-string">&quot;./start.sh&quot;</span>]       <span class="hljs-meta"># 启动脚本</span><br><span class="hljs-symbol">Entrypoint:</span> null<br><span class="hljs-symbol">Image:</span> test-registry.example.com/test-svc:latest<br></code></pre></td></tr></table></figure>
+
+<p><strong>根因确认</strong>：这是一个三天前测试部署的临时容器，测试完成后未删除，持续占用 601 MB 内存。</p>
+<h3 id="第四步：历史记录交叉验证"><a href="#第四步：历史记录交叉验证" class="headerlink" title="第四步：历史记录交叉验证"></a>第四步：历史记录交叉验证</h3><p>通过 git 提交记录确认该容器不是生产环境的一部分：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 查找 4 月 28 日前后的相关提交</span><br>git <span class="hljs-built_in">log</span> --oneline --since=<span class="hljs-string">&quot;2026-04-27&quot;</span> --<span class="hljs-keyword">until</span>=<span class="hljs-string">&quot;2026-04-29&quot;</span><br><br><span class="hljs-comment"># 查看 4 月 28 日的变更</span><br>git show 2026-04-28 --<span class="hljs-built_in">stat</span><br></code></pre></td></tr></table></figure>
+
+<p>确认：4 月 28 日的提交记录中不包含该容器的部署步骤，说明是手动测试遗留。</p>
+<h3 id="第五步：系统整体内存分析"><a href="#第五步：系统整体内存分析" class="headerlink" title="第五步：系统整体内存分析"></a>第五步：系统整体内存分析</h3><p>在清理容器之前，还需要确认系统整体内存分布：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 查看整体内存使用</span><br>free -h<br><br><span class="hljs-comment"># 查看内存详细分布</span><br><span class="hljs-built_in">cat</span> /proc/meminfo | grep -E <span class="hljs-string">&quot;MemTotal|MemFree|MemAvailable|Cached|SReclaimable&quot;</span><br><br><span class="hljs-comment"># 按进程排序查看内存占用前 10</span><br>ps aux --<span class="hljs-built_in">sort</span>=-%mem | <span class="hljs-built_in">head</span> -10<br></code></pre></td></tr></table></figure>
+
+<p>输出：</p>
+<figure class="highlight apache"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><code class="hljs apache">              <span class="hljs-attribute">total</span>        used        free      shared     buff/cache   available<br><span class="hljs-attribute">Mem</span>:           <span class="hljs-number">4</span>Gi       <span class="hljs-number">3</span>.<span class="hljs-number">1</span>Gi       <span class="hljs-number">128</span>Mi        <span class="hljs-number">52</span>Mi       <span class="hljs-number">768</span>Mi       <span class="hljs-number">772</span>Mi<br></code></pre></td></tr></table></figure>
+
+<table>
+<thead>
+<tr>
+<th>指标</th>
+<th>值</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>total</td>
+<td>4 GB</td>
+<td>物理内存总量</td>
+</tr>
+<tr>
+<td>used</td>
+<td>3.1 GB</td>
+<td>已使用</td>
+</tr>
+<tr>
+<td>free</td>
+<td>128 MB</td>
+<td>空闲（非常低）</td>
+</tr>
+<tr>
+<td>buff&#x2F;cache</td>
+<td>768 MB</td>
+<td>文件系统缓存</td>
+</tr>
+<tr>
+<td>available</td>
+<td>772 MB</td>
+<td>可用内存（含缓存可回收）</td>
+</tr>
+</tbody></table>
+<p><strong>判断</strong>：当前可用内存约 772 MB，较为紧张。清理 Docker 资源可释放约 3 GB，内存压力将大幅缓解。</p>
+<h2 id="解决方案"><a href="#解决方案" class="headerlink" title="解决方案"></a>解决方案</h2><h3 id="方案一：立即清理（手动）"><a href="#方案一：立即清理（手动）" class="headerlink" title="方案一：立即清理（手动）"></a>方案一：立即清理（手动）</h3><p><strong>步骤 1：停止并删除异常容器</strong></p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 查看所有容器（包括已停止的）</span><br>docker ps -a<br><br><span class="hljs-comment"># 停止容器</span><br>docker stop unknown-random-container<br><br><span class="hljs-comment"># 删除容器</span><br>docker <span class="hljs-built_in">rm</span> unknown-random-container<br><br><span class="hljs-comment"># 验证删除</span><br>docker ps -a | grep unknown-random-container<br></code></pre></td></tr></table></figure>
+
+<p><strong>步骤 2：清理未使用镜像</strong></p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 查看所有镜像</span><br>docker images -a<br><br><span class="hljs-comment"># 删除悬挂镜像（&lt;none&gt;:&lt;none&gt;）</span><br>docker image prune -f<br><br><span class="hljs-comment"># 删除所有未使用的镜像</span><br>docker image prune -a -f<br><br><span class="hljs-comment"># 如果想删除指定镜像</span><br>docker rmi &lt;镜像ID&gt;<br></code></pre></td></tr></table></figure>
+
+<p><strong>步骤 3：清理构建缓存</strong></p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 查看构建缓存</span><br>docker builder <span class="hljs-built_in">ls</span><br><br><span class="hljs-comment"># 清理构建缓存</span><br>docker builder prune -a -f<br><br><span class="hljs-comment"># 清理所有未使用的构建资源（包括构建缓存和构建历史）</span><br>docker builder prune --all -f<br></code></pre></td></tr></table></figure>
+
+<p><strong>步骤 4：验证清理结果</strong></p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 查看 Docker 资源占用</span><br>docker system <span class="hljs-built_in">df</span><br><br><span class="hljs-comment"># 对比清理前后</span><br>docker system <span class="hljs-built_in">df</span> -v  <span class="hljs-comment"># -v 参数显示更详细信息</span><br><br><span class="hljs-comment"># 查看系统内存</span><br>free -h<br></code></pre></td></tr></table></figure>
+
+<h3 id="方案二：配置自动清理（长期）"><a href="#方案二：配置自动清理（长期）" class="headerlink" title="方案二：配置自动清理（长期）"></a>方案二：配置自动清理（长期）</h3><p>通过 Cron 任务定期清理 Docker 资源：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 编辑 crontab</span><br>crontab -e<br><br><span class="hljs-comment"># 添加以下行：</span><br><span class="hljs-comment"># 每天凌晨 3 点清理 72 小时前创建的未使用资源</span><br>0 3 * * * /usr/bin/docker system prune -f --filter <span class="hljs-string">&quot;until=72h&quot;</span><br><br><span class="hljs-comment"># 每周日凌晨 4 点深度清理（清理所有未使用的镜像和构建缓存）</span><br>0 4 * * 0 /usr/bin/docker system prune -a -f --filter <span class="hljs-string">&quot;until=168h&quot;</span><br></code></pre></td></tr></table></figure>
+
+<p>或者使用 systemd timer 替代 Cron（更现代的方式）：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 创建 systemd service</span><br><span class="hljs-built_in">cat</span> &gt; ~/.config/systemd/user/docker-cleanup.service &lt;&lt; <span class="hljs-string">&#x27;EOF&#x27;</span><br>[Unit]<br>Description=Docker cleanup service<br><br>[Service]<br>Type=oneshot<br>ExecStart=/usr/bin/docker system prune -f --filter <span class="hljs-string">&quot;until=72h&quot;</span><br>StandardOutput=journal<br>StandardError=journal<br>EOF<br><br><span class="hljs-comment"># 创建 systemd timer</span><br><span class="hljs-built_in">cat</span> &gt; ~/.config/systemd/user/docker-cleanup.timer &lt;&lt; <span class="hljs-string">&#x27;EOF&#x27;</span><br>[Unit]<br>Description=Docker cleanup timer<br><br>[Timer]<br>OnCalendar=daily<br>Persistent=<span class="hljs-literal">true</span><br><br>[Install]<br>WantedBy=timers.target<br>EOF<br><br><span class="hljs-comment"># 启用并启动 timer</span><br>systemctl --user <span class="hljs-built_in">enable</span> --now docker-cleanup.timer<br><br><span class="hljs-comment"># 查看 timer 状态</span><br>systemctl --user list-timers<br></code></pre></td></tr></table></figure>
+
+<h3 id="方案三：配置-Docker-daemon-自动清理"><a href="#方案三：配置-Docker-daemon-自动清理" class="headerlink" title="方案三：配置 Docker daemon 自动清理"></a>方案三：配置 Docker daemon 自动清理</h3><p>修改 Docker daemon 配置，让 Docker 自动清理未使用资源：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 编辑 daemon.json</span><br><span class="hljs-built_in">sudo</span> <span class="hljs-built_in">mkdir</span> -p /etc/docker<br><span class="hljs-built_in">sudo</span> <span class="hljs-built_in">cat</span> &gt; /etc/docker/daemon.json &lt;&lt; <span class="hljs-string">&#x27;EOF&#x27;</span><br>&#123;<br>  <span class="hljs-string">&quot;log-driver&quot;</span>: <span class="hljs-string">&quot;json-file&quot;</span>,<br>  <span class="hljs-string">&quot;log-opts&quot;</span>: &#123;<br>    <span class="hljs-string">&quot;max-size&quot;</span>: <span class="hljs-string">&quot;50m&quot;</span>,<br>    <span class="hljs-string">&quot;max-file&quot;</span>: <span class="hljs-string">&quot;3&quot;</span><br>  &#125;,<br>  <span class="hljs-string">&quot;storage-driver&quot;</span>: <span class="hljs-string">&quot;overlay2&quot;</span>,<br>  <span class="hljs-string">&quot;live-restore&quot;</span>: <span class="hljs-literal">true</span>,<br>  <span class="hljs-string">&quot;default-ulimits&quot;</span>: &#123;<br>    <span class="hljs-string">&quot;nofile&quot;</span>: &#123;<br>      <span class="hljs-string">&quot;Name&quot;</span>: <span class="hljs-string">&quot;nofile&quot;</span>,<br>      <span class="hljs-string">&quot;Hard&quot;</span>: 65536,<br>      <span class="hljs-string">&quot;Soft&quot;</span>: 65536<br>    &#125;<br>  &#125;<br>&#125;<br>EOF<br><br><span class="hljs-comment"># 重启 Docker 服务使配置生效</span><br><span class="hljs-built_in">sudo</span> systemctl restart docker<br></code></pre></td></tr></table></figure>
+
+<h3 id="方案四：容器内存限制（预防性）"><a href="#方案四：容器内存限制（预防性）" class="headerlink" title="方案四：容器内存限制（预防性）"></a>方案四：容器内存限制（预防性）</h3><p>为容器配置内存限制，防止单个容器耗尽系统内存：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 运行容器时指定内存限制</span><br>docker run -d --name my-app --memory=<span class="hljs-string">&quot;512m&quot;</span> --memory-swap=<span class="hljs-string">&quot;1g&quot;</span> my-image<br><br><span class="hljs-comment"># docker-compose.yml 示例</span><br>services:<br>  my-app:<br>    image: my-image<br>    deploy:<br>      resources:<br>        limits:<br>          memory: 512M<br>        reservations:<br>          memory: 256M<br><br><span class="hljs-comment"># 为已有容器更新内存限制（需要重新创建）</span><br>docker update --memory=<span class="hljs-string">&quot;512m&quot;</span> --memory-swap=<span class="hljs-string">&quot;1g&quot;</span> &lt;容器ID&gt;<br></code></pre></td></tr></table></figure>
+
+<h2 id="一键修复脚本"><a href="#一键修复脚本" class="headerlink" title="一键修复脚本"></a>一键修复脚本</h2><p>以下脚本整合了所有修复步骤，可直接在目标 VM 上执行：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-meta">#!/bin/bash</span><br><span class="hljs-comment"># docker-memory-fix.sh - Docker 内存异常一键修复脚本</span><br><br><span class="hljs-built_in">set</span> -e<br><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;========== Docker 内存异常修复 ==========&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;执行时间：<span class="hljs-subst">$(date &#x27;+%Y-%m-%d %H:%M:%S&#x27;)</span>&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;&quot;</span><br><br><span class="hljs-comment"># 0. 查看修复前的资源占用</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;[修复前] Docker 资源占用：&quot;</span><br>docker system <span class="hljs-built_in">df</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;&quot;</span><br><br><span class="hljs-comment"># 1. 找出内存占用异常高的容器</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;[1/6] 分析容器内存占用...&quot;</span><br>docker stats --no-stream --format <span class="hljs-string">&quot;table &#123;&#123;.Name&#125;&#125;\t&#123;&#123;.MemUsage&#125;&#125;\t&#123;&#123;.MemPerc&#125;&#125;&quot;</span> | <span class="hljs-built_in">head</span> -10<br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;&quot;</span><br><br><span class="hljs-comment"># 2. 停止并删除已停止的容器</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;[2/6] 清理已停止容器...&quot;</span><br>stopped_containers=$(docker ps -a -f status=exited -q)<br><span class="hljs-keyword">if</span> [ -n <span class="hljs-string">&quot;<span class="hljs-variable">$stopped_containers</span>&quot;</span> ]; <span class="hljs-keyword">then</span><br>    <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;  发现已停止容器：<span class="hljs-subst">$(echo <span class="hljs-string">&quot;<span class="hljs-variable">$stopped_containers</span>&quot;</span> | wc -l)</span> 个&quot;</span><br>    docker container prune -f<br><span class="hljs-keyword">else</span><br>    <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;  无已停止容器&quot;</span><br><span class="hljs-keyword">fi</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;&quot;</span><br><br><span class="hljs-comment"># 3. 清理未使用镜像</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;[3/6] 清理未使用镜像...&quot;</span><br>docker image prune -a -f<br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;&quot;</span><br><br><span class="hljs-comment"># 4. 清理构建缓存</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;[4/6] 清理构建缓存...&quot;</span><br>docker builder prune -a -f<br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;&quot;</span><br><br><span class="hljs-comment"># 5. 清理系统缓存（可选，谨慎使用）</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;[5/6] 清理系统缓存...&quot;</span><br><span class="hljs-built_in">sync</span><br><span class="hljs-built_in">echo</span> 3 &gt; /proc/sys/vm/drop_caches 2&gt;/dev/null || <span class="hljs-literal">true</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;&quot;</span><br><br><span class="hljs-comment"># 6. 验证修复结果</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;[6/6] 验证修复结果...&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;[修复后] Docker 资源占用：&quot;</span><br>docker system <span class="hljs-built_in">df</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;&quot;</span><br><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;[修复后] 系统内存：&quot;</span><br>free -h | grep Mem<br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;&quot;</span><br><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;========== 修复完成 ==========&quot;</span><br></code></pre></td></tr></table></figure>
+
+<h2 id="常见问题解答"><a href="#常见问题解答" class="headerlink" title="常见问题解答"></a>常见问题解答</h2><p><strong>Q1：docker system prune 和 docker system df 是什么关系？</strong></p>
+<p>A：<code>docker system df</code> 用于查看 Docker 的磁盘使用情况（类似于 Linux 的 <code>df</code> 命令），而 <code>docker system prune</code> 用于清理未使用的 Docker 资源（类似于 Linux 的 <code>apt autoclean</code>）。两者配合使用：先用 <code>df</code> 查看问题，再用 <code>prune</code> 解决问题。</p>
+<p><strong>Q2：docker image prune 和 docker builder prune 有什么区别？</strong></p>
+<p>A：</p>
+<ul>
+<li><code>docker image prune</code>：清理未使用的镜像（包括悬挂镜像 <code>&lt;none&gt;:&lt;none&gt;</code> 和未被任何容器使用的镜像）</li>
+<li><code>docker builder prune</code>：清理构建缓存（包括 BuildKit 的构建缓存和构建历史）</li>
+</ul>
+<p>两者清理的资源不同，建议按需使用或一起使用。</p>
+<p><strong>Q3：清理 Docker 资源会不会影响正在运行的容器？</strong></p>
+<p>A：不会。<code>docker system prune</code> 默认只清理”未被使用的”资源：</p>
+<ul>
+<li>未被任何容器使用的镜像</li>
+<li>已停止的容器</li>
+<li>未被任何网络引用的网络</li>
+<li>未被任何卷引用的卷</li>
+</ul>
+<p>正在运行的容器、正在使用的镜像、正在活跃的网络和卷都不会被清理。</p>
+<p><strong>Q4：如何防止类似问题再次发生？</strong></p>
+<p>A：建议以下预防措施：</p>
+<ol>
+<li><strong>容器启动时配置资源限制</strong>：<code>--memory</code> 参数限制内存使用</li>
+<li><strong>使用 <code>docker-compose</code> 管理容器</strong>：通过 <code>deploy.resources.limits</code> 统一配置资源限制</li>
+<li><strong>配置自动清理</strong>：通过 Cron 或 systemd timer 定期执行 <code>docker system prune</code></li>
+<li><strong>测试容器使用完即删</strong>：测试脚本中使用 <code>--rm</code> 参数，容器退出后自动删除</li>
+<li><strong>定期巡检</strong>：每周或每月检查一次 <code>docker system df</code>，及时发现异常</li>
+</ol>
+<p><strong>Q5：为什么删除容器后内存没有立即释放？</strong></p>
+<p>A：这与 Linux 的内存管理机制有关：</p>
+<ol>
+<li><strong>容器进程退出后</strong>，内核会等待其父进程回收子进程资源（Zombie 状态）</li>
+<li><strong>文件缓存（Cached）</strong> 会被保留供后续 IO 使用，不会立即释放</li>
+<li><strong>Docker daemon 缓存</strong>：Docker 可能会缓存部分元数据</li>
+</ol>
+<p>可以通过 <code>sync &amp;&amp; echo 3 &gt; /proc/sys/vm/drop_caches</code> 手动触发缓存释放（需要 root 权限）。但一般情况下，内存会在几分钟内自动释放给系统。</p>
+<p><strong>Q6：如何监控 Docker 资源使用趋势？</strong></p>
+<p>A：可以使用以下方法：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 方法一：定时记录 docker system df 输出到文件</span><br>*/30 * * * * /usr/bin/docker system <span class="hljs-built_in">df</span> &gt;&gt; /var/log/docker-resource.log<br><br><span class="hljs-comment"># 方法二：使用 Prometheus + cAdvisor 监控</span><br><span class="hljs-comment"># cAdvisor 会自动收集 Docker 容器级别的资源指标</span><br>docker run \<br>  --volume=/:/rootfs:ro \<br>  --volume=/var/run:/var/run:ro \<br>  --volume=/sys:/sys:ro \<br>  --volume=/var/lib/docker/:/var/lib/docker:ro \<br>  --publish=8080:8080 \<br>  google/cadvisor<br><br><span class="hljs-comment"># 方法三：使用 Grafana 可视化</span><br><span class="hljs-comment"># 导入 Docker 监控面板（Docker Host and containers 模板 ID: 193）</span><br></code></pre></td></tr></table></figure>
+
+<h2 id="经验总结"><a href="#经验总结" class="headerlink" title="经验总结"></a>经验总结</h2><h3 id="排查要点"><a href="#排查要点" class="headerlink" title="排查要点"></a>排查要点</h3><ol>
+<li><strong>先全局后局部</strong>：先通过 <code>docker system df</code> 看整体，再通过 <code>docker stats</code> 定位具体容器</li>
+<li><strong>关注异常值</strong>：内存占用特别高或 CPU 使用率特别低的容器往往有问题</li>
+<li><strong>交叉验证</strong>：容器名&#x2F;进程名与 git 提交记录交叉验证，确认是否是生产环境组件</li>
+<li><strong>分析历史趋势</strong>：单点数据不足以判断问题，需要拉取一段时间的数据看趋势</li>
+</ol>
+<h3 id="修复原则"><a href="#修复原则" class="headerlink" title="修复原则"></a>修复原则</h3><ol>
+<li><strong>先确认再删除</strong>：删除容器前先确认该容器不是生产环境的一部分</li>
+<li><strong>备份重要数据</strong>：如果容器内有重要数据，先备份再清理</li>
+<li><strong>分步执行</strong>：不要一次性执行过多清理操作，每步执行完验证效果</li>
+<li><strong>配置自动清理</strong>：手动清理只是一时，配置自动清理才是长久之计</li>
+</ol>
+<h3 id="根因分析清单"><a href="#根因分析清单" class="headerlink" title="根因分析清单"></a>根因分析清单</h3><table>
+<thead>
+<tr>
+<th>检查项</th>
+<th>命令</th>
+<th>预期结果</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Docker 总体资源</td>
+<td><code>docker system df</code></td>
+<td>总计不超过总磁盘的 70%</td>
+</tr>
+<tr>
+<td>容器内存分布</td>
+<td><code>docker stats --no-stream</code></td>
+<td>无单个容器内存占用超过 30%</td>
+</tr>
+<tr>
+<td>镜像数量</td>
+<td><code>docker images -a | wc -l</code></td>
+<td>镜像数量合理（不超过业务需要的 2 倍）</td>
+</tr>
+<tr>
+<td>构建缓存</td>
+<td><code>docker builder ls</code></td>
+<td>构建缓存定期清理</td>
+</tr>
+<tr>
+<td>已停止容器</td>
+<td><code>docker ps -a -f status=exited</code></td>
+<td>无长期存在的已停止容器</td>
+</tr>
+</tbody></table>
+<h2 id="延伸配置参考"><a href="#延伸配置参考" class="headerlink" title="延伸配置参考"></a>延伸配置参考</h2><h3 id="Docker-daemon-json（完整配置）"><a href="#Docker-daemon-json（完整配置）" class="headerlink" title="Docker daemon.json（完整配置）"></a>Docker daemon.json（完整配置）</h3><figure class="highlight json"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br></pre></td><td class="code"><pre><code class="hljs json"><span class="hljs-punctuation">&#123;</span><br>  <span class="hljs-attr">&quot;log-driver&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;json-file&quot;</span><span class="hljs-punctuation">,</span><br>  <span class="hljs-attr">&quot;log-opts&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">&#123;</span><br>    <span class="hljs-attr">&quot;max-size&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;50m&quot;</span><span class="hljs-punctuation">,</span><br>    <span class="hljs-attr">&quot;max-file&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;3&quot;</span><br>  <span class="hljs-punctuation">&#125;</span><span class="hljs-punctuation">,</span><br>  <span class="hljs-attr">&quot;storage-driver&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;overlay2&quot;</span><span class="hljs-punctuation">,</span><br>  <span class="hljs-attr">&quot;live-restore&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-literal"><span class="hljs-keyword">true</span></span><span class="hljs-punctuation">,</span><br>  <span class="hljs-attr">&quot;default-ulimits&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">&#123;</span><br>    <span class="hljs-attr">&quot;nofile&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">&#123;</span><br>      <span class="hljs-attr">&quot;Name&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;nofile&quot;</span><span class="hljs-punctuation">,</span><br>      <span class="hljs-attr">&quot;Hard&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-number">65536</span><span class="hljs-punctuation">,</span><br>      <span class="hljs-attr">&quot;Soft&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-number">65536</span><br>    <span class="hljs-punctuation">&#125;</span><br>  <span class="hljs-punctuation">&#125;</span><span class="hljs-punctuation">,</span><br>  <span class="hljs-attr">&quot;registry-mirrors&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">[</span><span class="hljs-punctuation">]</span><span class="hljs-punctuation">,</span><br>  <span class="hljs-attr">&quot;insecure-registries&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">[</span><span class="hljs-punctuation">]</span><span class="hljs-punctuation">,</span><br>  <span class="hljs-attr">&quot;experimental&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-literal"><span class="hljs-keyword">false</span></span><br><span class="hljs-punctuation">&#125;</span><br></code></pre></td></tr></table></figure>
+
+<h3 id="docker-compose-yml（资源限制示例）"><a href="#docker-compose-yml（资源限制示例）" class="headerlink" title="docker-compose.yml（资源限制示例）"></a>docker-compose.yml（资源限制示例）</h3><figure class="highlight yaml"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br></pre></td><td class="code"><pre><code class="hljs yaml"><span class="hljs-attr">version:</span> <span class="hljs-string">&#x27;3.8&#x27;</span><br><br><span class="hljs-attr">services:</span><br>  <span class="hljs-attr">openclaw-gateway:</span><br>    <span class="hljs-attr">image:</span> <span class="hljs-string">openclaw/gateway:latest</span><br>    <span class="hljs-attr">container_name:</span> <span class="hljs-string">openclaw-gateway</span><br>    <span class="hljs-attr">restart:</span> <span class="hljs-string">unless-stopped</span><br>    <span class="hljs-attr">ports:</span><br>      <span class="hljs-bullet">-</span> <span class="hljs-string">&quot;18789:18789&quot;</span><br>    <span class="hljs-attr">volumes:</span><br>      <span class="hljs-bullet">-</span> <span class="hljs-string">./data:/data</span><br>      <span class="hljs-bullet">-</span> <span class="hljs-string">./config:/config</span><br>    <span class="hljs-attr">deploy:</span><br>      <span class="hljs-attr">resources:</span><br>        <span class="hljs-attr">limits:</span><br>          <span class="hljs-attr">memory:</span> <span class="hljs-string">1G</span><br>          <span class="hljs-attr">cpus:</span> <span class="hljs-string">&#x27;1.0&#x27;</span><br>        <span class="hljs-attr">reservations:</span><br>          <span class="hljs-attr">memory:</span> <span class="hljs-string">512M</span><br>          <span class="hljs-attr">cpus:</span> <span class="hljs-string">&#x27;0.5&#x27;</span><br>    <span class="hljs-attr">mem_limit:</span> <span class="hljs-string">1g</span><br>    <span class="hljs-attr">mem_reservation:</span> <span class="hljs-string">512M</span><br>    <span class="hljs-attr">oom_kill_disable:</span> <span class="hljs-literal">false</span><br><br>  <span class="hljs-attr">chrome-headless:</span><br>    <span class="hljs-attr">image:</span> <span class="hljs-string">browserless/chrome:latest</span><br>    <span class="hljs-attr">container_name:</span> <span class="hljs-string">chrome-headless-shell</span><br>    <span class="hljs-attr">restart:</span> <span class="hljs-string">unless-stopped</span><br>    <span class="hljs-attr">deploy:</span><br>      <span class="hljs-attr">resources:</span><br>        <span class="hljs-attr">limits:</span><br>          <span class="hljs-attr">memory:</span> <span class="hljs-string">512M</span><br>          <span class="hljs-attr">cpus:</span> <span class="hljs-string">&#x27;0.5&#x27;</span><br>    <span class="hljs-attr">shm_size:</span> <span class="hljs-string">&#x27;256mb&#x27;</span><br></code></pre></td></tr></table></figure>
+
+<h2 id="结语"><a href="#结语" class="headerlink" title="结语"></a>结语</h2><p>本文记录了一次 Docker 容器内存占用异常的完整排查过程。核心要点是：<strong>从全局到局部、从数据到根因</strong>。先通过 <code>docker system df</code> 了解整体资源占用，再通过 <code>docker stats</code> 定位具体容器，最后通过交叉验证（git 记录、容器创建时间、进程名等）确认问题根因。</p>
+<p>这类问题的根因往往是”测试容器忘记删除”或”资源限制未配置”。前者需要通过流程规范（测试完必须删除）或自动清理（Cron&#x2F;systemd timer）来解决；后者需要通过合理的资源限制（<code>--memory</code>）和监控告警来预防。</p>
+<p>希望本文提供的排查思路、修复方案和预防措施，能帮助你在类似场景中快速定位问题、建立完善的防御机制。</p>
+<hr>
+<p><em>作者：小六，一个五一假期前一天还在跟 Docker 容器搏斗的运维工程师</em></p>
+
+    
+  </article>
+
+  
+      
+    <div class="nexmoe-post-copyright">
+        <strong>Author：</strong>Margrop<br>
+        <strong>Link：</strong><a href="http://blog.margrop.com/post/2026-05-01-docker-container-memory-analysis/" title="http:&#x2F;&#x2F;blog.margrop.com&#x2F;post&#x2F;2026-05-01-docker-container-memory-analysis&#x2F;" target="_blank" rel="noopener">http:&#x2F;&#x2F;blog.margrop.com&#x2F;post&#x2F;2026-05-01-docker-container-memory-analysis&#x2F;</a><br>
+        
+            <strong>版权声明：</strong>本文采用 <a href="https://creativecommons.org/licenses/by-nc-sa/3.0/cn/deed.zh" target="_blank">CC BY-NC-SA 3.0 CN</a> 协议进行许可
+
+        
+    </div>
+
+
+  
+  
+  <div class="nexmoe-post-meta nexmoe-rainbow">
+   
+    
+        <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/Docker/" rel="tag">Docker</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/%E5%86%85%E5%AD%98%E7%AE%A1%E7%90%86/" rel="tag">内存管理</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/%E6%8A%80%E6%9C%AF/" rel="tag">技术</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/%E7%9B%91%E6%8E%A7/" rel="tag">监控</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/%E8%BF%90%E7%BB%B4/" rel="tag">运维</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/%E9%97%AE%E9%A2%98%E6%8E%92%E6%9F%A5/" rel="tag">问题排查</a>
+    
+</div>
+  
+  
+    <script async src="../../js/copy-codeblock.js?v=1777641005615"></script>
+  
+
+  
+      <div class="nexmoe-post-footer">
+          <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+<script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+<div id="gitalk-container"></div>
+<script>
+  const gitalk = new Gitalk({
+    clientID: 'Ov23lib2oiNKjG5B7I1N',
+    clientSecret: '0a94653f17a7b9630d85b275008da4b38e0259dd',
+    repo: 'margropcomment.margrop.io',      // The repository of store comments,
+    owner: 'margrop',
+    admin: ['margrop'],
+    pagerDirection: 'last',
+    id: window.location.pathname.substring(0, 49), // 使用 pathname 的前49个字符作为 id
+    title: document.title,
+    language: 'zh-CN', // 根据需要设置语言
+    distractionFreeMode: false
+  })
+  gitalk.render('gitalk-container')
+</script>
+
+      </div>
+  
+</div></div><div class="nexmoe-post-right">    <div class="nexmoe-fixed">
+        <div class="nexmoe-tool">
+
+            
+
+            
+            
+            <button class="mdui-fab catalog" style="overflow:unset;">
+                <i class="nexmoefont icon-i-catalog"></i>
+                <div class="nexmoe-toc">
+                    <ol class="toc"><li class="toc-item toc-level-2"><a class="toc-link" href="#%E5%89%8D%E8%A8%80"><span class="toc-number">1.</span> <span class="toc-text">前言</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E9%97%AE%E9%A2%98%E8%83%8C%E6%99%AF"><span class="toc-number">2.</span> <span class="toc-text">问题背景</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#%E4%B8%9A%E5%8A%A1%E5%9C%BA%E6%99%AF"><span class="toc-number">2.1.</span> <span class="toc-text">业务场景</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E9%97%AE%E9%A2%98%E7%8E%B0%E8%B1%A1"><span class="toc-number">2.2.</span> <span class="toc-text">问题现象</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E7%8E%AF%E5%A2%83%E4%BF%A1%E6%81%AF"><span class="toc-number">2.3.</span> <span class="toc-text">环境信息</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E6%8E%92%E6%9F%A5%E8%BF%87%E7%A8%8B"><span class="toc-number">3.</span> <span class="toc-text">排查过程</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#%E7%AC%AC%E4%B8%80%E6%AD%A5%EF%BC%9A%E5%85%A8%E5%B1%80%E8%B5%84%E6%BA%90%E5%88%86%E6%9E%90"><span class="toc-number">3.1.</span> <span class="toc-text">第一步：全局资源分析</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E7%AC%AC%E4%BA%8C%E6%AD%A5%EF%BC%9A%E5%AE%B9%E5%99%A8%E7%BA%A7%E5%86%85%E5%AD%98%E5%88%86%E6%9E%90"><span class="toc-number">3.2.</span> <span class="toc-text">第二步：容器级内存分析</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E7%AC%AC%E4%B8%89%E6%AD%A5%EF%BC%9A%E5%AE%B9%E5%99%A8%E8%AF%A6%E6%83%85%E8%BF%BD%E6%BA%AF"><span class="toc-number">3.3.</span> <span class="toc-text">第三步：容器详情追溯</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E7%AC%AC%E5%9B%9B%E6%AD%A5%EF%BC%9A%E5%8E%86%E5%8F%B2%E8%AE%B0%E5%BD%95%E4%BA%A4%E5%8F%89%E9%AA%8C%E8%AF%81"><span class="toc-number">3.4.</span> <span class="toc-text">第四步：历史记录交叉验证</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E7%AC%AC%E4%BA%94%E6%AD%A5%EF%BC%9A%E7%B3%BB%E7%BB%9F%E6%95%B4%E4%BD%93%E5%86%85%E5%AD%98%E5%88%86%E6%9E%90"><span class="toc-number">3.5.</span> <span class="toc-text">第五步：系统整体内存分析</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E8%A7%A3%E5%86%B3%E6%96%B9%E6%A1%88"><span class="toc-number">4.</span> <span class="toc-text">解决方案</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#%E6%96%B9%E6%A1%88%E4%B8%80%EF%BC%9A%E7%AB%8B%E5%8D%B3%E6%B8%85%E7%90%86%EF%BC%88%E6%89%8B%E5%8A%A8%EF%BC%89"><span class="toc-number">4.1.</span> <span class="toc-text">方案一：立即清理（手动）</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E6%96%B9%E6%A1%88%E4%BA%8C%EF%BC%9A%E9%85%8D%E7%BD%AE%E8%87%AA%E5%8A%A8%E6%B8%85%E7%90%86%EF%BC%88%E9%95%BF%E6%9C%9F%EF%BC%89"><span class="toc-number">4.2.</span> <span class="toc-text">方案二：配置自动清理（长期）</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E6%96%B9%E6%A1%88%E4%B8%89%EF%BC%9A%E9%85%8D%E7%BD%AE-Docker-daemon-%E8%87%AA%E5%8A%A8%E6%B8%85%E7%90%86"><span class="toc-number">4.3.</span> <span class="toc-text">方案三：配置 Docker daemon 自动清理</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E6%96%B9%E6%A1%88%E5%9B%9B%EF%BC%9A%E5%AE%B9%E5%99%A8%E5%86%85%E5%AD%98%E9%99%90%E5%88%B6%EF%BC%88%E9%A2%84%E9%98%B2%E6%80%A7%EF%BC%89"><span class="toc-number">4.4.</span> <span class="toc-text">方案四：容器内存限制（预防性）</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%B8%80%E9%94%AE%E4%BF%AE%E5%A4%8D%E8%84%9A%E6%9C%AC"><span class="toc-number">5.</span> <span class="toc-text">一键修复脚本</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E5%B8%B8%E8%A7%81%E9%97%AE%E9%A2%98%E8%A7%A3%E7%AD%94"><span class="toc-number">6.</span> <span class="toc-text">常见问题解答</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E7%BB%8F%E9%AA%8C%E6%80%BB%E7%BB%93"><span class="toc-number">7.</span> <span class="toc-text">经验总结</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#%E6%8E%92%E6%9F%A5%E8%A6%81%E7%82%B9"><span class="toc-number">7.1.</span> <span class="toc-text">排查要点</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E4%BF%AE%E5%A4%8D%E5%8E%9F%E5%88%99"><span class="toc-number">7.2.</span> <span class="toc-text">修复原则</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E6%A0%B9%E5%9B%A0%E5%88%86%E6%9E%90%E6%B8%85%E5%8D%95"><span class="toc-number">7.3.</span> <span class="toc-text">根因分析清单</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E5%BB%B6%E4%BC%B8%E9%85%8D%E7%BD%AE%E5%8F%82%E8%80%83"><span class="toc-number">8.</span> <span class="toc-text">延伸配置参考</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#Docker-daemon-json%EF%BC%88%E5%AE%8C%E6%95%B4%E9%85%8D%E7%BD%AE%EF%BC%89"><span class="toc-number">8.1.</span> <span class="toc-text">Docker daemon.json（完整配置）</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#docker-compose-yml%EF%BC%88%E8%B5%84%E6%BA%90%E9%99%90%E5%88%B6%E7%A4%BA%E4%BE%8B%EF%BC%89"><span class="toc-number">8.2.</span> <span class="toc-text">docker-compose.yml（资源限制示例）</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E7%BB%93%E8%AF%AD"><span class="toc-number">9.</span> <span class="toc-text">结语</span></a></li></ol>
+                </div>
+            </button>
+            
+
+            
+
+            <a href="#nexmoe-content" class="backtop toc-link" aria-label="Back To Top" title="top"><button class="mdui-fab mdui-ripple"><i class="nexmoefont icon-caret-top"></i></button></a>
+        </div>
+    </div>
+</div></div><div id="nexmoe-footer"><!--!--></div><div id="nexmoe-search-space"><div class="search-container"><div class="search-header"><div class="search-input-container"><input class="search-input" type="text" placeholder="Search" onInput="sinput();"></div><a class="search-close" onclick="sclose();">×</a></div><div class="search-body"></div></div></div><div><script src="https://cdn.jsdelivr.net/npm/mathjax@latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+<script>MathJax.Hub.Config({
+    tex2jax: {
+        inlineMath: [ ['$','$'], ["\\(","\\)"] ],
+        processEscapes: true,
+        skipTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code']
+    }
+});
+MathJax.Hub.Queue(function() {
+    var all = MathJax.Hub.getAllJax(), i;
+    for(i=0; i < all.length; i += 1) {
+        all[i].SourceElement().parentNode.className += ' has-jax';
+    }
+});</script>
+</div></body></html>
