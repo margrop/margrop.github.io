@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en-US">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>When Docker Networks Collide with the Home LAN: Moving Auto-Allocated Subnets Back to 172 - Margrop Blog</title>
+<meta name="description" content="This post records a very practical Docker networking failure: the number of containers kept growing, Docker’s auto-assigned user-defined bridge networks …">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://blog.margrop.net/en/post/docker-network-subnet-conflict-migration-record/">
+
+<meta property="og:site_name" content="Margrop Blog">
+<meta property="og:title" content="When Docker Networks Collide with the Home LAN: Moving Auto-Allocated Subnets Back to 172 - Margrop Blog">
+<meta property="og:description" content="This post records a very practical Docker networking failure: the number of containers kept growing, Docker’s auto-assigned user-defined bridge networks …">
+<meta property="og:url" content="https://blog.margrop.net/en/post/docker-network-subnet-conflict-migration-record/">
+<meta property="og:locale" content="en_US"><meta property="og:type" content="article"><meta property="og:locale:alternate" content="zh_CN"><meta property="og:image" content="https://blog.margrop.net/images/avatar.png"><meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="When Docker Networks Collide with the Home LAN: Moving Auto-Allocated Subnets Back to 172 - Margrop Blog">
+<meta name="twitter:description" content="This post records a very practical Docker networking failure: the number of containers kept growing, Docker’s auto-assigned user-defined bridge networks …"><meta name="twitter:image" content="https://blog.margrop.net/images/avatar.png"><link rel="alternate" hreflang="zh-CN" href="https://blog.margrop.net/post/docker-network-subnet-conflict-migration-record/"><link rel="alternate" hreflang="en-US" href="https://blog.margrop.net/en/post/docker-network-subnet-conflict-migration-record/"><link rel="alternate" hreflang="x-default" href="https://blog.margrop.net/"><meta property="article:published_time" content="2026-04-13T08:00:00&#43;08:00">
+<meta property="article:modified_time" content="2026-04-13T08:00:00&#43;08:00"><meta property="article:tag" content="docker"><meta property="article:tag" content="network"><meta property="article:tag" content="nas"><meta property="article:tag" content="portainer"><meta property="article:tag" content="dockhand"><meta property="article:tag" content="ipam"><meta property="article:tag" content="synology"><script type="application/ld+json">{"@context":"https://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"Margrop"},"dateModified":"2026-04-13T08:00:00+08:00","datePublished":"2026-04-13T08:00:00+08:00","description":"This post records a very practical Docker networking failure: the number of containers kept growing, Docker’s auto-assigned user-defined bridge networks …","headline":"When Docker Networks Collide with the Home LAN: Moving Auto-Allocated Subnets Back to 172","mainEntityOfPage":"https://blog.margrop.net/en/post/docker-network-subnet-conflict-migration-record/","url":"https://blog.margrop.net/en/post/docker-network-subnet-conflict-migration-record/"}</script>
+    <meta name="baidu-site-verification" content="code-sVFZ8SER59" />
+
+    
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-3J2W592DHJ"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-3J2W592DHJ');
+    </script>
+
+    <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 860px; margin: 0 auto; padding: 20px; line-height: 1.7; color: #222; }
+    h1 { border-bottom: 2px solid #333; padding-bottom: 10px; }
+    .post-list { list-style: none; padding: 0; }
+    .post-list li { margin: 15px 0; }
+    .post-list a { text-decoration: none; color: #333; font-size: 18px; }
+    .post-list a:hover { color: #006CFF; }
+    .date { color: #666; font-size: 14px; margin-right: 10px; }
+    .tags { margin-top: 8px; }
+    .tag { background: #eee; padding: 2px 8px; border-radius: 3px; font-size: 12px; margin-right: 5px; display: inline-block; }
+    nav { margin-bottom: 18px; border-bottom: 1px solid #eee; padding-bottom: 15px; }
+    nav a { margin-right: 20px; text-decoration: none; color: #333; font-size: 16px; }
+    nav a:hover { color: #006CFF; }
+    .language-switcher { margin: -8px 0 26px; }
+    .language-switcher a { display: inline-block; margin-right: 10px; padding: 4px 10px; border: 1px solid #ddd; border-radius: 999px; color: #555; text-decoration: none; font-size: 14px; }
+    .language-switcher a.active { background: #006CFF; border-color: #006CFF; color: #fff; }
+    .content { line-height: 1.8; }
+    .content code { background: #f4f4f4; padding: 2px 5px; border-radius: 3px; }
+    .content pre { background: #f4f4f4; padding: 15px; overflow-x: auto; border-radius: 5px; }
+    .content img { max-width: 100%; height: auto; }
+    .content .code-snippet__fix {
+        margin: 0 0 1.5em;
+    }
+    .content .code-snippet__fix .code-snippet__line-index {
+        display: none !important;
+    }
+    .meta { color: #666; font-size: 14px; margin-bottom: 14px; }
+    a { color: #006CFF; }
+    @media (max-width: 680px) {
+        body { padding: 16px; }
+        nav a { display: inline-block; margin-right: 12px; margin-bottom: 8px; }
+    }
+</style>
+
+</head>
+<body>
+    <nav>
+  
+  <a href="/en/">Home</a>
+  <a href="/en/post/">Archive</a>
+  <a href="/en/tags/">Tags</a>
+  <a href="/en/post/about/">About</a>
+  <a href="https://download.margrop.net" target="_blank" rel="noopener">Download</a>
+  <a href="/en/post/favorites/">Links</a>
+  <a href="/en/post/github-project-stars/">Github</a>
+  
+</nav>
+
+    
+<div class="language-switcher">
+  
+    <a href="/post/docker-network-subnet-conflict-migration-record/" class="">中文</a>
+  
+    <a href="/en/post/docker-network-subnet-conflict-migration-record/" class="active">English</a>
+  
+</div>
+
+
+    
+    <article>
+        <h1>When Docker Networks Collide with the Home LAN: Moving Auto-Allocated Subnets Back to 172</h1>
+        <div class="meta">
+            Published: 2026-04-13
+        </div>
+        
+<div class="tags">
+    
+    <a href="/en/tag/docker/"><span class="tag">docker</span></a>
+    
+    <a href="/en/tag/network/"><span class="tag">network</span></a>
+    
+    <a href="/en/tag/nas/"><span class="tag">nas</span></a>
+    
+    <a href="/en/tag/portainer/"><span class="tag">portainer</span></a>
+    
+    <a href="/en/tag/dockhand/"><span class="tag">dockhand</span></a>
+    
+    <a href="/en/tag/ipam/"><span class="tag">ipam</span></a>
+    
+    <a href="/en/tag/synology/"><span class="tag">synology</span></a>
+    
+</div>
+
+
+        <div class="content">
+            <p>This post records a very practical Docker networking failure: the number of containers kept growing, Docker&rsquo;s auto-assigned user-defined bridge networks eventually started landing in <code>192.168.x.x</code>, and those networks began colliding with the real home LAN. The symptoms were not dramatic at first. Nothing looked “broken” in the usual sense. Containers were still running, the host was still alive, and the dashboard still looked normal. But parts of the home network became unreliable, and once I dug into it on my NAS, the root cause turned out to be the Docker network allocation strategy rather than any single bad container.</p>
+<p>The fix was straightforward in principle, but important in practice: I moved Docker&rsquo;s automatic network pool to <code>172.16.0.0/12</code>, migrated the existing <code>192.168.*</code> networks onto the 172 private range, and made sure future networks created through Portainer, Dockhand, or plain <code>docker compose</code> would follow the same rule.</p>
+<h1 id="the-short-version">The short version</h1>
+<p>The rule is simple:</p>
+<p><strong>Docker may auto-allocate only from <code>172.16.0.0/12</code>. No more <code>192.168.*</code>, and I try to avoid <code>10.*</code> as well.</strong></p>
+<p>That was not a cosmetic choice. My home LAN already uses the <code>192.168</code> family. If Docker keeps creating user-defined bridge networks inside <code>192.168.*</code>, you eventually end up with routing ambiguity, confusing host-side access paths, and a very unpleasant debugging experience. Portainer and Dockhand make this more visible because they keep creating new stacks and new networks over time. If the default pool is not constrained early, the problem grows silently until it affects the whole home environment.</p>
+<p>On my NAS I did three things:</p>
+<ol>
+<li>Set Docker&rsquo;s default address pools to <code>172.16.0.0/12</code> with <code>size=20</code>.</li>
+<li>Migrated every existing Docker network that was still using <code>192.168.*</code>.</li>
+<li>Also moved one network that had drifted into an odd 172.x range back into the RFC1918 private range.</li>
+</ol>
+<p>The final result was what I wanted:</p>
+<ul>
+<li>new containers and new networks continue to land in the 172 range,</li>
+<li>all old <code>192.168.*</code> Docker networks are gone,</li>
+<li>Portainer and Dockhand will also inherit the same behavior for new networks.</li>
+</ul>
+<h1 id="how-the-problem-showed-up">How the problem showed up</h1>
+<p>At first I did not think this was a Docker issue.</p>
+<p>The symptoms looked like a mixed LAN failure: some devices could still reach the network, some could not talk to each other, and a few services became unreachable in ways that were hard to reproduce. Because my NAS runs a lot of things at once, including storage services, reverse proxying, monitoring, and multiple Docker projects, the first instinct is usually to suspect a physical device, a switch, an AP, or a weird routing loop rather than Docker&rsquo;s address pool.</p>
+<p>That is why Docker networking problems are so annoying. They rarely present as a clean failure. They usually look like “something is off” instead of “this exact component is down.” The issue can sit there silently for a long time as long as the address pool is still large enough. Once the pool starts overlapping with a real LAN, though, you get conflicts that are much harder to reason about.</p>
+<p>This was exactly what I saw on my NAS.</p>
+<p><img alt="Docker network conflict before and after" src="/post-images/docker-network-conflict/01-before-after.svg"></p>
+<p>The left side of the image shows the bad state: Docker networks in <code>192.168.x.x</code> living too close to the real LAN, which is also in the <code>192.168</code> family. The right side shows the fixed state: Docker auto networks live entirely in the <code>172.16.0.0/12</code> private range, away from the home LAN and away from the ambiguity that comes with it.</p>
+<h1 id="why-docker-picked-192168-in-the-first-place">Why Docker picked 192.168 in the first place</h1>
+<p>Docker was not “randomly broken.” It was doing what it was configured to do.</p>
+<p>When you create a user-defined bridge network through <code>docker compose</code>, Portainer, Dockhand, or <code>docker network create</code>, Docker will allocate a subnet from its default address pool unless you explicitly define your own <code>ipam</code> configuration. Docker does not know what your home LAN is. It does not inspect your router and decide to avoid it. It simply follows the pool it has been given.</p>
+<p>That works fine for small setups. When you only have a couple of networks, the first few allocations usually stay out of the way. But once the number of projects grows, especially on a NAS that runs for months without a full reset, the pool gets consumed. If the default pool is not conservative enough, or if some old configuration has survived past a migration, Docker eventually starts handing out networks that look suspiciously close to your home LAN.</p>
+<p>And once that happens, the issue is no longer “just a container network.” It becomes a routing problem, a discovery problem, and sometimes a DNS problem as well. Devices that rely on local discovery, containers that talk to each other by IP, and services that expect clean LAN separation can all start behaving oddly.</p>
+<p>That is why I decided to stop playing whack-a-mole and set the rule explicitly: Docker&rsquo;s auto-assigned networks will only come from the 172 private range.</p>
+<h1 id="why-i-chose-172-instead-of-staying-with-192168-or-using-10">Why I chose 172 instead of staying with 192.168 or using 10</h1>
+<p>This was a deliberate choice.</p>
+<p><code>192.168.0.0/16</code> is the most common home-network default. Routers, APs, NAS setup wizards, guest Wi-Fi defaults, and many consumer devices all love <code>192.168.*</code>. If you live in a normal home environment, you very quickly end up with a lot of equipment in that family of addresses.</p>
+<p><code>10.0.0.0/8</code> is also private, but it is heavily used by VPNs, company networks, cloud VPCs, lab environments, and virtualization stacks. In other words, it is private on paper, but in real life it collides with a lot of other things. If you run a home lab, remote-work VPNs, or multiple isolated networks, <code>10.*</code> is not necessarily safer than <code>192.168.*</code>.</p>
+<p><code>172.16.0.0/12</code> gives you a very large private block, from <code>172.16.0.0</code> to <code>172.31.255.255</code>. That is plenty of space for Docker&rsquo;s auto networks, monitoring stacks, app-specific networks, and future expansion. Most importantly, it is easier to keep away from the usual home LAN defaults and many common VPN ranges.</p>
+<p>So the goal here was not just “pick another subnet.” The goal was to carve out a clean boundary between the host LAN and the container LAN.</p>
+<p><img alt="Default pool migration" src="/post-images/docker-network-conflict/02-default-pools.svg"></p>
+<p>This picture summarizes the rule I wanted: Docker should stop guessing, and instead use one clearly bounded private block. If the daemon is constrained to <code>172.16.0.0/12</code>, then every new automatically created bridge network stays inside that space.</p>
+<h1 id="check-the-current-state-first">Check the current state first</h1>
+<p>Before changing anything, I checked two things.</p>
+<p>First, I asked Docker which default address pools it was using:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>docker info --format <span style="color:#e6db74">&#39;{{json .DefaultAddressPools}}&#39;</span>
+</span></span></code></pre></div><p>On my NAS, after the correction, the result was:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-json" data-lang="json"><span style="display:flex;"><span>[{<span style="color:#f92672">&#34;Base&#34;</span>:<span style="color:#e6db74">&#34;172.16.0.0/12&#34;</span>,<span style="color:#f92672">&#34;Size&#34;</span>:<span style="color:#ae81ff">20</span>}]
+</span></span></code></pre></div><p>This tells Docker to carve its automatic networks out of the 172 block with a /20 size. The exact mask is not the point. The important part is that the pool is now explicit, stable, and private enough to stay out of the way of the home LAN.</p>
+<p>Second, I listed the existing networks and inspected the ones that looked suspicious:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>docker network ls
+</span></span><span style="display:flex;"><span>docker network inspect &lt;network-name&gt;
+</span></span></code></pre></div><p>The networks that needed migration included these:</p>
+<table>
+<thead>
+<tr>
+<th>Old network</th>
+<th>Old subnet</th>
+<th>New subnet</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>dockhand_central_data_default</code></td>
+<td><code>192.168.*</code></td>
+<td><code>172.16.16.0/20</code></td>
+</tr>
+<tr>
+<td><code>dockhand_data_default</code></td>
+<td><code>192.168.*</code></td>
+<td><code>172.16.32.0/20</code></td>
+</tr>
+<tr>
+<td><code>gopeed_default</code></td>
+<td><code>192.168.*</code></td>
+<td><code>172.16.48.0/20</code></td>
+</tr>
+<tr>
+<td><code>hawser_data_default</code></td>
+<td><code>192.168.*</code></td>
+<td><code>172.16.64.0/20</code></td>
+</tr>
+<tr>
+<td><code>gsmonitor_gs_monitor_net</code></td>
+<td><code>172.x</code></td>
+<td><code>172.16.80.0/20</code></td>
+</tr>
+</tbody>
+</table>
+<p>The last row matters because I did not want the cleanup to stop at “no more <code>192.168</code>.” The real target was “no more questionable non-RFC1918 network drift at all.” Once I decided to reserve 172 for container networks, it made sense to move everything else into the same private block too.</p>
+<h1 id="changing-dockers-default-address-pool">Changing Docker&rsquo;s default address pool</h1>
+<p>My NAS runs on Synology&rsquo;s Container Manager / Docker environment, so the configuration path is not exactly the same as on a stock Linux server. The idea is the same, though: change the daemon&rsquo;s default address pool so Docker&rsquo;s future allocations become predictable.</p>
+<p>The essential configuration is this:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-json" data-lang="json"><span style="display:flex;"><span>{
+</span></span><span style="display:flex;"><span>  <span style="color:#f92672">&#34;default-address-pools&#34;</span>: [
+</span></span><span style="display:flex;"><span>    {
+</span></span><span style="display:flex;"><span>      <span style="color:#f92672">&#34;base&#34;</span>: <span style="color:#e6db74">&#34;172.16.0.0/12&#34;</span>,
+</span></span><span style="display:flex;"><span>      <span style="color:#f92672">&#34;size&#34;</span>: <span style="color:#ae81ff">20</span>
+</span></span><span style="display:flex;"><span>    }
+</span></span><span style="display:flex;"><span>  ]
+</span></span><span style="display:flex;"><span>}
+</span></span></code></pre></div><p>On a regular Linux system this usually lives in <code>/etc/docker/daemon.json</code>. On Synology it can live inside the Container Manager configuration area. The exact path is less important than the rule itself: <strong>Docker must be given a private block that is reserved for its own use.</strong></p>
+<p>After editing that file, Docker has to be restarted for the new allocation rule to take effect. That part is important because this is not a live-tweak setting that updates every existing network automatically.</p>
+<p>I also kept a backup of the old configuration before making the change. On infrastructure work, the ability to roll back quickly is worth far more than the few seconds it takes to save a backup first.</p>
+<h1 id="migrating-the-existing-networks">Migrating the existing networks</h1>
+<p>This is where most of the real work lives.</p>
+<p>People often assume that once the default pool is changed, the problem is solved. It is not. The new rule only applies to <strong>future</strong> networks. Existing networks do not get rewritten automatically. If you already have networks sitting in <code>192.168.*</code>, they will stay there until you replace or recreate them.</p>
+<p>For services with volumes and persistent data, the safest approach is usually to keep the data and replace only the network layer. In other words, do not destroy the service state unless you absolutely have to. Rebuild the network, not the data.</p>
+<p>On my NAS I did the migration roughly like this:</p>
+<ol>
+<li>Identify which containers are attached to the target network.</li>
+<li>Record the current network name and IPAM settings.</li>
+<li>Stop the related stack or project.</li>
+<li>Recreate the network using the new 172 subnet.</li>
+<li>Bring the containers back and verify reachability.</li>
+</ol>
+<p>The concrete migrations were:</p>
+<ul>
+<li><code>dockhand_central_data_default</code> -&gt; <code>172.16.16.0/20</code></li>
+<li><code>dockhand_data_default</code> -&gt; <code>172.16.32.0/20</code></li>
+<li><code>gopeed_default</code> -&gt; <code>172.16.48.0/20</code></li>
+<li><code>hawser_data_default</code> -&gt; <code>172.16.64.0/20</code></li>
+<li><code>gsmonitor_gs_monitor_net</code> -&gt; <code>172.16.80.0/20</code></li>
+</ul>
+<p>To the outside world this looks like subnet housekeeping. To me it mattered because it removed the ambiguity completely: there were no more Docker networks pretending to be part of the same address family as the home LAN.</p>
+<p><img alt="Migration path from old networks to private range" src="/post-images/docker-network-conflict/03-migration-path.svg"></p>
+<p>The diagram shows the logic: find the old network, stop the dependent stack, recreate the network under a reserved private subnet, and then start the services again. Simple on paper, but there are two common ways this can go wrong:</p>
+<ol>
+<li>Deleting the network too early while containers are still attached.</li>
+<li>Migrating the runtime network but forgetting that the compose file or stack template still hard-codes the old subnet.</li>
+</ol>
+<h1 id="what-portainer-and-dockhand-change-in-the-story">What Portainer and Dockhand change in the story</h1>
+<p>The user specifically mentioned that Portainer or Dockhand might be used later to manage the same Docker host. That matters, because the fix cannot stop at “change the daemon once.” It also has to hold up when someone creates a new stack from a GUI next month.</p>
+<p>There is a key distinction here:</p>
+<ul>
+<li>If a stack does not specify a subnet, Docker uses the default address pool.</li>
+<li>If a stack hard-codes <code>ipam.config.subnet</code>, then that stack bypasses the daemon&rsquo;s default pool entirely.</li>
+</ul>
+<p>So if you want the rule to hold for future containers, you need to audit not only Docker itself, but also the templates and stack definitions used by Portainer and Dockhand:</p>
+<ol>
+<li>Check the Portainer stacks you commonly redeploy.</li>
+<li>Check Dockhand project templates or presets.</li>
+<li>Search for <code>ipam</code> blocks in compose files.</li>
+<li>Find any manually created bridge networks with an explicit subnet.</li>
+</ol>
+<p>If an explicit subnet is hard-coded, either move it into the <code>172.16.0.0/12</code> private space or remove the explicit subnet and let Docker allocate from the daemon pool. For a long-running home NAS, letting the daemon manage the pool is usually the cleaner option.</p>
+<p>One more note: <code>macvlan</code>, <code>ipvlan</code>, and Swarm overlay networks are a different story. They are still Docker networks, but they do not behave exactly like normal bridge networks. The default address pool is the main fix for bridge network drift, not a magic universal cure for every Docker network model.</p>
+<h1 id="how-i-verified-the-end-state">How I verified the end state</h1>
+<p>After the migration, I checked the result in several layers.</p>
+<p>First, I confirmed the default address pools:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>docker info --format <span style="color:#e6db74">&#39;{{json .DefaultAddressPools}}&#39;</span>
+</span></span></code></pre></div><p>Second, I checked that the Docker network list no longer contained lingering <code>192.168.*</code> or <code>10.*</code> networks that might later collide with the home LAN or a VPN.</p>
+<p>Third, I verified that the moved services were healthy again, especially the <code>gsmonitor</code> set:</p>
+<ul>
+<li><code>gsmonitor-grafana</code></li>
+<li><code>gsmonitor-prometheus</code></li>
+<li><code>gsmonitor-victoriametrics</code></li>
+</ul>
+<p>All three were back on the new private subnet and reachable as expected.</p>
+<p>That last step is important. A blog post about network migration is only half useful if it stops at the configuration file. In practice, the meaningful part is whether the services still work after the network move, whether monitoring is back online, and whether new containers will continue to land on the correct subnet.</p>
+<h1 id="why-i-no-longer-accept-good-enough">Why I no longer accept “good enough”</h1>
+<p>If this were just a one-off test server, I would be fine with a quick workaround. This NAS is not that. It is a long-lived piece of home infrastructure. When a Docker network on that machine starts to drift into the same family as the home LAN, the cost is not a single failed container. The cost is unpredictable network behavior across the whole house.</p>
+<p>For that kind of environment, I ended up with a very simple rule set:</p>
+<ol>
+<li>Do not leave network allocation to whatever default Docker happens to ship with.</li>
+<li>Do not mix the home LAN, Docker network space, and VPN space inside the same broad address family if you can avoid it.</li>
+<li>Do not assume that fixing the symptom later is cheaper than reserving the subnet properly today.</li>
+</ol>
+<p>I would rather spend a bit more time carving out a clean 172 block than keep chasing weird edge cases every time a new container is added.</p>
+<h1 id="what-i-took-away-from-this-migration">What I took away from this migration</h1>
+<p>If you hit a similar issue on a NAS, soft router, home lab host, or any box that keeps accumulating Docker workloads, my recommendation is to follow this sequence:</p>
+<ol>
+<li>Identify the physical LAN subnet first.</li>
+<li>Check Docker&rsquo;s default address pools second.</li>
+<li>Scan the existing bridge networks third.</li>
+<li>Find every stack or compose file that hard-codes a subnet.</li>
+<li>Move both the default pool and the explicit subnets into a private range with no conflict risk.</li>
+</ol>
+<p>For me, the answer in this case was 172. It is not fancy, but it is practical, stable, and easy to reason about.</p>
+<p>The home network is complicated enough already. Docker should not add another layer of randomness on top of it.</p>
+        </div>
+    </article>
+
+    
+  
+
+
+  
+    
+  
+
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk/dist/gitalk.css">
+<script src="https://cdn.jsdelivr.net/npm/gitalk/dist/gitalk.min.js"></script>
+<div id="gitalk-container" style="margin-top:40px"></div>
+<script>
+  (function(){
+    var gitalk = new Gitalk({
+      clientID: '3181fd94e501cc5db0ad',
+      clientSecret: 'af1dab79dae02c69296e6615bfcecf47fc8615ee',
+      repo: 'margropcomment.margrop.io',
+      owner: 'margrop',
+      admin: ["margrop"],
+      
+      id: '\/post\/docker-network-subnet-conflict-migration-re',
+      
+      distractionFreeMode: false
+    });
+    gitalk.render('gitalk-container');
+  })();
+</script>
+  
+
+
+
+
+    
+    <script type="text/javascript" src="https://js.users.51.la/21044367.js"></script>
+    <script charset="UTF-8" id="LA_COLLECT" src="//sdk.51.la/js-sdk-pro.min.js"></script>
+    <script>LA.init({id: "1vVTUWl7zoRjnKXi",ck: "1vVTUWl7zoRjnKXi"})</script>
+    <script src="https://sdk.51.la/perf/js-sdk-perf.min.js" crossorigin="anonymous"></script>
+    <script>
+      new LingQue.Monitor().init({id:"202teQt8THXwqyve"});
+    </script>
+</body>
+</html>

@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Docker 容器太多导致网段冲突：把自动分配网络统一迁回 172 私有段的完整记录 - 魔都水滴</title>
+<meta name="description" content="这篇文章记录的是一次很典型、也很容易被忽略的 Docker 网络故障：容器越来越多，Docker 自动分配出来的 user-defined bridge 网段，最后落进了 192.168.x.x，并且和家里的真实局域网发生了冲突。问题本身不算复杂，但它有一个很讨厌的特点：它不是那种“容器起不来”或者“端口没映射”的显性 …">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://blog.margrop.net/post/docker-network-subnet-conflict-migration-record/">
+
+<meta property="og:site_name" content="魔都水滴">
+<meta property="og:title" content="Docker 容器太多导致网段冲突：把自动分配网络统一迁回 172 私有段的完整记录 - 魔都水滴">
+<meta property="og:description" content="这篇文章记录的是一次很典型、也很容易被忽略的 Docker 网络故障：容器越来越多，Docker 自动分配出来的 user-defined bridge 网段，最后落进了 192.168.x.x，并且和家里的真实局域网发生了冲突。问题本身不算复杂，但它有一个很讨厌的特点：它不是那种“容器起不来”或者“端口没映射”的显性 …">
+<meta property="og:url" content="https://blog.margrop.net/post/docker-network-subnet-conflict-migration-record/">
+<meta property="og:locale" content="zh_CN"><meta property="og:type" content="article"><meta property="og:locale:alternate" content="en_US"><meta property="og:image" content="https://blog.margrop.net/images/avatar.png"><meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Docker 容器太多导致网段冲突：把自动分配网络统一迁回 172 私有段的完整记录 - 魔都水滴">
+<meta name="twitter:description" content="这篇文章记录的是一次很典型、也很容易被忽略的 Docker 网络故障：容器越来越多，Docker 自动分配出来的 user-defined bridge 网段，最后落进了 192.168.x.x，并且和家里的真实局域网发生了冲突。问题本身不算复杂，但它有一个很讨厌的特点：它不是那种“容器起不来”或者“端口没映射”的显性 …"><meta name="twitter:image" content="https://blog.margrop.net/images/avatar.png"><link rel="alternate" hreflang="zh-CN" href="https://blog.margrop.net/post/docker-network-subnet-conflict-migration-record/"><link rel="alternate" hreflang="en-US" href="https://blog.margrop.net/en/post/docker-network-subnet-conflict-migration-record/"><link rel="alternate" hreflang="x-default" href="https://blog.margrop.net/"><meta property="article:published_time" content="2026-04-13T08:00:00&#43;08:00">
+<meta property="article:modified_time" content="2026-04-13T08:00:00&#43;08:00"><meta property="article:tag" content="docker"><meta property="article:tag" content="network"><meta property="article:tag" content="nas"><meta property="article:tag" content="portainer"><meta property="article:tag" content="dockhand"><meta property="article:tag" content="ipam"><meta property="article:tag" content="synology"><script type="application/ld+json">{"@context":"https://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"魔都水滴"},"dateModified":"2026-04-13T08:00:00+08:00","datePublished":"2026-04-13T08:00:00+08:00","description":"这篇文章记录的是一次很典型、也很容易被忽略的 Docker 网络故障：容器越来越多，Docker 自动分配出来的 user-defined bridge 网段，最后落进了 192.168.x.x，并且和家里的真实局域网发生了冲突。问题本身不算复杂，但它有一个很讨厌的特点：它不是那种“容器起不来”或者“端口没映射”的显性 …","headline":"Docker 容器太多导致网段冲突：把自动分配网络统一迁回 172 私有段的完整记录","mainEntityOfPage":"https://blog.margrop.net/post/docker-network-subnet-conflict-migration-record/","url":"https://blog.margrop.net/post/docker-network-subnet-conflict-migration-record/"}</script>
+    <meta name="baidu-site-verification" content="code-sVFZ8SER59" />
+
+    
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-3J2W592DHJ"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-3J2W592DHJ');
+    </script>
+
+    <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 860px; margin: 0 auto; padding: 20px; line-height: 1.7; color: #222; }
+    h1 { border-bottom: 2px solid #333; padding-bottom: 10px; }
+    .post-list { list-style: none; padding: 0; }
+    .post-list li { margin: 15px 0; }
+    .post-list a { text-decoration: none; color: #333; font-size: 18px; }
+    .post-list a:hover { color: #006CFF; }
+    .date { color: #666; font-size: 14px; margin-right: 10px; }
+    .tags { margin-top: 8px; }
+    .tag { background: #eee; padding: 2px 8px; border-radius: 3px; font-size: 12px; margin-right: 5px; display: inline-block; }
+    nav { margin-bottom: 18px; border-bottom: 1px solid #eee; padding-bottom: 15px; }
+    nav a { margin-right: 20px; text-decoration: none; color: #333; font-size: 16px; }
+    nav a:hover { color: #006CFF; }
+    .language-switcher { margin: -8px 0 26px; }
+    .language-switcher a { display: inline-block; margin-right: 10px; padding: 4px 10px; border: 1px solid #ddd; border-radius: 999px; color: #555; text-decoration: none; font-size: 14px; }
+    .language-switcher a.active { background: #006CFF; border-color: #006CFF; color: #fff; }
+    .content { line-height: 1.8; }
+    .content code { background: #f4f4f4; padding: 2px 5px; border-radius: 3px; }
+    .content pre { background: #f4f4f4; padding: 15px; overflow-x: auto; border-radius: 5px; }
+    .content img { max-width: 100%; height: auto; }
+    .content .code-snippet__fix {
+        margin: 0 0 1.5em;
+    }
+    .content .code-snippet__fix .code-snippet__line-index {
+        display: none !important;
+    }
+    .meta { color: #666; font-size: 14px; margin-bottom: 14px; }
+    a { color: #006CFF; }
+    @media (max-width: 680px) {
+        body { padding: 16px; }
+        nav a { display: inline-block; margin-right: 12px; margin-bottom: 8px; }
+    }
+</style>
+
+</head>
+<body>
+    <nav>
+  
+  <a href="/">首页</a>
+  <a href="/post/">归档</a>
+  <a href="/tags/">标签</a>
+  <a href="/post/about/">关于</a>
+  <a href="https://download.margrop.net" target="_blank" rel="noopener">下载</a>
+  <a href="/post/favorites/">Link</a>
+  <a href="/post/github-project-stars/">Github</a>
+  
+  <a href="https://github-mirrors.margrop.net" target="_blank" rel="noopener">Github加速</a>
+  <a href="https://status.anye.xyz/" target="_blank" rel="noopener">Docker加速</a>
+  
+</nav>
+
+    
+<div class="language-switcher">
+  
+    <a href="/post/docker-network-subnet-conflict-migration-record/" class="active">中文</a>
+  
+    <a href="/en/post/docker-network-subnet-conflict-migration-record/" class="">English</a>
+  
+</div>
+
+
+    
+    <article>
+        <h1>Docker 容器太多导致网段冲突：把自动分配网络统一迁回 172 私有段的完整记录</h1>
+        <div class="meta">
+            发布时间: 2026-04-13
+        </div>
+        
+<div class="tags">
+    
+    <a href="/tag/docker/"><span class="tag">docker</span></a>
+    
+    <a href="/tag/network/"><span class="tag">network</span></a>
+    
+    <a href="/tag/nas/"><span class="tag">nas</span></a>
+    
+    <a href="/tag/portainer/"><span class="tag">portainer</span></a>
+    
+    <a href="/tag/dockhand/"><span class="tag">dockhand</span></a>
+    
+    <a href="/tag/ipam/"><span class="tag">ipam</span></a>
+    
+    <a href="/tag/synology/"><span class="tag">synology</span></a>
+    
+</div>
+
+
+        <div class="content">
+            <p>这篇文章记录的是一次很典型、也很容易被忽略的 Docker 网络故障：容器越来越多，Docker 自动分配出来的 user-defined bridge 网段，最后落进了 <code>192.168.x.x</code>，并且和家里的真实局域网发生了冲突。问题本身不算复杂，但它有一个很讨厌的特点：它不是那种“容器起不来”或者“端口没映射”的显性错误，而是把整个家庭网络拖进一个很别扭的半瘫痪状态。</p>
+<p>当时在我的 NAS 上，家里部分设备开始出现访问异常。表面上看，像是某个设备离线，或者某个交换机、AP、路由器出了毛病；但我沿着 Docker 的网络一路排查下去后，最终确认，真正的根因不是单个容器坏了，而是 Docker 网络池的自动分配策略，已经把局域网挤到了一个危险的位置。</p>
+<h1 id="先说结论">先说结论</h1>
+<p>这次的处理原则只有一条：<strong>Docker 以后只允许自动使用 <code>172.16.0.0/12</code> 这类私有网段，不再使用 <code>192.168.*</code>，也尽量不碰 <code>10.*</code>。</strong></p>
+<p>这不是为了好看，而是为了稳定。家里真实网段本身也是 <code>192.168</code> 这一类地址，如果 Docker 再往 <code>192.168.*</code> 里塞 user-defined network，哪怕它们理论上是“容器内部网络”，实际运行时也很容易和宿主机路由、DNS、网关、某些跨网段访问规则撞在一起。更糟的是，Portainer、Dockhand 这类工具在不断创建新 stack、新 network 的时候，会持续消耗 Docker 的默认地址池；如果不提前约束，等你发现的时候，已经不只是一个容器的问题，而是整个网络平面开始变得不可预测。</p>
+<p>这次我在 NAS 上做了三件事：</p>
+<ol>
+<li>把 Docker 的默认地址池改成 <code>172.16.0.0/12</code>，<code>size=20</code>。</li>
+<li>把现有的所有 <code>192.168.*</code> Docker 网络迁移到 <code>172.16.*</code> 私有网段。</li>
+<li>顺手把之前那个已经飘到 <code>172.x</code> 非标准边界的网络也拉回到 RFC1918 的私有范围里。</li>
+</ol>
+<p>最后的结果很简单：</p>
+<ul>
+<li>新增容器和新增网络，默认都会继续落在 172 段。</li>
+<li>现有的老网络已经全部换掉。</li>
+<li>Portainer 和 Dockhand 以后继续创建网络，也会自动遵守这套规则。</li>
+</ul>
+<h1 id="问题是怎么暴露出来的">问题是怎么暴露出来的</h1>
+<p>最开始我并没有把它当成 Docker 的问题。</p>
+<p>家里的现象很像“某个设备开始乱发包”或者“某条链路出现了奇怪的路由回流”：部分设备能上网，部分设备不能互访，甚至在同一个局域网里，两个本该能直连的设备会突然访问失败。因为家里同时跑着 NAS、软路由、交换机、AP、几套 Docker 服务，所以第一反应通常不会是“Docker 网络池坏了”，而是“是不是某个物理设备又出幺蛾子了”。</p>
+<p>这种排查很容易走弯路，因为 Docker 的问题经常不是“挂了”，而是“还能跑，但跑得不对”。它不会像磁盘坏块那样直接报错，也不会像网卡掉线那样一眼能看出异常。它更像是一种慢性污染：新网络越建越多，默认地址池越用越深，直到某一天，宿主机和局域网的地址规划开始打架。</p>
+<p>我在 NAS 上看到的，就是这种慢性污染累积到临界点后的结果。</p>
+<p><img alt="Docker network conflict before and after" src="/post-images/docker-network-conflict/01-before-after.svg"></p>
+<p>图里左边是问题状态：Docker 的自动网络已经挤进了 <code>192.168.x.x</code>，而家里的 LAN 也在 <code>192.168</code> 这一大类里，两边都在同一个大类里，哪怕不是完全相同的子网，也足够让路由和访问关系变得复杂。右边是修正后的状态：Docker 自动网络统一收敛到 <code>172.16.0.0/12</code>，它和家里的 LAN 明确隔离开，宿主机、容器、局域网之间的关系也会干净很多。</p>
+<h1 id="docker-为什么会自己分到-192168">Docker 为什么会自己分到 192.168</h1>
+<p>很多人第一次遇到这个问题时，会下意识以为 Docker 是“随机乱选”了一个网段。其实不是，Docker 的 user-defined network 背后是有地址池策略的。</p>
+<p>当你通过 <code>docker compose</code>、Portainer、Dockhand，或者直接 <code>docker network create</code> 创建一个 bridge 网络时，如果没有显式指定 <code>ipam</code> 配置，Docker 会从默认地址池里自动找一个可用的 subnet。这个默认池在很多环境里并不会主动避开你的家庭 LAN，也不会自动感知你当前路由器到底在用什么网段。它只管自己内部的分配规则。</p>
+<p>在容器数量少的时候，这个问题几乎感觉不到。因为前几个网络通常还会落在比较“安全”的地址范围里。但当你长期使用 NAS 跑各种服务，尤其是不断增删 stack、反复重建项目网络时，Docker 分配出去的 subnet 会越来越多。这个时候，如果默认池设置得不够保守，或者历史上某次迁移留下了旧配置，就很容易开始出现 <code>192.168.*</code> 这种和家庭网络高度重叠的地址。</p>
+<p>对外人来说，这也许只是“一个子网而已”；但对一个家庭网络来说，这其实是在给路由表埋雷。因为家庭网络里常见的设备扫描、局域网发现、访问控制、NAS 互联、反向代理、甚至某些手机 App 的局域网探测，都会受到这种重叠地址的影响。</p>
+<p>所以这次我没有继续“见招拆招”，而是直接把规则定死：<strong>以后 Docker 的自动网络只能从 172 私有段里分配。</strong></p>
+<h1 id="为什么选-172而不是继续用-192168-或-10">为什么选 172，而不是继续用 192.168 或 10</h1>
+<p>这个选择不是拍脑袋。</p>
+<p><code>192.168.0.0/16</code> 在家庭网络里非常常见，尤其是一些老路由器、光猫、AP、NAS 初始化向导，都会默认往这个段上靠。只要你住在一个和我类似的环境里，家里有一台主路由、若干 AP、NAS、交换机，再加上一些临时设备，<code>192.168</code> 就很容易被占用得很乱。</p>
+<p><code>10.0.0.0/8</code> 虽然也是 RFC1918 私有地址，但它在很多公司 VPN、云厂商 VPC、虚拟化平台、开发测试网络里都很常见。也就是说，它虽然“理论上安全”，但现实世界里的重叠概率并不低。尤其是你家里还跑软路由、远程办公 VPN、各类实验网段的时候，<code>10.*</code> 和外部环境撞车的概率并不比 <code>192.168</code> 小多少。</p>
+<p>相比之下，<code>172.16.0.0/12</code> 的可用空间足够大，覆盖 <code>172.16.0.0</code> 到 <code>172.31.255.255</code>。如果你把这整段专门留给 Docker 和内网隔离用途，通常能做到两件事：</p>
+<ol>
+<li>和家庭 LAN 拉开距离。</li>
+<li>和外部 VPN、公司网络、常见默认网段也拉开距离。</li>
+</ol>
+<p>所以这次我把 Docker 的默认网络池统一收敛到 172 段，本质上是做了一次“网络命名空间的重新划界”。</p>
+<p><img alt="Default pool migration" src="/post-images/docker-network-conflict/02-default-pools.svg"></p>
+<p>上面这张图的意思很直接：不是让 Docker 自己继续猜，而是给它一个明确的边界。Docker 以后只在 <code>172.16.0.0/12</code> 里工作，容器网段就不会再跑到家里 LAN 旁边去碰瓷。</p>
+<h1 id="先看现状再改规则">先看现状，再改规则</h1>
+<p>真正动手之前，我先做了两件检查。</p>
+<p>第一件是看 Docker 当前到底用的是什么默认地址池：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>docker info --format <span style="color:#e6db74">&#39;{{json .DefaultAddressPools}}&#39;</span>
+</span></span></code></pre></div><p>在 NAS 上，修正后的结果如下：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-json" data-lang="json"><span style="display:flex;"><span>[{<span style="color:#f92672">&#34;Base&#34;</span>:<span style="color:#e6db74">&#34;172.16.0.0/12&#34;</span>,<span style="color:#f92672">&#34;Size&#34;</span>:<span style="color:#ae81ff">20</span>}]
+</span></span></code></pre></div><p>这个结果很重要，因为它说明 Docker 后续自动创建的网络，都会从 <code>172.16.0.0/12</code> 里按 <code>20</code> 位掩码去切分。<code>size=20</code> 的意思并不是“固定一个网段”，而是把一整块大池子切成很多个可重复分配的小网段。对于大量容器、多个 compose 项目、Portainer stack、Dockhand 项目来说，这种切分方式足够实用。</p>
+<p>第二件事是扫一遍已经存在的网络，确认到底有哪些网络还在用旧网段。</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>docker network ls
+</span></span><span style="display:flex;"><span>docker network inspect &lt;network-name&gt;
+</span></span></code></pre></div><p>我最终找到的旧网络里，最典型的是这些：</p>
+<table>
+<thead>
+<tr>
+<th>旧网络</th>
+<th>旧网段</th>
+<th>新网段</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>dockhand_central_data_default</code></td>
+<td><code>192.168.*</code></td>
+<td><code>172.16.16.0/20</code></td>
+</tr>
+<tr>
+<td><code>dockhand_data_default</code></td>
+<td><code>192.168.*</code></td>
+<td><code>172.16.32.0/20</code></td>
+</tr>
+<tr>
+<td><code>gopeed_default</code></td>
+<td><code>192.168.*</code></td>
+<td><code>172.16.48.0/20</code></td>
+</tr>
+<tr>
+<td><code>hawser_data_default</code></td>
+<td><code>192.168.*</code></td>
+<td><code>172.16.64.0/20</code></td>
+</tr>
+<tr>
+<td><code>gsmonitor_gs_monitor_net</code></td>
+<td><code>172.x</code></td>
+<td><code>172.16.80.0/20</code></td>
+</tr>
+</tbody>
+</table>
+<p>这里有一个关键经验：<strong>不要只盯着“看起来像 192.168 的网络”</strong>。如果你已经决定把 Docker 网络统一纳入私有范围，那么任何落在 RFC1918 之外的网段，哪怕它不是 <code>192.168</code>，也值得一起清理掉。因为你真正想要的不是“少一个冲突”，而是“让地址规划可控”。</p>
+<h1 id="修改-docker-默认地址池">修改 Docker 默认地址池</h1>
+<p>NAS 上用的是群晖的 Container Manager / Docker 运行环境，所以配置文件路径和普通 Linux 服务器略有差异。但思路是一样的：把 Docker daemon 的默认地址池改掉。</p>
+<p>我做的事情本质上只有一段配置：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-json" data-lang="json"><span style="display:flex;"><span>{
+</span></span><span style="display:flex;"><span>  <span style="color:#f92672">&#34;default-address-pools&#34;</span>: [
+</span></span><span style="display:flex;"><span>    {
+</span></span><span style="display:flex;"><span>      <span style="color:#f92672">&#34;base&#34;</span>: <span style="color:#e6db74">&#34;172.16.0.0/12&#34;</span>,
+</span></span><span style="display:flex;"><span>      <span style="color:#f92672">&#34;size&#34;</span>: <span style="color:#ae81ff">20</span>
+</span></span><span style="display:flex;"><span>    }
+</span></span><span style="display:flex;"><span>  ]
+</span></span><span style="display:flex;"><span>}
+</span></span></code></pre></div><p>如果你是在标准 Linux 上，通常会放到 <code>/etc/docker/daemon.json</code>。如果你是在群晖这类系统上，路径可能会在 Container Manager 的内部配置目录里。路径不一定一样，但规则一定要一样：<strong>让 Docker 以后只从你预留的私有池里自动分配网络。</strong></p>
+<p>改完以后，必须重启 Docker daemon，让新规则生效。这个步骤不能省，因为 Docker 默认地址池不是“热加载就自动替换”的那类配置。</p>
+<p>在这个阶段，我还特意保留了旧配置备份。原因很简单：网络改错比容器停一下更麻烦。只要还有回滚能力，任何基础设施操作都值得先做备份。</p>
+<h1 id="现有网络怎么迁">现有网络怎么迁</h1>
+<p>这个部分才是最容易出坑的地方。</p>
+<p>很多人看到“把默认池改成 172”之后，会以为问题已经结束了。实际上不是。默认池只影响<strong>以后新建的网络</strong>，而已经存在的老网络并不会自动变脸。也就是说，如果旧网络已经在 <code>192.168.*</code> 里，你不主动迁移，它们还是会继续躺在那里，只是“以后不再新增更多同类问题”而已。</p>
+<p>所以现有网络要么删掉重建，要么逐个替换。对于带数据卷的服务，通常我会优先选择“保留数据，只重建网络”的方式。原因很简单：数据是最贵的，网络是可以重新建的。</p>
+<p>在 NAS 上，我是按这个思路处理的：</p>
+<ol>
+<li>先确认哪些容器绑定了目标网络。</li>
+<li>记录网络名和 IPAM 配置。</li>
+<li>对应的 stack / compose 项目停止并重建。</li>
+<li>把网络替换到新的 <code>172.16.*</code> 子网。</li>
+<li>启动容器并检查服务可达性。</li>
+</ol>
+<p>实际迁移结果如下：</p>
+<ul>
+<li><code>dockhand_central_data_default</code> -&gt; <code>172.16.16.0/20</code></li>
+<li><code>dockhand_data_default</code> -&gt; <code>172.16.32.0/20</code></li>
+<li><code>gopeed_default</code> -&gt; <code>172.16.48.0/20</code></li>
+<li><code>hawser_data_default</code> -&gt; <code>172.16.64.0/20</code></li>
+<li><code>gsmonitor_gs_monitor_net</code> -&gt; <code>172.16.80.0/20</code></li>
+</ul>
+<p>对外界看起来，这只是几个 subnet 的迁移；但对我来说，这一步的意义在于：<strong>整个 Docker 生态里，终于没有 <code>192.168.*</code> 这种会和家里 LAN 混淆的地址了。</strong></p>
+<p><img alt="Migration path from old networks to private range" src="/post-images/docker-network-conflict/03-migration-path.svg"></p>
+<p>这张图更像是迁移流程图：先识别旧网段，再停掉相关 stack，然后以新的 172 段重建网络，最后恢复容器。它看起来简单，但实际执行时最怕两类问题：</p>
+<p>第一类是“网络删早了”。如果你在容器还在运行时就把 network 删了，服务会直接中断。</p>
+<p>第二类是“配置还写死着旧 subnet”。你把运行时网络迁过去了，但 Portainer stack、Dockhand 模板、compose 文件里还写着旧的 <code>ipam.config.subnet</code>，下次重新部署时它还会把你拉回老坑里。</p>
+<h1 id="portainer-和-dockhand-里要注意什么">Portainer 和 Dockhand 里要注意什么</h1>
+<p>这次用户额外提到，后续可能会继续用 Portainer 或 Dockhand 管理容器。这个提醒很关键，因为这意味着网络规则不能只停留在“当前 Docker daemon 上”，还要落实到“未来创建网络的入口”。</p>
+<p>这里有个很容易误判的点：</p>
+<ul>
+<li>如果一个 stack 没有显式指定 subnet，Docker 会按默认地址池自动分配。</li>
+<li>如果一个 stack 显式写了 <code>ipam.config.subnet</code>，那它就会绕过默认地址池，直接用你写死的网段。</li>
+</ul>
+<p>所以，要保证新增容器也满足规则，只改 Docker daemon 还不够，最好再做一次源头检查：</p>
+<ol>
+<li>检查 Portainer 里所有常用 stack 的网络定义。</li>
+<li>检查 Dockhand 的模板或项目配置。</li>
+<li>检查 <code>docker-compose.yml</code> 里是否有 <code>ipam</code> 段。</li>
+<li>检查是否有人手工创建过 bridge network，并在里面写死 subnet。</li>
+</ol>
+<p>如果发现有硬编码网段，最好统一改成 <code>172.16.0.0/12</code> 这个大池子里的某个区间，或者干脆删掉显式 subnet，让 Docker 重新接管分配。对于长期维护的家庭 NAS 来说，第二种方式通常更省心。</p>
+<p>再补一句：如果你用的是 <code>macvlan</code>、<code>ipvlan</code>、Swarm overlay 之类的网络模型，它们虽然也受 Docker 管理，但和普通 bridge 网络不是一回事。<strong>默认地址池是 bridge 网络最常见的冲突来源，但不是所有 Docker 网络问题都能靠它一个设置解决。</strong></p>
+<h1 id="我最后是怎么验收的">我最后是怎么验收的</h1>
+<p>迁移完之后，我做了几层确认。</p>
+<p>第一层，确认 Docker 的默认地址池已经生效：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>docker info --format <span style="color:#e6db74">&#39;{{json .DefaultAddressPools}}&#39;</span>
+</span></span></code></pre></div><p>第二层，确认当前网络里已经没有 <code>192.168.*</code> 和 <code>10.*</code> 这类会跟家庭或办公网络产生碰撞的 Docker 网络残留。</p>
+<p>第三层，确认被迁移的容器全部恢复正常，尤其是 <code>gsmonitor</code> 这一组服务，迁移之后还要确保：</p>
+<ul>
+<li><code>gsmonitor-grafana</code></li>
+<li><code>gsmonitor-prometheus</code></li>
+<li><code>gsmonitor-victoriametrics</code></li>
+</ul>
+<p>都能正常启动并相互访问。</p>
+<p>这个阶段其实最能看出“网络迁移”和“服务恢复”之间的差别。很多故障排查文章只写到“网络改好了”，但实际运维里，真正重要的是服务是否还能被外部访问、监控是否正常、告警是否恢复、以及新的容器是不是还会继续落到正确网段。</p>
+<h1 id="为什么这次我不再接受凑合用">为什么这次我不再接受“凑合用”</h1>
+<p>如果问题只是一个实验环境，或者一台临时测试机，那“先能跑就行”是可以接受的。但这台 NAS 不是临时机，它是家庭里真正长期使用的基础设施。这样的机器上，Docker 网络一旦失控，代价并不只是某个容器重启慢一点，而是整个家庭网络可能会开始出现“时好时坏”的问题。</p>
+<p>对这种场景，我最后总结出一个很朴素的原则：</p>
+<ol>
+<li><strong>不要把自动分配交给默认值。</strong></li>
+<li><strong>不要把家庭 LAN、Docker 网络、VPN 网段混在同一个大类里。</strong></li>
+<li><strong>不要指望事后排查比事前规划更省时间。</strong></li>
+</ol>
+<p>这次我宁愿多花一点时间把 172 段规划清楚，也不愿意以后再遇到“某个容器一扩容，家里网络就开始抽风”的情况。</p>
+<h1 id="这次迁移留下的经验">这次迁移留下的经验</h1>
+<p>如果以后你也在自己的 NAS、软路由、家庭实验室，或者一台装了大量容器的服务器上遇到类似问题，我建议直接按这个顺序处理：</p>
+<ol>
+<li>先确认宿主机所在的物理 LAN 网段。</li>
+<li>再确认 Docker 默认地址池。</li>
+<li>再扫一遍现有的 bridge network。</li>
+<li>找出所有显式写死 subnet 的 compose / stack。</li>
+<li>把默认池和手工网段统一迁到一个没有冲突风险的私有范围里。</li>
+</ol>
+<p>对我来说，这次最终的答案就是 172。它不神秘，也不复杂，但它足够安全、足够宽裕，而且足够适合长期维护。</p>
+<p>家里的网络本来就够复杂了，Docker 不应该再给它添一层不必要的随机性。</p>
+        </div>
+    </article>
+
+    
+  
+
+
+  
+    
+  
+
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk/dist/gitalk.css">
+<script src="https://cdn.jsdelivr.net/npm/gitalk/dist/gitalk.min.js"></script>
+<div id="gitalk-container" style="margin-top:40px"></div>
+<script>
+  (function(){
+    var gitalk = new Gitalk({
+      clientID: '3181fd94e501cc5db0ad',
+      clientSecret: 'af1dab79dae02c69296e6615bfcecf47fc8615ee',
+      repo: 'margropcomment.margrop.io',
+      owner: 'margrop',
+      admin: ["margrop"],
+      
+      id: '\/post\/docker-network-subnet-conflict-migration-re',
+      
+      distractionFreeMode: false
+    });
+    gitalk.render('gitalk-container');
+  })();
+</script>
+  
+
+
+
+
+    
+    <script type="text/javascript" src="https://js.users.51.la/21044367.js"></script>
+    <script charset="UTF-8" id="LA_COLLECT" src="//sdk.51.la/js-sdk-pro.min.js"></script>
+    <script>LA.init({id: "1vVTUWl7zoRjnKXi",ck: "1vVTUWl7zoRjnKXi"})</script>
+    <script src="https://sdk.51.la/perf/js-sdk-perf.min.js" crossorigin="anonymous"></script>
+    <script>
+      new LingQue.Monitor().init({id:"202teQt8THXwqyve"});
+    </script>
+</body>
+</html>

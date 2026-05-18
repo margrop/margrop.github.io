@@ -1,0 +1,572 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>ProxmoxVE 添加 local-lvm 使用率监控、网线速率监控到 Uptime Kuma - 魔都水滴</title>
+<meta name="description" content="先说结论 ProxmoxVE 的 local-lvm 不是一个普通挂载目录，很多时候不能靠 df -h 发现它快满了；网口协商速率也不会因为服务还在线就自动暴露出来。最稳的办法是把这两个“容易被忽略但一出事就很麻烦”的指标接入现有 Uptime Kuma：local-lvm 用 HTTP 拉取监控，网口速率用 Push …">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://blog.margrop.net/post/proxmoxve-lvm-link-speed-uptime-kuma/">
+
+<meta property="og:site_name" content="魔都水滴">
+<meta property="og:title" content="ProxmoxVE 添加 local-lvm 使用率监控、网线速率监控到 Uptime Kuma - 魔都水滴">
+<meta property="og:description" content="先说结论 ProxmoxVE 的 local-lvm 不是一个普通挂载目录，很多时候不能靠 df -h 发现它快满了；网口协商速率也不会因为服务还在线就自动暴露出来。最稳的办法是把这两个“容易被忽略但一出事就很麻烦”的指标接入现有 Uptime Kuma：local-lvm 用 HTTP 拉取监控，网口速率用 Push …">
+<meta property="og:url" content="https://blog.margrop.net/post/proxmoxve-lvm-link-speed-uptime-kuma/">
+<meta property="og:locale" content="zh_CN"><meta property="og:type" content="article"><meta property="og:locale:alternate" content="en_US"><meta property="og:image" content="https://blog.margrop.net/images/avatar.png"><meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="ProxmoxVE 添加 local-lvm 使用率监控、网线速率监控到 Uptime Kuma - 魔都水滴">
+<meta name="twitter:description" content="先说结论 ProxmoxVE 的 local-lvm 不是一个普通挂载目录，很多时候不能靠 df -h 发现它快满了；网口协商速率也不会因为服务还在线就自动暴露出来。最稳的办法是把这两个“容易被忽略但一出事就很麻烦”的指标接入现有 Uptime Kuma：local-lvm 用 HTTP 拉取监控，网口速率用 Push …"><meta name="twitter:image" content="https://blog.margrop.net/images/avatar.png"><link rel="alternate" hreflang="zh-CN" href="https://blog.margrop.net/post/proxmoxve-lvm-link-speed-uptime-kuma/"><link rel="alternate" hreflang="en-US" href="https://blog.margrop.net/en/post/proxmoxve-lvm-link-speed-uptime-kuma/"><link rel="alternate" hreflang="x-default" href="https://blog.margrop.net/"><meta property="article:published_time" content="2026-05-05T17:20:00&#43;08:00">
+<meta property="article:modified_time" content="2026-05-05T17:20:00&#43;08:00"><meta property="article:tag" content="ProxmoxVE"><meta property="article:tag" content="Uptime Kuma"><meta property="article:tag" content="LVM"><meta property="article:tag" content="local-lvm"><meta property="article:tag" content="ethtool"><meta property="article:tag" content="监控"><meta property="article:tag" content="Homelab"><meta property="article:tag" content="NAS"><script type="application/ld+json">{"@context":"https://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"魔都水滴"},"dateModified":"2026-05-05T17:20:00+08:00","datePublished":"2026-05-05T17:20:00+08:00","description":"先说结论 ProxmoxVE 的 local-lvm 不是一个普通挂载目录，很多时候不能靠 df -h 发现它快满了；网口协商速率也不会因为服务还在线就自动暴露出来。最稳的办法是把这两个“容易被忽略但一出事就很麻烦”的指标接入现有 Uptime Kuma：local-lvm 用 HTTP 拉取监控，网口速率用 Push …","headline":"ProxmoxVE 添加 local-lvm 使用率监控、网线速率监控到 Uptime Kuma","mainEntityOfPage":"https://blog.margrop.net/post/proxmoxve-lvm-link-speed-uptime-kuma/","url":"https://blog.margrop.net/post/proxmoxve-lvm-link-speed-uptime-kuma/"}</script>
+    <meta name="baidu-site-verification" content="code-sVFZ8SER59" />
+
+    
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-3J2W592DHJ"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-3J2W592DHJ');
+    </script>
+
+    <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 860px; margin: 0 auto; padding: 20px; line-height: 1.7; color: #222; }
+    h1 { border-bottom: 2px solid #333; padding-bottom: 10px; }
+    .post-list { list-style: none; padding: 0; }
+    .post-list li { margin: 15px 0; }
+    .post-list a { text-decoration: none; color: #333; font-size: 18px; }
+    .post-list a:hover { color: #006CFF; }
+    .date { color: #666; font-size: 14px; margin-right: 10px; }
+    .tags { margin-top: 8px; }
+    .tag { background: #eee; padding: 2px 8px; border-radius: 3px; font-size: 12px; margin-right: 5px; display: inline-block; }
+    nav { margin-bottom: 18px; border-bottom: 1px solid #eee; padding-bottom: 15px; }
+    nav a { margin-right: 20px; text-decoration: none; color: #333; font-size: 16px; }
+    nav a:hover { color: #006CFF; }
+    .language-switcher { margin: -8px 0 26px; }
+    .language-switcher a { display: inline-block; margin-right: 10px; padding: 4px 10px; border: 1px solid #ddd; border-radius: 999px; color: #555; text-decoration: none; font-size: 14px; }
+    .language-switcher a.active { background: #006CFF; border-color: #006CFF; color: #fff; }
+    .content { line-height: 1.8; }
+    .content code { background: #f4f4f4; padding: 2px 5px; border-radius: 3px; }
+    .content pre { background: #f4f4f4; padding: 15px; overflow-x: auto; border-radius: 5px; }
+    .content img { max-width: 100%; height: auto; }
+    .content .code-snippet__fix {
+        margin: 0 0 1.5em;
+    }
+    .content .code-snippet__fix .code-snippet__line-index {
+        display: none !important;
+    }
+    .meta { color: #666; font-size: 14px; margin-bottom: 14px; }
+    a { color: #006CFF; }
+    @media (max-width: 680px) {
+        body { padding: 16px; }
+        nav a { display: inline-block; margin-right: 12px; margin-bottom: 8px; }
+    }
+</style>
+
+</head>
+<body>
+    <nav>
+  
+  <a href="/">首页</a>
+  <a href="/post/">归档</a>
+  <a href="/tags/">标签</a>
+  <a href="/post/about/">关于</a>
+  <a href="https://download.margrop.net" target="_blank" rel="noopener">下载</a>
+  <a href="/post/favorites/">Link</a>
+  <a href="/post/github-project-stars/">Github</a>
+  
+  <a href="https://github-mirrors.margrop.net" target="_blank" rel="noopener">Github加速</a>
+  <a href="https://status.anye.xyz/" target="_blank" rel="noopener">Docker加速</a>
+  
+</nav>
+
+    
+<div class="language-switcher">
+  
+    <a href="/post/proxmoxve-lvm-link-speed-uptime-kuma/" class="active">中文</a>
+  
+    <a href="/en/post/proxmoxve-lvm-link-speed-uptime-kuma/" class="">English</a>
+  
+</div>
+
+
+    
+    <article>
+        <h1>ProxmoxVE 添加 local-lvm 使用率监控、网线速率监控到 Uptime Kuma</h1>
+        <div class="meta">
+            发布时间: 2026-05-05
+        </div>
+        
+<div class="tags">
+    
+    <a href="/tag/proxmoxve/"><span class="tag">ProxmoxVE</span></a>
+    
+    <a href="/tag/uptime-kuma/"><span class="tag">Uptime Kuma</span></a>
+    
+    <a href="/tag/lvm/"><span class="tag">LVM</span></a>
+    
+    <a href="/tag/local-lvm/"><span class="tag">local-lvm</span></a>
+    
+    <a href="/tag/ethtool/"><span class="tag">ethtool</span></a>
+    
+    <a href="/tag/%E7%9B%91%E6%8E%A7/"><span class="tag">监控</span></a>
+    
+    <a href="/tag/homelab/"><span class="tag">Homelab</span></a>
+    
+    <a href="/tag/nas/"><span class="tag">NAS</span></a>
+    
+</div>
+
+
+        <div class="content">
+            <blockquote>
+<p><strong>先说结论</strong></p>
+<p>ProxmoxVE 的 <code>local-lvm</code> 不是一个普通挂载目录，很多时候不能靠 <code>df -h</code> 发现它快满了；网口协商速率也不会因为服务还在线就自动暴露出来。最稳的办法是把这两个“容易被忽略但一出事就很麻烦”的指标接入现有 Uptime Kuma：<code>local-lvm</code> 用 HTTP 拉取监控，网口速率用 Push 主动上报。这样磁盘池接近阈值、网线或交换机端口掉到百兆时，统一在 Uptime Kuma 页面和通知链路里告警。</p>
+</blockquote>
+<p>本文会从需求背景、原始方案的问题核查、改进后的脚本、systemd 服务、Uptime Kuma 配置、验证方法和安全边界讲完整。文中所有地址、token、主机名都使用占位符，不出现真实内网信息。你可以把示例里的 <code>&lt;PVE_HOST&gt;</code>、<code>&lt;KUMA_URL&gt;</code>、<code>&lt;PUSH_TOKEN&gt;</code>、<code>&lt;INTERFACE&gt;</code> 替换成自己的环境值。</p>
+<p><img alt="ProxmoxVE 与 Uptime Kuma 磁盘、网口监控全貌" src="/post-images/proxmoxve-lvm-link-speed-uptime-kuma/01-overview-clear.png"></p>
+<p><em>图 1：全文概要。磁盘监控由 Uptime Kuma 定时拉取 PVE 上的 HTTP 检查服务；网口速率由 PVE 定时主动 Push 到 Uptime Kuma。</em></p>
+<h2 id="1-为什么要专门监控-local-lvm-和网口速率">1. 为什么要专门监控 local-lvm 和网口速率</h2>
+<p>很多故障并不是“整台机器宕机”这么干脆。更常见的是：页面还能打开，部分任务失败；数据库还能连，但写入开始报错；虚拟机还在跑，备份或快照却突然失败；NAS 还能访问，但大文件传输从一百多 MB/s 掉到十 MB/s 左右。排查这种问题时，人很容易先怀疑应用、数据库、网络协议、权限、缓存，最后才发现是存储池满了，或者网口只协商到了百兆。</p>
+<p>这两个问题有共同点：</p>
+<ol>
+<li>它们不会总是表现为“服务不可用”。</li>
+<li>它们的根因在基础设施层，应用层日志经常只显示间接错误。</li>
+<li>它们很适合提前告警，因为指标非常明确。</li>
+<li>它们又太小众，通常不值得单独上 Prometheus、Grafana、node exporter 全家桶。</li>
+</ol>
+<p>如果家里或小团队已经在用 Uptime Kuma 监控站点、端口、证书和服务存活，把这些基础设施小指标塞进 Uptime Kuma 是很合适的：页面统一、通知统一、维护成本低。它不是专业指标平台，但做“阈值型健康检查”已经够用。</p>
+<p>本文目标不是把 Uptime Kuma 改造成监控平台，而是补上两个实际缺口：</p>
+<ol>
+<li>ProxmoxVE 的 <code>local-lvm</code> thin pool 使用率超过阈值时告警。</li>
+<li>指定网口没有达到预期链路速率时告警。</li>
+</ol>
+<h2 id="2-先核查原始思路里容易踩坑的地方">2. 先核查原始思路里容易踩坑的地方</h2>
+<p>原始方案的方向是对的：<code>local-lvm</code> 用 PVE 暴露一个 HTTP 接口给 Uptime Kuma 拉取，网口速率用脚本主动调用 Uptime Kuma Push URL。但是直接照搬会有几个问题。</p>
+<h3 id="21-只看-http-200-不够">2.1 只看 HTTP 200 不够</h3>
+<p>如果 Python HTTP 服务永远返回 <code>200</code>，即使 JSON 里写了 <code>&quot;status&quot;:&quot;fail&quot;</code>，普通 HTTP 监控也可能仍然认为它是正常的。解决办法有两个：</p>
+<ol>
+<li>HTTP 服务在异常时返回 <code>503</code>。</li>
+<li>Uptime Kuma HTTP 监控同时配置关键字，例如匹配 <code>&quot;status&quot;:&quot;ok&quot;</code>。</li>
+</ol>
+<p>我更推荐两个都做。HTTP 状态码负责粗粒度失败，关键字匹配负责避免脚本输出异常但状态码仍为 200 的情况。</p>
+<h3 id="22-lvm-thin-pool-不能只看-data">2.2 LVM thin pool 不能只看 Data%</h3>
+<p>LVM thin pool 有数据区和元数据区。<code>Data%</code> 接近 100% 会出问题，<code>Meta%</code> 接近 100% 同样危险。原始脚本只看 <code>data_percent</code>，容易漏掉元数据耗尽的场景。LVM 官方手册也明确建议在 thin pool 上关注 <code>data_percent</code> 与 <code>metadata_percent</code>，并在它们接近 100% 前扩容。</p>
+<p>所以本文的检查规则是：<strong>任一 thin pool 的 <code>Data%</code> 或 <code>Meta%</code> 达到阈值，就判定 fail。</strong></p>
+<h3 id="23-pool_lv-过滤条件不够稳">2.3 <code>pool_lv</code> 过滤条件不够稳</h3>
+<p>原始脚本用 <code>pool_lv == data</code> 来过滤逻辑卷。这个假设只适用于某些默认安装或特定命名。更稳的方式是直接从 <code>lvs</code> 输出中识别 thin pool LV，并读取它自己的 <code>data_percent</code> 与 <code>metadata_percent</code>。如果你的环境确实只想监控某个池，也可以再加白名单变量，例如 <code>WATCH_LV=data</code>。</p>
+<h3 id="24-curl-url-拼接需要处理特殊字符">2.4 curl URL 拼接需要处理特殊字符</h3>
+<p>网口速率脚本里如果把 <code>msg=Speed is 100Mb/s</code> 直接拼进 URL，空格、斜杠、冒号都可能引起转义问题。应使用 <code>curl --get --data-urlencode</code> 传参。这样 Uptime Kuma 里能看到清楚的消息，脚本也不会因为消息文本变复杂而失效。</p>
+<h3 id="25-push-token-不能写进公开文章">2.5 Push token 不能写进公开文章</h3>
+<p>Uptime Kuma Push URL 里的 token 等价于这个监控项的写入凭证。任何拿到 token 的人都可以把监控上报成 up 或 down。公开文章、截图、仓库里都不应该出现真实 token。本文统一使用 <code>&lt;PUSH_TOKEN&gt;</code> 占位。</p>
+<h2 id="3-两种监控模式怎么选">3. 两种监控模式怎么选</h2>
+<p><img alt="Uptime Kuma 拉取监控与 Push 监控的区别" src="/post-images/proxmoxve-lvm-link-speed-uptime-kuma/02-monitoring-modes-clear.png"></p>
+<p><em>图 2：能被 Uptime Kuma 访问到的检查项适合 HTTP 拉取；只能在被监控机器本地判断的状态适合 Push。</em></p>
+<p><code>local-lvm</code> 监控采用“被动调用”或“拉取”：PVE 上运行一个只读检查服务，Uptime Kuma 定时访问 <code>http://&lt;PVE_HOST&gt;:8080/health</code>。这样 Uptime Kuma 可以自己决定检查频率、重试次数、告警策略。</p>
+<p>网口速率采用“主动调用”或“Push”：PVE 本地通过 <code>ethtool</code> 读取指定网卡当前协商速率，然后调用 Uptime Kuma 的 <code>/api/push/&lt;token&gt;</code>。因为网口速率是主机本地状态，而且很多情况下 Uptime Kuma 所在机器不能直接知道远端网卡协商结果，所以 Push 更自然。</p>
+<p>这两种模式可以总结为：</p>
+<ol>
+<li><strong>Uptime Kuma 能直接访问，并且检查动作很轻量：用 HTTP 拉取。</strong></li>
+<li><strong>只有被监控机器自己知道结果，或需要本地命令判断：用 Push。</strong></li>
+</ol>
+<h2 id="4-local-lvm-为什么不能靠-df--h">4. local-lvm 为什么不能靠 df -h</h2>
+<p><img alt="local 与 local-lvm 的差异" src="/post-images/proxmoxve-lvm-link-speed-uptime-kuma/03-lvm-thin-metrics-clear.png"></p>
+<p><em>图 3：<code>local</code> 常见是目录存储，<code>local-lvm</code> 常见是 LVM-thin 块存储；后者要用 <code>lvs</code> 查看 thin pool 指标。</em></p>
+<p>ProxmoxVE 默认安装时经常会出现两个本地存储：</p>
+<ol>
+<li><code>local</code>：目录存储，通常用于 ISO、模板、备份片段等。</li>
+<li><code>local-lvm</code>：LVM-thin 存储，通常用于 VM 磁盘和 CT rootfs。</li>
+</ol>
+<p><code>local</code> 是文件系统目录，<code>df -h</code> 很直观。<code>local-lvm</code> 是 thin pool，虚拟磁盘以逻辑卷形式存在，不能把它当成一个普通目录看。你需要用类似下面的命令查看：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>lvs -o lv_name,vg_name,lv_size,data_percent,metadata_percent,lv_attr,pool_lv
+</span></span></code></pre></div><p>如果只看 PVE 页面，当然也能看到一部分信息；但监控系统需要稳定、可脚本化、可返回机器可读结果，所以这里选择直接调用 <code>lvs</code>。</p>
+<h2 id="5-改进版-lvm-检查脚本">5. 改进版 LVM 检查脚本</h2>
+<p>下面脚本建议保存为 <code>/usr/local/bin/lvm_check.sh</code>，并授予执行权限。它使用 <code>lvs --reportformat json</code> 和 <code>jq</code>，避免手工按空格切字段导致解析不稳定。</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e">#!/usr/bin/env bash
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>set -euo pipefail
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>THRESHOLD<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>THRESHOLD<span style="color:#66d9ef">:-</span>90<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>LVS_BIN<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>LVS_BIN<span style="color:#66d9ef">:-</span>/sbin/lvs<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> ! command -v jq &gt;/dev/null 2&gt;&amp;1; <span style="color:#66d9ef">then</span>
+</span></span><span style="display:flex;"><span>  echo <span style="color:#e6db74">&#39;{&#34;status&#34;:&#34;fail&#34;,&#34;error&#34;:&#34;jq is required&#34;}&#39;</span>
+</span></span><span style="display:flex;"><span>  exit <span style="color:#ae81ff">2</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">fi</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#e6db74">&#34;</span>$LVS_BIN<span style="color:#e6db74">&#34;</span> --reportformat json --units g --nosuffix <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  -o lv_name,vg_name,lv_size,data_percent,metadata_percent,lv_attr,pool_lv |
+</span></span><span style="display:flex;"><span>jq --argjson threshold <span style="color:#e6db74">&#34;</span>$THRESHOLD<span style="color:#e6db74">&#34;</span> <span style="color:#e6db74">&#39;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  .report[0].lv
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  | map(select(((.lv_attr // &#34;&#34;) | startswith(&#34;t&#34;)) or ((.data_percent // &#34;&#34;) != &#34;&#34; and (.metadata_percent // &#34;&#34;) != &#34;&#34;)))
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  | map({
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">      lv: .lv_name,
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">      vg: .vg_name,
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">      size_g: .lv_size,
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">      data_percent: ((.data_percent // &#34;0&#34;) | tonumber),
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">      metadata_percent: ((.metadata_percent // &#34;0&#34;) | tonumber)
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    })
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  | {
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">      status: (if any(.[]; .data_percent &gt;= $threshold or .metadata_percent &gt;= $threshold) then &#34;fail&#34; else &#34;ok&#34; end),
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">      threshold: $threshold,
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">      volumes: map(select(.data_percent &gt;= $threshold or .metadata_percent &gt;= $threshold))
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    }
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">&#39;</span>
+</span></span></code></pre></div><p>安装依赖和授权：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>apt update
+</span></span><span style="display:flex;"><span>apt install -y jq
+</span></span><span style="display:flex;"><span>install -m <span style="color:#ae81ff">0755</span> lvm_check.sh /usr/local/bin/lvm_check.sh
+</span></span></code></pre></div><p>正常时输出类似：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-json" data-lang="json"><span style="display:flex;"><span>{
+</span></span><span style="display:flex;"><span>  <span style="color:#f92672">&#34;status&#34;</span>: <span style="color:#e6db74">&#34;ok&#34;</span>,
+</span></span><span style="display:flex;"><span>  <span style="color:#f92672">&#34;threshold&#34;</span>: <span style="color:#ae81ff">90</span>,
+</span></span><span style="display:flex;"><span>  <span style="color:#f92672">&#34;volumes&#34;</span>: []
+</span></span><span style="display:flex;"><span>}
+</span></span></code></pre></div><p>超过阈值时输出类似：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-json" data-lang="json"><span style="display:flex;"><span>{
+</span></span><span style="display:flex;"><span>  <span style="color:#f92672">&#34;status&#34;</span>: <span style="color:#e6db74">&#34;fail&#34;</span>,
+</span></span><span style="display:flex;"><span>  <span style="color:#f92672">&#34;threshold&#34;</span>: <span style="color:#ae81ff">90</span>,
+</span></span><span style="display:flex;"><span>  <span style="color:#f92672">&#34;volumes&#34;</span>: [
+</span></span><span style="display:flex;"><span>    {
+</span></span><span style="display:flex;"><span>      <span style="color:#f92672">&#34;lv&#34;</span>: <span style="color:#e6db74">&#34;data&#34;</span>,
+</span></span><span style="display:flex;"><span>      <span style="color:#f92672">&#34;vg&#34;</span>: <span style="color:#e6db74">&#34;pve&#34;</span>,
+</span></span><span style="display:flex;"><span>      <span style="color:#f92672">&#34;size_g&#34;</span>: <span style="color:#e6db74">&#34;900.00&#34;</span>,
+</span></span><span style="display:flex;"><span>      <span style="color:#f92672">&#34;data_percent&#34;</span>: <span style="color:#ae81ff">93.2</span>,
+</span></span><span style="display:flex;"><span>      <span style="color:#f92672">&#34;metadata_percent&#34;</span>: <span style="color:#ae81ff">41.8</span>
+</span></span><span style="display:flex;"><span>    }
+</span></span><span style="display:flex;"><span>  ]
+</span></span><span style="display:flex;"><span>}
+</span></span></code></pre></div><p>注意，这里的示例卷名和容量只是示意，不代表任何真实机器。</p>
+<h2 id="6-lvm-http-检查服务">6. LVM HTTP 检查服务</h2>
+<p><img alt="LVM HTTP 检查服务链路" src="/post-images/proxmoxve-lvm-link-speed-uptime-kuma/04-lvm-http-service-clear.png"></p>
+<p><em>图 4：HTTP 服务只是一个薄封装，真正的判断仍然放在本地脚本里，方便单独测试和替换。</em></p>
+<p>下面的 Python HTTP 服务建议保存为 <code>/root/TOOLS/lvm_http_server.py</code>。它只处理 <code>/health</code>，脚本失败或 JSON 状态为 fail 时返回 <code>503</code>，正常时返回 <code>200</code>。</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-python" data-lang="python"><span style="display:flex;"><span><span style="color:#75715e">#!/usr/bin/env python3</span>
+</span></span><span style="display:flex;"><span><span style="color:#f92672">from</span> http.server <span style="color:#f92672">import</span> BaseHTTPRequestHandler, HTTPServer
+</span></span><span style="display:flex;"><span><span style="color:#f92672">import</span> json
+</span></span><span style="display:flex;"><span><span style="color:#f92672">import</span> subprocess
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>CHECK_CMD <span style="color:#f92672">=</span> [<span style="color:#e6db74">&#34;/usr/local/bin/lvm_check.sh&#34;</span>]
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">class</span> <span style="color:#a6e22e">LVMCheckHandler</span>(BaseHTTPRequestHandler):
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">def</span> <span style="color:#a6e22e">log_message</span>(self, fmt, <span style="color:#f92672">*</span>args):
+</span></span><span style="display:flex;"><span>        <span style="color:#66d9ef">return</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">def</span> <span style="color:#a6e22e">do_GET</span>(self):
+</span></span><span style="display:flex;"><span>        <span style="color:#66d9ef">if</span> self<span style="color:#f92672">.</span>path <span style="color:#f92672">not</span> <span style="color:#f92672">in</span> (<span style="color:#e6db74">&#34;/&#34;</span>, <span style="color:#e6db74">&#34;/health&#34;</span>):
+</span></span><span style="display:flex;"><span>            self<span style="color:#f92672">.</span>send_response(<span style="color:#ae81ff">404</span>)
+</span></span><span style="display:flex;"><span>            self<span style="color:#f92672">.</span>end_headers()
+</span></span><span style="display:flex;"><span>            self<span style="color:#f92672">.</span>wfile<span style="color:#f92672">.</span>write(<span style="color:#e6db74">b</span><span style="color:#e6db74">&#34;not found</span><span style="color:#ae81ff">\n</span><span style="color:#e6db74">&#34;</span>)
+</span></span><span style="display:flex;"><span>            <span style="color:#66d9ef">return</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>        result <span style="color:#f92672">=</span> subprocess<span style="color:#f92672">.</span>run(CHECK_CMD, stdout<span style="color:#f92672">=</span>subprocess<span style="color:#f92672">.</span>PIPE, stderr<span style="color:#f92672">=</span>subprocess<span style="color:#f92672">.</span>PIPE, text<span style="color:#f92672">=</span><span style="color:#66d9ef">True</span>)
+</span></span><span style="display:flex;"><span>        body <span style="color:#f92672">=</span> result<span style="color:#f92672">.</span>stdout<span style="color:#f92672">.</span>strip() <span style="color:#f92672">or</span> <span style="color:#e6db74">&#39;{&#34;status&#34;:&#34;fail&#34;,&#34;error&#34;:&#34;empty output&#34;}&#39;</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>        status_code <span style="color:#f92672">=</span> <span style="color:#ae81ff">200</span>
+</span></span><span style="display:flex;"><span>        <span style="color:#66d9ef">try</span>:
+</span></span><span style="display:flex;"><span>            payload <span style="color:#f92672">=</span> json<span style="color:#f92672">.</span>loads(body)
+</span></span><span style="display:flex;"><span>            <span style="color:#66d9ef">if</span> result<span style="color:#f92672">.</span>returncode <span style="color:#f92672">!=</span> <span style="color:#ae81ff">0</span> <span style="color:#f92672">or</span> payload<span style="color:#f92672">.</span>get(<span style="color:#e6db74">&#34;status&#34;</span>) <span style="color:#f92672">!=</span> <span style="color:#e6db74">&#34;ok&#34;</span>:
+</span></span><span style="display:flex;"><span>                status_code <span style="color:#f92672">=</span> <span style="color:#ae81ff">503</span>
+</span></span><span style="display:flex;"><span>        <span style="color:#66d9ef">except</span> json<span style="color:#f92672">.</span>JSONDecodeError:
+</span></span><span style="display:flex;"><span>            status_code <span style="color:#f92672">=</span> <span style="color:#ae81ff">503</span>
+</span></span><span style="display:flex;"><span>            body <span style="color:#f92672">=</span> json<span style="color:#f92672">.</span>dumps({<span style="color:#e6db74">&#34;status&#34;</span>: <span style="color:#e6db74">&#34;fail&#34;</span>, <span style="color:#e6db74">&#34;error&#34;</span>: <span style="color:#e6db74">&#34;invalid json from lvm_check.sh&#34;</span>})
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>        self<span style="color:#f92672">.</span>send_response(status_code)
+</span></span><span style="display:flex;"><span>        self<span style="color:#f92672">.</span>send_header(<span style="color:#e6db74">&#34;Content-Type&#34;</span>, <span style="color:#e6db74">&#34;application/json; charset=utf-8&#34;</span>)
+</span></span><span style="display:flex;"><span>        self<span style="color:#f92672">.</span>end_headers()
+</span></span><span style="display:flex;"><span>        self<span style="color:#f92672">.</span>wfile<span style="color:#f92672">.</span>write((body <span style="color:#f92672">+</span> <span style="color:#e6db74">&#34;</span><span style="color:#ae81ff">\n</span><span style="color:#e6db74">&#34;</span>)<span style="color:#f92672">.</span>encode(<span style="color:#e6db74">&#34;utf-8&#34;</span>))
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> __name__ <span style="color:#f92672">==</span> <span style="color:#e6db74">&#34;__main__&#34;</span>:
+</span></span><span style="display:flex;"><span>    HTTPServer((<span style="color:#e6db74">&#34;0.0.0.0&#34;</span>, <span style="color:#ae81ff">8080</span>), LVMCheckHandler)<span style="color:#f92672">.</span>serve_forever()
+</span></span></code></pre></div><p>systemd 服务文件 <code>/etc/systemd/system/lvm-http.service</code>：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-ini" data-lang="ini"><span style="display:flex;"><span><span style="color:#66d9ef">[Unit]</span>
+</span></span><span style="display:flex;"><span><span style="color:#a6e22e">Description</span><span style="color:#f92672">=</span><span style="color:#e6db74">ProxmoxVE LVM thin pool health HTTP service</span>
+</span></span><span style="display:flex;"><span><span style="color:#a6e22e">After</span><span style="color:#f92672">=</span><span style="color:#e6db74">network-online.target</span>
+</span></span><span style="display:flex;"><span><span style="color:#a6e22e">Wants</span><span style="color:#f92672">=</span><span style="color:#e6db74">network-online.target</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">[Service]</span>
+</span></span><span style="display:flex;"><span><span style="color:#a6e22e">Type</span><span style="color:#f92672">=</span><span style="color:#e6db74">simple</span>
+</span></span><span style="display:flex;"><span><span style="color:#a6e22e">ExecStart</span><span style="color:#f92672">=</span><span style="color:#e6db74">/usr/bin/python3 /root/TOOLS/lvm_http_server.py</span>
+</span></span><span style="display:flex;"><span><span style="color:#a6e22e">Restart</span><span style="color:#f92672">=</span><span style="color:#e6db74">always</span>
+</span></span><span style="display:flex;"><span><span style="color:#a6e22e">RestartSec</span><span style="color:#f92672">=</span><span style="color:#e6db74">5</span>
+</span></span><span style="display:flex;"><span><span style="color:#a6e22e">User</span><span style="color:#f92672">=</span><span style="color:#e6db74">root</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">[Install]</span>
+</span></span><span style="display:flex;"><span><span style="color:#a6e22e">WantedBy</span><span style="color:#f92672">=</span><span style="color:#e6db74">multi-user.target</span>
+</span></span></code></pre></div><p>启用服务：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>systemctl daemon-reload
+</span></span><span style="display:flex;"><span>systemctl enable --now lvm-http.service
+</span></span><span style="display:flex;"><span>systemctl status lvm-http.service --no-pager
+</span></span><span style="display:flex;"><span>curl -sS http://127.0.0.1:8080/health
+</span></span></code></pre></div><p>如果 PVE 开了防火墙，只允许 Uptime Kuma 所在机器访问 8080 即可；如果你习惯只开放反向代理，也可以把这个服务绑定到 <code>127.0.0.1</code>，再由内网反向代理转发。核心原则是：这个接口只暴露健康状态，不暴露真实内网拓扑、token 或敏感路径。</p>
+<h2 id="7-uptime-kuma-里配置-local-lvm-http-监控">7. Uptime Kuma 里配置 local-lvm HTTP 监控</h2>
+<p>在 Uptime Kuma 新增一个 HTTP(s) 监控：</p>
+<ol>
+<li>Monitor Type 选择 <code>HTTP(s)</code>。</li>
+<li>URL 填 <code>http://&lt;PVE_HOST&gt;:8080/health</code>。</li>
+<li>Method 使用 <code>GET</code>。</li>
+<li>Keyword 可以填 <code>&quot;status&quot;:&quot;ok&quot;</code>，如果你的 JSON 输出带空格，也可以填 <code>&quot;status&quot;: &quot;ok&quot;</code>。</li>
+<li>Heartbeat Interval 按重要性设置，例如 60 秒或 300 秒。</li>
+<li>Retries 建议大于 1，避免短暂服务重启误报。</li>
+<li>通知渠道复用现有告警渠道。</li>
+</ol>
+<p>这里有一个细节：如果 Python 服务已经在失败时返回 <code>503</code>，关键字匹配不是必需的，但我仍然建议配置。因为这样可以防止某次脚本异常输出了非预期 HTML、报错文本或空内容，却因为某层代理返回了 200 而被误判健康。</p>
+<h2 id="8-网口速率监控脚本">8. 网口速率监控脚本</h2>
+<p><img alt="网口速率 Push 监控链路" src="/post-images/proxmoxve-lvm-link-speed-uptime-kuma/05-link-speed-push-clear.png"></p>
+<p><em>图 5：链路速率检查适合 Push。告警消息里应带上实际速率，方便直接定位线材、交换机端口或协商问题。</em></p>
+<p>网口速率问题的典型表现是：服务都在，Ping 也正常，但大文件传输速度只有十 MB/s 左右。这个时候通常要检查网线、交换机端口、光猫/软路由口、网卡驱动、EEE 节能协商等。监控脚本不负责修复，只负责在速率偏离预期时第一时间告诉你。</p>
+<p>建议脚本保存为 <code>/usr/local/bin/lan_speed_checker.sh</code>：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e">#!/usr/bin/env bash
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>set -euo pipefail
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>INTERFACE<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>INTERFACE<span style="color:#66d9ef">:-</span>&lt;INTERFACE&gt;<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>EXPECTED_SPEED<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>EXPECTED_SPEED<span style="color:#66d9ef">:-</span>1000Mb/s<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>PUSH_URL<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>PUSH_URL<span style="color:#66d9ef">:-</span>https://&lt;KUMA_URL&gt;/api/push/&lt;PUSH_TOKEN&gt;<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> ! command -v ethtool &gt;/dev/null 2&gt;&amp;1; <span style="color:#66d9ef">then</span>
+</span></span><span style="display:flex;"><span>  STATUS<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;down&#34;</span>
+</span></span><span style="display:flex;"><span>  MSG<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;ethtool not installed&#34;</span>
+</span></span><span style="display:flex;"><span>  PING<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;0&#34;</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">else</span>
+</span></span><span style="display:flex;"><span>  SPEED<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#66d9ef">$(</span>ethtool <span style="color:#e6db74">&#34;</span>$INTERFACE<span style="color:#e6db74">&#34;</span> 2&gt;/dev/null | awk -F<span style="color:#e6db74">&#39;: &#39;</span> <span style="color:#e6db74">&#39;/Speed:/ {print $2; exit}&#39;</span><span style="color:#66d9ef">)</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>  SPEED<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>SPEED<span style="color:#66d9ef">:-</span>unknown<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>  <span style="color:#66d9ef">if</span> <span style="color:#f92672">[</span> <span style="color:#e6db74">&#34;</span>$SPEED<span style="color:#e6db74">&#34;</span> <span style="color:#f92672">=</span> <span style="color:#e6db74">&#34;</span>$EXPECTED_SPEED<span style="color:#e6db74">&#34;</span> <span style="color:#f92672">]</span>; <span style="color:#66d9ef">then</span>
+</span></span><span style="display:flex;"><span>    STATUS<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;up&#34;</span>
+</span></span><span style="display:flex;"><span>    MSG<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;link speed ok: </span><span style="color:#e6db74">${</span>INTERFACE<span style="color:#e6db74">}</span><span style="color:#e6db74"> </span><span style="color:#e6db74">${</span>SPEED<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>    PING<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;1&#34;</span>
+</span></span><span style="display:flex;"><span>  <span style="color:#66d9ef">else</span>
+</span></span><span style="display:flex;"><span>    STATUS<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;down&#34;</span>
+</span></span><span style="display:flex;"><span>    MSG<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;link speed abnormal: </span><span style="color:#e6db74">${</span>INTERFACE<span style="color:#e6db74">}</span><span style="color:#e6db74"> actual=</span><span style="color:#e6db74">${</span>SPEED<span style="color:#e6db74">}</span><span style="color:#e6db74"> expected=</span><span style="color:#e6db74">${</span>EXPECTED_SPEED<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>    PING<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;0&#34;</span>
+</span></span><span style="display:flex;"><span>  <span style="color:#66d9ef">fi</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">fi</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>curl -fsS --get <span style="color:#e6db74">&#34;</span>$PUSH_URL<span style="color:#e6db74">&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  --data-urlencode <span style="color:#e6db74">&#34;status=</span><span style="color:#e6db74">${</span>STATUS<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  --data-urlencode <span style="color:#e6db74">&#34;msg=</span><span style="color:#e6db74">${</span>MSG<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  --data-urlencode <span style="color:#e6db74">&#34;ping=</span><span style="color:#e6db74">${</span>PING<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span> &gt;/dev/null
+</span></span></code></pre></div><p>安装依赖和授权：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>apt update
+</span></span><span style="display:flex;"><span>apt install -y ethtool curl
+</span></span><span style="display:flex;"><span>install -m <span style="color:#ae81ff">0755</span> lan_speed_checker.sh /usr/local/bin/lan_speed_checker.sh
+</span></span></code></pre></div><p>手动测试时不要急着写 crontab，先显式传入变量：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>INTERFACE<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;&lt;INTERFACE&gt;&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>EXPECTED_SPEED<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;1000Mb/s&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>PUSH_URL<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;https://&lt;KUMA_URL&gt;/api/push/&lt;PUSH_TOKEN&gt;&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>/usr/local/bin/lan_speed_checker.sh
+</span></span></code></pre></div><p>如果你有 2.5G、5G 或 10G 网络，把 <code>EXPECTED_SPEED</code> 改成对应值即可，例如 <code>2500Mb/s</code> 或 <code>10000Mb/s</code>。不要把“千兆”写死在脚本里，否则以后升级交换机或网卡时容易忘记改。</p>
+<h2 id="9-用-cron-或-systemd-timer-定时执行">9. 用 cron 或 systemd timer 定时执行</h2>
+<p>最简单可以用 cron：</p>
+<pre tabindex="0"><code class="language-cron" data-lang="cron">PATH=/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin
+* * * * * INTERFACE=&lt;INTERFACE&gt; EXPECTED_SPEED=1000Mb/s PUSH_URL=https://&lt;KUMA_URL&gt;/api/push/&lt;PUSH_TOKEN&gt; /usr/local/bin/lan_speed_checker.sh
+</code></pre><p>如果你不想把 Push URL 直接写在 crontab 里，可以放到 root 可读的环境文件，例如 <code>/etc/default/lan-speed-checker</code>：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>INTERFACE<span style="color:#f92672">=</span>&lt;INTERFACE&gt;
+</span></span><span style="display:flex;"><span>EXPECTED_SPEED<span style="color:#f92672">=</span>1000Mb/s
+</span></span><span style="display:flex;"><span>PUSH_URL<span style="color:#f92672">=</span>https://&lt;KUMA_URL&gt;/api/push/&lt;PUSH_TOKEN&gt;
+</span></span></code></pre></div><p>然后写一个 systemd service 和 timer。service：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-ini" data-lang="ini"><span style="display:flex;"><span><span style="color:#66d9ef">[Unit]</span>
+</span></span><span style="display:flex;"><span><span style="color:#a6e22e">Description</span><span style="color:#f92672">=</span><span style="color:#e6db74">Push network link speed status to Uptime Kuma</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">[Service]</span>
+</span></span><span style="display:flex;"><span><span style="color:#a6e22e">Type</span><span style="color:#f92672">=</span><span style="color:#e6db74">oneshot</span>
+</span></span><span style="display:flex;"><span><span style="color:#a6e22e">EnvironmentFile</span><span style="color:#f92672">=</span><span style="color:#e6db74">/etc/default/lan-speed-checker</span>
+</span></span><span style="display:flex;"><span><span style="color:#a6e22e">ExecStart</span><span style="color:#f92672">=</span><span style="color:#e6db74">/usr/local/bin/lan_speed_checker.sh</span>
+</span></span></code></pre></div><p>timer：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-ini" data-lang="ini"><span style="display:flex;"><span><span style="color:#66d9ef">[Unit]</span>
+</span></span><span style="display:flex;"><span><span style="color:#a6e22e">Description</span><span style="color:#f92672">=</span><span style="color:#e6db74">Run link speed checker every minute</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">[Timer]</span>
+</span></span><span style="display:flex;"><span><span style="color:#a6e22e">OnBootSec</span><span style="color:#f92672">=</span><span style="color:#e6db74">30</span>
+</span></span><span style="display:flex;"><span><span style="color:#a6e22e">OnUnitActiveSec</span><span style="color:#f92672">=</span><span style="color:#e6db74">60</span>
+</span></span><span style="display:flex;"><span><span style="color:#a6e22e">AccuracySec</span><span style="color:#f92672">=</span><span style="color:#e6db74">10</span>
+</span></span><span style="display:flex;"><span><span style="color:#a6e22e">Unit</span><span style="color:#f92672">=</span><span style="color:#e6db74">lan-speed-checker.service</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">[Install]</span>
+</span></span><span style="display:flex;"><span><span style="color:#a6e22e">WantedBy</span><span style="color:#f92672">=</span><span style="color:#e6db74">timers.target</span>
+</span></span></code></pre></div><p>启用：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>systemctl daemon-reload
+</span></span><span style="display:flex;"><span>systemctl enable --now lan-speed-checker.timer
+</span></span><span style="display:flex;"><span>systemctl list-timers --all | grep lan-speed-checker
+</span></span></code></pre></div><p>cron 简单直接，systemd timer 更容易查日志。家庭环境用 cron 完全可以；多台机器统一维护时，我更偏向 systemd timer。</p>
+<h2 id="10-uptime-kuma-里配置网口-push-监控">10. Uptime Kuma 里配置网口 Push 监控</h2>
+<p>新增监控时选择 <code>Push</code> 类型。保存后，Uptime Kuma 会生成一个 Push URL，形式类似：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>https://&lt;KUMA_URL&gt;/api/push/&lt;PUSH_TOKEN&gt;?status=up&amp;msg=OK&amp;ping=
+</span></span></code></pre></div><p>脚本里只保留基础 URL：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>https://&lt;KUMA_URL&gt;/api/push/&lt;PUSH_TOKEN&gt;
+</span></span></code></pre></div><p>然后由 <code>curl --data-urlencode</code> 添加 <code>status</code>、<code>msg</code>、<code>ping</code>。Push 监控的重点配置是 Heartbeat Interval。假设脚本每分钟执行一次，Uptime Kuma 的心跳间隔可以设置为 60 秒，再给一点 Grace Period。这样脚本没执行、主机断网、Uptime Kuma 收不到上报，都会变成 down。</p>
+<p>这里要理解一个区别：</p>
+<ol>
+<li><code>status=down</code>：脚本执行了，并明确告诉 Uptime Kuma 当前速率异常。</li>
+<li>没有收到 Push：脚本没执行、主机离线、网络断开、token 错误、Uptime Kuma 不可达，都可能导致超时。</li>
+</ol>
+<p>这两种在告警上都重要，但排查方向不同。前者看网线、交换机、网卡协商；后者先看主机和任务是否还活着。</p>
+<h2 id="11-验证清单">11. 验证清单</h2>
+<p>上线前建议按下面顺序验证。</p>
+<h3 id="111-验证-lvm-检查">11.1 验证 LVM 检查</h3>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>/usr/local/bin/lvm_check.sh | jq .
+</span></span><span style="display:flex;"><span>curl -i http://127.0.0.1:8080/health
+</span></span><span style="display:flex;"><span>systemctl status lvm-http.service --no-pager
+</span></span></code></pre></div><p>你应该看到：</p>
+<ol>
+<li>JSON 能被 <code>jq</code> 正常解析。</li>
+<li>正常时 HTTP 状态码为 200。</li>
+<li><code>status</code> 为 <code>ok</code>。</li>
+<li>Uptime Kuma 的 HTTP 监控显示 up。</li>
+</ol>
+<p>如果想测试 fail 分支，可以临时把阈值调低运行脚本：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>THRESHOLD<span style="color:#f92672">=</span><span style="color:#ae81ff">1</span> /usr/local/bin/lvm_check.sh
+</span></span></code></pre></div><p>不要为了测试真的把磁盘写满。</p>
+<h3 id="112-验证网口速率检查">11.2 验证网口速率检查</h3>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>ethtool &lt;INTERFACE&gt; | grep -E <span style="color:#e6db74">&#39;Speed|Duplex|Link detected&#39;</span>
+</span></span><span style="display:flex;"><span>INTERFACE<span style="color:#f92672">=</span>&lt;INTERFACE&gt; EXPECTED_SPEED<span style="color:#f92672">=</span>1000Mb/s PUSH_URL<span style="color:#f92672">=</span>https://&lt;KUMA_URL&gt;/api/push/&lt;PUSH_TOKEN&gt; /usr/local/bin/lan_speed_checker.sh
+</span></span></code></pre></div><p>再到 Uptime Kuma 的 Push 监控页面看最近一次 heartbeat。建议把 <code>EXPECTED_SPEED</code> 临时改成一个不可能的值，例如 <code>9999Mb/s</code>，确认它会变成 down；测试完马上改回来。</p>
+<h2 id="12-安全与维护建议">12. 安全与维护建议</h2>
+<p>第一，不要把 Push token、真实内网地址、真实主机名写进公开文章或仓库。脚本可以放模板，真实值放环境文件，并限制文件权限：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>chmod <span style="color:#ae81ff">600</span> /etc/default/lan-speed-checker
+</span></span></code></pre></div><p>第二，LVM HTTP 服务尽量只允许 Uptime Kuma 访问。它虽然只读，但没有必要暴露到公网。</p>
+<p>第三，阈值不要设得太贴边。<code>local-lvm</code> 到 99% 才报警通常已经晚了。家庭和小团队环境可以从 85% 或 90% 开始，根据容量增长速度调整。</p>
+<p>第四，网口速率要按实际网络设计设置。如果你的 NAS 是 2.5G，期望值就应该是 <code>2500Mb/s</code>；如果某台软路由只有百兆管理口，不要硬套千兆规则。</p>
+<p>第五，告警消息要写清楚。<code>down</code> 本身不够，<code>actual=100Mb/s expected=1000Mb/s</code> 才能让你第一眼知道发生了什么。</p>
+<h2 id="13-告警之后应该怎么排查">13. 告警之后应该怎么排查</h2>
+<p>监控的价值不只是把红点亮出来，更重要的是把排查顺序固定下来。否则告警来了之后，仍然可能从应用日志、数据库日志、代理日志一路绕远。我的建议是把这两类告警都当成“基础设施优先”的信号：先确认底层状态，再决定是否继续往上查。</p>
+<h3 id="131-local-lvm-告警后的排查顺序">13.1 local-lvm 告警后的排查顺序</h3>
+<p><code>local-lvm</code> 告警后，不要马上删除文件，也不要直接扩容。先确认到底是数据区高，还是元数据区高。</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>lvs -o lv_name,vg_name,lv_size,data_percent,metadata_percent,lv_attr,pool_lv
+</span></span><span style="display:flex;"><span>pvesm status
+</span></span></code></pre></div><p>如果 <code>Data%</code> 高，通常说明 VM/CT 磁盘实际写入量接近 thin pool 的物理容量。这个时候要看最近是否有：</p>
+<ol>
+<li>新建或迁移了大磁盘虚拟机。</li>
+<li>某台虚拟机内部日志、缓存、数据库、对象存储暴涨。</li>
+<li>快照长期没有清理。</li>
+<li>备份或临时数据误写入了虚拟磁盘。</li>
+<li>thin provisioning 过度承诺，多个虚拟磁盘同时增长。</li>
+</ol>
+<p>如果 <code>Meta%</code> 高，问题更偏向 thin pool 元数据压力。大量快照、大量小块变更、频繁创建删除卷，都可能让元数据增长。此时只看 VM 内部剩余空间没有意义，因为元数据属于宿主机 LVM thin pool 自己的管理结构。</p>
+<p>排查时可以先列出 VM 和 CT 的磁盘，再结合近期变更判断：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>qm list
+</span></span><span style="display:flex;"><span>pct list
+</span></span><span style="display:flex;"><span>pvesm list local-lvm
+</span></span></code></pre></div><p>如果你确实要清理空间，优先从业务上确认哪些虚拟机内部数据可以删除，哪些快照可以合并或移除。不要直接在宿主机上手工删除 LVM 设备文件。Proxmox 管理的卷应尽量通过 Proxmox 命令或 Web UI 操作，避免让 PVE 的配置状态和底层存储状态不一致。</p>
+<p>如果要扩容，也要先确认底层 VG 是否还有空闲空间：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>vgs
+</span></span><span style="display:flex;"><span>lvs
+</span></span></code></pre></div><p>有空闲空间时，可以评估扩展 thin pool；没有空闲空间时，就要考虑迁移虚拟磁盘、增加物理盘、调整存储布局或清理无用卷。监控本身不替你做这个决定，它只负责让你在“快满但还没炸”的阶段知道问题。</p>
+<h3 id="132-网口速率告警后的排查顺序">13.2 网口速率告警后的排查顺序</h3>
+<p>网口速率告警通常比磁盘更直观，但也容易被误判。看到 <code>actual=100Mb/s expected=1000Mb/s</code> 时，不要只盯着 PVE。链路协商是两端共同决定的，任何一端端口、线材、水晶头、模块、驱动、电源管理策略都有可能影响结果。</p>
+<p>建议按这个顺序查：</p>
+<ol>
+<li>在 PVE 上执行 <code>ethtool &lt;INTERFACE&gt;</code>，确认告警里的速率不是脚本误读。</li>
+<li>查看交换机或路由器对应端口的协商速率。</li>
+<li>重新插拔网线，观察速率是否恢复。</li>
+<li>更换一根确认质量正常的网线。</li>
+<li>换交换机端口，排除单个端口问题。</li>
+<li>检查是否开启了节能以太网、绿色以太网或自动省电功能。</li>
+<li>查看内核日志里是否有网卡 link up/link down 抖动。</li>
+</ol>
+<p>常用命令：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>ethtool &lt;INTERFACE&gt;
+</span></span><span style="display:flex;"><span>dmesg -T | grep -Ei <span style="color:#e6db74">&#39;link is|renamed|eth|enp|speed&#39;</span>
+</span></span><span style="display:flex;"><span>journalctl -k --since <span style="color:#e6db74">&#39;1 hour ago&#39;</span> | grep -Ei <span style="color:#e6db74">&#39;link|speed|duplex&#39;</span>
+</span></span></code></pre></div><p>如果速率偶尔掉到百兆又恢复，重点怀疑线材、接头、交换机端口或电磁干扰。如果每次重启后都异常，重点看驱动、系统配置、交换机固定速率设置。如果只有大流量后异常，可能还要看网卡温度、供电、模块兼容性或交换机稳定性。</p>
+<p>这里有个实际经验：不要只用测速软件判断链路是否恢复。先看 <code>ethtool</code> 的协商速率，再做传输测试。因为测速慢可能还有磁盘、CPU、SMB/NFS 协议、加密、远端写入性能等因素；而 <code>Speed</code> 是链路层结果，能先把问题范围缩小。</p>
+<h3 id="133-误报怎么处理">13.3 误报怎么处理</h3>
+<p>任何监控都会遇到误报。关键不是追求零误报，而是让误报可解释、可收敛。</p>
+<p><code>local-lvm</code> 误报常见原因有：</p>
+<ol>
+<li>PVE 正在重启，HTTP 服务短暂不可达。</li>
+<li><code>jq</code> 或 <code>lvs</code> 路径不对，脚本在 cron/systemd 环境下找不到命令。</li>
+<li>Uptime Kuma 到 PVE 的网络路径抖动。</li>
+<li>阈值设得太低，正常波动也触发告警。</li>
+<li>thin pool 名称或输出字段和脚本假设不一致。</li>
+</ol>
+<p>解决方式是先看脚本本地输出，再看 HTTP 服务日志，最后看 Uptime Kuma 的检查详情。不要只在 Uptime Kuma 页面上猜。</p>
+<p>网口速率误报常见原因有：</p>
+<ol>
+<li>监控接口写错，检查到了管理口或未接线接口。</li>
+<li>机器实际是 2.5G，但期望值仍写成 <code>1000Mb/s</code>。</li>
+<li>某些驱动在 link down 时返回 <code>Unknown!</code>，脚本按 down 处理，这是合理的，但消息需要写清楚。</li>
+<li>Push URL token 复制错，导致 Uptime Kuma 收不到心跳。</li>
+<li>cron 环境变量不完整，脚本没有加载到真实配置。</li>
+</ol>
+<p>所以脚本里最好把实际接口名、实际速率、期望速率都写进消息。告警消息越具体，误报处理越快。</p>
+<h3 id="134-多台-pve-怎么统一维护">13.4 多台 PVE 怎么统一维护</h3>
+<p>如果只有一台 PVE，手工部署脚本就够了。多台 PVE 或多台 NAS/软路由时，就要考虑一致性。最简单的做法不是马上引入复杂平台，而是先把脚本模板固定下来：</p>
+<ol>
+<li><code>lvm_check.sh</code> 保持一致，只通过环境变量调整阈值。</li>
+<li><code>lvm_http_server.py</code> 保持一致，只开放固定端口和路径。</li>
+<li><code>lan_speed_checker.sh</code> 保持一致，每台机器只改 <code>INTERFACE</code>、<code>EXPECTED_SPEED</code>、<code>PUSH_URL</code>。</li>
+<li>Uptime Kuma 监控命名保持统一，例如 <code>pve-a local-lvm</code>、<code>pve-a link speed</code>。</li>
+<li>所有真实 Push URL 只保存在对应机器本地，不写进公共仓库。</li>
+</ol>
+<p>这样以后新增机器时，只需要复制模板、改环境文件、在 Uptime Kuma 新建监控项。命名统一之后，告警消息也更容易看懂。</p>
+<p>如果你已经使用 Ansible、SaltStack 或其他配置管理工具，可以把这三个脚本、两个 systemd 单元和一个环境文件纳入配置管理。注意 Push token 每台机器不同，最好作为受保护变量注入，不要硬编码到模板里。</p>
+<h3 id="135-阈值应该怎么定">13.5 阈值应该怎么定</h3>
+<p>磁盘阈值没有绝对标准。小容量机器和大容量机器的 90% 不是一个概念：100G 的 10% 只剩 10G，4T 的 10% 还剩 400G。更合理的做法是结合“百分比”和“增长速度”理解。</p>
+<p>如果是小容量系统盘承载的 <code>local-lvm</code>，可以设得保守一些，例如 80% 到 85%。因为剩余空间不多，几个日志暴涨、一次备份误写入、一个快照忘删，就可能迅速耗尽。对于容量较大、增长规律稳定的存储池，可以先设 90%，再观察一段时间。</p>
+<p>网口速率阈值则应该按设计值定，而不是按“能用”定。千兆链路掉到百兆，服务仍然能访问，但备份窗口、同步任务和远程桌面体验都会明显变差。2.5G 链路掉到千兆也是同理。如果你的设计目标是 2.5G，就应该按 <code>2500Mb/s</code> 监控，而不是因为千兆也能用就不告警。</p>
+<h3 id="136-为什么不直接改-uptime-kuma-源码">13.6 为什么不直接改 Uptime Kuma 源码</h3>
+<p>这种需求很容易让人产生一个冲动：既然 Uptime Kuma 没有内置 <code>local-lvm</code> 和网口速率监控，那就给它加一个监控类型。技术上当然可以，但我不建议为了这类小众指标直接改源码。</p>
+<p>原因很现实。第一，Uptime Kuma 升级频率不低，私有改动会让后续升级变得麻烦。第二，<code>local-lvm</code>、ZFS、普通目录、Ceph、iSCSI、不同网卡速率、不同系统命令，这些组合一旦做成通用功能，就会迅速膨胀。第三，监控项真正需要的只是一个二值结果和一段可读消息，没必要把所有环境差异都塞进 Uptime Kuma。</p>
+<p>把复杂判断放在被监控机器本地，Uptime Kuma 只接收结果，是更稳的边界。PVE 自己最清楚 LVM 和网卡状态；Uptime Kuma 最擅长展示状态、维持心跳、发送通知。两边各做擅长的事，脚本也更容易被你自己理解、审计和替换。</p>
+<p>这也是本文没有追求“平台化”的原因。家庭服务器和小团队系统最怕的是维护成本超过问题本身。一个几十行脚本、一个 systemd 服务、一个 Uptime Kuma 监控项，已经能解决 80% 的实际风险。等到你真的需要历史趋势、容量预测、跨主机聚合和复杂查询时，再引入 Prometheus、VictoriaMetrics、Grafana 或专门的日志指标系统也不迟。</p>
+<h3 id="137-我会怎样给告警命名">13.7 我会怎样给告警命名</h3>
+<p>告警命名看似小事，但机器多了以后很重要。建议名称里包含三部分：主机角色、指标对象、期望状态。例如：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>pve-main local-lvm thin pool
+</span></span><span style="display:flex;"><span>pve-main uplink speed 1000M
+</span></span><span style="display:flex;"><span>nas-a uplink speed 2500M
+</span></span><span style="display:flex;"><span>router-a wan-port speed 1000M
+</span></span></code></pre></div><p>不要只命名为 <code>disk</code>、<code>network</code>、<code>PVE check</code>。真正收到通知时，你可能在外面、手机屏幕很小、没有登录后台的条件。标题越具体，你越容易判断是否需要立刻处理。对于网口速率告警，消息里再带上 <code>actual</code> 和 <code>expected</code>，基本就能在通知层面完成第一轮判断。</p>
+<h2 id="14-参考资料">14. 参考资料</h2>
+<ol>
+<li>Proxmox VE LVM-thin storage 文档：<code>https://pve.proxmox.com/pve-docs/pve-storage-lvmthin-plain.html</code></li>
+<li>LVM thin provisioning 手册：<code>https://man7.org/linux/man-pages/man7/lvmthin.7.html</code></li>
+<li>Uptime Kuma Push endpoint 说明：<code>https://github.com/louislam/uptime-kuma/wiki/Internal-API</code></li>
+</ol>
+<h2 id="15-总结">15. 总结</h2>
+<p>这套方案的价值不在于脚本多复杂，而在于把两个“低频但高伤害”的问题提前纳入统一监控。</p>
+<p><code>local-lvm</code> 满了，影响的是虚拟机、容器、快照、备份和写入稳定性；网口掉速，影响的是 NAS、软路由、备份、同步和所有大文件传输。它们都不一定让服务立刻宕机，却会制造大量看似随机的应用层问题。</p>
+<p>把 LVM thin pool 的 <code>Data%</code>、<code>Meta%</code> 和网口协商速率接到 Uptime Kuma 后，排障路径会短很多：看到告警，先处理基础设施；没有告警，再继续查应用。对家庭服务器和小团队系统来说，这已经能挡住不少“明明昨天还好好的”事故。</p>
+        </div>
+    </article>
+
+    
+  
+
+
+  
+    
+  
+
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk/dist/gitalk.css">
+<script src="https://cdn.jsdelivr.net/npm/gitalk/dist/gitalk.min.js"></script>
+<div id="gitalk-container" style="margin-top:40px"></div>
+<script>
+  (function(){
+    var gitalk = new Gitalk({
+      clientID: '3181fd94e501cc5db0ad',
+      clientSecret: 'af1dab79dae02c69296e6615bfcecf47fc8615ee',
+      repo: 'margropcomment.margrop.io',
+      owner: 'margrop',
+      admin: ["margrop"],
+      
+      id: '\/post\/proxmoxve-lvm-link-speed-uptime-kuma\/',
+      
+      distractionFreeMode: false
+    });
+    gitalk.render('gitalk-container');
+  })();
+</script>
+  
+
+
+
+
+    
+    <script type="text/javascript" src="https://js.users.51.la/21044367.js"></script>
+    <script charset="UTF-8" id="LA_COLLECT" src="//sdk.51.la/js-sdk-pro.min.js"></script>
+    <script>LA.init({id: "1vVTUWl7zoRjnKXi",ck: "1vVTUWl7zoRjnKXi"})</script>
+    <script src="https://sdk.51.la/perf/js-sdk-perf.min.js" crossorigin="anonymous"></script>
+    <script>
+      new LingQue.Monitor().init({id:"202teQt8THXwqyve"});
+    </script>
+</body>
+</html>
