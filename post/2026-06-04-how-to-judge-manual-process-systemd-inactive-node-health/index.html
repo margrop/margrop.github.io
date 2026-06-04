@@ -1,0 +1,793 @@
+<!doctype html>
+<html lang="cn"><head>
+<title>OpenClaw 健康检查中如何正确判定&#34;manual 进程 + systemd inactive&#34;节点的健康状态：一份可复用的判断矩阵 - 魔都水滴</title>
+<meta charset="UTF-8">
+<meta name="keywords" content="">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5">
+
+<link rel="shortcut icon" href="/favicon.ico" type="image/x-icon" />
+<meta name="description" content="前言做 OpenClaw Gateway 健康检查的人，几乎都会撞上这样一个让人”半夜睡不着”的场景： 12345678$ systemctl is-active openclaw-gatewayinactive$ ps -ef | grep openclaw | grep -v greproot  338431  ...  &#x2F;usr&#x2F;local&#x2F;bin&#x2F;openclaw-gateway --co">
+<meta property="og:type" content="article">
+<meta property="og:title" content="OpenClaw 健康检查中如何正确判定&quot;manual 进程 + systemd inactive&quot;节点的健康状态：一份可复用的判断矩阵">
+<meta property="og:url" content="http://blog.margrop.com/post/2026-06-04-how-to-judge-manual-process-systemd-inactive-node-health/index.html">
+<meta property="og:site_name" content="魔都水滴">
+<meta property="og:description" content="前言做 OpenClaw Gateway 健康检查的人，几乎都会撞上这样一个让人”半夜睡不着”的场景： 12345678$ systemctl is-active openclaw-gatewayinactive$ ps -ef | grep openclaw | grep -v greproot  338431  ...  &#x2F;usr&#x2F;local&#x2F;bin&#x2F;openclaw-gateway --co">
+<meta property="og:locale">
+<meta property="article:published_time" content="2026-06-04T13:30:00.000Z">
+<meta property="article:modified_time" content="2026-06-04T13:21:08.992Z">
+<meta property="article:author" content="Margrop">
+<meta property="article:tag" content="运维">
+<meta property="article:tag" content="OpenClaw">
+<meta property="article:tag" content="健康检查">
+<meta property="article:tag" content="监控">
+<meta property="article:tag" content="systemd">
+<meta property="article:tag" content="技术">
+<meta property="article:tag" content="进程">
+<meta property="article:tag" content="manual">
+<meta property="article:tag" content="Hermes">
+<meta property="article:tag" content="dashboard">
+<meta name="twitter:card" content="summary">
+
+<link rel="stylesheet" href="../../lib/fancybox/fancybox.css">
+<link rel="stylesheet" href="../../lib/mdui_043tiny/mdui.css">
+
+
+<link rel="stylesheet" href="../../lib/iconfont/iconfont.css?v=1780579290294">
+
+<link rel="stylesheet" href="../../css/style.css?v=1780579290294">
+
+
+
+
+    
+        <link rel="stylesheet" href="../../custom.css?v=1780579290297">
+    
+
+
+
+<script src="../../lib/mdui_043tiny/mdui.js" async></script>
+<script src="../../lib/fancybox/fancybox.umd.js" async></script>
+<script src="../../lib/lax.min.js" async></script>
+
+
+<script async src="../../js/app.js?v=1780579290298"></script>
+
+ 
+
+<script charset="UTF-8" id="LA_COLLECT" src="//sdk.51.la/js-sdk-pro.min.js"></script>
+<script>LA.init({id:"23bDEwNOu1L8NhV1",ck:"23bDEwNOu1L8NhV1"})</script>
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-4NGHEP8LEV"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+
+  gtag('config', 'G-4NGHEP8LEV');
+</script>
+
+
+<link rel="stylesheet"  href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/atom-one-dark.min.css">
+<meta name="generator" content="Hexo 7.3.0"><link rel="alternate" href="atom.xml" title="魔都水滴" type="application/atom+xml">
+</head><body class="nexmoe mdui-drawer-body-left"><div id="nexmoe-background"><div class="nexmoe-bg" style="background-image: url(/images/background.webp)"></div><div class="mdui-appbar mdui-shadow-0"><div class="mdui-toolbar"><a class="mdui-btn mdui-btn-icon mdui-ripple" mdui-drawer="{target: &#039;#drawer&#039;, swipe: true}" title="menu"><i class="mdui-icon nexmoefont icon-menu"></i></a><div class="mdui-toolbar-spacer"></div><a class="mdui-btn mdui-btn-icon" href="../../index.html" title="Margrop"><img src="/images/avatar.webp" alt="Margrop"></a></div></div></div><div id="nexmoe-header"><div class="nexmoe-drawer mdui-drawer" id="drawer">
+    <div class="nexmoe-avatar mdui-ripple">
+        <a href="../../index.html" title="Margrop">
+            <img src="/images/avatar.webp" alt="Margrop" alt="Margrop">
+        </a>
+    </div>
+    <div class="nexmoe-count">
+        <div><span>Articles</span>338</div>
+        <div><span>Tags</span>504</div>
+        <div><span>Categories</span>7</div>
+    </div>
+    <div class="nexmoe-list mdui-list" mdui-collapse="{accordion: true}">
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" href="../../index.html" title="回到首页">
+            <i class="mdui-list-item-icon nexmoefont icon-home"></i>
+            <div class="mdui-list-item-content">
+                回到首页
+            </div>
+        </a>
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" href="../../post/archives/" title="文章归档">
+            <i class="mdui-list-item-icon nexmoefont icon-container"></i>
+            <div class="mdui-list-item-content">
+                文章归档
+            </div>
+        </a>
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" target="_blank" rel="noopener" href="https://example.com/" title="下载">
+            <i class="mdui-list-item-icon nexmoefont icon-container"></i>
+            <div class="mdui-list-item-content">
+                下载
+            </div>
+        </a>
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" href="../../post/favorites/" title="常用链接">
+            <i class="mdui-list-item-icon nexmoefont icon-unorderedlist"></i>
+            <div class="mdui-list-item-content">
+                常用链接
+            </div>
+        </a>
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" href="../../post/github-project-stars/" title="GithubStars">
+            <i class="mdui-list-item-icon nexmoefont icon-github"></i>
+            <div class="mdui-list-item-content">
+                GithubStars
+            </div>
+        </a>
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" href="../../post/donate/" title="给我赞助">
+            <i class="mdui-list-item-icon nexmoefont icon-coffee"></i>
+            <div class="mdui-list-item-content">
+                给我赞助
+            </div>
+        </a>
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" href="../../post/about/" title="关于博主">
+            <i class="mdui-list-item-icon nexmoefont icon-info-circle"></i>
+            <div class="mdui-list-item-content">
+                关于博主
+            </div>
+        </a>
+        
+    </div>
+    
+    
+        
+        <div class="nexmoe-widget-wrap">
+    <div class="nexmoe-widget nexmoe-search">
+         
+            <form id="search_form" action_e="https://cn.bing.com/search?q=site:example.com" onsubmit="return search();">
+                <label><input id="search_value" name="q" type="search" placeholder="Search"></label>
+            </form>
+         
+    </div>
+</div>
+
+
+
+
+    
+        
+        <div class="nexmoe-widget-wrap">
+	<div class="nexmoe-widget nexmoe-social">
+		<a
+			class="mdui-ripple"
+			href="http://qm.qq.com/cgi-bin/qm/qr?_wv=1027&k=weD8TANNWdCOveAMcdmoAxOKt5owKkDS"
+			target="_blank"
+			mdui-tooltip="{content: 'QQ群'}"
+			style="
+				color: rgb(249, 174, 8);
+				background-color: rgba(249, 174, 8, .1);
+			"
+		>
+			<i
+				class="nexmoefont icon-QQ"
+			></i> </a
+		><a
+			class="mdui-ripple"
+			href="https://github.com/margrop/"
+			target="_blank"
+			mdui-tooltip="{content: 'GitHub'}"
+			style="
+				color: rgb(25, 23, 23);
+				background-color: rgba(25, 23, 23, .1);
+			"
+		>
+			<i
+				class="nexmoefont icon-github"
+			></i> </a
+		><a
+			class="mdui-ripple"
+			href="../../atom.xml"
+			target="_blank"
+			mdui-tooltip="{content: 'RSS'}"
+			style="
+				color: rgb(247, 132, 34);
+				background-color: rgba(247, 132, 34, .1);
+			"
+		>
+			<i
+				class="nexmoefont icon-rss"
+			></i> </a
+		>
+	</div>
+</div>
+
+    
+        
+        
+  <div class="nexmoe-widget-wrap">
+    <h3 class="nexmoe-widget-title">Categories</h3>
+    <div class="nexmoe-widget">
+
+      <ul class="category-list">
+
+        
+
+
+        
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/ai-diary/">ai_diary</a>
+          <span class="category-list-count">94</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/ai-tech/">ai_tech</a>
+          <span class="category-list-count">86</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/develop/">develop</a>
+          <span class="category-list-count">28</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/">network</a>
+          <span class="category-list-count">112</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/notes/">notes</a>
+          <span class="category-list-count">10</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/others/">others</a>
+          <span class="category-list-count">3</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/sport/">sport</a>
+          <span class="category-list-count">4</span>
+        </li>
+
+        
+      </ul>
+
+    </div>
+  </div>
+
+
+    
+        
+        
+  <div class="nexmoe-widget-wrap">
+    <div id="randomtagcloud" class="nexmoe-widget tagcloud nexmoe-rainbow">
+      <a href="../../tags/1password/" style="font-size: 10px;">1password</a> <a href="../../tags/401/" style="font-size: 10px;">401</a> <a href="../../tags/6%E4%B8%AA%E8%8A%82%E7%82%B9/" style="font-size: 10px;">6个节点</a> <a href="../../tags/AC/" style="font-size: 10.43px;">AC</a> <a href="../../tags/ACP/" style="font-size: 10px;">ACP</a> <a href="../../tags/AI/" style="font-size: 12.17px;">AI</a> <a href="../../tags/AI-Coding-Assistant/" style="font-size: 10px;">AI Coding Assistant</a> <a href="../../tags/AI%E7%BC%96%E7%A8%8B%E5%8A%A9%E6%89%8B/" style="font-size: 10px;">AI编程助手</a> <a href="../../tags/AI%E8%BE%85%E5%8A%A9/" style="font-size: 10.43px;">AI辅助</a> <a href="../../tags/AI%E8%BE%85%E5%8A%A9%E7%BC%96%E7%A8%8B/" style="font-size: 10.43px;">AI辅助编程</a> <a href="../../tags/AP/" style="font-size: 10.87px;">AP</a> <a href="../../tags/API/" style="font-size: 11.3px;">API</a> <a href="../../tags/Alertmanager/" style="font-size: 10px;">Alertmanager</a> <a href="../../tags/AppDaemon/" style="font-size: 10px;">AppDaemon</a> <a href="../../tags/Aqara/" style="font-size: 10px;">Aqara</a> <a href="../../tags/CC-Switch/" style="font-size: 10.43px;">CC-Switch</a> <a href="../../tags/CI-CD/" style="font-size: 10.43px;">CI/CD</a> <a href="../../tags/CLI-Tools/" style="font-size: 10px;">CLI Tools</a> <a href="../../tags/CLI%E5%B7%A5%E5%85%B7/" style="font-size: 10px;">CLI工具</a> <a href="../../tags/Caddy/" style="font-size: 10px;">Caddy</a> <a href="../../tags/Claude-Code/" style="font-size: 10.43px;">Claude Code</a> <a href="../../tags/Cloudflare/" style="font-size: 10px;">Cloudflare</a> <a href="../../tags/Codex/" style="font-size: 10.43px;">Codex</a> <a href="../../tags/Cookie-%E8%AE%A4%E8%AF%81/" style="font-size: 10px;">Cookie 认证</a> <a href="../../tags/Cron/" style="font-size: 11.3px;">Cron</a> <a href="../../tags/D1/" style="font-size: 10px;">D1</a> <a href="../../tags/Date/" style="font-size: 10px;">Date</a> <a href="../../tags/Diagrams-net/" style="font-size: 10px;">Diagrams.net</a> <a href="../../tags/Diary/" style="font-size: 10px;">Diary</a> <a href="../../tags/Docker/" style="font-size: 15.22px;">Docker</a> <a href="../../tags/Docker-Compose/" style="font-size: 10px;">Docker Compose</a> <a href="../../tags/Efficiency-Tools/" style="font-size: 10px;">Efficiency Tools</a> <a href="../../tags/Electerm/" style="font-size: 10px;">Electerm</a> <a href="../../tags/English/" style="font-size: 10.43px;">English</a> <a href="../../tags/Gateway/" style="font-size: 12.61px;">Gateway</a> <a href="../../tags/Gemini-CLI/" style="font-size: 10.43px;">Gemini CLI</a> <a href="../../tags/GitHub-Actions/" style="font-size: 10.43px;">GitHub Actions</a> <a href="../../tags/HA/" style="font-size: 10px;">HA</a> <a href="../../tags/HADashboard/" style="font-size: 10px;">HADashboard</a> <a href="../../tags/Hermes/" style="font-size: 10px;">Hermes</a> <a href="../../tags/Hexo/" style="font-size: 10.87px;">Hexo</a> <a href="../../tags/HomeAssistant/" style="font-size: 10px;">HomeAssistant</a> <a href="../../tags/IP/" style="font-size: 10px;">IP</a> <a href="../../tags/IPv4/" style="font-size: 10px;">IPv4</a> <a href="../../tags/Java/" style="font-size: 11.74px;">Java</a> <a href="../../tags/LVM%E2%80%91Thin/" style="font-size: 10.43px;">LVM‑Thin</a> <a href="../../tags/Linux/" style="font-size: 13.04px;">Linux</a> <a href="../../tags/MacOS/" style="font-size: 10.87px;">MacOS</a> <a href="../../tags/Markdown/" style="font-size: 10px;">Markdown</a> <a href="../../tags/MiniMax/" style="font-size: 10px;">MiniMax</a> <a href="../../tags/Multi-Agent/" style="font-size: 10px;">Multi-Agent</a> <a href="../../tags/MySQL/" style="font-size: 10.87px;">MySQL</a> <a href="../../tags/NAS/" style="font-size: 10.87px;">NAS</a> <a href="../../tags/Nginx/" style="font-size: 10px;">Nginx</a> <a href="../../tags/Node-RED/" style="font-size: 10.43px;">Node-RED</a> <a href="../../tags/Node-js/" style="font-size: 10.43px;">Node.js</a> <a href="../../tags/OOM/" style="font-size: 10px;">OOM</a> <a href="../../tags/OpenAI/" style="font-size: 10px;">OpenAI</a> <a href="../../tags/OpenClaw/" style="font-size: 18.26px;">OpenClaw</a> <a href="../../tags/OpenCode/" style="font-size: 10.43px;">OpenCode</a> <a href="../../tags/OpenResty/" style="font-size: 10px;">OpenResty</a> <a href="../../tags/OpenWrt/" style="font-size: 10.43px;">OpenWrt</a> <a href="../../tags/PPPoE/" style="font-size: 10px;">PPPoE</a> <a href="../../tags/Portainer/" style="font-size: 10px;">Portainer</a> <a href="../../tags/PostgreSQL/" style="font-size: 10px;">PostgreSQL</a> <a href="../../tags/ProcessOn/" style="font-size: 10px;">ProcessOn</a> <a href="../../tags/Prometheus/" style="font-size: 13.04px;">Prometheus</a> <a href="../../tags/Proxmox-VE/" style="font-size: 15.65px;">Proxmox VE</a> <a href="../../tags/RPC/" style="font-size: 10px;">RPC</a> <a href="../../tags/SOCKS5/" style="font-size: 10px;">SOCKS5</a> <a href="../../tags/SSL/" style="font-size: 10px;">SSL</a> <a href="../../tags/Session/" style="font-size: 10px;">Session</a> <a href="../../tags/Shell/" style="font-size: 10.43px;">Shell</a> <a href="../../tags/Subagent/" style="font-size: 10px;">Subagent</a> <a href="../../tags/TTS/" style="font-size: 10px;">TTS</a> <a href="../../tags/TimeMachine/" style="font-size: 10px;">TimeMachine</a> <a href="../../tags/UML/" style="font-size: 10px;">UML</a> <a href="../../tags/Uptime-Kuma/" style="font-size: 10.43px;">Uptime Kuma</a> <a href="../../tags/VPN/" style="font-size: 10px;">VPN</a> <a href="../../tags/VPS/" style="font-size: 10.87px;">VPS</a> <a href="../../tags/Web/" style="font-size: 10px;">Web</a> <a href="../../tags/WebSocket/" style="font-size: 10.43px;">WebSocket</a> <a href="../../tags/Windows/" style="font-size: 10px;">Windows</a> <a href="../../tags/Workers/" style="font-size: 10px;">Workers</a> <a href="../../tags/activate/" style="font-size: 10.43px;">activate</a> <a href="../../tags/ad/" style="font-size: 10px;">ad</a> <a href="../../tags/adb/" style="font-size: 10px;">adb</a> <a href="../../tags/adblock/" style="font-size: 10.43px;">adblock</a> <a href="../../tags/agent/" style="font-size: 10px;">agent</a> <a href="../../tags/aligenie/" style="font-size: 10px;">aligenie</a> <a href="../../tags/aliyun/" style="font-size: 10.87px;">aliyun</a> <a href="../../tags/alpine/" style="font-size: 10px;">alpine</a> <a href="../../tags/annotation/" style="font-size: 10px;">annotation</a> <a href="../../tags/aop/" style="font-size: 10px;">aop</a> <a href="../../tags/authy/" style="font-size: 10px;">authy</a> <a href="../../tags/autofs/" style="font-size: 10px;">autofs</a> <a href="../../tags/backup/" style="font-size: 10px;">backup</a> <a href="../../tags/baidupan/" style="font-size: 10px;">baidupan</a> <a href="../../tags/bash/" style="font-size: 10.87px;">bash</a> <a href="../../tags/bitwarden/" style="font-size: 10px;">bitwarden</a> <a href="../../tags/boot/" style="font-size: 10.43px;">boot</a> <a href="../../tags/brew/" style="font-size: 10.43px;">brew</a> <a href="../../tags/browser/" style="font-size: 10px;">browser</a> <a href="../../tags/caddy2/" style="font-size: 10.43px;">caddy2</a> <a href="../../tags/cdn/" style="font-size: 10px;">cdn</a> <a href="../../tags/centos/" style="font-size: 14.35px;">centos</a> <a href="../../tags/cert/" style="font-size: 10.43px;">cert</a> <a href="../../tags/certbot/" style="font-size: 10px;">certbot</a> <a href="../../tags/charles/" style="font-size: 10px;">charles</a> <a href="../../tags/chat/" style="font-size: 10px;">chat</a> <a href="../../tags/chrome/" style="font-size: 10.87px;">chrome</a> <a href="../../tags/classloader/" style="font-size: 10px;">classloader</a> <a href="../../tags/client/" style="font-size: 10.87px;">client</a> <a href="../../tags/clone/" style="font-size: 10.43px;">clone</a> <a href="../../tags/closures/" style="font-size: 10px;">closures</a> <a href="../../tags/cloudflare/" style="font-size: 10.43px;">cloudflare</a> <a href="../../tags/cmd/" style="font-size: 10px;">cmd</a> <a href="../../tags/command/" style="font-size: 10px;">command</a> <a href="../../tags/commit/" style="font-size: 10px;">commit</a> <a href="../../tags/container/" style="font-size: 10px;">container</a> <a href="../../tags/crontab/" style="font-size: 10px;">crontab</a> <a href="../../tags/ctyun/" style="font-size: 10.43px;">ctyun</a> <a href="../../tags/dashboard/" style="font-size: 10px;">dashboard</a> <a href="../../tags/ddsm/" style="font-size: 10px;">ddsm</a> <a href="../../tags/demo/" style="font-size: 10px;">demo</a> <a href="../../tags/dependency/" style="font-size: 10px;">dependency</a> <a href="../../tags/deploy/" style="font-size: 10px;">deploy</a> <a href="../../tags/developer/" style="font-size: 10px;">developer</a> <a href="../../tags/devtools/" style="font-size: 10px;">devtools</a> <a href="../../tags/dll/" style="font-size: 10px;">dll</a> <a href="../../tags/dns/" style="font-size: 10.87px;">dns</a> <a href="../../tags/docker/" style="font-size: 13.48px;">docker</a> <a href="../../tags/domain/" style="font-size: 10px;">domain</a> <a href="../../tags/download/" style="font-size: 10px;">download</a> <a href="../../tags/draw/" style="font-size: 10.43px;">draw</a> <a href="../../tags/drawio/" style="font-size: 10px;">drawio</a> <a href="../../tags/dsm/" style="font-size: 13.04px;">dsm</a> <a href="../../tags/dump/" style="font-size: 10px;">dump</a> <a href="../../tags/dylib/" style="font-size: 10px;">dylib</a> <a href="../../tags/edge/" style="font-size: 10.87px;">edge</a> <a href="../../tags/exception/" style="font-size: 10.43px;">exception</a> <a href="../../tags/export/" style="font-size: 10px;">export</a> <a href="../../tags/fail2ban/" style="font-size: 10px;">fail2ban</a> <a href="../../tags/fallback%E5%A4%B1%E6%95%88/" style="font-size: 10px;">fallback失效</a> <a href="../../tags/feign/" style="font-size: 10px;">feign</a> <a href="../../tags/firewall-cmd/" style="font-size: 10.43px;">firewall-cmd</a> <a href="../../tags/flow/" style="font-size: 10px;">flow</a> <a href="../../tags/frp/" style="font-size: 10.43px;">frp</a> <a href="../../tags/frpc/" style="font-size: 11.3px;">frpc</a> <a href="../../tags/frps/" style="font-size: 10.43px;">frps</a> <a href="../../tags/fuckgfw/" style="font-size: 11.3px;">fuckgfw</a> <a href="../../tags/function/" style="font-size: 10px;">function</a> <a href="../../tags/fuser/" style="font-size: 10px;">fuser</a> <a href="../../tags/gcc/" style="font-size: 10px;">gcc</a> <a href="../../tags/gfw/" style="font-size: 10.43px;">gfw</a> <a href="../../tags/git/" style="font-size: 12.17px;">git</a> <a href="../../tags/github/" style="font-size: 12.61px;">github</a> <a href="../../tags/golang/" style="font-size: 10px;">golang</a> <a href="../../tags/gperftools/" style="font-size: 10px;">gperftools</a> <a href="../../tags/gridea/" style="font-size: 10.43px;">gridea</a> <a href="../../tags/grub/" style="font-size: 10.43px;">grub</a> <a href="../../tags/gvt-g/" style="font-size: 10px;">gvt-g</a> <a href="../../tags/hacs/" style="font-size: 10px;">hacs</a> <a href="../../tags/havcs/" style="font-size: 10.43px;">havcs</a> <a href="../../tags/heap/" style="font-size: 10px;">heap</a> <a href="../../tags/hello/" style="font-size: 10.43px;">hello</a> <a href="../../tags/hexo/" style="font-size: 10.87px;">hexo</a> <a href="../../tags/hibernate/" style="font-size: 10.43px;">hibernate</a> <a href="../../tags/hidpi/" style="font-size: 10px;">hidpi</a> <a href="../../tags/hoisting/" style="font-size: 10px;">hoisting</a> <a href="../../tags/homeassistant/" style="font-size: 11.74px;">homeassistant</a> <a href="../../tags/hosts/" style="font-size: 10px;">hosts</a> <a href="../../tags/html/" style="font-size: 10.43px;">html</a> <a href="../../tags/htmlparser/" style="font-size: 10px;">htmlparser</a> <a href="../../tags/https/" style="font-size: 10.87px;">https</a> <a href="../../tags/iKuai/" style="font-size: 10.43px;">iKuai</a> <a href="../../tags/idea/" style="font-size: 10px;">idea</a> <a href="../../tags/image/" style="font-size: 10px;">image</a> <a href="../../tags/img/" style="font-size: 10.43px;">img</a> <a href="../../tags/img2kvm/" style="font-size: 10px;">img2kvm</a> <a href="../../tags/immortalwrt/" style="font-size: 10px;">immortalwrt</a> <a href="../../tags/import/" style="font-size: 10px;">import</a> <a href="../../tags/index/" style="font-size: 10px;">index</a> <a href="../../tags/install/" style="font-size: 12.17px;">install</a> <a href="../../tags/intel/" style="font-size: 10.43px;">intel</a> <a href="../../tags/io/" style="font-size: 10px;">io</a> <a href="../../tags/ios/" style="font-size: 10px;">ios</a> <a href="../../tags/ip/" style="font-size: 10px;">ip</a> <a href="../../tags/iptables/" style="font-size: 10px;">iptables</a> <a href="../../tags/iptv/" style="font-size: 10.43px;">iptv</a> <a href="../../tags/ipv6/" style="font-size: 10px;">ipv6</a> <a href="../../tags/iso/" style="font-size: 10px;">iso</a> <a href="../../tags/java/" style="font-size: 11.74px;">java</a> <a href="../../tags/javascript/" style="font-size: 10.43px;">javascript</a> <a href="../../tags/jetbrains/" style="font-size: 10px;">jetbrains</a> <a href="../../tags/jni/" style="font-size: 10px;">jni</a> <a href="../../tags/jnilib/" style="font-size: 10px;">jnilib</a> <a href="../../tags/jpa/" style="font-size: 10px;">jpa</a> <a href="../../tags/js/" style="font-size: 10.87px;">js</a> <a href="../../tags/json/" style="font-size: 10.43px;">json</a> <a href="../../tags/jsonb/" style="font-size: 10px;">jsonb</a> <a href="../../tags/jupter/" style="font-size: 10px;">jupter</a> <a href="../../tags/jupyterlab/" style="font-size: 10px;">jupyterlab</a> <a href="../../tags/jvm/" style="font-size: 10.43px;">jvm</a> <a href="../../tags/k8s/" style="font-size: 10.43px;">k8s</a> <a href="../../tags/kernel/" style="font-size: 10px;">kernel</a> <a href="../../tags/key/" style="font-size: 10px;">key</a> <a href="../../tags/kid/" style="font-size: 10px;">kid</a> <a href="../../tags/kms/" style="font-size: 10px;">kms</a> <a href="../../tags/kodi/" style="font-size: 10px;">kodi</a> <a href="../../tags/koolproxy/" style="font-size: 10.43px;">koolproxy</a> <a href="../../tags/koolproxyr/" style="font-size: 10.43px;">koolproxyr</a> <a href="../../tags/kvm/" style="font-size: 10.43px;">kvm</a> <a href="../../tags/lan/" style="font-size: 10px;">lan</a> <a href="../../tags/lastpass/" style="font-size: 10px;">lastpass</a> <a href="../../tags/launchctl/" style="font-size: 10px;">launchctl</a> <a href="../../tags/learning/" style="font-size: 10px;">learning</a> <a href="../../tags/lede/" style="font-size: 10px;">lede</a> <a href="../../tags/letsencrypt/" style="font-size: 10.87px;">letsencrypt</a> <a href="../../tags/linux/" style="font-size: 11.3px;">linux</a> <a href="../../tags/live/" style="font-size: 10px;">live</a> <a href="../../tags/loopback-proxy/" style="font-size: 10px;">loopback-proxy</a> <a href="../../tags/low-code/" style="font-size: 10px;">low-code</a> <a href="../../tags/lsof/" style="font-size: 10px;">lsof</a> <a href="../../tags/lvm/" style="font-size: 10px;">lvm</a> <a href="../../tags/lxc/" style="font-size: 10px;">lxc</a> <a href="../../tags/m3u8/" style="font-size: 10px;">m3u8</a> <a href="../../tags/mac/" style="font-size: 10.43px;">mac</a> <a href="../../tags/macos/" style="font-size: 10px;">macos</a> <a href="../../tags/manual/" style="font-size: 10px;">manual</a> <a href="../../tags/mariadb/" style="font-size: 10px;">mariadb</a> <a href="../../tags/markdown/" style="font-size: 10px;">markdown</a> <a href="../../tags/maven/" style="font-size: 10.43px;">maven</a> <a href="../../tags/md5/" style="font-size: 10.43px;">md5</a> <a href="../../tags/microcode/" style="font-size: 10px;">microcode</a> <a href="../../tags/mirror/" style="font-size: 10.43px;">mirror</a> <a href="../../tags/modem/" style="font-size: 10px;">modem</a> <a href="../../tags/modules/" style="font-size: 10px;">modules</a> <a href="../../tags/monitor/" style="font-size: 10px;">monitor</a> <a href="../../tags/mount/" style="font-size: 10px;">mount</a> <a href="../../tags/mstsc/" style="font-size: 10px;">mstsc</a> <a href="../../tags/mysql/" style="font-size: 10px;">mysql</a> <a href="../../tags/n2n/" style="font-size: 13.04px;">n2n</a> <a href="../../tags/n5105/" style="font-size: 10px;">n5105</a> <a href="../../tags/nas/" style="font-size: 10px;">nas</a> <a href="../../tags/netstat/" style="font-size: 10px;">netstat</a> <a href="../../tags/network/" style="font-size: 13.48px;">network</a> <a href="../../tags/new-api/" style="font-size: 10.43px;">new-api</a> <a href="../../tags/nfs/" style="font-size: 10px;">nfs</a> <a href="../../tags/node/" style="font-size: 10.43px;">node</a> <a href="../../tags/node-red/" style="font-size: 10.43px;">node-red</a> <a href="../../tags/nodejs/" style="font-size: 11.3px;">nodejs</a> <a href="../../tags/nohup/" style="font-size: 10.43px;">nohup</a> <a href="../../tags/notepad/" style="font-size: 10px;">notepad++</a> <a href="../../tags/npm/" style="font-size: 12.17px;">npm</a> <a href="../../tags/nssm/" style="font-size: 10.43px;">nssm</a> <a href="../../tags/ntp/" style="font-size: 10px;">ntp</a> <a href="../../tags/one-api/" style="font-size: 10px;">one-api</a> <a href="../../tags/oop/" style="font-size: 10px;">oop</a> <a href="../../tags/openfeign/" style="font-size: 10px;">openfeign</a> <a href="../../tags/openssl/" style="font-size: 10.43px;">openssl</a> <a href="../../tags/os/" style="font-size: 10px;">os</a> <a href="../../tags/otp/" style="font-size: 10px;">otp</a> <a href="../../tags/ovz/" style="font-size: 10px;">ovz</a> <a href="../../tags/p14/" style="font-size: 10px;">p14</a> <a href="../../tags/packet-capture/" style="font-size: 10px;">packet capture</a> <a href="../../tags/pat/" style="font-size: 10px;">pat</a> <a href="../../tags/pdf/" style="font-size: 10px;">pdf</a> <a href="../../tags/pem/" style="font-size: 10.43px;">pem</a> <a href="../../tags/perf/" style="font-size: 10px;">perf</a> <a href="../../tags/ping/" style="font-size: 10px;">ping</a> <a href="../../tags/pip/" style="font-size: 10px;">pip</a> <a href="../../tags/plugin/" style="font-size: 10px;">plugin</a> <a href="../../tags/png/" style="font-size: 10px;">png</a> <a href="../../tags/powerbutton/" style="font-size: 10px;">powerbutton</a> <a href="../../tags/print/" style="font-size: 10px;">print</a> <a href="../../tags/pro/" style="font-size: 10px;">pro</a> <a href="../../tags/proxy/" style="font-size: 10.43px;">proxy</a> <a href="../../tags/pve/" style="font-size: 15.65px;">pve</a> <a href="../../tags/pvekclean/" style="font-size: 11.3px;">pvekclean</a> <a href="../../tags/python/" style="font-size: 13.91px;">python</a> <a href="../../tags/qcow2/" style="font-size: 10px;">qcow2</a> <a href="../../tags/qemu/" style="font-size: 10.43px;">qemu</a> <a href="../../tags/qemu-guest-agent/" style="font-size: 10px;">qemu-guest-agent</a> <a href="../../tags/rar/" style="font-size: 10px;">rar</a> <a href="../../tags/reboot/" style="font-size: 10px;">reboot</a> <a href="../../tags/reflog/" style="font-size: 10px;">reflog</a> <a href="../../tags/remote/" style="font-size: 10px;">remote</a> <a href="../../tags/remote-desktop/" style="font-size: 10.43px;">remote desktop</a> <a href="../../tags/renew/" style="font-size: 10px;">renew</a> <a href="../../tags/repo/" style="font-size: 10px;">repo</a> <a href="../../tags/resize/" style="font-size: 10px;">resize</a> <a href="../../tags/retina/" style="font-size: 10px;">retina</a> <a href="../../tags/root/" style="font-size: 10px;">root</a> <a href="../../tags/route/" style="font-size: 10px;">route</a> <a href="../../tags/router/" style="font-size: 10.43px;">router</a> <a href="../../tags/rule/" style="font-size: 10px;">rule</a> <a href="../../tags/rules/" style="font-size: 10px;">rules</a> <a href="../../tags/runtime/" style="font-size: 10px;">runtime</a> <a href="../../tags/safari/" style="font-size: 10px;">safari</a> <a href="../../tags/sata/" style="font-size: 10px;">sata</a> <a href="../../tags/scipy-notebook/" style="font-size: 10px;">scipy-notebook</a> <a href="../../tags/scoping/" style="font-size: 10px;">scoping</a> <a href="../../tags/scp/" style="font-size: 10px;">scp</a> <a href="../../tags/server/" style="font-size: 10.43px;">server</a> <a href="../../tags/server-is-busy/" style="font-size: 10px;">server is busy</a> <a href="../../tags/slmgr/" style="font-size: 10px;">slmgr</a> <a href="../../tags/so/" style="font-size: 10px;">so</a> <a href="../../tags/socket-proxyd/" style="font-size: 10px;">socket-proxyd</a> <a href="../../tags/socks/" style="font-size: 10px;">socks</a> <a href="../../tags/source/" style="font-size: 10px;">source</a> <a href="../../tags/spk/" style="font-size: 10px;">spk</a> <a href="../../tags/spring/" style="font-size: 11.3px;">spring</a> <a href="../../tags/springboot/" style="font-size: 12.17px;">springboot</a> <a href="../../tags/springfox/" style="font-size: 10.87px;">springfox</a> <a href="../../tags/ss/" style="font-size: 10px;">ss</a> <a href="../../tags/ssh/" style="font-size: 11.74px;">ssh</a> <a href="../../tags/ssl/" style="font-size: 10.43px;">ssl</a> <a href="../../tags/stash/" style="font-size: 10px;">stash</a> <a href="../../tags/string/" style="font-size: 10px;">string</a> <a href="../../tags/supernode/" style="font-size: 10.43px;">supernode</a> <a href="../../tags/svg/" style="font-size: 10px;">svg</a> <a href="../../tags/svn/" style="font-size: 10px;">svn</a> <a href="../../tags/swagger/" style="font-size: 11.3px;">swagger</a> <a href="../../tags/sync/" style="font-size: 10px;">sync</a> <a href="../../tags/synology/" style="font-size: 10.43px;">synology</a> <a href="../../tags/systemctl/" style="font-size: 10.87px;">systemctl</a> <a href="../../tags/systemd/" style="font-size: 14.78px;">systemd</a> <a href="../../tags/tap/" style="font-size: 10px;">tap</a> <a href="../../tags/tap-windows/" style="font-size: 10px;">tap-windows</a> <a href="../../tags/tapwindows/" style="font-size: 10px;">tapwindows</a> <a href="../../tags/telecom/" style="font-size: 10.43px;">telecom</a> <a href="../../tags/template/" style="font-size: 10px;">template</a> <a href="../../tags/terminal/" style="font-size: 10px;">terminal</a> <a href="../../tags/tls/" style="font-size: 10px;">tls</a> <a href="../../tags/tmux/" style="font-size: 10.43px;">tmux</a> <a href="../../tags/token/" style="font-size: 10px;">token</a> <a href="../../tags/token%E5%A4%B1%E6%95%88/" style="font-size: 10px;">token失效</a> <a href="../../tags/totp/" style="font-size: 10px;">totp</a> <a href="../../tags/tvbox/" style="font-size: 10.87px;">tvbox</a> <a href="../../tags/txt/" style="font-size: 10px;">txt</a> <a href="../../tags/ubuntu/" style="font-size: 11.74px;">ubuntu</a> <a href="../../tags/udisk/" style="font-size: 10px;">udisk</a> <a href="../../tags/ui/" style="font-size: 10px;">ui</a> <a href="../../tags/undertow/" style="font-size: 10px;">undertow</a> <a href="../../tags/uninstall/" style="font-size: 10px;">uninstall</a> <a href="../../tags/unlocker/" style="font-size: 10px;">unlocker</a> <a href="../../tags/upgrade/" style="font-size: 10.43px;">upgrade</a> <a href="../../tags/url/" style="font-size: 10px;">url</a> <a href="../../tags/v2ray/" style="font-size: 10.43px;">v2ray</a> <a href="../../tags/vhd/" style="font-size: 10px;">vhd</a> <a href="../../tags/vim/" style="font-size: 10px;">vim</a> <a href="../../tags/vlmcsd/" style="font-size: 10px;">vlmcsd</a> <a href="../../tags/vm/" style="font-size: 10.43px;">vm</a> <a href="../../tags/vmdk/" style="font-size: 10px;">vmdk</a> <a href="../../tags/web/" style="font-size: 11.74px;">web</a> <a href="../../tags/websocket/" style="font-size: 10.43px;">websocket</a> <a href="../../tags/wechat/" style="font-size: 10px;">wechat</a> <a href="../../tags/windows/" style="font-size: 11.74px;">windows</a> <a href="../../tags/with/" style="font-size: 10px;">with</a> <a href="../../tags/worker/" style="font-size: 10.43px;">worker</a> <a href="../../tags/wow/" style="font-size: 10px;">wow</a> <a href="../../tags/xiaoya/" style="font-size: 10px;">xiaoya</a> <a href="../../tags/xml/" style="font-size: 10px;">xml</a> <a href="../../tags/yum/" style="font-size: 10px;">yum</a> <a href="../../tags/zip/" style="font-size: 10px;">zip</a> <a href="../../tags/%E4%B8%AD%E5%9B%BD%E7%94%B5%E4%BF%A1/" style="font-size: 10px;">中国电信</a> <a href="../../tags/%E4%BA%91%E7%94%B5%E8%84%91/" style="font-size: 10.43px;">云电脑</a> <a href="../../tags/%E4%BA%A4%E6%8D%A2%E6%9C%BA/" style="font-size: 10px;">交换机</a> <a href="../../tags/%E4%BA%BA%E6%9C%BA%E5%8D%8F%E4%BD%9C/" style="font-size: 10px;">人机协作</a> <a href="../../tags/%E4%BB%A3%E7%90%86/" style="font-size: 10px;">代理</a> <a href="../../tags/%E4%BC%98%E5%8C%96/" style="font-size: 10px;">优化</a> <a href="../../tags/%E4%BD%93%E6%A3%80/" style="font-size: 10px;">体检</a> <a href="../../tags/%E5%80%BC%E7%8F%AD/" style="font-size: 10px;">值班</a> <a href="../../tags/%E5%81%A5%E5%BA%B7%E6%A3%80%E6%9F%A5/" style="font-size: 17.39px;">健康检查</a> <a href="../../tags/%E5%85%89%E7%8C%AB/" style="font-size: 10.43px;">光猫</a> <a href="../../tags/%E5%85%A8%E7%BB%BF/" style="font-size: 10px;">全绿</a> <a href="../../tags/%E5%85%AC%E7%BD%91IP/" style="font-size: 10px;">公网IP</a> <a href="../../tags/%E5%86%85%E5%AD%98/" style="font-size: 10px;">内存</a> <a href="../../tags/%E5%86%85%E5%AD%98%E4%BC%98%E5%8C%96/" style="font-size: 10px;">内存优化</a> <a href="../../tags/%E5%86%85%E7%BD%91/" style="font-size: 10.43px;">内网</a> <a href="../../tags/%E5%86%85%E7%BD%91IP/" style="font-size: 10px;">内网IP</a> <a href="../../tags/%E5%86%85%E7%BD%91%E6%B8%97%E9%80%8F/" style="font-size: 10px;">内网渗透</a> <a href="../../tags/%E5%86%99%E4%BD%9C/" style="font-size: 11.3px;">写作</a> <a href="../../tags/%E5%8D%87%E7%BA%A7/" style="font-size: 11.3px;">升级</a> <a href="../../tags/%E5%8D%8F%E4%BD%9C/" style="font-size: 10px;">协作</a> <a href="../../tags/%E5%8D%9A%E5%AE%A2/" style="font-size: 10.87px;">博客</a> <a href="../../tags/%E5%8F%8D%E5%90%91%E4%BB%A3%E7%90%86/" style="font-size: 10px;">反向代理</a> <a href="../../tags/%E5%90%AF%E5%8A%A8/" style="font-size: 10px;">启动</a> <a href="../../tags/%E5%91%8A%E8%AD%A6/" style="font-size: 12.61px;">告警</a> <a href="../../tags/%E5%91%8A%E8%AD%A6%E4%BC%98%E5%8C%96/" style="font-size: 10px;">告警优化</a> <a href="../../tags/%E5%91%A8%E4%B8%80/" style="font-size: 10px;">周一</a> <a href="../../tags/%E5%91%A8%E4%B8%80%E7%84%A6%E8%99%91/" style="font-size: 10px;">周一焦虑</a> <a href="../../tags/%E5%91%A8%E4%BA%94/" style="font-size: 10px;">周五</a> <a href="../../tags/%E5%91%A8%E6%8A%A5/" style="font-size: 10px;">周报</a> <a href="../../tags/%E5%91%A8%E6%97%A5/" style="font-size: 10px;">周日</a> <a href="../../tags/%E5%91%A8%E6%9C%AB/" style="font-size: 10.43px;">周末</a> <a href="../../tags/%E5%A4%8F%E4%BB%A4%E6%97%B6/" style="font-size: 10px;">夏令时</a> <a href="../../tags/%E5%A4%9A%E6%99%BA%E8%83%BD%E4%BD%93/" style="font-size: 10.87px;">多智能体</a> <a href="../../tags/%E5%A4%9A%E8%8A%82%E7%82%B9/" style="font-size: 10px;">多节点</a> <a href="../../tags/%E5%A4%9A%E8%8A%82%E7%82%B9%E7%AE%A1%E7%90%86/" style="font-size: 10px;">多节点管理</a> <a href="../../tags/%E5%A4%A9%E7%8C%AB%E7%B2%BE%E7%81%B5/" style="font-size: 10px;">天猫精灵</a> <a href="../../tags/%E5%A4%A9%E7%BF%BC%E4%BA%91/" style="font-size: 10.43px;">天翼云</a> <a href="../../tags/%E5%AE%89%E5%85%A8/" style="font-size: 16.09px;">安全</a> <a href="../../tags/%E5%AE%89%E8%A3%85/" style="font-size: 10.43px;">安装</a> <a href="../../tags/%E5%AE%9A%E6%97%B6%E4%BB%BB%E5%8A%A1/" style="font-size: 10.43px;">定时任务</a> <a href="../../tags/%E5%AE%B9%E5%99%A8/" style="font-size: 12.61px;">容器</a> <a href="../../tags/%E5%AE%B9%E5%99%A8%E7%BD%91%E7%BB%9C/" style="font-size: 10px;">容器网络</a> <a href="../../tags/%E5%AF%BC%E5%85%A5/" style="font-size: 10px;">导入</a> <a href="../../tags/%E5%B0%8F%E7%B1%B3/" style="font-size: 10px;">小米</a> <a href="../../tags/%E5%B7%A5%E4%BD%9C%E6%84%9F%E6%82%9F/" style="font-size: 10.87px;">工作感悟</a> <a href="../../tags/%E5%B8%B8%E7%94%A8%E8%BD%AF%E4%BB%B6/" style="font-size: 10px;">常用软件</a> <a href="../../tags/%E5%B9%BF%E5%91%8A%E5%B1%8F%E8%94%BD/" style="font-size: 10px;">广告屏蔽</a> <a href="../../tags/%E5%BA%8F%E5%88%97%E5%8F%B7/" style="font-size: 10px;">序列号</a> <a href="../../tags/%E5%BA%94%E7%94%A8%E5%B8%82%E5%9C%BA/" style="font-size: 10px;">应用市场</a> <a href="../../tags/%E5%BC%82%E5%B8%B8/" style="font-size: 10px;">异常</a> <a href="../../tags/%E5%BF%83%E6%80%81/" style="font-size: 10px;">心态</a> <a href="../../tags/%E5%BF%83%E6%99%BA%E6%88%90%E9%95%BF/" style="font-size: 10px;">心智成长</a> <a href="../../tags/%E5%BF%83%E8%B7%B3/" style="font-size: 10px;">心跳</a> <a href="../../tags/%E5%BF%83%E8%B7%B3%E6%A3%80%E6%9F%A5/" style="font-size: 10.43px;">心跳检查</a> <a href="../../tags/%E6%80%A7%E8%83%BD%E4%BC%98%E5%8C%96/" style="font-size: 10px;">性能优化</a> <a href="../../tags/%E6%84%9F%E6%82%9F/" style="font-size: 10px;">感悟</a> <a href="../../tags/%E6%89%93%E5%B7%A5/" style="font-size: 18.7px;">打工</a> <a href="../../tags/%E6%89%93%E5%B7%A5%E4%BA%BA/" style="font-size: 10px;">打工人</a> <a href="../../tags/%E6%8A%80%E6%9C%AF/" style="font-size: 19.13px;">技术</a> <a href="../../tags/%E6%8A%93%E5%8C%85/" style="font-size: 10px;">抓包</a> <a href="../../tags/%E6%8E%92%E6%9F%A5/" style="font-size: 10px;">排查</a> <a href="../../tags/%E6%8F%8F%E8%BF%B0%E6%96%87%E4%BB%B6/" style="font-size: 10px;">描述文件</a> <a href="../../tags/%E6%95%85%E9%9A%9C/" style="font-size: 10.43px;">故障</a> <a href="../../tags/%E6%95%85%E9%9A%9C%E6%8E%92%E6%9F%A5/" style="font-size: 12.61px;">故障排查</a> <a href="../../tags/%E6%95%88%E7%8E%87/" style="font-size: 10.43px;">效率</a> <a href="../../tags/%E6%95%88%E7%8E%87%E5%B7%A5%E5%85%B7/" style="font-size: 11.3px;">效率工具</a> <a href="../../tags/%E6%95%B0%E6%8D%AE/" style="font-size: 10px;">数据</a> <a href="../../tags/%E6%97%81%E8%B7%AF%E7%94%B1/" style="font-size: 10px;">旁路由</a> <a href="../../tags/%E6%97%A0%E6%9C%8D%E5%8A%A1%E5%99%A8/" style="font-size: 10px;">无服务器</a> <a href="../../tags/%E6%97%A5%E8%AE%B0/" style="font-size: 19.57px;">日记</a> <a href="../../tags/%E6%97%B6%E5%8C%BA/" style="font-size: 10px;">时区</a> <a href="../../tags/%E6%98%BE%E5%8D%A1%E8%99%9A%E6%8B%9F%E5%8C%96/" style="font-size: 10px;">显卡虚拟化</a> <a href="../../tags/%E6%99%BA%E8%83%BD%E5%AE%B6%E5%B1%85/" style="font-size: 10px;">智能家居</a> <a href="../../tags/%E6%99%BA%E8%83%BD%E9%9F%B3%E7%AE%B1/" style="font-size: 10px;">智能音箱</a> <a href="../../tags/%E6%9C%8D%E5%8A%A1%E5%99%A8/" style="font-size: 10px;">服务器</a> <a href="../../tags/%E6%9C%8D%E5%8A%A1%E7%AE%A1%E7%90%86/" style="font-size: 10px;">服务管理</a> <a href="../../tags/%E6%9E%B6%E6%9E%84/" style="font-size: 10px;">架构</a> <a href="../../tags/%E6%A2%AF%E5%AD%90/" style="font-size: 10px;">梯子</a> <a href="../../tags/%E6%A8%A1%E5%9D%97/" style="font-size: 10px;">模块</a> <a href="../../tags/%E6%A8%A1%E5%9E%8B%E8%B0%83%E7%94%A8/" style="font-size: 10.43px;">模型调用</a> <a href="../../tags/%E6%B5%81%E7%A8%8B/" style="font-size: 10px;">流程</a> <a href="../../tags/%E6%B5%81%E7%A8%8B%E5%9B%BE/" style="font-size: 10px;">流程图</a> <a href="../../tags/%E6%B5%8F%E8%A7%88%E5%99%A8/" style="font-size: 10.43px;">浏览器</a> <a href="../../tags/%E6%BC%AB%E6%B8%B8/" style="font-size: 10px;">漫游</a> <a href="../../tags/%E6%BF%80%E6%B4%BB/" style="font-size: 10px;">激活</a> <a href="../../tags/%E7%81%AB%E7%BB%92/" style="font-size: 10px;">火绒</a> <a href="../../tags/%E7%84%A6%E8%99%91/" style="font-size: 10.43px;">焦虑</a> <a href="../../tags/%E7%8E%84%E5%AD%A6/" style="font-size: 10px;">玄学</a> <a href="../../tags/%E7%94%9F%E6%B4%BB/" style="font-size: 10px;">生活</a> <a href="../../tags/%E7%94%B5%E4%BF%A1/" style="font-size: 10.43px;">电信</a> <a href="../../tags/%E7%94%BB%E5%9B%BE/" style="font-size: 10px;">画图</a> <a href="../../tags/%E7%9B%91%E6%8E%A7/" style="font-size: 16.52px;">监控</a> <a href="../../tags/%E7%9B%91%E6%8E%A7%E7%B3%BB%E7%BB%9F/" style="font-size: 10px;">监控系统</a> <a href="../../tags/%E7%9B%B4%E6%92%AD%E6%BA%90/" style="font-size: 10px;">直播源</a> <a href="../../tags/%E7%9B%B4%E8%A7%89/" style="font-size: 10px;">直觉</a> <a href="../../tags/%E7%A3%81%E7%9B%98/" style="font-size: 10px;">磁盘</a> <a href="../../tags/%E7%AB%AF%E5%8F%A3/" style="font-size: 10.43px;">端口</a> <a href="../../tags/%E7%AB%AF%E5%8F%A3%E5%86%B2%E7%AA%81/" style="font-size: 10.43px;">端口冲突</a> <a href="../../tags/%E7%AB%AF%E5%8F%A3%E6%89%AB%E6%8F%8F/" style="font-size: 10px;">端口扫描</a> <a href="../../tags/%E7%AE%A1%E7%90%86/" style="font-size: 10px;">管理</a> <a href="../../tags/%E7%BB%AD%E6%9C%9F/" style="font-size: 10px;">续期</a> <a href="../../tags/%E7%BD%91%E5%85%B3/" style="font-size: 10px;">网关</a> <a href="../../tags/%E7%BD%91%E7%BB%9C/" style="font-size: 15.22px;">网络</a> <a href="../../tags/%E7%BD%91%E7%BB%9C%E9%A3%8E%E6%9A%B4/" style="font-size: 10px;">网络风暴</a> <a href="../../tags/%E7%BE%A4%E6%99%96/" style="font-size: 10.43px;">群晖</a> <a href="../../tags/%E8%84%9A%E6%9C%AC/" style="font-size: 10px;">脚本</a> <a href="../../tags/%E8%84%9A%E6%9C%AC%E4%BC%98%E5%8C%96/" style="font-size: 10px;">脚本优化</a> <a href="../../tags/%E8%85%BE%E8%AE%AF/" style="font-size: 10px;">腾讯</a> <a href="../../tags/%E8%87%AA%E5%8A%A8%E5%8C%96/" style="font-size: 16.96px;">自动化</a> <a href="../../tags/%E8%87%AA%E5%8A%A8%E6%81%A2%E5%A4%8D/" style="font-size: 10.43px;">自动恢复</a> <a href="../../tags/%E8%99%9A%E6%8B%9F%E6%9C%BA/" style="font-size: 11.74px;">虚拟机</a> <a href="../../tags/%E8%AE%A4%E8%AF%81/" style="font-size: 10.43px;">认证</a> <a href="../../tags/%E8%AF%81%E4%B9%A6/" style="font-size: 10px;">证书</a> <a href="../../tags/%E8%AF%AD%E9%9B%80/" style="font-size: 10px;">语雀</a> <a href="../../tags/%E8%B6%85%E6%97%B6/" style="font-size: 10.43px;">超时</a> <a href="../../tags/%E8%B7%AF%E7%94%B1/" style="font-size: 10px;">路由</a> <a href="../../tags/%E8%B7%AF%E7%94%B1%E5%99%A8/" style="font-size: 11.3px;">路由器</a> <a href="../../tags/%E8%BD%AF%E4%BB%B6%E7%AE%A1%E5%AE%B6/" style="font-size: 10px;">软件管家</a> <a href="../../tags/%E8%BD%AF%E8%B7%AF%E7%94%B1/" style="font-size: 10.43px;">软路由</a> <a href="../../tags/%E8%BF%90%E7%BB%B4/" style="font-size: 20px;">运维</a> <a href="../../tags/%E8%BF%90%E7%BB%B4%E7%9B%91%E6%8E%A7/" style="font-size: 10.43px;">运维监控</a> <a href="../../tags/%E8%BF%9B%E7%A8%8B/" style="font-size: 10.43px;">进程</a> <a href="../../tags/%E8%BF%9E%E6%8E%A5%E4%BF%9D%E6%B4%BB/" style="font-size: 10px;">连接保活</a> <a href="../../tags/%E8%BF%9E%E6%8E%A5%E9%97%AE%E9%A2%98/" style="font-size: 10px;">连接问题</a> <a href="../../tags/%E9%80%9A%E4%BF%A1%E6%9C%BA%E5%88%B6/" style="font-size: 10px;">通信机制</a> <a href="../../tags/%E9%80%9A%E7%9F%A5/" style="font-size: 10px;">通知</a> <a href="../../tags/%E9%83%A8%E7%BD%B2/" style="font-size: 12.17px;">部署</a> <a href="../../tags/%E9%85%8D%E7%BD%AE/" style="font-size: 10.87px;">配置</a> <a href="../../tags/%E9%92%89%E9%92%89/" style="font-size: 10.43px;">钉钉</a> <a href="../../tags/%E9%95%9C%E5%83%8F/" style="font-size: 10.87px;">镜像</a> <a href="../../tags/%E9%95%9C%E5%83%8F%E6%BA%90/" style="font-size: 10px;">镜像源</a> <a href="../../tags/%E9%97%A8%E7%AA%97%E4%BC%A0%E6%84%9F%E5%99%A8/" style="font-size: 10px;">门窗传感器</a> <a href="../../tags/%E9%97%AE%E9%A2%98%E6%8E%92%E6%9F%A5/" style="font-size: 17.83px;">问题排查</a> <a href="../../tags/%E9%98%B2%E7%81%AB%E5%A2%99/" style="font-size: 11.3px;">防火墙</a> <a href="../../tags/%E9%98%BF%E9%87%8C%E4%BA%91/" style="font-size: 11.3px;">阿里云</a> <a href="../../tags/%E9%98%BF%E9%87%8C%E6%BA%90/" style="font-size: 10.43px;">阿里源</a> <a href="../../tags/%E9%9B%86%E5%AE%A2/" style="font-size: 10.43px;">集客</a> <a href="../../tags/%E9%A3%9E%E4%B9%A6/" style="font-size: 10.43px;">飞书</a>
+    </div>
+    
+      <script>
+        var maxTagcloud = parseInt(17);
+        var tags_length = parseInt(504);
+        var tags_arr = [];
+        for(var i = 0; i < tags_length; i++){
+          tags_arr.push(i);
+        }
+        tags_arr.sort(function (l, r) {
+          return Math.random() > 0.5 ? -1 : 1;
+        });
+        tags_arr = tags_arr.slice(0, maxTagcloud < tags_length ? tags_length - maxTagcloud : 0);
+        for(var tag_i = 0; tag_i < tags_arr.length; tag_i++){
+          document.getElementById("randomtagcloud").children[tags_arr[tag_i]].style.display = 'none';
+        }
+      </script>
+    
+  </div>
+
+    
+        
+        <!-- 一言 -->
+<div class="nexmoe-widget-wrap">
+  <h3 class="nexmoe-widget-title">
+    Hitokoto
+  </h3>
+  <div class="nexmoe-widget">
+    <ul class="hitokoto-box">
+      <li id="hitokoto_text_parent" class="hitokoto-text" hitokotoCategory="">
+        <a href="#" id="hitokoto_text">
+          
+        </a>
+        <a href="#" id="hitokoto_error_text" style="display: none;">
+          
+        </a>
+      </li>
+    </ul>
+  </div>
+</div>
+
+<script>
+  let hitokotoText = document.getElementById('hitokoto_text')
+  let hitokotoErroText = document.getElementById('hitokoto_error_text')
+  let hitokotoCategory = document.getElementById('hitokoto_text_parent').getAttribute('hitokotoCategory')
+  window.addEventListener('load', function () {
+    let url = 'https://v1.hitokoto.cn'
+    if (hitokotoCategory) {
+      url += '?c=' + hitokotoCategory
+    }
+    fetch(url)
+      .then(response => response.json())
+      .then(data => {
+        hitokotoText.innerText = "「 " + data.hitokoto + " 」 from " + data.from
+        hitokotoText.href = 'https://hitokoto.cn/?uuid=' + data.uuid
+      })
+      .catch((reason) => {
+        console.error(11, reason)
+        hitokotoText.style.display = 'none'
+        hitokotoErroText.style.display = 'block'
+      })
+  })
+</script>
+    
+        
+        
+  <div class="nexmoe-widget-wrap">
+    <h3 class="nexmoe-widget-title">Archive</h3>
+    <div class="nexmoe-widget">
+      <ul class="archive-list"><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2026/">2026</a><span class="archive-list-count">180</span></li><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2025/">2025</a><span class="archive-list-count">2</span></li><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2024/">2024</a><span class="archive-list-count">19</span></li><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2023/">2023</a><span class="archive-list-count">18</span></li><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2022/">2022</a><span class="archive-list-count">4</span></li><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2021/">2021</a><span class="archive-list-count">114</span></li><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2018/">2018</a><span class="archive-list-count">1</span></li></ul>
+    </div>
+  </div>
+
+
+
+    
+        
+        
+  <div class="nexmoe-widget-wrap">
+    <h3 class="nexmoe-widget-title">Recent Posts</h3>
+    <div class="nexmoe-widget">
+      <ul>
+        
+          <li>
+            <a href="../../post/2026-06-04-how-to-judge-manual-process-systemd-inactive-node-health/">OpenClaw 健康检查中如何正确判定&#34;manual 进程 + systemd inactive&#34;节点的健康状态：一份可复用的判断矩阵</a>
+          </li>
+        
+          <li>
+            <a href="../../post/2026-06-04-when-six-nodes-all-green-i-started-doubting-the-monitor/">周四晚上 21:15，6 个节点全绿，我反而开始怀疑监控坏了</a>
+          </li>
+        
+          <li>
+            <a href="../../post/2026-06-03-new-api-channel-token-401-diagnosis/">new-api 渠道调用 100% 失败但后端 CPU 0%：上游 channel 鉴权失败的诊断与一键排查脚本</a>
+          </li>
+        
+          <li>
+            <a href="../../post/2026-06-03-when-server-is-busy-hides-401/">周三晚上 20:15，model 跟我说&#34;server is busy&#34;，我盯着屏幕发呆了 10 分钟</a>
+          </li>
+        
+          <li>
+            <a href="../../post/2026-06-02-systemd-socket-proxyd-missing-socket-file/">systemd-socket-proxyd 报 &#34;Didn&#39;t get any sockets passed in&#34;：缺失 .socket 文件的排查与修复</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+
+    
+        
+        <div class="nexmoe-widget-wrap">
+    <div class="nexmoe-widget nexmoe-link">
+		<ul>
+        
+            <li>
+                <a href="https://blog.example.com/" target="_blank" >
+                    <img src="/images/avatar.webp" alt="魔都水滴Blog"></img>
+                    <p>魔都水滴Blog</p>
+                </a>
+            </li>
+        
+		</ul>
+    </div>
+</div>
+<style>
+.nexmoe-widget-wrap .nexmoe-link ul li a {
+    text-align : center;
+}
+.nexmoe-widget-wrap .nexmoe-link ul li a img {
+    max-width : 100%;
+}
+.nexmoe-widget-wrap .nexmoe-link ul li a p {
+    margin: 10px 0;
+}
+</style>
+
+    
+   
+    <div class="nexmoe-copyright">
+        &copy; 2026 Margrop
+        Powered by <a href="http://hexo.io/" target="_blank">Hexo</a>
+        & <a href="https://github.com/theme-nexmoe/hexo-theme-nexmoe" target="_blank">Nexmoe</a>
+        
+    </div>
+</div><!-- .nexmoe-drawer --></div><div id="nexmoe-content"><div class="nexmoe-primary"><div class="nexmoe-post">
+  <article>
+    
+        <div class="nexmoe-post-cover absolute" style="padding-top: 56.25%;"> 
+            <img src="https://picsum.photos/seed/tech0604/1280/720" alt="OpenClaw 健康检查中如何正确判定&#34;manual 进程 + systemd inactive&#34;节点的健康状态：一份可复用的判断矩阵" loading="lazy">
+            <h1>OpenClaw 健康检查中如何正确判定&#34;manual 进程 + systemd inactive&#34;节点的健康状态：一份可复用的判断矩阵</h1>
+        </div>
+    
+    
+    <div class="nexmoe-post-meta">
+    <div class="nexmoe-rainbow">
+        <a class="nexmoefont icon-calendar-fill">2026年06月04日</a>
+        
+            <a class="nexmoefont icon-appstore-fill -link" href="../../categories/ai-tech/">ai_tech</a>
+        
+        
+    <a><i class="nexmoefont icon-areachart"></i>约48k字</a>
+    <a><i class="nexmoefont icon-time-circle-fill"></i>预计需要1:08分钟</a>
+
+    </div>
+    
+    
+    
+    
+    
+</div>
+
+    <h2 id="前言"><a href="#前言" class="headerlink" title="前言"></a>前言</h2><p>做 OpenClaw Gateway 健康检查的人，几乎都会撞上这样一个让人”半夜睡不着”的场景：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><code class="hljs bash">$ systemctl is-active openclaw-gateway<br>inactive<br><br>$ ps -ef | grep openclaw | grep -v grep<br>root  338431  ...  /usr/local/bin/openclaw-gateway --config /etc/openclaw/gateway.yaml<br><br>$ curl -s http://127.0.0.1:18789/readyz<br>&#123;<span class="hljs-string">&quot;status&quot;</span>:<span class="hljs-string">&quot;ready&quot;</span>,<span class="hljs-string">&quot;uptime&quot;</span>:<span class="hljs-string">&quot;29h12m&quot;</span>&#125;<br></code></pre></td></tr></table></figure>
+
+<p><strong><code>systemd</code> 报 inactive，但 manual 进程在跑，gateway 自身 200。</strong></p>
+<p><strong>这到底算健康，还是算故障？</strong></p>
+<p>如果你选”故障”—— 你可能会去 <code>systemctl restart openclaw-gateway</code>，然后：</p>
+<ul>
+<li>进程抢不到端口（被 manual 那个占着）</li>
+<li>累计 NRestarts</li>
+<li>飞书&#x2F;钉钉连接被踢</li>
+<li>业务中断 30 秒</li>
+</ul>
+<p>如果你选”健康”—— 你可能会被半夜 3 点的告警吵醒：”systemd unit not-found”。</p>
+<p><strong>这个判定没有标准答案，但有一套判断矩阵。</strong></p>
+<p>本文会基于我维护 6 节点 OpenClaw 集群的实战经验，给出一份<strong>可复用的”manual 进程 + systemd inactive” 健康判定矩阵</strong>，并附一个<strong>只读、不 kill 任何进程</strong>的安全检查脚本。</p>
+<h2 id="一、为什么会出现”manual-进程-systemd-inactive”"><a href="#一、为什么会出现”manual-进程-systemd-inactive”" class="headerlink" title="一、为什么会出现”manual 进程 + systemd inactive”"></a>一、为什么会出现”manual 进程 + systemd inactive”</h2><h3 id="1-1-三种典型场景"><a href="#1-1-三种典型场景" class="headerlink" title="1.1 三种典型场景"></a>1.1 三种典型场景</h3><p>在我这 6 个节点里，”systemd inactive 但服务健康”的状态出现过 3 次：</p>
+<p><strong>场景 A：Hermes 节点取代 OpenClaw</strong></p>
+<p>VM152 (p2) 整个迁移到了 HermesAgent 栈。Hermes 的 gateway 是个独立二进制（<code>hermes-gateway</code>），不归 OpenClaw 那个 systemd unit 管。</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><code class="hljs bash">$ systemctl is-active openclaw-gateway<br>inactive  ← OpenClaw unit 不知道 Hermes 进程<br><br>$ ps -ef | grep hermes<br>hermes  338431  ...  /usr/local/bin/hermes-gateway<br></code></pre></td></tr></table></figure>
+
+<p><strong>systemd inactive 是预期的。</strong> 重点是 Hermes 自己的 <code>/api/status</code>（9119 端口）是不是 200。</p>
+<p><strong>场景 B：systemd unit 丢失，manual 进程续命</strong></p>
+<p>VM151 (p1) 之前某次升级的时候，systemd unit 文件被覆盖了或者丢失了（<code>is-enabled: not-found</code>），但 manual 启动的进程一直在跑，没人来重启。</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><code class="hljs bash">$ systemctl is-active openclaw-gateway<br>inactive<br><br>$ systemctl is-enabled openclaw-gateway<br>not-found  ← unit 文件不存在<br><br>$ ps -ef | grep openclaw<br>root  802705  ...  /usr/local/bin/openclaw-gateway<br></code></pre></td></tr></table></figure>
+
+<p><strong>unit 丢失 ≠ 进程不健康。</strong> 重点是 manual 进程本身是不是还在响应。</p>
+<p><strong>场景 C：manual 启动是”故意为之”</strong></p>
+<p>有些团队（特别是 Hermes 这种新栈）会<strong>故意不开 systemd</strong>，就用 <code>nohup hermes-gateway &amp;</code> 跑着，因为 Hermes 的更新节奏太快，systemd unit 维护成本反而高。</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><code class="hljs bash">$ <span class="hljs-built_in">cat</span> /etc/systemd/system/hermes.service<br><span class="hljs-comment"># 注释掉的 unit 文件</span><br><span class="hljs-comment"># 故意不开 systemd — 详见 Hermes 部署文档</span><br></code></pre></td></tr></table></figure>
+
+<p><strong>systemd inactive 是”设计选择”，不是”运维事故”。</strong></p>
+<h3 id="1-2-反面：什么时候-systemd-inactive-真的是故障"><a href="#1-2-反面：什么时候-systemd-inactive-真的是故障" class="headerlink" title="1.2 反面：什么时候 systemd inactive 真的是故障"></a>1.2 反面：什么时候 systemd inactive 真的是故障</h3><figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><code class="hljs bash">$ systemctl is-active openclaw-gateway<br>inactive  ← 真的 inactive<br><br>$ ps -ef | grep openclaw<br>(空)  ← 没有 manual 进程<br><br>$ curl -s http://127.0.0.1:18789/readyz<br>curl: (7) Failed to connect to 127.0.0.1 port 18789<br></code></pre></td></tr></table></figure>
+
+<p><strong>systemd inactive + 进程不在 + readyz 拒绝连接 &#x3D; 真故障。</strong></p>
+<p><strong>这种情况下是要立刻拉起来的，不是误报。</strong></p>
+<h2 id="二、健康判定矩阵"><a href="#二、健康判定矩阵" class="headerlink" title="二、健康判定矩阵"></a>二、健康判定矩阵</h2><p>我把这 6 个节点的经验总结成一张矩阵。</p>
+<p><strong>判定维度 4 个</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>含义</th>
+<th>检查方式</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>D1: systemd 状态</strong></td>
+<td>unit 是否 active</td>
+<td><code>systemctl is-active</code></td>
+</tr>
+<tr>
+<td><strong>D2: 进程是否存在</strong></td>
+<td>至少 1 个 openclaw &#x2F; hermes 进程在跑</td>
+<td><code>ps -ef | grep</code></td>
+</tr>
+<tr>
+<td><strong>D3: readyz 端点</strong></td>
+<td>gateway 自身 HTTP 200</td>
+<td><code>curl /readyz</code></td>
+</tr>
+<tr>
+<td><strong>D4: 上游连接</strong></td>
+<td>飞书 &#x2F; 钉钉 &#x2F; wecom 实际连通</td>
+<td><code>ss | grep ESTAB 443</code> 或 channel 状态</td>
+</tr>
+</tbody></table>
+<p><strong>判定矩阵</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>D1 systemd</th>
+<th>D2 进程</th>
+<th>D3 readyz</th>
+<th>D4 上游</th>
+<th>结论</th>
+<th>行动</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>active</td>
+<td>✅</td>
+<td>200</td>
+<td>✅</td>
+<td>✅ 完美健康</td>
+<td>无</td>
+</tr>
+<tr>
+<td>active</td>
+<td>❌</td>
+<td>—</td>
+<td>—</td>
+<td>❌ 真故障</td>
+<td><code>systemctl restart</code></td>
+</tr>
+<tr>
+<td><strong>inactive</strong></td>
+<td><strong>✅</strong></td>
+<td><strong>200</strong></td>
+<td><strong>✅</strong></td>
+<td><strong>⚠️ 灰色健康</strong></td>
+<td><strong>不动，看 NRestarts</strong></td>
+</tr>
+<tr>
+<td><strong>inactive</strong></td>
+<td><strong>✅</strong></td>
+<td><strong>200</strong></td>
+<td><strong>❌</strong></td>
+<td><strong>❌ 准故障</strong></td>
+<td><strong>查上游连接受阻原因</strong></td>
+</tr>
+<tr>
+<td><strong>inactive</strong></td>
+<td><strong>❌</strong></td>
+<td><strong>—</strong></td>
+<td><strong>—</strong></td>
+<td><strong>❌ 真故障</strong></td>
+<td><strong>手动起进程</strong></td>
+</tr>
+<tr>
+<td>active (restart)</td>
+<td>❌</td>
+<td>502</td>
+<td>—</td>
+<td>❌ restart loop</td>
+<td>杀孤儿保 systemd（6&#x2F;2 那次 VM153 的情况）</td>
+</tr>
+</tbody></table>
+<p><strong>关键判定</strong>：第 3、4 行——“inactive + 进程在跑”。</p>
+<p><strong>这不是”绿色健康”，也不是”红色故障”，是”灰色健康”。</strong></p>
+<p>灰色健康的 3 个子情形：</p>
+<ol>
+<li><strong>Hermes 节点取代 OpenClaw</strong>（场景 A）→ <strong>预期，判健康</strong></li>
+<li><strong>systemd unit 丢失，manual 续命</strong>（场景 B）→ <strong>判健康，但记 NRestarts 警告</strong></li>
+<li><strong>故意不开 systemd</strong>（场景 C）→ <strong>判健康，文档里写明</strong></li>
+</ol>
+<p><strong>只要满足 D2 + D3 + D4 任一上游连接，就判健康。</strong></p>
+<h2 id="三、为什么不能用”看-NRestarts”一刀切"><a href="#三、为什么不能用”看-NRestarts”一刀切" class="headerlink" title="三、为什么不能用”看 NRestarts”一刀切"></a>三、为什么不能用”看 NRestarts”一刀切</h2><p>很多人会这么写脚本：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># ❌ 错误逻辑</span><br>NRestarts=$(systemctl show openclaw-gateway --property=NRestarts --value)<br><span class="hljs-keyword">if</span> [ <span class="hljs-string">&quot;<span class="hljs-variable">$NRestarts</span>&quot;</span> -gt 100 ]; <span class="hljs-keyword">then</span><br>  <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;🔴 不健康&quot;</span><br>  <span class="hljs-built_in">exit</span> 1<br><span class="hljs-keyword">fi</span><br></code></pre></td></tr></table></figure>
+
+<p><strong>这个逻辑的问题：NRestarts 是累计计数，不是”过去 1 小时”的计数。</strong></p>
+<p>VM153 修好之前的历史累计 NRestarts&#x3D;2258。但<strong>修好之后已经稳定 1h+ 没动过</strong>。</p>
+<p><strong>如果脚本只看累计值，永远在告警。</strong></p>
+<p><strong>正确做法</strong>：NRestarts 必须配合时间窗口使用——</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># ✅ 改进</span><br><span class="hljs-comment"># 1. 看 ActiveEnterTimestamp 是多久前</span><br>ActiveEnterTimestamp=$(systemctl show openclaw-gateway --property=ActiveEnterTimestamp --value)<br>SecondsSinceStart=$(<span class="hljs-built_in">date</span> -d <span class="hljs-string">&quot;<span class="hljs-variable">$ActiveEnterTimestamp</span>&quot;</span> +%s 2&gt;/dev/null)<br><br><span class="hljs-comment"># 2. 如果进程已经稳定运行 1h+，即使 NRestarts=2000 也是健康的</span><br><span class="hljs-keyword">if</span> [ <span class="hljs-string">&quot;<span class="hljs-variable">$SecondsSinceStart</span>&quot;</span> -gt 3600 ]; <span class="hljs-keyword">then</span><br>  <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;✅ 进程已稳定 1h+ — 历史 NRestarts 不影响当前状态&quot;</span><br><span class="hljs-keyword">fi</span><br></code></pre></td></tr></table></figure>
+
+<p><strong>——这也是 6&#x2F;2 那次我修好 VM153 之后，写进 AGENTS.md 的一条铁律。</strong></p>
+<blockquote>
+<p>6&#x2F;2 的教训: 看 systemd <code>NRestarts</code> 字段! counter &gt; 100 就一定有事<br>但 NRestarts 是<strong>历史累计</strong>，必须配合 ActiveEnterTimestamp 看</p>
+</blockquote>
+<h2 id="四、怎么区分”灰色健康”的三种子情形"><a href="#四、怎么区分”灰色健康”的三种子情形" class="headerlink" title="四、怎么区分”灰色健康”的三种子情形"></a>四、怎么区分”灰色健康”的三种子情形</h2><p>光看 systemd&#x2F;进程&#x2F;readyz 还不够。</p>
+<p><strong>“灰色健康”的三种情形需要进一步区分</strong>，否则会把 Hermes 节点误判成”unit 丢失”。</p>
+<h3 id="4-1-区分方法：看进程二进制名"><a href="#4-1-区分方法：看进程二进制名" class="headerlink" title="4.1 区分方法：看进程二进制名"></a>4.1 区分方法：看进程二进制名</h3><figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 进程二进制名 = openclaw-gateway  → OpenClaw 栈</span><br><span class="hljs-comment"># 进程二进制名 = hermes-gateway     → Hermes 栈</span><br><span class="hljs-comment"># 进程二进制名 = node ... hermes     → Hermes 跑的 Node 进程</span><br><br>PROCESS_BIN=$(ps -ef | grep -E <span class="hljs-string">&quot;openclaw|hermes&quot;</span> | grep -v grep | awk <span class="hljs-string">&#x27;&#123;print $8&#125;&#x27;</span> | <span class="hljs-built_in">head</span> -1)<br><span class="hljs-keyword">case</span> <span class="hljs-string">&quot;<span class="hljs-variable">$PROCESS_BIN</span>&quot;</span> <span class="hljs-keyword">in</span><br>  *openclaw*)  <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;OpenClaw 栈&quot;</span>;;<br>  *hermes*)    <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;Hermes 栈&quot;</span>;;<br>  *node*hermes*) <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;Hermes (Node) 栈&quot;</span>;;<br><span class="hljs-keyword">esac</span><br></code></pre></td></tr></table></figure>
+
+<p><strong>栈判断 + readyz 端口</strong> &#x3D; 准确识别：</p>
+<table>
+<thead>
+<tr>
+<th>栈</th>
+<th>systemd 单元名</th>
+<th>readyz 端口</th>
+<th>平台 dashboard 端口</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>OpenClaw</td>
+<td><code>openclaw-gateway.service</code></td>
+<td><strong>18789</strong></td>
+<td>无（管理面板在 gateway 里）</td>
+</tr>
+<tr>
+<td>Hermes</td>
+<td><code>hermes-gateway.service</code> (可能缺失)</td>
+<td>9119</td>
+<td>9119（独立 dashboard）</td>
+</tr>
+</tbody></table>
+<p><strong>VM152&#x2F;VM154 是 Hermes 节点 — 它们用的是 9119 端口，不是 18789。</strong></p>
+<p><strong>我用 <code>curl http://127.0.0.1:9119/api/status</code> 验证 Hermes 节点的健康。</strong></p>
+<h3 id="4-2-区分方法：看进程启动方式"><a href="#4-2-区分方法：看进程启动方式" class="headerlink" title="4.2 区分方法：看进程启动方式"></a>4.2 区分方法：看进程启动方式</h3><figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># manual 启动的进程 — PPID 一般不是 1</span><br><span class="hljs-comment"># systemd 启动的进程 — PPID 一定是 1 (PID 1 = systemd)</span><br><br>PPID=$(ps -ef | grep -E <span class="hljs-string">&quot;openclaw|hermes&quot;</span> | grep -v grep | awk <span class="hljs-string">&#x27;&#123;print $3&#125;&#x27;</span> | <span class="hljs-built_in">head</span> -1)<br><span class="hljs-keyword">if</span> [ <span class="hljs-string">&quot;<span class="hljs-variable">$PPID</span>&quot;</span> = <span class="hljs-string">&quot;1&quot;</span> ]; <span class="hljs-keyword">then</span><br>  <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;systemd 启动&quot;</span><br><span class="hljs-keyword">else</span><br>  <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;manual 启动 (PPID=<span class="hljs-variable">$PPID</span>)&quot;</span><br><span class="hljs-keyword">fi</span><br></code></pre></td></tr></table></figure>
+
+<p><strong>PPID !&#x3D; 1 不一定是 manual 启动</strong>（可能是被 supervisor 之类接管了），但**可以用来快速区分”systemd 启的”和”其他方式启的”**。</p>
+<h3 id="4-3-区分方法：看启动时长-vs-NRestarts"><a href="#4-3-区分方法：看启动时长-vs-NRestarts" class="headerlink" title="4.3 区分方法：看启动时长 vs NRestarts"></a>4.3 区分方法：看启动时长 vs NRestarts</h3><figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># systemd 报的 NRestarts 是 unit 重启次数</span><br><span class="hljs-comment"># manual 进程的 etime 是它当前实例运行了多久</span><br><br><span class="hljs-comment"># 如果 manual 进程 etime &gt; 24h</span><br><span class="hljs-comment">#   → 这是&quot;长期 manual 续命&quot;，不是&quot;刚被踢出来&quot;</span><br><span class="hljs-comment">#   → 灰色健康，不动</span><br><br><span class="hljs-comment"># 如果 manual 进程 etime &lt; 5min</span><br><span class="hljs-comment">#   → 这是&quot;刚被踢出来又拉起&quot;</span><br><span class="hljs-comment">#   → 灰色健康 + 警告（有人在反复重启）</span><br></code></pre></td></tr></table></figure>
+
+<p><strong>etime 决定”灰色健康”的可信度。</strong></p>
+<h2 id="五、一键检查脚本"><a href="#五、一键检查脚本" class="headerlink" title="五、一键检查脚本"></a>五、一键检查脚本</h2><p>把上述判断逻辑封装成一个<strong>只读、不 kill 任何进程</strong>的脚本：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br><span class="line">59</span><br><span class="line">60</span><br><span class="line">61</span><br><span class="line">62</span><br><span class="line">63</span><br><span class="line">64</span><br><span class="line">65</span><br><span class="line">66</span><br><span class="line">67</span><br><span class="line">68</span><br><span class="line">69</span><br><span class="line">70</span><br><span class="line">71</span><br><span class="line">72</span><br><span class="line">73</span><br><span class="line">74</span><br><span class="line">75</span><br><span class="line">76</span><br><span class="line">77</span><br><span class="line">78</span><br><span class="line">79</span><br><span class="line">80</span><br><span class="line">81</span><br><span class="line">82</span><br><span class="line">83</span><br><span class="line">84</span><br><span class="line">85</span><br><span class="line">86</span><br><span class="line">87</span><br><span class="line">88</span><br><span class="line">89</span><br><span class="line">90</span><br><span class="line">91</span><br><span class="line">92</span><br><span class="line">93</span><br><span class="line">94</span><br><span class="line">95</span><br><span class="line">96</span><br><span class="line">97</span><br><span class="line">98</span><br><span class="line">99</span><br><span class="line">100</span><br><span class="line">101</span><br><span class="line">102</span><br><span class="line">103</span><br><span class="line">104</span><br><span class="line">105</span><br><span class="line">106</span><br><span class="line">107</span><br><span class="line">108</span><br><span class="line">109</span><br><span class="line">110</span><br><span class="line">111</span><br><span class="line">112</span><br><span class="line">113</span><br><span class="line">114</span><br><span class="line">115</span><br><span class="line">116</span><br><span class="line">117</span><br><span class="line">118</span><br><span class="line">119</span><br><span class="line">120</span><br><span class="line">121</span><br><span class="line">122</span><br><span class="line">123</span><br><span class="line">124</span><br><span class="line">125</span><br><span class="line">126</span><br><span class="line">127</span><br><span class="line">128</span><br><span class="line">129</span><br><span class="line">130</span><br><span class="line">131</span><br><span class="line">132</span><br><span class="line">133</span><br><span class="line">134</span><br><span class="line">135</span><br><span class="line">136</span><br><span class="line">137</span><br><span class="line">138</span><br><span class="line">139</span><br><span class="line">140</span><br><span class="line">141</span><br><span class="line">142</span><br><span class="line">143</span><br><span class="line">144</span><br><span class="line">145</span><br><span class="line">146</span><br><span class="line">147</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-meta">#!/bin/bash</span><br><span class="hljs-comment"># diagnose-manual-systemd.sh</span><br><span class="hljs-comment"># 用途：诊断 &quot;systemd inactive + manual 进程在跑&quot; 节点的健康状态</span><br><span class="hljs-comment"># 原则：只读，不重启、不 kill、不动 systemd</span><br><br><span class="hljs-built_in">set</span> -e<br><br>NODE_NAME=<span class="hljs-string">&quot;<span class="hljs-variable">$&#123;1:-$(hostname)&#125;</span>&quot;</span><br>GATEWAY_PORT=<span class="hljs-string">&quot;<span class="hljs-variable">$&#123;2:-18789&#125;</span>&quot;</span><br>HERMES_PORT=<span class="hljs-string">&quot;<span class="hljs-variable">$&#123;3:-9119&#125;</span>&quot;</span><br><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;============================================&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;  节点健康判定矩阵 — <span class="hljs-variable">$NODE_NAME</span>&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;============================================&quot;</span><br><span class="hljs-built_in">echo</span><br><br><span class="hljs-comment"># === 0. 节点角色判断 ===</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;=== 0. 节点角色判断 ===&quot;</span><br>PROCESS_LIST=$(ps -ef | grep -E <span class="hljs-string">&quot;openclaw|hermes&quot;</span> | grep -v grep || <span class="hljs-literal">true</span>)<br><span class="hljs-keyword">if</span> [ -z <span class="hljs-string">&quot;<span class="hljs-variable">$PROCESS_LIST</span>&quot;</span> ]; <span class="hljs-keyword">then</span><br>  <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;❌ 没有 openclaw / hermes 进程在跑&quot;</span><br>  <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;   建议：手动启动 gateway&quot;</span><br>  <span class="hljs-built_in">exit</span> 1<br><span class="hljs-keyword">fi</span><br><br>PROCESS_BIN=$(<span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;<span class="hljs-variable">$PROCESS_LIST</span>&quot;</span> | awk <span class="hljs-string">&#x27;&#123;print $8&#125;&#x27;</span> | <span class="hljs-built_in">head</span> -1)<br>PROCESS_PID=$(<span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;<span class="hljs-variable">$PROCESS_LIST</span>&quot;</span> | awk <span class="hljs-string">&#x27;&#123;print $2&#125;&#x27;</span> | <span class="hljs-built_in">head</span> -1)<br>PROCESS_PPID=$(<span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;<span class="hljs-variable">$PROCESS_LIST</span>&quot;</span> | awk <span class="hljs-string">&#x27;&#123;print $3&#125;&#x27;</span> | <span class="hljs-built_in">head</span> -1)<br>PROCESS_ETIME=$(ps -p <span class="hljs-string">&quot;<span class="hljs-variable">$PROCESS_PID</span>&quot;</span> -o etime= 2&gt;/dev/null | xargs)<br><br><span class="hljs-keyword">case</span> <span class="hljs-string">&quot;<span class="hljs-variable">$PROCESS_BIN</span>&quot;</span> <span class="hljs-keyword">in</span><br>  *openclaw*)<br>    STACK=<span class="hljs-string">&quot;OpenClaw&quot;</span><br>    READYZ_URL=<span class="hljs-string">&quot;http://127.0.0.1:<span class="hljs-variable">$GATEWAY_PORT</span>/readyz&quot;</span><br>    ;;<br>  *hermes*)<br>    STACK=<span class="hljs-string">&quot;Hermes&quot;</span><br>    READYZ_URL=<span class="hljs-string">&quot;http://127.0.0.1:<span class="hljs-variable">$HERMES_PORT</span>/api/status&quot;</span><br>    ;;<br>  *node*)<br>    STACK=<span class="hljs-string">&quot;Hermes (Node)&quot;</span><br>    READYZ_URL=<span class="hljs-string">&quot;http://127.0.0.1:<span class="hljs-variable">$HERMES_PORT</span>/api/status&quot;</span><br>    ;;<br>  *)<br>    STACK=<span class="hljs-string">&quot;Unknown (<span class="hljs-variable">$PROCESS_BIN</span>)&quot;</span><br>    READYZ_URL=<span class="hljs-string">&quot;&quot;</span><br>    ;;<br><span class="hljs-keyword">esac</span><br><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;栈:      <span class="hljs-variable">$STACK</span>&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;PID:     <span class="hljs-variable">$PROCESS_PID</span>&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;PPID:    <span class="hljs-variable">$PROCESS_PPID</span> (1 = systemd 启动, 其他 = manual/supervisor)&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;etime:   <span class="hljs-variable">$PROCESS_ETIME</span>&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;readyz:  <span class="hljs-variable">$READYZ_URL</span>&quot;</span><br><span class="hljs-built_in">echo</span><br><br><span class="hljs-comment"># === 1. D1: systemd 状态 ===</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;=== 1. D1: systemd 状态 ===&quot;</span><br>SYSTEMD_ACTIVE=$(systemctl is-active openclaw-gateway 2&gt;/dev/null || <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;unknown&quot;</span>)<br>SYSTEMD_ENABLED=$(systemctl is-enabled openclaw-gateway 2&gt;/dev/null || <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;unknown&quot;</span>)<br>NRESTARTS=$(systemctl show openclaw-gateway --property=NRestarts --value 2&gt;/dev/null || <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;0&quot;</span>)<br>ACTIVE_TS=$(systemctl show openclaw-gateway --property=ActiveEnterTimestamp --value 2&gt;/dev/null || <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;n/a&quot;</span>)<br><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;is-active:    <span class="hljs-variable">$SYSTEMD_ACTIVE</span>&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;is-enabled:   <span class="hljs-variable">$SYSTEMD_ENABLED</span>&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;NRestarts:    <span class="hljs-variable">$NRESTARTS</span> (历史累计)&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;ActiveEnter:  <span class="hljs-variable">$ACTIVE_TS</span>&quot;</span><br><span class="hljs-built_in">echo</span><br><br><span class="hljs-comment"># === 2. D2: 进程存在性 ===</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;=== 2. D2: 进程存在性 ===&quot;</span><br><span class="hljs-keyword">if</span> [ -n <span class="hljs-string">&quot;<span class="hljs-variable">$PROCESS_PID</span>&quot;</span> ]; <span class="hljs-keyword">then</span><br>  <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;✅ <span class="hljs-variable">$STACK</span> 进程在跑 (PID <span class="hljs-variable">$PROCESS_PID</span>, etime <span class="hljs-variable">$PROCESS_ETIME</span>)&quot;</span><br><span class="hljs-keyword">else</span><br>  <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;❌ 没有 <span class="hljs-variable">$STACK</span> 进程&quot;</span><br><span class="hljs-keyword">fi</span><br><span class="hljs-built_in">echo</span><br><br><span class="hljs-comment"># === 3. D3: readyz 端点 ===</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;=== 3. D3: readyz 端点 ===&quot;</span><br><span class="hljs-keyword">if</span> [ -n <span class="hljs-string">&quot;<span class="hljs-variable">$READYZ_URL</span>&quot;</span> ]; <span class="hljs-keyword">then</span><br>  HTTP_CODE=$(curl -sS -o /tmp/readyz_resp.json -w <span class="hljs-string">&quot;%&#123;http_code&#125;&quot;</span> \<br>    --max-time 5 <span class="hljs-string">&quot;<span class="hljs-variable">$READYZ_URL</span>&quot;</span> 2&gt;/dev/null || <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;000&quot;</span>)<br>  <span class="hljs-keyword">if</span> [ <span class="hljs-string">&quot;<span class="hljs-variable">$HTTP_CODE</span>&quot;</span> = <span class="hljs-string">&quot;200&quot;</span> ]; <span class="hljs-keyword">then</span><br>    <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;✅ <span class="hljs-variable">$READYZ_URL</span> → 200&quot;</span><br>    <span class="hljs-built_in">cat</span> /tmp/readyz_resp.json | jq -r <span class="hljs-string">&#x27;.status // .&quot;uptime // . // empty&#x27;</span> 2&gt;/dev/null<br>  <span class="hljs-keyword">elif</span> [ <span class="hljs-string">&quot;<span class="hljs-variable">$HTTP_CODE</span>&quot;</span> = <span class="hljs-string">&quot;000&quot;</span> ]; <span class="hljs-keyword">then</span><br>    <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;❌ <span class="hljs-variable">$READYZ_URL</span> → 无法连接&quot;</span><br>  <span class="hljs-keyword">else</span><br>    <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;⚠️  <span class="hljs-variable">$READYZ_URL</span> → <span class="hljs-variable">$HTTP_CODE</span>&quot;</span><br>  <span class="hljs-keyword">fi</span><br><span class="hljs-keyword">else</span><br>  <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;⚠️  未知栈，跳过 readyz 检查&quot;</span><br><span class="hljs-keyword">fi</span><br><span class="hljs-built_in">echo</span><br><br><span class="hljs-comment"># === 4. D4: 上游连接 ===</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;=== 4. D4: 上游连接 ===&quot;</span><br>ESTAB_COUNT=$(ss -tan 2&gt;/dev/null | grep -E <span class="hljs-string">&quot;ESTAB.*:443&quot;</span> | <span class="hljs-built_in">wc</span> -l | xargs)<br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;443 ESTAB 连接数: <span class="hljs-variable">$ESTAB_COUNT</span>&quot;</span><br><span class="hljs-keyword">if</span> [ <span class="hljs-string">&quot;<span class="hljs-variable">$ESTAB_COUNT</span>&quot;</span> -gt 0 ]; <span class="hljs-keyword">then</span><br>  <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;✅ 有上游连接（飞书/钉钉/wecom 至少一个连着）&quot;</span><br>  ss -tan 2&gt;/dev/null | grep -E <span class="hljs-string">&quot;ESTAB.*:443&quot;</span> | awk <span class="hljs-string">&#x27;&#123;print $5&#125;&#x27;</span> | <span class="hljs-built_in">head</span> -3<br><span class="hljs-keyword">else</span><br>  <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;⚠️  没有 443 ESTAB 连接 — 上游可能没连上&quot;</span><br><span class="hljs-keyword">fi</span><br><span class="hljs-built_in">echo</span><br><br><span class="hljs-comment"># === 5. 综合判定 ===</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;=== 5. 综合判定 ===&quot;</span><br><span class="hljs-keyword">if</span> [ <span class="hljs-string">&quot;<span class="hljs-variable">$SYSTEMD_ACTIVE</span>&quot;</span> = <span class="hljs-string">&quot;active&quot;</span> ] &amp;&amp; [ <span class="hljs-string">&quot;<span class="hljs-variable">$HTTP_CODE</span>&quot;</span> = <span class="hljs-string">&quot;200&quot;</span> ] &amp;&amp; [ <span class="hljs-string">&quot;<span class="hljs-variable">$ESTAB_COUNT</span>&quot;</span> -gt 0 ]; <span class="hljs-keyword">then</span><br>  <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;✅ 完美健康 (systemd active + 进程在跑 + readyz 200 + 上游连着)&quot;</span><br>  EXIT_CODE=0<br><span class="hljs-keyword">elif</span> [ <span class="hljs-string">&quot;<span class="hljs-variable">$SYSTEMD_ACTIVE</span>&quot;</span> != <span class="hljs-string">&quot;active&quot;</span> ] &amp;&amp; [ <span class="hljs-string">&quot;<span class="hljs-variable">$HTTP_CODE</span>&quot;</span> = <span class="hljs-string">&quot;200&quot;</span> ] &amp;&amp; [ <span class="hljs-string">&quot;<span class="hljs-variable">$ESTAB_COUNT</span>&quot;</span> -gt 0 ]; <span class="hljs-keyword">then</span><br>  <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;⚠️  灰色健康 (systemd inactive + 进程在跑 + readyz 200 + 上游连着)&quot;</span><br>  <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;   说明: systemd 单元不健康但 gateway 自身正常&quot;</span><br>  <span class="hljs-keyword">case</span> <span class="hljs-string">&quot;<span class="hljs-variable">$STACK</span>&quot;</span> <span class="hljs-keyword">in</span><br>    Hermes*)        <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;   原因: Hermes 栈不依赖 OpenClaw systemd 单元 — 预期状态&quot;</span>;;<br>    OpenClaw*)<br>      <span class="hljs-keyword">if</span> [ <span class="hljs-string">&quot;<span class="hljs-variable">$SYSTEMD_ENABLED</span>&quot;</span> = <span class="hljs-string">&quot;not-found&quot;</span> ]; <span class="hljs-keyword">then</span><br>        <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;   原因: systemd unit 文件丢失，manual 进程在续命&quot;</span><br>        <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;   建议: 重写 systemd unit 让它接管 (但不强制)&quot;</span><br>      <span class="hljs-keyword">else</span><br>        <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;   原因: systemd unit 存在但 inactive，进程是 manual 启动&quot;</span><br>        <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;   建议: 看 journalctl 找 systemd 为何没拉起&quot;</span><br>      <span class="hljs-keyword">fi</span><br>      ;;<br>  <span class="hljs-keyword">esac</span><br>  EXIT_CODE=0<br><span class="hljs-keyword">elif</span> [ <span class="hljs-string">&quot;<span class="hljs-variable">$HTTP_CODE</span>&quot;</span> != <span class="hljs-string">&quot;200&quot;</span> ] || [ <span class="hljs-string">&quot;<span class="hljs-variable">$ESTAB_COUNT</span>&quot;</span> -eq 0 ]; <span class="hljs-keyword">then</span><br>  <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;❌ 准故障 (gateway 自身或上游有问题)&quot;</span><br>  <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;   建议: 看 journalctl / gateway 日志找原因&quot;</span><br>  EXIT_CODE=1<br><span class="hljs-keyword">elif</span> [ -z <span class="hljs-string">&quot;<span class="hljs-variable">$PROCESS_PID</span>&quot;</span> ]; <span class="hljs-keyword">then</span><br>  <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;❌ 真故障 (进程不在)&quot;</span><br>  <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;   建议: 手动启动 gateway&quot;</span><br>  EXIT_CODE=1<br><span class="hljs-keyword">else</span><br>  <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;⚠️  状态未明 — 请人工排查&quot;</span><br>  EXIT_CODE=1<br><span class="hljs-keyword">fi</span><br><span class="hljs-built_in">echo</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;============================================&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;  诊断完成 (exit code: <span class="hljs-variable">$EXIT_CODE</span>)&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;============================================&quot;</span><br><br><span class="hljs-built_in">exit</span> <span class="hljs-variable">$EXIT_CODE</span><br></code></pre></td></tr></table></figure>
+
+<p><strong>使用方法</strong>：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-built_in">chmod</span> +x diagnose-manual-systemd.sh<br><br><span class="hljs-comment"># OpenClaw 节点</span><br>./diagnose-manual-systemd.sh VM151<br><br><span class="hljs-comment"># Hermes 节点</span><br>./diagnose-manual-systemd.sh VM152 18789 9119<br></code></pre></td></tr></table></figure>
+
+<p><strong>VM152 (Hermes 节点) 输出示例</strong>：</p>
+<figure class="highlight asciidoc"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br></pre></td><td class="code"><pre><code class="hljs asciidoc">============================================<br>  节点健康判定矩阵 — VM152<br>============================================<br><br><span class="hljs-section">=== 0. 节点角色判断 ===</span><br>栈:      Hermes<br>PID:     338431<br>PPID:    338347 (1 = systemd 启动, 其他 = manual/supervisor)<br>etime:   1-06:23:45<br>readyz:  http://127.0.0.1:9119/api/status<br><br><span class="hljs-section">=== 1. D1: systemd 状态 ===</span><br>is-active:    inactive<br>is-enabled:   not-found<br>NRestarts:    0 (历史累计)<br>ActiveEnter:  n/a<br><br><span class="hljs-section">=== 2. D2: 进程存在性 ===</span><br>✅ Hermes 进程在跑 (PID 338431, etime 1-06:23:45)<br><br><span class="hljs-section">=== 3. D3: readyz 端点 ===</span><br>✅ http://127.0.0.1:9119/api/status → 200<br>gateway_state=running<br><br><span class="hljs-section">=== 4. D4: 上游连接 ===</span><br>443 ESTAB 连接数: 1<br>✅ 有上游连接（飞书/钉钉/wecom 至少一个连着）<br><br><span class="hljs-section">=== 5. 综合判定 ===</span><br>⚠️  灰色健康 (systemd inactive <span class="hljs-code">+ 进程在跑 +</span> readyz 200 + 上游连着)<br><span class="hljs-code">   说明: systemd 单元不健康但 gateway 自身正常</span><br><span class="hljs-code">   原因: Hermes 栈不依赖 OpenClaw systemd 单元 — 预期状态</span><br><span class="hljs-code">   建议: 重写 systemd unit 让它接管 (但不强制)</span><br><br>============================================<br>  诊断完成 (exit code: 0)<br>============================================<br></code></pre></td></tr></table></figure>
+
+<p><strong>关键</strong>：这个脚本<strong>不重启、不 kill、不动 systemd</strong>。它只是<strong>给出现状的事实陈述</strong> + <strong>建议</strong>。</p>
+<p><strong>决策权在运维人手里。</strong></p>
+<h2 id="六、Q-A"><a href="#六、Q-A" class="headerlink" title="六、Q&amp;A"></a>六、Q&amp;A</h2><h3 id="Q1：systemd-inactive-但进程在跑，要不要-systemctl-restart？"><a href="#Q1：systemd-inactive-但进程在跑，要不要-systemctl-restart？" class="headerlink" title="Q1：systemd inactive 但进程在跑，要不要 systemctl restart？"></a>Q1：systemd inactive 但进程在跑，要不要 <code>systemctl restart</code>？</h3><p><strong>A</strong>：<strong>不要。</strong> <code>systemctl restart</code> 会尝试启动一个新进程，但 18789 端口被 manual 进程占着，新进程会<strong>立即失败</strong>，然后累计 NRestarts，飞书&#x2F;钉钉的 WebSocket 连接会被踢一次。</p>
+<p><strong>正确做法</strong>：</p>
+<ul>
+<li><strong>如果 manual 进程是健康的</strong>（readyz 200 + 上游连着）→ 什么都不做，记一条”灰色健康”到监控</li>
+<li><strong>如果 manual 进程也是坏的</strong>（readyz 502）→ 找到 manual 进程 PID，温和地 <code>kill -TERM &lt;pid&gt;</code>，让 systemd 接管</li>
+</ul>
+<h3 id="Q2：怎么判断-manual-进程是”刚被踢出来”还是”长期续命”？"><a href="#Q2：怎么判断-manual-进程是”刚被踢出来”还是”长期续命”？" class="headerlink" title="Q2：怎么判断 manual 进程是”刚被踢出来”还是”长期续命”？"></a>Q2：怎么判断 manual 进程是”刚被踢出来”还是”长期续命”？</h3><p><strong>A</strong>：看 <code>etime</code> 字段。</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><code class="hljs bash">$ ps -p <span class="hljs-variable">$PID</span> -o etime=<br>1-06:23:45  ← 1 天 6 小时 23 分 45 秒（长期续命）<br>05:23       ← 5 分 23 秒（刚被踢出来）<br></code></pre></td></tr></table></figure>
+
+<p><strong>etime &gt; 24h 几乎一定是”长期 manual 续命”<strong>，可以判定为</strong>稳定的灰色健康</strong>。</p>
+<p>**etime &lt; 5min 是”刚被踢出来”**，需要查为什么 systemd unit 在反复 restart。</p>
+<h3 id="Q3：NRestarts-100-是不是一定要报警？"><a href="#Q3：NRestarts-100-是不是一定要报警？" class="headerlink" title="Q3：NRestarts &gt; 100 是不是一定要报警？"></a>Q3：NRestarts &gt; 100 是不是一定要报警？</h3><p><strong>A</strong>：<strong>不一定。</strong> NRestarts 是<strong>历史累计</strong>，不是”过去 1 小时”。</p>
+<p><strong>正确判定</strong>：</p>
+<ul>
+<li>NRestarts&#x3D;2000 + ActiveEnterTimestamp&#x3D;1h ago → 修好了，<strong>不报警</strong></li>
+<li>NRestarts&#x3D;2000 + ActiveEnterTimestamp&#x3D;10s ago + 还在涨 → 还在 restart loop，<strong>报警</strong></li>
+</ul>
+<p><strong>铁律</strong>: 必须<strong>同时看 NRestarts 和 ActiveEnterTimestamp</strong>，<strong>缺一不可</strong>。</p>
+<h3 id="Q4：Hermes-节点（VM152-VM154）的-systemd-单元要不要补上？"><a href="#Q4：Hermes-节点（VM152-VM154）的-systemd-单元要不要补上？" class="headerlink" title="Q4：Hermes 节点（VM152&#x2F;VM154）的 systemd 单元要不要补上？"></a>Q4：Hermes 节点（VM152&#x2F;VM154）的 systemd 单元要不要补上？</h3><p><strong>A</strong>：<strong>看情况。</strong></p>
+<ul>
+<li>如果 Hermes 升级频率很高（每周一个版本）→ <strong>建议不开 systemd</strong>，manual 跑就行，省得每次升级都改 unit</li>
+<li>如果 Hermes 升级频率低（每月一个版本）→ <strong>建议补上 systemd unit</strong>，让进程意外退出能自动拉起</li>
+</ul>
+<p><strong>经验值</strong>：我 6 个节点里 VM152&#x2F;VM154 是 Hermes 栈，目前<strong>都跑 manual</strong>——因为 Hermes 的更新频率比 OpenClaw 高，unit 维护成本不划算。</p>
+<p><strong>这不等于”systemd 没用”，而是”manual 是当前最佳实践”。</strong></p>
+<h3 id="Q5：怎么监控”manual-进程-systemd-inactive”的灰色健康？"><a href="#Q5：怎么监控”manual-进程-systemd-inactive”的灰色健康？" class="headerlink" title="Q5：怎么监控”manual 进程 + systemd inactive”的灰色健康？"></a>Q5：怎么监控”manual 进程 + systemd inactive”的灰色健康？</h3><p><strong>A</strong>：两种方式：</p>
+<p><strong>方式 1：在监控面板里单独建一个组</strong>（推荐）</p>
+<figure class="highlight nsis"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><code class="hljs nsis">Group: <span class="hljs-string">&quot;灰色健康（已知项）&quot;</span><br>├── VM151 — manual 续命，<span class="hljs-params">system</span>d unit 缺失（已知）<br>├── VM152 — Hermes 节点，<span class="hljs-params">system</span>d 不适用（已知）<br>└── VM154 — Hermes 节点，<span class="hljs-params">system</span>d 不适用（已知）<br></code></pre></td></tr></table></figure>
+
+<p><strong>方式 2：在告警规则里加白名单</strong></p>
+<figure class="highlight yaml"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><code class="hljs yaml"><span class="hljs-comment"># Prometheus alertmanager</span><br><span class="hljs-attr">routes:</span><br>  <span class="hljs-bullet">-</span> <span class="hljs-attr">match:</span><br>      <span class="hljs-attr">alertname:</span> <span class="hljs-string">SystemdUnitInactive</span><br>      <span class="hljs-attr">instance:</span> <span class="hljs-string">&quot;VM151|VM152|VM154&quot;</span><br>    <span class="hljs-attr">receiver:</span> <span class="hljs-string">&quot;silent&quot;</span>  <span class="hljs-comment"># 静默</span><br>  <span class="hljs-bullet">-</span> <span class="hljs-attr">match:</span><br>      <span class="hljs-attr">alertname:</span> <span class="hljs-string">SystemdUnitInactive</span><br>    <span class="hljs-attr">receiver:</span> <span class="hljs-string">&quot;page&quot;</span>     <span class="hljs-comment"># 其他节点真告警</span><br></code></pre></td></tr></table></figure>
+
+<p><strong>——这就是为什么我说”6 个节点全绿反而让我慌”：因为白名单 + 全绿，看起来像监控坏了。</strong></p>
+<p><strong>其实不是坏了，是 6 个节点都被”差异化健康检查”覆盖了，每一种”健康”都被验证过。</strong></p>
+<h3 id="Q6：怎么从根上避免”systemd-unit-丢失”这种状态？"><a href="#Q6：怎么从根上避免”systemd-unit-丢失”这种状态？" class="headerlink" title="Q6：怎么从根上避免”systemd unit 丢失”这种状态？"></a>Q6：怎么从根上避免”systemd unit 丢失”这种状态？</h3><p><strong>A</strong>：三个动作：</p>
+<ol>
+<li><p><strong>systemd unit 文件纳入版本控制</strong>（Git）</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><code class="hljs bash">/etc/systemd/system/openclaw-gateway.service  →  /opt/openclaw/deploy/systemd/<br></code></pre></td></tr></table></figure>
+<p>升级时 <code>cp -p</code> 覆盖，而不是直接 overwrite。</p>
+</li>
+<li><p><strong>加一个 systemd unit 完整性的 cron 检查</strong></p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 每天早上 8 点跑一次</span><br>0 8 * * *  systemctl is-enabled openclaw-gateway || \<br>  <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;⚠️ openclaw-gateway unit 缺失！&quot;</span> | mail -s <span class="hljs-string">&quot;ALERT&quot;</span> ops@example.com<br></code></pre></td></tr></table></figure>
+</li>
+<li><p><strong>跑 manual 进程时记录”为什么要 manual”</strong></p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># /etc/openclaw/manual-reason.txt</span><br>2026-06-03 23:15  ——<br>原因: systemd unit 在 5/30 升级时丢失<br>临时方案: <span class="hljs-built_in">nohup</span> openclaw-gateway &amp; 续命<br>永久方案: 等 6/4 上午重写 unit<br></code></pre></td></tr></table></figure></li>
+</ol>
+<p><strong>第 3 条是关键</strong>——<strong>所有”临时方案”必须有 metadata</strong>，否则 3 个月后就没人记得当初为什么 manual 启动了。</p>
+<h2 id="七、总结"><a href="#七、总结" class="headerlink" title="七、总结"></a>七、总结</h2><p>“systemd inactive + manual 进程在跑” 这个状态，在 6 节点 OpenClaw 集群里是<strong>日常状态</strong>，不是”故障状态”。</p>
+<p><strong>核心要点</strong>：</p>
+<ol>
+<li>✅ <strong>判定矩阵 4 维</strong>: systemd 状态 + 进程存在 + readyz 端点 + 上游连接</li>
+<li>✅ <strong>“灰色健康”是健康</strong>,不是”待处理故障”——尤其 Hermes 节点</li>
+<li>✅ <strong>NRestarts 必配合 ActiveEnterTimestamp</strong>,缺一不可</li>
+<li>✅ <strong><code>etime &gt; 24h</code> 几乎一定是”长期 manual 续命”</strong>,可以稳定判健康</li>
+<li>✅ <strong>不要轻易 <code>systemctl restart</code></strong>,它会抢端口、累计 NRestarts、踢连接</li>
+<li>✅ <strong>决策权在运维手里</strong>——脚本只给”事实 + 建议”,<strong>不替运维做决定</strong></li>
+</ol>
+<p><strong>这次的教训: 健康检查不是”非黑即白”的二进制。</strong> 真正稳定的集群里,总会有”灰色地带”——</p>
+<ul>
+<li>有的灰色是”已知项”(systemd unit 丢失,manual 续命)</li>
+<li>有的灰色是”设计选择”(Hermes 节点不开 systemd)</li>
+<li>有的灰色是”真故障的前兆”(刚被踢出来又拉起)</li>
+</ul>
+<p><strong>把这三种灰色区分开,是健康检查脚本从”能跑”到”可信”的分水岭。</strong></p>
+<p>下次看到”systemd inactive + 进程在跑”——</p>
+<p><strong>第一件事不是 restart,是看 readyz、看 etime、看上游连接、看进程栈类型。</strong></p>
+<p><strong>——把这四件事做完了,再做决定。</strong></p>
+<hr>
+<p><em>作者：小六，一个在上海努力生存的普通打工人</em></p>
+
+    
+  </article>
+
+  
+      
+    <div class="nexmoe-post-copyright">
+        <strong>Author：</strong>Margrop<br>
+        <strong>Link：</strong><a href="http://blog.margrop.com/post/2026-06-04-how-to-judge-manual-process-systemd-inactive-node-health/" title="http:&#x2F;&#x2F;blog.margrop.com&#x2F;post&#x2F;2026-06-04-how-to-judge-manual-process-systemd-inactive-node-health&#x2F;" target="_blank" rel="noopener">http:&#x2F;&#x2F;blog.margrop.com&#x2F;post&#x2F;2026-06-04-how-to-judge-manual-process-systemd-inactive-node-health&#x2F;</a><br>
+        
+            <strong>版权声明：</strong>本文采用 <a href="https://creativecommons.org/licenses/by-nc-sa/3.0/cn/deed.zh" target="_blank">CC BY-NC-SA 3.0 CN</a> 协议进行许可
+
+        
+    </div>
+
+
+  
+  
+  <div class="nexmoe-post-meta nexmoe-rainbow">
+   
+    
+        <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/Hermes/" rel="tag">Hermes</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/OpenClaw/" rel="tag">OpenClaw</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/dashboard/" rel="tag">dashboard</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/manual/" rel="tag">manual</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/systemd/" rel="tag">systemd</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/%E5%81%A5%E5%BA%B7%E6%A3%80%E6%9F%A5/" rel="tag">健康检查</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/%E6%8A%80%E6%9C%AF/" rel="tag">技术</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/%E7%9B%91%E6%8E%A7/" rel="tag">监控</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/%E8%BF%90%E7%BB%B4/" rel="tag">运维</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/%E8%BF%9B%E7%A8%8B/" rel="tag">进程</a>
+    
+</div>
+  
+  
+    <script async src="../../js/copy-codeblock.js?v=1780579286566"></script>
+  
+
+  
+      <div class="nexmoe-post-footer">
+          <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+<script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+<div id="gitalk-container"></div>
+<script>
+  const gitalk = new Gitalk({
+    clientID: 'Ov23lib2oiNKjG5B7I1N',
+    clientSecret: '0a94653f17a7b9630d85b275008da4b38e0259dd',
+    repo: 'margropcomment.margrop.io',      // The repository of store comments,
+    owner: 'margrop',
+    admin: ['margrop'],
+    pagerDirection: 'last',
+    id: window.location.pathname.substring(0, 49), // 使用 pathname 的前49个字符作为 id
+    title: document.title,
+    language: 'zh-CN', // 根据需要设置语言
+    distractionFreeMode: false
+  })
+  gitalk.render('gitalk-container')
+</script>
+
+      </div>
+  
+</div></div><div class="nexmoe-post-right">    <div class="nexmoe-fixed">
+        <div class="nexmoe-tool">
+
+            
+
+            
+            
+            <button class="mdui-fab catalog" style="overflow:unset;">
+                <i class="nexmoefont icon-i-catalog"></i>
+                <div class="nexmoe-toc">
+                    <ol class="toc"><li class="toc-item toc-level-2"><a class="toc-link" href="#%E5%89%8D%E8%A8%80"><span class="toc-number">1.</span> <span class="toc-text">前言</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%B8%80%E3%80%81%E4%B8%BA%E4%BB%80%E4%B9%88%E4%BC%9A%E5%87%BA%E7%8E%B0%E2%80%9Dmanual-%E8%BF%9B%E7%A8%8B-systemd-inactive%E2%80%9D"><span class="toc-number">2.</span> <span class="toc-text">一、为什么会出现”manual 进程 + systemd inactive”</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#1-1-%E4%B8%89%E7%A7%8D%E5%85%B8%E5%9E%8B%E5%9C%BA%E6%99%AF"><span class="toc-number">2.1.</span> <span class="toc-text">1.1 三种典型场景</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#1-2-%E5%8F%8D%E9%9D%A2%EF%BC%9A%E4%BB%80%E4%B9%88%E6%97%B6%E5%80%99-systemd-inactive-%E7%9C%9F%E7%9A%84%E6%98%AF%E6%95%85%E9%9A%9C"><span class="toc-number">2.2.</span> <span class="toc-text">1.2 反面：什么时候 systemd inactive 真的是故障</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%BA%8C%E3%80%81%E5%81%A5%E5%BA%B7%E5%88%A4%E5%AE%9A%E7%9F%A9%E9%98%B5"><span class="toc-number">3.</span> <span class="toc-text">二、健康判定矩阵</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%B8%89%E3%80%81%E4%B8%BA%E4%BB%80%E4%B9%88%E4%B8%8D%E8%83%BD%E7%94%A8%E2%80%9D%E7%9C%8B-NRestarts%E2%80%9D%E4%B8%80%E5%88%80%E5%88%87"><span class="toc-number">4.</span> <span class="toc-text">三、为什么不能用”看 NRestarts”一刀切</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E5%9B%9B%E3%80%81%E6%80%8E%E4%B9%88%E5%8C%BA%E5%88%86%E2%80%9D%E7%81%B0%E8%89%B2%E5%81%A5%E5%BA%B7%E2%80%9D%E7%9A%84%E4%B8%89%E7%A7%8D%E5%AD%90%E6%83%85%E5%BD%A2"><span class="toc-number">5.</span> <span class="toc-text">四、怎么区分”灰色健康”的三种子情形</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#4-1-%E5%8C%BA%E5%88%86%E6%96%B9%E6%B3%95%EF%BC%9A%E7%9C%8B%E8%BF%9B%E7%A8%8B%E4%BA%8C%E8%BF%9B%E5%88%B6%E5%90%8D"><span class="toc-number">5.1.</span> <span class="toc-text">4.1 区分方法：看进程二进制名</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#4-2-%E5%8C%BA%E5%88%86%E6%96%B9%E6%B3%95%EF%BC%9A%E7%9C%8B%E8%BF%9B%E7%A8%8B%E5%90%AF%E5%8A%A8%E6%96%B9%E5%BC%8F"><span class="toc-number">5.2.</span> <span class="toc-text">4.2 区分方法：看进程启动方式</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#4-3-%E5%8C%BA%E5%88%86%E6%96%B9%E6%B3%95%EF%BC%9A%E7%9C%8B%E5%90%AF%E5%8A%A8%E6%97%B6%E9%95%BF-vs-NRestarts"><span class="toc-number">5.3.</span> <span class="toc-text">4.3 区分方法：看启动时长 vs NRestarts</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%BA%94%E3%80%81%E4%B8%80%E9%94%AE%E6%A3%80%E6%9F%A5%E8%84%9A%E6%9C%AC"><span class="toc-number">6.</span> <span class="toc-text">五、一键检查脚本</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E5%85%AD%E3%80%81Q-A"><span class="toc-number">7.</span> <span class="toc-text">六、Q&amp;A</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#Q1%EF%BC%9Asystemd-inactive-%E4%BD%86%E8%BF%9B%E7%A8%8B%E5%9C%A8%E8%B7%91%EF%BC%8C%E8%A6%81%E4%B8%8D%E8%A6%81-systemctl-restart%EF%BC%9F"><span class="toc-number">7.1.</span> <span class="toc-text">Q1：systemd inactive 但进程在跑，要不要 systemctl restart？</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#Q2%EF%BC%9A%E6%80%8E%E4%B9%88%E5%88%A4%E6%96%AD-manual-%E8%BF%9B%E7%A8%8B%E6%98%AF%E2%80%9D%E5%88%9A%E8%A2%AB%E8%B8%A2%E5%87%BA%E6%9D%A5%E2%80%9D%E8%BF%98%E6%98%AF%E2%80%9D%E9%95%BF%E6%9C%9F%E7%BB%AD%E5%91%BD%E2%80%9D%EF%BC%9F"><span class="toc-number">7.2.</span> <span class="toc-text">Q2：怎么判断 manual 进程是”刚被踢出来”还是”长期续命”？</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#Q3%EF%BC%9ANRestarts-100-%E6%98%AF%E4%B8%8D%E6%98%AF%E4%B8%80%E5%AE%9A%E8%A6%81%E6%8A%A5%E8%AD%A6%EF%BC%9F"><span class="toc-number">7.3.</span> <span class="toc-text">Q3：NRestarts &gt; 100 是不是一定要报警？</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#Q4%EF%BC%9AHermes-%E8%8A%82%E7%82%B9%EF%BC%88VM152-VM154%EF%BC%89%E7%9A%84-systemd-%E5%8D%95%E5%85%83%E8%A6%81%E4%B8%8D%E8%A6%81%E8%A1%A5%E4%B8%8A%EF%BC%9F"><span class="toc-number">7.4.</span> <span class="toc-text">Q4：Hermes 节点（VM152&#x2F;VM154）的 systemd 单元要不要补上？</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#Q5%EF%BC%9A%E6%80%8E%E4%B9%88%E7%9B%91%E6%8E%A7%E2%80%9Dmanual-%E8%BF%9B%E7%A8%8B-systemd-inactive%E2%80%9D%E7%9A%84%E7%81%B0%E8%89%B2%E5%81%A5%E5%BA%B7%EF%BC%9F"><span class="toc-number">7.5.</span> <span class="toc-text">Q5：怎么监控”manual 进程 + systemd inactive”的灰色健康？</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#Q6%EF%BC%9A%E6%80%8E%E4%B9%88%E4%BB%8E%E6%A0%B9%E4%B8%8A%E9%81%BF%E5%85%8D%E2%80%9Dsystemd-unit-%E4%B8%A2%E5%A4%B1%E2%80%9D%E8%BF%99%E7%A7%8D%E7%8A%B6%E6%80%81%EF%BC%9F"><span class="toc-number">7.6.</span> <span class="toc-text">Q6：怎么从根上避免”systemd unit 丢失”这种状态？</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%B8%83%E3%80%81%E6%80%BB%E7%BB%93"><span class="toc-number">8.</span> <span class="toc-text">七、总结</span></a></li></ol>
+                </div>
+            </button>
+            
+
+            
+
+            <a href="#nexmoe-content" class="backtop toc-link" aria-label="Back To Top" title="top"><button class="mdui-fab mdui-ripple"><i class="nexmoefont icon-caret-top"></i></button></a>
+        </div>
+    </div>
+</div></div><div id="nexmoe-footer"><!--!--></div><div id="nexmoe-search-space"><div class="search-container"><div class="search-header"><div class="search-input-container"><input class="search-input" type="text" placeholder="Search" onInput="sinput();"></div><a class="search-close" onclick="sclose();">×</a></div><div class="search-body"></div></div></div><div><script src="https://cdn.jsdelivr.net/npm/mathjax@latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+<script>MathJax.Hub.Config({
+    tex2jax: {
+        inlineMath: [ ['$','$'], ["\\(","\\)"] ],
+        processEscapes: true,
+        skipTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code']
+    }
+});
+MathJax.Hub.Queue(function() {
+    var all = MathJax.Hub.getAllJax(), i;
+    for(i=0; i < all.length; i += 1) {
+        all[i].SourceElement().parentNode.className += ' has-jax';
+    }
+});</script>
+</div></body></html>
