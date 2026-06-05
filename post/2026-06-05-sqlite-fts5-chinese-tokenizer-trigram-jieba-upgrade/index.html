@@ -1,0 +1,762 @@
+<!doctype html>
+<html lang="cn"><head>
+<title>SQLite FTS5 默认 unicode61 分词对中文&#34;返回 0 条&#34;的根因分析与三种升级方案（jieba / trigram / porter-wrap） - 魔都水滴</title>
+<meta charset="UTF-8">
+<meta name="keywords" content="">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5">
+
+<link rel="shortcut icon" href="/favicon.ico" type="image/x-icon" />
+<meta name="description" content="前言周五晚上 17:11，我在做例行的 BaiduPCS 同步检查时，撞上了一个**”明明有数据却搜不到”**的怪现象： 本地 SQLite FTS5 索引健康，5,499 条数据全部覆盖； 但用中文关键词查 小马，返回 0 条命中。 用英文关键词查 pdf，返回 362 条。 用 pony 查，返回 47 条。 ——只有中文搜不到。 排查 30 分钟后，定位到根因：  SQLite FTS5 默">
+<meta property="og:type" content="article">
+<meta property="og:title" content="SQLite FTS5 默认 unicode61 分词对中文&quot;返回 0 条&quot;的根因分析与三种升级方案（jieba &#x2F; trigram &#x2F; porter-wrap）">
+<meta property="og:url" content="http://blog.margrop.com/post/2026-06-05-sqlite-fts5-chinese-tokenizer-trigram-jieba-upgrade/index.html">
+<meta property="og:site_name" content="魔都水滴">
+<meta property="og:description" content="前言周五晚上 17:11，我在做例行的 BaiduPCS 同步检查时，撞上了一个**”明明有数据却搜不到”**的怪现象： 本地 SQLite FTS5 索引健康，5,499 条数据全部覆盖； 但用中文关键词查 小马，返回 0 条命中。 用英文关键词查 pdf，返回 362 条。 用 pony 查，返回 47 条。 ——只有中文搜不到。 排查 30 分钟后，定位到根因：  SQLite FTS5 默">
+<meta property="og:locale">
+<meta property="article:published_time" content="2026-06-05T13:30:00.000Z">
+<meta property="article:modified_time" content="2026-06-05T13:20:54.939Z">
+<meta property="article:author" content="Margrop">
+<meta property="article:tag" content="运维">
+<meta property="article:tag" content="技术">
+<meta property="article:tag" content="BaiduPCS">
+<meta property="article:tag" content="FTS5">
+<meta property="article:tag" content="SQLite">
+<meta property="article:tag" content="分词">
+<meta property="article:tag" content="中文搜索">
+<meta property="article:tag" content="unicode61">
+<meta property="article:tag" content="trigram">
+<meta property="article:tag" content="jieba">
+<meta name="twitter:card" content="summary">
+
+<link rel="stylesheet" href="../../lib/fancybox/fancybox.css">
+<link rel="stylesheet" href="../../lib/mdui_043tiny/mdui.css">
+
+
+<link rel="stylesheet" href="../../lib/iconfont/iconfont.css?v=1780665687420">
+
+<link rel="stylesheet" href="../../css/style.css?v=1780665687420">
+
+
+
+
+    
+        <link rel="stylesheet" href="../../custom.css?v=1780665687420">
+    
+
+
+
+<script src="../../lib/mdui_043tiny/mdui.js" async></script>
+<script src="../../lib/fancybox/fancybox.umd.js" async></script>
+<script src="../../lib/lax.min.js" async></script>
+
+
+<script async src="../../js/app.js?v=1780665687421"></script>
+
+ 
+
+<script charset="UTF-8" id="LA_COLLECT" src="//sdk.51.la/js-sdk-pro.min.js"></script>
+<script>LA.init({id:"23bDEwNOu1L8NhV1",ck:"23bDEwNOu1L8NhV1"})</script>
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-4NGHEP8LEV"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+
+  gtag('config', 'G-4NGHEP8LEV');
+</script>
+
+
+<link rel="stylesheet"  href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/atom-one-dark.min.css">
+<meta name="generator" content="Hexo 7.3.0"><link rel="alternate" href="atom.xml" title="魔都水滴" type="application/atom+xml">
+</head><body class="nexmoe mdui-drawer-body-left"><div id="nexmoe-background"><div class="nexmoe-bg" style="background-image: url(/images/background.webp)"></div><div class="mdui-appbar mdui-shadow-0"><div class="mdui-toolbar"><a class="mdui-btn mdui-btn-icon mdui-ripple" mdui-drawer="{target: &#039;#drawer&#039;, swipe: true}" title="menu"><i class="mdui-icon nexmoefont icon-menu"></i></a><div class="mdui-toolbar-spacer"></div><a class="mdui-btn mdui-btn-icon" href="../../index.html" title="Margrop"><img src="/images/avatar.webp" alt="Margrop"></a></div></div></div><div id="nexmoe-header"><div class="nexmoe-drawer mdui-drawer" id="drawer">
+    <div class="nexmoe-avatar mdui-ripple">
+        <a href="../../index.html" title="Margrop">
+            <img src="/images/avatar.webp" alt="Margrop" alt="Margrop">
+        </a>
+    </div>
+    <div class="nexmoe-count">
+        <div><span>Articles</span>340</div>
+        <div><span>Tags</span>515</div>
+        <div><span>Categories</span>7</div>
+    </div>
+    <div class="nexmoe-list mdui-list" mdui-collapse="{accordion: true}">
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" href="../../index.html" title="回到首页">
+            <i class="mdui-list-item-icon nexmoefont icon-home"></i>
+            <div class="mdui-list-item-content">
+                回到首页
+            </div>
+        </a>
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" href="../../post/archives/" title="文章归档">
+            <i class="mdui-list-item-icon nexmoefont icon-container"></i>
+            <div class="mdui-list-item-content">
+                文章归档
+            </div>
+        </a>
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" target="_blank" rel="noopener" href="https://example.com/" title="下载">
+            <i class="mdui-list-item-icon nexmoefont icon-container"></i>
+            <div class="mdui-list-item-content">
+                下载
+            </div>
+        </a>
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" href="../../post/favorites/" title="常用链接">
+            <i class="mdui-list-item-icon nexmoefont icon-unorderedlist"></i>
+            <div class="mdui-list-item-content">
+                常用链接
+            </div>
+        </a>
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" href="../../post/github-project-stars/" title="GithubStars">
+            <i class="mdui-list-item-icon nexmoefont icon-github"></i>
+            <div class="mdui-list-item-content">
+                GithubStars
+            </div>
+        </a>
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" href="../../post/donate/" title="给我赞助">
+            <i class="mdui-list-item-icon nexmoefont icon-coffee"></i>
+            <div class="mdui-list-item-content">
+                给我赞助
+            </div>
+        </a>
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" href="../../post/about/" title="关于博主">
+            <i class="mdui-list-item-icon nexmoefont icon-info-circle"></i>
+            <div class="mdui-list-item-content">
+                关于博主
+            </div>
+        </a>
+        
+    </div>
+    
+    
+        
+        <div class="nexmoe-widget-wrap">
+    <div class="nexmoe-widget nexmoe-search">
+         
+            <form id="search_form" action_e="https://cn.bing.com/search?q=site:example.com" onsubmit="return search();">
+                <label><input id="search_value" name="q" type="search" placeholder="Search"></label>
+            </form>
+         
+    </div>
+</div>
+
+
+
+
+    
+        
+        <div class="nexmoe-widget-wrap">
+	<div class="nexmoe-widget nexmoe-social">
+		<a
+			class="mdui-ripple"
+			href="http://qm.qq.com/cgi-bin/qm/qr?_wv=1027&k=weD8TANNWdCOveAMcdmoAxOKt5owKkDS"
+			target="_blank"
+			mdui-tooltip="{content: 'QQ群'}"
+			style="
+				color: rgb(249, 174, 8);
+				background-color: rgba(249, 174, 8, .1);
+			"
+		>
+			<i
+				class="nexmoefont icon-QQ"
+			></i> </a
+		><a
+			class="mdui-ripple"
+			href="https://github.com/margrop/"
+			target="_blank"
+			mdui-tooltip="{content: 'GitHub'}"
+			style="
+				color: rgb(25, 23, 23);
+				background-color: rgba(25, 23, 23, .1);
+			"
+		>
+			<i
+				class="nexmoefont icon-github"
+			></i> </a
+		><a
+			class="mdui-ripple"
+			href="../../atom.xml"
+			target="_blank"
+			mdui-tooltip="{content: 'RSS'}"
+			style="
+				color: rgb(247, 132, 34);
+				background-color: rgba(247, 132, 34, .1);
+			"
+		>
+			<i
+				class="nexmoefont icon-rss"
+			></i> </a
+		>
+	</div>
+</div>
+
+    
+        
+        
+  <div class="nexmoe-widget-wrap">
+    <h3 class="nexmoe-widget-title">Categories</h3>
+    <div class="nexmoe-widget">
+
+      <ul class="category-list">
+
+        
+
+
+        
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/ai-diary/">ai_diary</a>
+          <span class="category-list-count">95</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/ai-tech/">ai_tech</a>
+          <span class="category-list-count">87</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/develop/">develop</a>
+          <span class="category-list-count">28</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/">network</a>
+          <span class="category-list-count">112</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/notes/">notes</a>
+          <span class="category-list-count">10</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/others/">others</a>
+          <span class="category-list-count">3</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/sport/">sport</a>
+          <span class="category-list-count">4</span>
+        </li>
+
+        
+      </ul>
+
+    </div>
+  </div>
+
+
+    
+        
+        
+  <div class="nexmoe-widget-wrap">
+    <div id="randomtagcloud" class="nexmoe-widget tagcloud nexmoe-rainbow">
+      <a href="../../tags/1password/" style="font-size: 10px;">1password</a> <a href="../../tags/401/" style="font-size: 10px;">401</a> <a href="../../tags/6%E4%B8%AA%E8%8A%82%E7%82%B9/" style="font-size: 10px;">6个节点</a> <a href="../../tags/AC/" style="font-size: 10.43px;">AC</a> <a href="../../tags/ACP/" style="font-size: 10px;">ACP</a> <a href="../../tags/AI/" style="font-size: 12.17px;">AI</a> <a href="../../tags/AI-Coding-Assistant/" style="font-size: 10px;">AI Coding Assistant</a> <a href="../../tags/AI%E7%BC%96%E7%A8%8B%E5%8A%A9%E6%89%8B/" style="font-size: 10px;">AI编程助手</a> <a href="../../tags/AI%E8%BE%85%E5%8A%A9/" style="font-size: 10.43px;">AI辅助</a> <a href="../../tags/AI%E8%BE%85%E5%8A%A9%E7%BC%96%E7%A8%8B/" style="font-size: 10.43px;">AI辅助编程</a> <a href="../../tags/AP/" style="font-size: 10.87px;">AP</a> <a href="../../tags/API/" style="font-size: 11.3px;">API</a> <a href="../../tags/Alertmanager/" style="font-size: 10px;">Alertmanager</a> <a href="../../tags/AppDaemon/" style="font-size: 10px;">AppDaemon</a> <a href="../../tags/Aqara/" style="font-size: 10px;">Aqara</a> <a href="../../tags/BaiduPCS/" style="font-size: 10.43px;">BaiduPCS</a> <a href="../../tags/CC-Switch/" style="font-size: 10.43px;">CC-Switch</a> <a href="../../tags/CI-CD/" style="font-size: 10.43px;">CI/CD</a> <a href="../../tags/CLI-Tools/" style="font-size: 10px;">CLI Tools</a> <a href="../../tags/CLI%E5%B7%A5%E5%85%B7/" style="font-size: 10px;">CLI工具</a> <a href="../../tags/Caddy/" style="font-size: 10px;">Caddy</a> <a href="../../tags/Claude-Code/" style="font-size: 10.43px;">Claude Code</a> <a href="../../tags/Cloudflare/" style="font-size: 10px;">Cloudflare</a> <a href="../../tags/Codex/" style="font-size: 10.43px;">Codex</a> <a href="../../tags/Cookie-%E8%AE%A4%E8%AF%81/" style="font-size: 10px;">Cookie 认证</a> <a href="../../tags/Cron/" style="font-size: 11.3px;">Cron</a> <a href="../../tags/D1/" style="font-size: 10px;">D1</a> <a href="../../tags/Date/" style="font-size: 10px;">Date</a> <a href="../../tags/Diagrams-net/" style="font-size: 10px;">Diagrams.net</a> <a href="../../tags/Diary/" style="font-size: 10px;">Diary</a> <a href="../../tags/Docker/" style="font-size: 15.22px;">Docker</a> <a href="../../tags/Docker-Compose/" style="font-size: 10px;">Docker Compose</a> <a href="../../tags/Efficiency-Tools/" style="font-size: 10px;">Efficiency Tools</a> <a href="../../tags/Electerm/" style="font-size: 10px;">Electerm</a> <a href="../../tags/English/" style="font-size: 10.43px;">English</a> <a href="../../tags/FTS5/" style="font-size: 10.43px;">FTS5</a> <a href="../../tags/Gateway/" style="font-size: 12.61px;">Gateway</a> <a href="../../tags/Gemini-CLI/" style="font-size: 10.43px;">Gemini CLI</a> <a href="../../tags/GitHub-Actions/" style="font-size: 10.43px;">GitHub Actions</a> <a href="../../tags/HA/" style="font-size: 10px;">HA</a> <a href="../../tags/HADashboard/" style="font-size: 10px;">HADashboard</a> <a href="../../tags/Hermes/" style="font-size: 10px;">Hermes</a> <a href="../../tags/Hexo/" style="font-size: 10.87px;">Hexo</a> <a href="../../tags/HomeAssistant/" style="font-size: 10px;">HomeAssistant</a> <a href="../../tags/IP/" style="font-size: 10px;">IP</a> <a href="../../tags/IPv4/" style="font-size: 10px;">IPv4</a> <a href="../../tags/Java/" style="font-size: 11.74px;">Java</a> <a href="../../tags/LVM%E2%80%91Thin/" style="font-size: 10.43px;">LVM‑Thin</a> <a href="../../tags/Linux/" style="font-size: 13.04px;">Linux</a> <a href="../../tags/MacOS/" style="font-size: 10.87px;">MacOS</a> <a href="../../tags/Markdown/" style="font-size: 10px;">Markdown</a> <a href="../../tags/MiniMax/" style="font-size: 10px;">MiniMax</a> <a href="../../tags/Multi-Agent/" style="font-size: 10px;">Multi-Agent</a> <a href="../../tags/MySQL/" style="font-size: 10.87px;">MySQL</a> <a href="../../tags/NAS/" style="font-size: 10.87px;">NAS</a> <a href="../../tags/Nginx/" style="font-size: 10px;">Nginx</a> <a href="../../tags/Node-RED/" style="font-size: 10.43px;">Node-RED</a> <a href="../../tags/Node-js/" style="font-size: 10.43px;">Node.js</a> <a href="../../tags/OOM/" style="font-size: 10px;">OOM</a> <a href="../../tags/OpenAI/" style="font-size: 10px;">OpenAI</a> <a href="../../tags/OpenClaw/" style="font-size: 18.26px;">OpenClaw</a> <a href="../../tags/OpenCode/" style="font-size: 10.43px;">OpenCode</a> <a href="../../tags/OpenResty/" style="font-size: 10px;">OpenResty</a> <a href="../../tags/OpenWrt/" style="font-size: 10.43px;">OpenWrt</a> <a href="../../tags/PPPoE/" style="font-size: 10px;">PPPoE</a> <a href="../../tags/Portainer/" style="font-size: 10px;">Portainer</a> <a href="../../tags/PostgreSQL/" style="font-size: 10px;">PostgreSQL</a> <a href="../../tags/ProcessOn/" style="font-size: 10px;">ProcessOn</a> <a href="../../tags/Prometheus/" style="font-size: 13.04px;">Prometheus</a> <a href="../../tags/Proxmox-VE/" style="font-size: 15.65px;">Proxmox VE</a> <a href="../../tags/RPC/" style="font-size: 10px;">RPC</a> <a href="../../tags/SOCKS5/" style="font-size: 10px;">SOCKS5</a> <a href="../../tags/SQLite/" style="font-size: 10.43px;">SQLite</a> <a href="../../tags/SSL/" style="font-size: 10px;">SSL</a> <a href="../../tags/Session/" style="font-size: 10px;">Session</a> <a href="../../tags/Shell/" style="font-size: 10.43px;">Shell</a> <a href="../../tags/Subagent/" style="font-size: 10px;">Subagent</a> <a href="../../tags/TTS/" style="font-size: 10px;">TTS</a> <a href="../../tags/TimeMachine/" style="font-size: 10px;">TimeMachine</a> <a href="../../tags/UML/" style="font-size: 10px;">UML</a> <a href="../../tags/Uptime-Kuma/" style="font-size: 10.43px;">Uptime Kuma</a> <a href="../../tags/VPN/" style="font-size: 10px;">VPN</a> <a href="../../tags/VPS/" style="font-size: 10.87px;">VPS</a> <a href="../../tags/Web/" style="font-size: 10px;">Web</a> <a href="../../tags/WebSocket/" style="font-size: 10.43px;">WebSocket</a> <a href="../../tags/Windows/" style="font-size: 10px;">Windows</a> <a href="../../tags/Workers/" style="font-size: 10px;">Workers</a> <a href="../../tags/activate/" style="font-size: 10.43px;">activate</a> <a href="../../tags/ad/" style="font-size: 10px;">ad</a> <a href="../../tags/adb/" style="font-size: 10px;">adb</a> <a href="../../tags/adblock/" style="font-size: 10.43px;">adblock</a> <a href="../../tags/agent/" style="font-size: 10px;">agent</a> <a href="../../tags/aligenie/" style="font-size: 10px;">aligenie</a> <a href="../../tags/aliyun/" style="font-size: 10.87px;">aliyun</a> <a href="../../tags/alpine/" style="font-size: 10px;">alpine</a> <a href="../../tags/annotation/" style="font-size: 10px;">annotation</a> <a href="../../tags/aop/" style="font-size: 10px;">aop</a> <a href="../../tags/authy/" style="font-size: 10px;">authy</a> <a href="../../tags/autofs/" style="font-size: 10px;">autofs</a> <a href="../../tags/backup/" style="font-size: 10px;">backup</a> <a href="../../tags/baidupan/" style="font-size: 10px;">baidupan</a> <a href="../../tags/bash/" style="font-size: 10.87px;">bash</a> <a href="../../tags/bitwarden/" style="font-size: 10px;">bitwarden</a> <a href="../../tags/boot/" style="font-size: 10.43px;">boot</a> <a href="../../tags/brew/" style="font-size: 10.43px;">brew</a> <a href="../../tags/browser/" style="font-size: 10px;">browser</a> <a href="../../tags/caddy2/" style="font-size: 10.43px;">caddy2</a> <a href="../../tags/cdn/" style="font-size: 10px;">cdn</a> <a href="../../tags/centos/" style="font-size: 14.35px;">centos</a> <a href="../../tags/cert/" style="font-size: 10.43px;">cert</a> <a href="../../tags/certbot/" style="font-size: 10px;">certbot</a> <a href="../../tags/charles/" style="font-size: 10px;">charles</a> <a href="../../tags/chat/" style="font-size: 10px;">chat</a> <a href="../../tags/chrome/" style="font-size: 10.87px;">chrome</a> <a href="../../tags/classloader/" style="font-size: 10px;">classloader</a> <a href="../../tags/client/" style="font-size: 10.87px;">client</a> <a href="../../tags/clone/" style="font-size: 10.43px;">clone</a> <a href="../../tags/closures/" style="font-size: 10px;">closures</a> <a href="../../tags/cloudflare/" style="font-size: 10.43px;">cloudflare</a> <a href="../../tags/cmd/" style="font-size: 10px;">cmd</a> <a href="../../tags/command/" style="font-size: 10px;">command</a> <a href="../../tags/commit/" style="font-size: 10px;">commit</a> <a href="../../tags/container/" style="font-size: 10px;">container</a> <a href="../../tags/crontab/" style="font-size: 10px;">crontab</a> <a href="../../tags/ctyun/" style="font-size: 10.43px;">ctyun</a> <a href="../../tags/dashboard/" style="font-size: 10px;">dashboard</a> <a href="../../tags/ddsm/" style="font-size: 10px;">ddsm</a> <a href="../../tags/demo/" style="font-size: 10px;">demo</a> <a href="../../tags/dependency/" style="font-size: 10px;">dependency</a> <a href="../../tags/deploy/" style="font-size: 10px;">deploy</a> <a href="../../tags/developer/" style="font-size: 10px;">developer</a> <a href="../../tags/devtools/" style="font-size: 10px;">devtools</a> <a href="../../tags/dll/" style="font-size: 10px;">dll</a> <a href="../../tags/dns/" style="font-size: 10.87px;">dns</a> <a href="../../tags/docker/" style="font-size: 13.48px;">docker</a> <a href="../../tags/domain/" style="font-size: 10px;">domain</a> <a href="../../tags/download/" style="font-size: 10px;">download</a> <a href="../../tags/draw/" style="font-size: 10.43px;">draw</a> <a href="../../tags/drawio/" style="font-size: 10px;">drawio</a> <a href="../../tags/dsm/" style="font-size: 13.04px;">dsm</a> <a href="../../tags/dump/" style="font-size: 10px;">dump</a> <a href="../../tags/dylib/" style="font-size: 10px;">dylib</a> <a href="../../tags/edge/" style="font-size: 10.87px;">edge</a> <a href="../../tags/exception/" style="font-size: 10.43px;">exception</a> <a href="../../tags/export/" style="font-size: 10px;">export</a> <a href="../../tags/fail2ban/" style="font-size: 10px;">fail2ban</a> <a href="../../tags/fallback%E5%A4%B1%E6%95%88/" style="font-size: 10px;">fallback失效</a> <a href="../../tags/feign/" style="font-size: 10px;">feign</a> <a href="../../tags/firewall-cmd/" style="font-size: 10.43px;">firewall-cmd</a> <a href="../../tags/flow/" style="font-size: 10px;">flow</a> <a href="../../tags/frp/" style="font-size: 10.43px;">frp</a> <a href="../../tags/frpc/" style="font-size: 11.3px;">frpc</a> <a href="../../tags/frps/" style="font-size: 10.43px;">frps</a> <a href="../../tags/fuckgfw/" style="font-size: 11.3px;">fuckgfw</a> <a href="../../tags/function/" style="font-size: 10px;">function</a> <a href="../../tags/fuser/" style="font-size: 10px;">fuser</a> <a href="../../tags/gcc/" style="font-size: 10px;">gcc</a> <a href="../../tags/gfw/" style="font-size: 10.43px;">gfw</a> <a href="../../tags/git/" style="font-size: 12.17px;">git</a> <a href="../../tags/github/" style="font-size: 12.61px;">github</a> <a href="../../tags/golang/" style="font-size: 10px;">golang</a> <a href="../../tags/gperftools/" style="font-size: 10px;">gperftools</a> <a href="../../tags/gridea/" style="font-size: 10.43px;">gridea</a> <a href="../../tags/grub/" style="font-size: 10.43px;">grub</a> <a href="../../tags/gvt-g/" style="font-size: 10px;">gvt-g</a> <a href="../../tags/hacs/" style="font-size: 10px;">hacs</a> <a href="../../tags/havcs/" style="font-size: 10.43px;">havcs</a> <a href="../../tags/heap/" style="font-size: 10px;">heap</a> <a href="../../tags/hello/" style="font-size: 10.43px;">hello</a> <a href="../../tags/hexo/" style="font-size: 10.87px;">hexo</a> <a href="../../tags/hibernate/" style="font-size: 10.43px;">hibernate</a> <a href="../../tags/hidpi/" style="font-size: 10px;">hidpi</a> <a href="../../tags/hoisting/" style="font-size: 10px;">hoisting</a> <a href="../../tags/homeassistant/" style="font-size: 11.74px;">homeassistant</a> <a href="../../tags/hosts/" style="font-size: 10px;">hosts</a> <a href="../../tags/html/" style="font-size: 10.43px;">html</a> <a href="../../tags/htmlparser/" style="font-size: 10px;">htmlparser</a> <a href="../../tags/https/" style="font-size: 10.87px;">https</a> <a href="../../tags/iKuai/" style="font-size: 10.43px;">iKuai</a> <a href="../../tags/idea/" style="font-size: 10px;">idea</a> <a href="../../tags/image/" style="font-size: 10px;">image</a> <a href="../../tags/img/" style="font-size: 10.43px;">img</a> <a href="../../tags/img2kvm/" style="font-size: 10px;">img2kvm</a> <a href="../../tags/immortalwrt/" style="font-size: 10px;">immortalwrt</a> <a href="../../tags/import/" style="font-size: 10px;">import</a> <a href="../../tags/index/" style="font-size: 10px;">index</a> <a href="../../tags/install/" style="font-size: 12.17px;">install</a> <a href="../../tags/intel/" style="font-size: 10.43px;">intel</a> <a href="../../tags/io/" style="font-size: 10px;">io</a> <a href="../../tags/ios/" style="font-size: 10px;">ios</a> <a href="../../tags/ip/" style="font-size: 10px;">ip</a> <a href="../../tags/iptables/" style="font-size: 10px;">iptables</a> <a href="../../tags/iptv/" style="font-size: 10.43px;">iptv</a> <a href="../../tags/ipv6/" style="font-size: 10px;">ipv6</a> <a href="../../tags/iso/" style="font-size: 10px;">iso</a> <a href="../../tags/java/" style="font-size: 11.74px;">java</a> <a href="../../tags/javascript/" style="font-size: 10.43px;">javascript</a> <a href="../../tags/jetbrains/" style="font-size: 10px;">jetbrains</a> <a href="../../tags/jieba/" style="font-size: 10px;">jieba</a> <a href="../../tags/jni/" style="font-size: 10px;">jni</a> <a href="../../tags/jnilib/" style="font-size: 10px;">jnilib</a> <a href="../../tags/jpa/" style="font-size: 10px;">jpa</a> <a href="../../tags/js/" style="font-size: 10.87px;">js</a> <a href="../../tags/json/" style="font-size: 10.43px;">json</a> <a href="../../tags/jsonb/" style="font-size: 10px;">jsonb</a> <a href="../../tags/jupter/" style="font-size: 10px;">jupter</a> <a href="../../tags/jupyterlab/" style="font-size: 10px;">jupyterlab</a> <a href="../../tags/jvm/" style="font-size: 10.43px;">jvm</a> <a href="../../tags/k8s/" style="font-size: 10.43px;">k8s</a> <a href="../../tags/kernel/" style="font-size: 10px;">kernel</a> <a href="../../tags/key/" style="font-size: 10px;">key</a> <a href="../../tags/kid/" style="font-size: 10px;">kid</a> <a href="../../tags/kms/" style="font-size: 10px;">kms</a> <a href="../../tags/kodi/" style="font-size: 10px;">kodi</a> <a href="../../tags/koolproxy/" style="font-size: 10.43px;">koolproxy</a> <a href="../../tags/koolproxyr/" style="font-size: 10.43px;">koolproxyr</a> <a href="../../tags/kvm/" style="font-size: 10.43px;">kvm</a> <a href="../../tags/lan/" style="font-size: 10px;">lan</a> <a href="../../tags/lastpass/" style="font-size: 10px;">lastpass</a> <a href="../../tags/launchctl/" style="font-size: 10px;">launchctl</a> <a href="../../tags/learning/" style="font-size: 10px;">learning</a> <a href="../../tags/lede/" style="font-size: 10px;">lede</a> <a href="../../tags/letsencrypt/" style="font-size: 10.87px;">letsencrypt</a> <a href="../../tags/linux/" style="font-size: 11.3px;">linux</a> <a href="../../tags/live/" style="font-size: 10px;">live</a> <a href="../../tags/loopback-proxy/" style="font-size: 10px;">loopback-proxy</a> <a href="../../tags/low-code/" style="font-size: 10px;">low-code</a> <a href="../../tags/lsof/" style="font-size: 10px;">lsof</a> <a href="../../tags/lvm/" style="font-size: 10px;">lvm</a> <a href="../../tags/lxc/" style="font-size: 10px;">lxc</a> <a href="../../tags/m3u8/" style="font-size: 10px;">m3u8</a> <a href="../../tags/mac/" style="font-size: 10.43px;">mac</a> <a href="../../tags/macos/" style="font-size: 10px;">macos</a> <a href="../../tags/manual/" style="font-size: 10px;">manual</a> <a href="../../tags/mariadb/" style="font-size: 10px;">mariadb</a> <a href="../../tags/markdown/" style="font-size: 10px;">markdown</a> <a href="../../tags/maven/" style="font-size: 10.43px;">maven</a> <a href="../../tags/md5/" style="font-size: 10.43px;">md5</a> <a href="../../tags/microcode/" style="font-size: 10px;">microcode</a> <a href="../../tags/mirror/" style="font-size: 10.43px;">mirror</a> <a href="../../tags/modem/" style="font-size: 10px;">modem</a> <a href="../../tags/modules/" style="font-size: 10px;">modules</a> <a href="../../tags/monitor/" style="font-size: 10px;">monitor</a> <a href="../../tags/mount/" style="font-size: 10px;">mount</a> <a href="../../tags/mstsc/" style="font-size: 10px;">mstsc</a> <a href="../../tags/mysql/" style="font-size: 10px;">mysql</a> <a href="../../tags/n2n/" style="font-size: 13.04px;">n2n</a> <a href="../../tags/n5105/" style="font-size: 10px;">n5105</a> <a href="../../tags/nas/" style="font-size: 10px;">nas</a> <a href="../../tags/netstat/" style="font-size: 10px;">netstat</a> <a href="../../tags/network/" style="font-size: 13.48px;">network</a> <a href="../../tags/new-api/" style="font-size: 10.43px;">new-api</a> <a href="../../tags/nfs/" style="font-size: 10px;">nfs</a> <a href="../../tags/node/" style="font-size: 10.43px;">node</a> <a href="../../tags/node-red/" style="font-size: 10.43px;">node-red</a> <a href="../../tags/nodejs/" style="font-size: 11.3px;">nodejs</a> <a href="../../tags/nohup/" style="font-size: 10.43px;">nohup</a> <a href="../../tags/notepad/" style="font-size: 10px;">notepad++</a> <a href="../../tags/npm/" style="font-size: 12.17px;">npm</a> <a href="../../tags/nssm/" style="font-size: 10.43px;">nssm</a> <a href="../../tags/ntp/" style="font-size: 10px;">ntp</a> <a href="../../tags/one-api/" style="font-size: 10px;">one-api</a> <a href="../../tags/oop/" style="font-size: 10px;">oop</a> <a href="../../tags/openfeign/" style="font-size: 10px;">openfeign</a> <a href="../../tags/openssl/" style="font-size: 10.43px;">openssl</a> <a href="../../tags/os/" style="font-size: 10px;">os</a> <a href="../../tags/otp/" style="font-size: 10px;">otp</a> <a href="../../tags/ovz/" style="font-size: 10px;">ovz</a> <a href="../../tags/p14/" style="font-size: 10px;">p14</a> <a href="../../tags/packet-capture/" style="font-size: 10px;">packet capture</a> <a href="../../tags/pat/" style="font-size: 10px;">pat</a> <a href="../../tags/pdf/" style="font-size: 10px;">pdf</a> <a href="../../tags/pem/" style="font-size: 10.43px;">pem</a> <a href="../../tags/perf/" style="font-size: 10px;">perf</a> <a href="../../tags/ping/" style="font-size: 10px;">ping</a> <a href="../../tags/pip/" style="font-size: 10px;">pip</a> <a href="../../tags/plugin/" style="font-size: 10px;">plugin</a> <a href="../../tags/png/" style="font-size: 10px;">png</a> <a href="../../tags/powerbutton/" style="font-size: 10px;">powerbutton</a> <a href="../../tags/print/" style="font-size: 10px;">print</a> <a href="../../tags/pro/" style="font-size: 10px;">pro</a> <a href="../../tags/proxy/" style="font-size: 10.43px;">proxy</a> <a href="../../tags/pve/" style="font-size: 15.65px;">pve</a> <a href="../../tags/pvekclean/" style="font-size: 11.3px;">pvekclean</a> <a href="../../tags/python/" style="font-size: 13.91px;">python</a> <a href="../../tags/qcow2/" style="font-size: 10px;">qcow2</a> <a href="../../tags/qemu/" style="font-size: 10.43px;">qemu</a> <a href="../../tags/qemu-guest-agent/" style="font-size: 10px;">qemu-guest-agent</a> <a href="../../tags/rar/" style="font-size: 10px;">rar</a> <a href="../../tags/reboot/" style="font-size: 10px;">reboot</a> <a href="../../tags/reflog/" style="font-size: 10px;">reflog</a> <a href="../../tags/remote/" style="font-size: 10px;">remote</a> <a href="../../tags/remote-desktop/" style="font-size: 10.43px;">remote desktop</a> <a href="../../tags/renew/" style="font-size: 10px;">renew</a> <a href="../../tags/repo/" style="font-size: 10px;">repo</a> <a href="../../tags/resize/" style="font-size: 10px;">resize</a> <a href="../../tags/retina/" style="font-size: 10px;">retina</a> <a href="../../tags/root/" style="font-size: 10px;">root</a> <a href="../../tags/route/" style="font-size: 10px;">route</a> <a href="../../tags/router/" style="font-size: 10.43px;">router</a> <a href="../../tags/rule/" style="font-size: 10px;">rule</a> <a href="../../tags/rules/" style="font-size: 10px;">rules</a> <a href="../../tags/runtime/" style="font-size: 10px;">runtime</a> <a href="../../tags/safari/" style="font-size: 10px;">safari</a> <a href="../../tags/sata/" style="font-size: 10px;">sata</a> <a href="../../tags/scipy-notebook/" style="font-size: 10px;">scipy-notebook</a> <a href="../../tags/scoping/" style="font-size: 10px;">scoping</a> <a href="../../tags/scp/" style="font-size: 10px;">scp</a> <a href="../../tags/server/" style="font-size: 10.43px;">server</a> <a href="../../tags/server-is-busy/" style="font-size: 10px;">server is busy</a> <a href="../../tags/slmgr/" style="font-size: 10px;">slmgr</a> <a href="../../tags/so/" style="font-size: 10px;">so</a> <a href="../../tags/socket-proxyd/" style="font-size: 10px;">socket-proxyd</a> <a href="../../tags/socks/" style="font-size: 10px;">socks</a> <a href="../../tags/source/" style="font-size: 10px;">source</a> <a href="../../tags/spk/" style="font-size: 10px;">spk</a> <a href="../../tags/spring/" style="font-size: 11.3px;">spring</a> <a href="../../tags/springboot/" style="font-size: 12.17px;">springboot</a> <a href="../../tags/springfox/" style="font-size: 10.87px;">springfox</a> <a href="../../tags/ss/" style="font-size: 10px;">ss</a> <a href="../../tags/ssh/" style="font-size: 11.74px;">ssh</a> <a href="../../tags/ssl/" style="font-size: 10.43px;">ssl</a> <a href="../../tags/stash/" style="font-size: 10px;">stash</a> <a href="../../tags/string/" style="font-size: 10px;">string</a> <a href="../../tags/supernode/" style="font-size: 10.43px;">supernode</a> <a href="../../tags/svg/" style="font-size: 10px;">svg</a> <a href="../../tags/svn/" style="font-size: 10px;">svn</a> <a href="../../tags/swagger/" style="font-size: 11.3px;">swagger</a> <a href="../../tags/sync/" style="font-size: 10px;">sync</a> <a href="../../tags/synology/" style="font-size: 10.43px;">synology</a> <a href="../../tags/systemctl/" style="font-size: 10.87px;">systemctl</a> <a href="../../tags/systemd/" style="font-size: 14.78px;">systemd</a> <a href="../../tags/tap/" style="font-size: 10px;">tap</a> <a href="../../tags/tap-windows/" style="font-size: 10px;">tap-windows</a> <a href="../../tags/tapwindows/" style="font-size: 10px;">tapwindows</a> <a href="../../tags/telecom/" style="font-size: 10.43px;">telecom</a> <a href="../../tags/template/" style="font-size: 10px;">template</a> <a href="../../tags/terminal/" style="font-size: 10px;">terminal</a> <a href="../../tags/tls/" style="font-size: 10px;">tls</a> <a href="../../tags/tmux/" style="font-size: 10.43px;">tmux</a> <a href="../../tags/token/" style="font-size: 10px;">token</a> <a href="../../tags/token%E5%A4%B1%E6%95%88/" style="font-size: 10px;">token失效</a> <a href="../../tags/totp/" style="font-size: 10px;">totp</a> <a href="../../tags/trigram/" style="font-size: 10px;">trigram</a> <a href="../../tags/tvbox/" style="font-size: 10.87px;">tvbox</a> <a href="../../tags/txt/" style="font-size: 10px;">txt</a> <a href="../../tags/ubuntu/" style="font-size: 11.74px;">ubuntu</a> <a href="../../tags/udisk/" style="font-size: 10px;">udisk</a> <a href="../../tags/ui/" style="font-size: 10px;">ui</a> <a href="../../tags/undertow/" style="font-size: 10px;">undertow</a> <a href="../../tags/unicode61/" style="font-size: 10px;">unicode61</a> <a href="../../tags/uninstall/" style="font-size: 10px;">uninstall</a> <a href="../../tags/unlocker/" style="font-size: 10px;">unlocker</a> <a href="../../tags/upgrade/" style="font-size: 10.43px;">upgrade</a> <a href="../../tags/url/" style="font-size: 10px;">url</a> <a href="../../tags/v2ray/" style="font-size: 10.43px;">v2ray</a> <a href="../../tags/vhd/" style="font-size: 10px;">vhd</a> <a href="../../tags/vim/" style="font-size: 10px;">vim</a> <a href="../../tags/vlmcsd/" style="font-size: 10px;">vlmcsd</a> <a href="../../tags/vm/" style="font-size: 10.43px;">vm</a> <a href="../../tags/vmdk/" style="font-size: 10px;">vmdk</a> <a href="../../tags/web/" style="font-size: 11.74px;">web</a> <a href="../../tags/websocket/" style="font-size: 10.43px;">websocket</a> <a href="../../tags/wechat/" style="font-size: 10px;">wechat</a> <a href="../../tags/windows/" style="font-size: 11.74px;">windows</a> <a href="../../tags/with/" style="font-size: 10px;">with</a> <a href="../../tags/worker/" style="font-size: 10.43px;">worker</a> <a href="../../tags/wow/" style="font-size: 10px;">wow</a> <a href="../../tags/xiaoya/" style="font-size: 10px;">xiaoya</a> <a href="../../tags/xml/" style="font-size: 10px;">xml</a> <a href="../../tags/yum/" style="font-size: 10px;">yum</a> <a href="../../tags/zip/" style="font-size: 10px;">zip</a> <a href="../../tags/%E4%B8%AD%E5%9B%BD%E7%94%B5%E4%BF%A1/" style="font-size: 10px;">中国电信</a> <a href="../../tags/%E4%B8%AD%E6%96%87%E6%90%9C%E7%B4%A2/" style="font-size: 10px;">中文搜索</a> <a href="../../tags/%E4%BA%91%E7%94%B5%E8%84%91/" style="font-size: 10.43px;">云电脑</a> <a href="../../tags/%E4%BA%A4%E6%8D%A2%E6%9C%BA/" style="font-size: 10px;">交换机</a> <a href="../../tags/%E4%BA%BA%E6%9C%BA%E5%8D%8F%E4%BD%9C/" style="font-size: 10px;">人机协作</a> <a href="../../tags/%E4%BB%A3%E7%90%86/" style="font-size: 10px;">代理</a> <a href="../../tags/%E4%BC%98%E5%8C%96/" style="font-size: 10px;">优化</a> <a href="../../tags/%E4%BD%93%E6%A3%80/" style="font-size: 10px;">体检</a> <a href="../../tags/%E5%80%BC%E7%8F%AD/" style="font-size: 10px;">值班</a> <a href="../../tags/%E5%81%A5%E5%BA%B7%E6%A3%80%E6%9F%A5/" style="font-size: 17.39px;">健康检查</a> <a href="../../tags/%E5%85%89%E7%8C%AB/" style="font-size: 10.43px;">光猫</a> <a href="../../tags/%E5%85%A8%E7%BB%BF/" style="font-size: 10px;">全绿</a> <a href="../../tags/%E5%85%A8%E9%87%8F%E5%90%8C%E6%AD%A5/" style="font-size: 10px;">全量同步</a> <a href="../../tags/%E5%85%AC%E7%BD%91IP/" style="font-size: 10px;">公网IP</a> <a href="../../tags/%E5%86%85%E5%AD%98/" style="font-size: 10px;">内存</a> <a href="../../tags/%E5%86%85%E5%AD%98%E4%BC%98%E5%8C%96/" style="font-size: 10px;">内存优化</a> <a href="../../tags/%E5%86%85%E7%BD%91/" style="font-size: 10.43px;">内网</a> <a href="../../tags/%E5%86%85%E7%BD%91IP/" style="font-size: 10px;">内网IP</a> <a href="../../tags/%E5%86%85%E7%BD%91%E6%B8%97%E9%80%8F/" style="font-size: 10px;">内网渗透</a> <a href="../../tags/%E5%86%99%E4%BD%9C/" style="font-size: 11.3px;">写作</a> <a href="../../tags/%E5%88%86%E8%AF%8D/" style="font-size: 10px;">分词</a> <a href="../../tags/%E5%8D%87%E7%BA%A7/" style="font-size: 11.3px;">升级</a> <a href="../../tags/%E5%8D%8F%E4%BD%9C/" style="font-size: 10px;">协作</a> <a href="../../tags/%E5%8D%9A%E5%AE%A2/" style="font-size: 10.87px;">博客</a> <a href="../../tags/%E5%8F%8D%E5%90%91%E4%BB%A3%E7%90%86/" style="font-size: 10px;">反向代理</a> <a href="../../tags/%E5%90%AF%E5%8A%A8/" style="font-size: 10px;">启动</a> <a href="../../tags/%E5%91%8A%E8%AD%A6/" style="font-size: 12.61px;">告警</a> <a href="../../tags/%E5%91%8A%E8%AD%A6%E4%BC%98%E5%8C%96/" style="font-size: 10px;">告警优化</a> <a href="../../tags/%E5%91%A8%E4%B8%80/" style="font-size: 10px;">周一</a> <a href="../../tags/%E5%91%A8%E4%B8%80%E7%84%A6%E8%99%91/" style="font-size: 10px;">周一焦虑</a> <a href="../../tags/%E5%91%A8%E4%BA%94/" style="font-size: 10px;">周五</a> <a href="../../tags/%E5%91%A8%E6%8A%A5/" style="font-size: 10px;">周报</a> <a href="../../tags/%E5%91%A8%E6%97%A5/" style="font-size: 10px;">周日</a> <a href="../../tags/%E5%91%A8%E6%9C%AB/" style="font-size: 10.43px;">周末</a> <a href="../../tags/%E5%A4%8F%E4%BB%A4%E6%97%B6/" style="font-size: 10px;">夏令时</a> <a href="../../tags/%E5%A4%9A%E6%99%BA%E8%83%BD%E4%BD%93/" style="font-size: 10.87px;">多智能体</a> <a href="../../tags/%E5%A4%9A%E8%8A%82%E7%82%B9/" style="font-size: 10px;">多节点</a> <a href="../../tags/%E5%A4%9A%E8%8A%82%E7%82%B9%E7%AE%A1%E7%90%86/" style="font-size: 10px;">多节点管理</a> <a href="../../tags/%E5%A4%A9%E7%8C%AB%E7%B2%BE%E7%81%B5/" style="font-size: 10px;">天猫精灵</a> <a href="../../tags/%E5%A4%A9%E7%BF%BC%E4%BA%91/" style="font-size: 10.43px;">天翼云</a> <a href="../../tags/%E5%AE%89%E5%85%A8/" style="font-size: 16.09px;">安全</a> <a href="../../tags/%E5%AE%89%E8%A3%85/" style="font-size: 10.43px;">安装</a> <a href="../../tags/%E5%AE%9A%E6%97%B6%E4%BB%BB%E5%8A%A1/" style="font-size: 10.43px;">定时任务</a> <a href="../../tags/%E5%AE%B9%E5%99%A8/" style="font-size: 12.61px;">容器</a> <a href="../../tags/%E5%AE%B9%E5%99%A8%E7%BD%91%E7%BB%9C/" style="font-size: 10px;">容器网络</a> <a href="../../tags/%E5%AF%BC%E5%85%A5/" style="font-size: 10px;">导入</a> <a href="../../tags/%E5%B0%8F%E7%B1%B3/" style="font-size: 10px;">小米</a> <a href="../../tags/%E5%B7%A5%E4%BD%9C%E6%84%9F%E6%82%9F/" style="font-size: 10.87px;">工作感悟</a> <a href="../../tags/%E5%B7%A5%E4%BD%9C%E6%97%A5%E5%B8%B8/" style="font-size: 10px;">工作日常</a> <a href="../../tags/%E5%B8%B8%E7%94%A8%E8%BD%AF%E4%BB%B6/" style="font-size: 10px;">常用软件</a> <a href="../../tags/%E5%B9%BF%E5%91%8A%E5%B1%8F%E8%94%BD/" style="font-size: 10px;">广告屏蔽</a> <a href="../../tags/%E5%BA%8F%E5%88%97%E5%8F%B7/" style="font-size: 10px;">序列号</a> <a href="../../tags/%E5%BA%94%E7%94%A8%E5%B8%82%E5%9C%BA/" style="font-size: 10px;">应用市场</a> <a href="../../tags/%E5%BC%82%E5%B8%B8/" style="font-size: 10px;">异常</a> <a href="../../tags/%E5%BF%83%E6%80%81/" style="font-size: 10px;">心态</a> <a href="../../tags/%E5%BF%83%E6%99%BA%E6%88%90%E9%95%BF/" style="font-size: 10px;">心智成长</a> <a href="../../tags/%E5%BF%83%E8%B7%B3/" style="font-size: 10px;">心跳</a> <a href="../../tags/%E5%BF%83%E8%B7%B3%E6%A3%80%E6%9F%A5/" style="font-size: 10.43px;">心跳检查</a> <a href="../../tags/%E6%80%A7%E8%83%BD%E4%BC%98%E5%8C%96/" style="font-size: 10px;">性能优化</a> <a href="../../tags/%E6%84%9F%E6%82%9F/" style="font-size: 10px;">感悟</a> <a href="../../tags/%E6%89%93%E5%B7%A5/" style="font-size: 18.7px;">打工</a> <a href="../../tags/%E6%89%93%E5%B7%A5%E4%BA%BA/" style="font-size: 10px;">打工人</a> <a href="../../tags/%E6%8A%80%E6%9C%AF/" style="font-size: 19.13px;">技术</a> <a href="../../tags/%E6%8A%93%E5%8C%85/" style="font-size: 10px;">抓包</a> <a href="../../tags/%E6%8E%92%E6%9F%A5/" style="font-size: 10px;">排查</a> <a href="../../tags/%E6%8F%8F%E8%BF%B0%E6%96%87%E4%BB%B6/" style="font-size: 10px;">描述文件</a> <a href="../../tags/%E6%95%85%E9%9A%9C/" style="font-size: 10.43px;">故障</a> <a href="../../tags/%E6%95%85%E9%9A%9C%E6%8E%92%E6%9F%A5/" style="font-size: 12.61px;">故障排查</a> <a href="../../tags/%E6%95%88%E7%8E%87/" style="font-size: 10.43px;">效率</a> <a href="../../tags/%E6%95%88%E7%8E%87%E5%B7%A5%E5%85%B7/" style="font-size: 11.3px;">效率工具</a> <a href="../../tags/%E6%95%B0%E6%8D%AE/" style="font-size: 10px;">数据</a> <a href="../../tags/%E6%97%81%E8%B7%AF%E7%94%B1/" style="font-size: 10px;">旁路由</a> <a href="../../tags/%E6%97%A0%E6%9C%8D%E5%8A%A1%E5%99%A8/" style="font-size: 10px;">无服务器</a> <a href="../../tags/%E6%97%A5%E8%AE%B0/" style="font-size: 19.57px;">日记</a> <a href="../../tags/%E6%97%B6%E5%8C%BA/" style="font-size: 10px;">时区</a> <a href="../../tags/%E6%98%BE%E5%8D%A1%E8%99%9A%E6%8B%9F%E5%8C%96/" style="font-size: 10px;">显卡虚拟化</a> <a href="../../tags/%E6%99%BA%E8%83%BD%E5%AE%B6%E5%B1%85/" style="font-size: 10px;">智能家居</a> <a href="../../tags/%E6%99%BA%E8%83%BD%E9%9F%B3%E7%AE%B1/" style="font-size: 10px;">智能音箱</a> <a href="../../tags/%E6%9C%8D%E5%8A%A1%E5%99%A8/" style="font-size: 10px;">服务器</a> <a href="../../tags/%E6%9C%8D%E5%8A%A1%E7%AE%A1%E7%90%86/" style="font-size: 10px;">服务管理</a> <a href="../../tags/%E6%9E%B6%E6%9E%84/" style="font-size: 10px;">架构</a> <a href="../../tags/%E6%A2%AF%E5%AD%90/" style="font-size: 10px;">梯子</a> <a href="../../tags/%E6%A8%A1%E5%9D%97/" style="font-size: 10px;">模块</a> <a href="../../tags/%E6%A8%A1%E5%9E%8B%E8%B0%83%E7%94%A8/" style="font-size: 10.43px;">模型调用</a> <a href="../../tags/%E6%B5%81%E7%A8%8B/" style="font-size: 10px;">流程</a> <a href="../../tags/%E6%B5%81%E7%A8%8B%E5%9B%BE/" style="font-size: 10px;">流程图</a> <a href="../../tags/%E6%B5%8F%E8%A7%88%E5%99%A8/" style="font-size: 10.43px;">浏览器</a> <a href="../../tags/%E6%BC%AB%E6%B8%B8/" style="font-size: 10px;">漫游</a> <a href="../../tags/%E6%BF%80%E6%B4%BB/" style="font-size: 10px;">激活</a> <a href="../../tags/%E7%81%AB%E7%BB%92/" style="font-size: 10px;">火绒</a> <a href="../../tags/%E7%84%A6%E8%99%91/" style="font-size: 10.43px;">焦虑</a> <a href="../../tags/%E7%8E%84%E5%AD%A6/" style="font-size: 10px;">玄学</a> <a href="../../tags/%E7%94%9F%E6%B4%BB/" style="font-size: 10px;">生活</a> <a href="../../tags/%E7%94%B5%E4%BF%A1/" style="font-size: 10.43px;">电信</a> <a href="../../tags/%E7%94%BB%E5%9B%BE/" style="font-size: 10px;">画图</a> <a href="../../tags/%E7%9B%91%E6%8E%A7/" style="font-size: 16.52px;">监控</a> <a href="../../tags/%E7%9B%91%E6%8E%A7%E7%B3%BB%E7%BB%9F/" style="font-size: 10px;">监控系统</a> <a href="../../tags/%E7%9B%B4%E6%92%AD%E6%BA%90/" style="font-size: 10px;">直播源</a> <a href="../../tags/%E7%9B%B4%E8%A7%89/" style="font-size: 10px;">直觉</a> <a href="../../tags/%E7%A3%81%E7%9B%98/" style="font-size: 10px;">磁盘</a> <a href="../../tags/%E7%AB%AF%E5%8F%A3/" style="font-size: 10.43px;">端口</a> <a href="../../tags/%E7%AB%AF%E5%8F%A3%E5%86%B2%E7%AA%81/" style="font-size: 10.43px;">端口冲突</a> <a href="../../tags/%E7%AB%AF%E5%8F%A3%E6%89%AB%E6%8F%8F/" style="font-size: 10px;">端口扫描</a> <a href="../../tags/%E7%AE%A1%E7%90%86/" style="font-size: 10px;">管理</a> <a href="../../tags/%E7%BB%AD%E6%9C%9F/" style="font-size: 10px;">续期</a> <a href="../../tags/%E7%BD%91%E5%85%B3/" style="font-size: 10px;">网关</a> <a href="../../tags/%E7%BD%91%E7%BB%9C/" style="font-size: 15.22px;">网络</a> <a href="../../tags/%E7%BD%91%E7%BB%9C%E9%A3%8E%E6%9A%B4/" style="font-size: 10px;">网络风暴</a> <a href="../../tags/%E7%BE%A4%E6%99%96/" style="font-size: 10.43px;">群晖</a> <a href="../../tags/%E8%84%9A%E6%9C%AC/" style="font-size: 10px;">脚本</a> <a href="../../tags/%E8%84%9A%E6%9C%AC%E4%BC%98%E5%8C%96/" style="font-size: 10px;">脚本优化</a> <a href="../../tags/%E8%85%BE%E8%AE%AF/" style="font-size: 10px;">腾讯</a> <a href="../../tags/%E8%87%AA%E5%8A%A8%E5%8C%96/" style="font-size: 16.96px;">自动化</a> <a href="../../tags/%E8%87%AA%E5%8A%A8%E6%81%A2%E5%A4%8D/" style="font-size: 10.43px;">自动恢复</a> <a href="../../tags/%E8%87%AA%E6%88%91%E6%89%93%E8%84%B8/" style="font-size: 10px;">自我打脸</a> <a href="../../tags/%E8%99%9A%E6%8B%9F%E6%9C%BA/" style="font-size: 11.74px;">虚拟机</a> <a href="../../tags/%E8%AE%A4%E8%AF%81/" style="font-size: 10.43px;">认证</a> <a href="../../tags/%E8%AF%81%E4%B9%A6/" style="font-size: 10px;">证书</a> <a href="../../tags/%E8%AF%AD%E9%9B%80/" style="font-size: 10px;">语雀</a> <a href="../../tags/%E8%B6%85%E6%97%B6/" style="font-size: 10.43px;">超时</a> <a href="../../tags/%E8%B7%AF%E7%94%B1/" style="font-size: 10px;">路由</a> <a href="../../tags/%E8%B7%AF%E7%94%B1%E5%99%A8/" style="font-size: 11.3px;">路由器</a> <a href="../../tags/%E8%BD%AF%E4%BB%B6%E7%AE%A1%E5%AE%B6/" style="font-size: 10px;">软件管家</a> <a href="../../tags/%E8%BD%AF%E8%B7%AF%E7%94%B1/" style="font-size: 10.43px;">软路由</a> <a href="../../tags/%E8%BF%90%E7%BB%B4/" style="font-size: 20px;">运维</a> <a href="../../tags/%E8%BF%90%E7%BB%B4%E7%9B%91%E6%8E%A7/" style="font-size: 10.43px;">运维监控</a> <a href="../../tags/%E8%BF%9B%E7%A8%8B/" style="font-size: 10.43px;">进程</a> <a href="../../tags/%E8%BF%9E%E6%8E%A5%E4%BF%9D%E6%B4%BB/" style="font-size: 10px;">连接保活</a> <a href="../../tags/%E8%BF%9E%E6%8E%A5%E9%97%AE%E9%A2%98/" style="font-size: 10px;">连接问题</a> <a href="../../tags/%E9%80%9A%E4%BF%A1%E6%9C%BA%E5%88%B6/" style="font-size: 10px;">通信机制</a> <a href="../../tags/%E9%80%9A%E7%9F%A5/" style="font-size: 10px;">通知</a> <a href="../../tags/%E9%83%A8%E7%BD%B2/" style="font-size: 12.17px;">部署</a> <a href="../../tags/%E9%85%8D%E7%BD%AE/" style="font-size: 10.87px;">配置</a> <a href="../../tags/%E9%92%89%E9%92%89/" style="font-size: 10.43px;">钉钉</a> <a href="../../tags/%E9%95%9C%E5%83%8F/" style="font-size: 10.87px;">镜像</a> <a href="../../tags/%E9%95%9C%E5%83%8F%E6%BA%90/" style="font-size: 10px;">镜像源</a> <a href="../../tags/%E9%97%A8%E7%AA%97%E4%BC%A0%E6%84%9F%E5%99%A8/" style="font-size: 10px;">门窗传感器</a> <a href="../../tags/%E9%97%AE%E9%A2%98%E6%8E%92%E6%9F%A5/" style="font-size: 17.83px;">问题排查</a> <a href="../../tags/%E9%98%B2%E7%81%AB%E5%A2%99/" style="font-size: 11.3px;">防火墙</a> <a href="../../tags/%E9%98%BF%E9%87%8C%E4%BA%91/" style="font-size: 11.3px;">阿里云</a> <a href="../../tags/%E9%98%BF%E9%87%8C%E6%BA%90/" style="font-size: 10.43px;">阿里源</a> <a href="../../tags/%E9%9B%86%E5%AE%A2/" style="font-size: 10.43px;">集客</a> <a href="../../tags/%E9%A3%9E%E4%B9%A6/" style="font-size: 10.43px;">飞书</a>
+    </div>
+    
+      <script>
+        var maxTagcloud = parseInt(17);
+        var tags_length = parseInt(515);
+        var tags_arr = [];
+        for(var i = 0; i < tags_length; i++){
+          tags_arr.push(i);
+        }
+        tags_arr.sort(function (l, r) {
+          return Math.random() > 0.5 ? -1 : 1;
+        });
+        tags_arr = tags_arr.slice(0, maxTagcloud < tags_length ? tags_length - maxTagcloud : 0);
+        for(var tag_i = 0; tag_i < tags_arr.length; tag_i++){
+          document.getElementById("randomtagcloud").children[tags_arr[tag_i]].style.display = 'none';
+        }
+      </script>
+    
+  </div>
+
+    
+        
+        <!-- 一言 -->
+<div class="nexmoe-widget-wrap">
+  <h3 class="nexmoe-widget-title">
+    Hitokoto
+  </h3>
+  <div class="nexmoe-widget">
+    <ul class="hitokoto-box">
+      <li id="hitokoto_text_parent" class="hitokoto-text" hitokotoCategory="">
+        <a href="#" id="hitokoto_text">
+          
+        </a>
+        <a href="#" id="hitokoto_error_text" style="display: none;">
+          
+        </a>
+      </li>
+    </ul>
+  </div>
+</div>
+
+<script>
+  let hitokotoText = document.getElementById('hitokoto_text')
+  let hitokotoErroText = document.getElementById('hitokoto_error_text')
+  let hitokotoCategory = document.getElementById('hitokoto_text_parent').getAttribute('hitokotoCategory')
+  window.addEventListener('load', function () {
+    let url = 'https://v1.hitokoto.cn'
+    if (hitokotoCategory) {
+      url += '?c=' + hitokotoCategory
+    }
+    fetch(url)
+      .then(response => response.json())
+      .then(data => {
+        hitokotoText.innerText = "「 " + data.hitokoto + " 」 from " + data.from
+        hitokotoText.href = 'https://hitokoto.cn/?uuid=' + data.uuid
+      })
+      .catch((reason) => {
+        console.error(11, reason)
+        hitokotoText.style.display = 'none'
+        hitokotoErroText.style.display = 'block'
+      })
+  })
+</script>
+    
+        
+        
+  <div class="nexmoe-widget-wrap">
+    <h3 class="nexmoe-widget-title">Archive</h3>
+    <div class="nexmoe-widget">
+      <ul class="archive-list"><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2026/">2026</a><span class="archive-list-count">182</span></li><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2025/">2025</a><span class="archive-list-count">2</span></li><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2024/">2024</a><span class="archive-list-count">19</span></li><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2023/">2023</a><span class="archive-list-count">18</span></li><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2022/">2022</a><span class="archive-list-count">4</span></li><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2021/">2021</a><span class="archive-list-count">114</span></li><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2018/">2018</a><span class="archive-list-count">1</span></li></ul>
+    </div>
+  </div>
+
+
+
+    
+        
+        
+  <div class="nexmoe-widget-wrap">
+    <h3 class="nexmoe-widget-title">Recent Posts</h3>
+    <div class="nexmoe-widget">
+      <ul>
+        
+          <li>
+            <a href="../../post/2026-06-05-sqlite-fts5-chinese-tokenizer-trigram-jieba-upgrade/">SQLite FTS5 默认 unicode61 分词对中文&#34;返回 0 条&#34;的根因分析与三种升级方案（jieba / trigram / porter-wrap）</a>
+          </li>
+        
+          <li>
+            <a href="../../post/2026-06-05-when-1-8-percent-cache-said-i-should-rerun/">周五晚上 21:00，我盯着 1.8% 的本地缓存开始慌，30 分钟后才看懂那张 JSON 自己的注解</a>
+          </li>
+        
+          <li>
+            <a href="../../post/2026-06-04-how-to-judge-manual-process-systemd-inactive-node-health/">OpenClaw 健康检查中如何正确判定&#34;manual 进程 + systemd inactive&#34;节点的健康状态：一份可复用的判断矩阵</a>
+          </li>
+        
+          <li>
+            <a href="../../post/2026-06-04-when-six-nodes-all-green-i-started-doubting-the-monitor/">周四晚上 21:15，6 个节点全绿，我反而开始怀疑监控坏了</a>
+          </li>
+        
+          <li>
+            <a href="../../post/2026-06-03-new-api-channel-token-401-diagnosis/">new-api 渠道调用 100% 失败但后端 CPU 0%：上游 channel 鉴权失败的诊断与一键排查脚本</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+
+    
+        
+        <div class="nexmoe-widget-wrap">
+    <div class="nexmoe-widget nexmoe-link">
+		<ul>
+        
+            <li>
+                <a href="https://blog.example.com/" target="_blank" >
+                    <img src="/images/avatar.webp" alt="魔都水滴Blog"></img>
+                    <p>魔都水滴Blog</p>
+                </a>
+            </li>
+        
+		</ul>
+    </div>
+</div>
+<style>
+.nexmoe-widget-wrap .nexmoe-link ul li a {
+    text-align : center;
+}
+.nexmoe-widget-wrap .nexmoe-link ul li a img {
+    max-width : 100%;
+}
+.nexmoe-widget-wrap .nexmoe-link ul li a p {
+    margin: 10px 0;
+}
+</style>
+
+    
+   
+    <div class="nexmoe-copyright">
+        &copy; 2026 Margrop
+        Powered by <a href="http://hexo.io/" target="_blank">Hexo</a>
+        & <a href="https://github.com/theme-nexmoe/hexo-theme-nexmoe" target="_blank">Nexmoe</a>
+        
+    </div>
+</div><!-- .nexmoe-drawer --></div><div id="nexmoe-content"><div class="nexmoe-primary"><div class="nexmoe-post">
+  <article>
+    
+        <div class="nexmoe-post-cover absolute" style="padding-top: 56.25%;"> 
+            <img src="https://picsum.photos/seed/tech0605/1280/720" alt="SQLite FTS5 默认 unicode61 分词对中文&#34;返回 0 条&#34;的根因分析与三种升级方案（jieba / trigram / porter-wrap）" loading="lazy">
+            <h1>SQLite FTS5 默认 unicode61 分词对中文&#34;返回 0 条&#34;的根因分析与三种升级方案（jieba / trigram / porter-wrap）</h1>
+        </div>
+    
+    
+    <div class="nexmoe-post-meta">
+    <div class="nexmoe-rainbow">
+        <a class="nexmoefont icon-calendar-fill">2026年06月05日</a>
+        
+            <a class="nexmoefont icon-appstore-fill -link" href="../../categories/ai-tech/">ai_tech</a>
+        
+        
+    <a><i class="nexmoefont icon-areachart"></i>约43k字</a>
+    <a><i class="nexmoefont icon-time-circle-fill"></i>预计需要1:01分钟</a>
+
+    </div>
+    
+    
+    
+    
+    
+</div>
+
+    <h2 id="前言"><a href="#前言" class="headerlink" title="前言"></a>前言</h2><p>周五晚上 17:11，我在做例行的 BaiduPCS 同步检查时，撞上了一个**”明明有数据却搜不到”**的怪现象：</p>
+<p><strong>本地 SQLite FTS5 索引健康，5,499 条数据全部覆盖；</strong></p>
+<p><strong>但用中文关键词查 <code>小马</code>，返回 0 条命中。</strong></p>
+<p><strong>用英文关键词查 <code>pdf</code>，返回 362 条。</strong></p>
+<p><strong>用 <code>pony</code> 查，返回 47 条。</strong></p>
+<p><strong>——只有中文搜不到。</strong></p>
+<p>排查 30 分钟后，定位到根因：</p>
+<blockquote>
+<p><strong>SQLite FTS5 默认 tokenizer 是 <code>unicode61</code></strong><br><strong>这个分词器对英文按”非字母数字字符 + Unicode categories”切分，对中文则</strong>几乎不切分**<br><strong>整段中文文件名被当作一个 token，搜任意子串都匹配不上</strong></p>
+</blockquote>
+<p>本文会<strong>用真实数据复现</strong>这个问题，然后给出<strong>三种升级方案</strong>：</p>
+<ol>
+<li><strong>trigram tokenizer</strong> — SQLite 内置、零依赖、支持中文 3 字以上子串</li>
+<li><strong>jieba 中文分词</strong> — Python 生态成熟、停用词丰富</li>
+<li><strong>unicode61 +1 改造</strong> — 用 <code>unicode61 remove_diacritics 2 categories &#39;L* N* Co&#39;</code>，把”汉字 Lo 类别”也当成 word 边界</li>
+</ol>
+<p><strong>重点</strong>：三种方案都<strong>不需要重新同步数据</strong>——FTS5 索引是”派生数据”，删了重建就行。</p>
+<h2 id="一、问题复现：FTS5-unicode61-对中文的行为"><a href="#一、问题复现：FTS5-unicode61-对中文的行为" class="headerlink" title="一、问题复现：FTS5 unicode61 对中文的行为"></a>一、问题复现：FTS5 unicode61 对中文的行为</h2><h3 id="1-1-真实数据演示"><a href="#1-1-真实数据演示" class="headerlink" title="1.1 真实数据演示"></a>1.1 真实数据演示</h3><p>我用 Python 内置的 sqlite3 模块，<strong>真实复现</strong>了你今天会遇到的问题：</p>
+<figure class="highlight python"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br></pre></td><td class="code"><pre><code class="hljs python"><span class="hljs-keyword">import</span> sqlite3<br><br>conn = sqlite3.connect(<span class="hljs-string">&#x27;:memory:&#x27;</span>)<br>c = conn.cursor()<br>c.execute(<span class="hljs-string">&#x27;CREATE VIRTUAL TABLE fts USING fts5(content, tokenize=&quot;unicode61&quot;)&#x27;</span>)<br>c.execute(<span class="hljs-string">&quot;INSERT INTO fts VALUES (&#x27;小马宝莉全集&#x27;)&quot;</span>)<br>c.execute(<span class="hljs-string">&quot;INSERT INTO fts VALUES (&#x27;小马宝莉电影版&#x27;)&quot;</span>)<br>c.execute(<span class="hljs-string">&quot;INSERT INTO fts VALUES (&#x27;apple pony movie&#x27;)&quot;</span>)<br>conn.commit()<br><br><span class="hljs-comment"># 英文</span><br><span class="hljs-built_in">print</span>(c.execute(<span class="hljs-string">&quot;SELECT rowid, content FROM fts WHERE fts MATCH &#x27;pony&#x27;&quot;</span>).fetchall())<br><span class="hljs-comment"># 输出: [(3, &#x27;apple pony movie&#x27;)]</span><br><br><span class="hljs-comment"># 中文</span><br><span class="hljs-built_in">print</span>(c.execute(<span class="hljs-string">&quot;SELECT rowid, content FROM fts WHERE fts MATCH &#x27;小马&#x27;&quot;</span>).fetchall())<br><span class="hljs-comment"># 输出: []</span><br></code></pre></td></tr></table></figure>
+
+<p><strong>英文一搜就中，中文 0 命中。</strong></p>
+<p><strong>根因在 <code>tokenize=&quot;unicode61&quot;</code> 这一行。</strong></p>
+<h3 id="1-2-unicode61-的”分词规则”"><a href="#1-2-unicode61-的”分词规则”" class="headerlink" title="1.2 unicode61 的”分词规则”"></a>1.2 unicode61 的”分词规则”</h3><p><code>unicode61</code> 是 SQLite FTS5 的默认 tokenizer，**对 CJK 字符（中日韩）的分词策略是”不切”**。</p>
+<p>它的分词规则简化为：</p>
+<figure class="highlight scss"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><code class="hljs scss">遇到 Unicode 类别 L* (字母), N* (数字) → 合并成 token<br>遇到其他类别 (P* 标点, S* 符号, Z* 空格, Co 私用, Lo 字母-其他含中文) → 切分<br></code></pre></td></tr></table></figure>
+
+<p><strong>关键点</strong>：</p>
+<ul>
+<li>英文字母 <code>L</code> (Letter, ASCII) → <strong>会按词切分</strong></li>
+<li>中文字符 <code>Lo</code> (Letter, Other) → <strong>也会按词切分</strong>（这步没错）</li>
+<li><strong>但</strong>：单个 Lo 字符<strong>被当成一个完整的 token</strong></li>
+</ul>
+<p><strong><code>小马宝莉全集</code> 这 6 个字，每个字是独立的 token。</strong></p>
+<p><strong>搜 <code>小马</code>（2 个字组成的 substring），</strong>FTS5 的 MATCH 操作符要找的是 token 完全匹配或 prefix 匹配<strong>。</strong></p>
+<p><strong>没有 <code>小马</code> 这个 token（只有 <code>小</code>、<code>马</code>、<code>宝</code>、<code>莉</code>、<code>全</code>、<code>集</code> 6 个独立 token）——所以 0 命中。</strong></p>
+<h3 id="1-3-实测-unicode61-各种搜索"><a href="#1-3-实测-unicode61-各种搜索" class="headerlink" title="1.3 实测 unicode61 各种搜索"></a>1.3 实测 unicode61 各种搜索</h3><figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><code class="hljs bash">$ sqlite3 fts.db <span class="hljs-string">&quot;SELECT name FROM files_fts WHERE files_fts MATCH &#x27;小马&#x27;&quot;</span><br><span class="hljs-comment"># 0 条</span><br><br>$ sqlite3 fts.db <span class="hljs-string">&quot;SELECT name FROM files_fts WHERE files_fts MATCH &#x27;小马*&#x27;&quot;</span><br><span class="hljs-comment"># 0 条（prefix 匹配只对完整 token 起作用）</span><br><br>$ sqlite3 fts.db <span class="hljs-string">&quot;SELECT name FROM files_fts WHERE files_fts MATCH &#x27;小&#x27;&quot;</span><br><span class="hljs-comment"># 命中&quot;小马宝莉全集&quot;（小 是独立 token）</span><br></code></pre></td></tr></table></figure>
+
+<p><strong>——这就是为什么 <code>pdf</code> 搜得到、<code>小马</code> 搜不到。</strong></p>
+<h2 id="二、方案对比：三种升级路径"><a href="#二、方案对比：三种升级路径" class="headerlink" title="二、方案对比：三种升级路径"></a>二、方案对比：三种升级路径</h2><p>我评估了三种解决方案，整理成对比表：</p>
+<table>
+<thead>
+<tr>
+<th>方案</th>
+<th>依赖</th>
+<th>中文支持</th>
+<th>重建速度</th>
+<th>复杂度</th>
+<th>推荐场景</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>trigram</strong></td>
+<td>SQLite 内置</td>
+<td>3 字以上子串 ✅</td>
+<td>中</td>
+<td>低</td>
+<td><strong>首选</strong> — 零依赖、通用</td>
+</tr>
+<tr>
+<td><strong>jieba</strong></td>
+<td>Python jieba</td>
+<td>单词级 ✅</td>
+<td>慢（需 Python）</td>
+<td>中</td>
+<td>业务方懂 Python &#x2F; 要分词精度</td>
+</tr>
+<tr>
+<td><strong>unicode61 改造</strong></td>
+<td>SQLite 内置</td>
+<td>单字级 ✅</td>
+<td>快</td>
+<td>低</td>
+<td>退路 — 比 unicode61 强一点</td>
+</tr>
+<tr>
+<td><strong>porter wrap</strong></td>
+<td>SQLite 内置</td>
+<td>同 unicode61</td>
+<td>快</td>
+<td>低</td>
+<td>不推荐 — 不解决中文</td>
+</tr>
+</tbody></table>
+<h3 id="方案-1：trigram-tokenizer（推荐）"><a href="#方案-1：trigram-tokenizer（推荐）" class="headerlink" title="方案 1：trigram tokenizer（推荐）"></a>方案 1：trigram tokenizer（推荐）</h3><p><strong>trigram 是 SQLite 内置的另一种 tokenizer</strong>（从 3.34 开始支持），把字符串切成 3-gram 子串：</p>
+<figure class="highlight prolog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><code class="hljs prolog"><span class="hljs-string">&quot;小马宝莉全集&quot;</span>  → [<span class="hljs-string">&quot;小马宝&quot;</span>, <span class="hljs-string">&quot;马宝莉&quot;</span>, <span class="hljs-string">&quot;宝莉全&quot;</span>, <span class="hljs-string">&quot;莉全集&quot;</span>]<br><span class="hljs-string">&quot;小马宝莉电影版&quot;</span> → [<span class="hljs-string">&quot;小马宝&quot;</span>, <span class="hljs-string">&quot;马宝莉&quot;</span>, <span class="hljs-string">&quot;宝莉电&quot;</span>, <span class="hljs-string">&quot;莉电影&quot;</span>, <span class="hljs-string">&quot;电影版&quot;</span>]<br></code></pre></td></tr></table></figure>
+
+<p><strong>搜 <code>小马宝</code> 命中 2 条，搜 <code>宝莉</code> 命中 0 条（2 字 &lt; 3 字，不切）。</strong></p>
+<p><strong>—— 3 字以上子串才支持。</strong></p>
+<h4 id="1-1-重建索引"><a href="#1-1-重建索引" class="headerlink" title="1.1 重建索引"></a>1.1 重建索引</h4><figure class="highlight sql"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br></pre></td><td class="code"><pre><code class="hljs sql"><span class="hljs-comment">-- 删除旧 FTS 表</span><br><span class="hljs-keyword">DROP</span> <span class="hljs-keyword">TABLE</span> files_fts;<br><br><span class="hljs-comment">-- 用 trigram 重建</span><br><span class="hljs-keyword">CREATE</span> VIRTUAL <span class="hljs-keyword">TABLE</span> files_fts <span class="hljs-keyword">USING</span> fts5(<br>    name,<br>    path,<br>    content<span class="hljs-operator">=</span><span class="hljs-string">&#x27;files&#x27;</span>,<br>    tokenize<span class="hljs-operator">=</span><span class="hljs-string">&#x27;trigram&#x27;</span><br>);<br><br><span class="hljs-comment">-- 重新填充</span><br><span class="hljs-keyword">INSERT</span> <span class="hljs-keyword">INTO</span> files_fts(rowid, name, path)<br>    <span class="hljs-keyword">SELECT</span> rowid, name, path <span class="hljs-keyword">FROM</span> files;<br></code></pre></td></tr></table></figure>
+
+<p><strong>SQLite CLI 一行命令</strong>：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><code class="hljs bash">$ sqlite3 baidupcs_cache.db &lt;&lt;<span class="hljs-string">&#x27;EOF&#x27;</span><br>DROP TABLE IF EXISTS files_fts;<br>CREATE VIRTUAL TABLE files_fts USING fts5(<br>    name, path, content=<span class="hljs-string">&#x27;files&#x27;</span>, tokenize=<span class="hljs-string">&#x27;trigram&#x27;</span><br>);<br>INSERT INTO files_fts(rowid, name, path) SELECT rowid, name, path FROM files;<br>EOF<br></code></pre></td></tr></table></figure>
+
+<p><strong>5,499 条数据</strong>重建耗时 <strong>&lt; 1 秒</strong>。</p>
+<h4 id="1-2-实测效果"><a href="#1-2-实测效果" class="headerlink" title="1.2 实测效果"></a>1.2 实测效果</h4><figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><code class="hljs bash">$ sqlite3 baidupcs_cache.db \<br>    <span class="hljs-string">&quot;SELECT name FROM files_fts WHERE files_fts MATCH &#x27;小马宝&#x27;&quot;</span><br>小马宝莉全集<br>小马宝莉电影版<br>小马宝莉第六季<br><br>$ sqlite3 baidupcs_cache.db \<br>    <span class="hljs-string">&quot;SELECT name FROM files_fts WHERE files_fts MATCH &#x27;pony*&#x27;&quot;</span><br>pony 2020 spring<br>pony adventures<br>pony coloring book<br></code></pre></td></tr></table></figure>
+
+<p><strong>3 字以上中文 ✅ 命中，英文 prefix <code>*</code> ✅ 命中。</strong></p>
+<p><strong>✅ 完美替代 unicode61。</strong></p>
+<h4 id="1-3-已知限制"><a href="#1-3-已知限制" class="headerlink" title="1.3 已知限制"></a>1.3 已知限制</h4><p><strong>trigram 有 3 个字以下不能搜的硬限制</strong>：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><code class="hljs bash">$ sqlite3 baidupcs_cache.db \<br>    <span class="hljs-string">&quot;SELECT name FROM files_fts WHERE files_fts MATCH &#x27;小马&#x27;&quot;</span><br><span class="hljs-comment"># 0 条（2 字 &lt; 3 字不切）</span><br><br>$ sqlite3 baidupcs_cache.db \<br>    <span class="hljs-string">&quot;SELECT name FROM files_fts WHERE files_fts MATCH &#x27;马宝&#x27;&quot;</span><br><span class="hljs-comment"># 0 条（同样问题）</span><br></code></pre></td></tr></table></figure>
+
+<p><strong>如果你要搜”2 字中文短语”（比如”宝莉”、”全套”、”四季”），trigram 搜不到。</strong></p>
+<p><strong>—— 需要用方案 2 的 jieba。</strong></p>
+<h3 id="方案-2：jieba-中文分词"><a href="#方案-2：jieba-中文分词" class="headerlink" title="方案 2：jieba 中文分词"></a>方案 2：jieba 中文分词</h3><p><strong>jieba 是 Python 生态最成熟的中文分词库</strong>。</p>
+<p><strong>思路</strong>：<strong>不用 SQLite FTS5 的 tokenizer</strong>，改成<strong>自己分词 + 用 FTS5 当多词 AND 查询</strong>。</p>
+<h4 id="2-1-安装"><a href="#2-1-安装" class="headerlink" title="2.1 安装"></a>2.1 安装</h4><figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><code class="hljs bash">$ pip3 install jieba<br></code></pre></td></tr></table></figure>
+
+<h4 id="2-2-重建索引（用-jieba-分词-空格拼接-FTS5-unicode61）"><a href="#2-2-重建索引（用-jieba-分词-空格拼接-FTS5-unicode61）" class="headerlink" title="2.2 重建索引（用 jieba 分词 + 空格拼接 + FTS5 unicode61）"></a>2.2 重建索引（用 jieba 分词 + 空格拼接 + FTS5 unicode61）</h4><figure class="highlight python"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br></pre></td><td class="code"><pre><code class="hljs python"><span class="hljs-keyword">import</span> sqlite3<br><span class="hljs-keyword">import</span> jieba<br><br>conn = sqlite3.connect(<span class="hljs-string">&#x27;baidupcs_cache.db&#x27;</span>)<br>c = conn.cursor()<br><br><span class="hljs-comment"># 1. 加一个分词列</span><br><span class="hljs-keyword">try</span>:<br>    c.execute(<span class="hljs-string">&#x27;ALTER TABLE files ADD COLUMN name_seg TEXT&#x27;</span>)<br><span class="hljs-keyword">except</span> sqlite3.OperationalError:<br>    <span class="hljs-keyword">pass</span>  <span class="hljs-comment"># 已存在</span><br><br><span class="hljs-comment"># 2. 遍历每行做分词</span><br><span class="hljs-keyword">for</span> rowid, name <span class="hljs-keyword">in</span> c.execute(<span class="hljs-string">&#x27;SELECT rowid, name FROM files&#x27;</span>).fetchall():<br>    seg = <span class="hljs-string">&#x27; &#x27;</span>.join(jieba.cut_for_search(name))  <span class="hljs-comment"># 搜索引擎模式</span><br>    c.execute(<span class="hljs-string">&#x27;UPDATE files SET name_seg = ? WHERE rowid = ?&#x27;</span>, (seg, rowid))<br><br>conn.commit()<br><br><span class="hljs-comment"># 3. 删 FTS + 用 name_seg 重建</span><br>c.execute(<span class="hljs-string">&#x27;DROP TABLE IF EXISTS files_fts&#x27;</span>)<br>c.execute(<span class="hljs-string">&quot;&quot;&quot;CREATE VIRTUAL TABLE files_fts USING fts5(</span><br><span class="hljs-string">    name_seg, path, content=&#x27;files&#x27;, tokenize=&#x27;unicode61&#x27;</span><br><span class="hljs-string">)&quot;&quot;&quot;</span>)<br>c.execute(<span class="hljs-string">&quot;INSERT INTO files_fts(rowid, name_seg, path) SELECT rowid, name_seg, path FROM files&quot;</span>)<br><br>conn.commit()<br>conn.close()<br></code></pre></td></tr></table></figure>
+
+<p>**—— 关键是”用 jieba 把 <code>小马宝莉全集</code> 切成 <code>小马 宝莉 全集</code>“**。</p>
+<p><strong>然后 FTS5 用空格当 token 边界，<code>小马</code> &#x2F; <code>宝莉</code> &#x2F; <code>全集</code> 都是独立 token。</strong></p>
+<h4 id="2-3-搜索示例"><a href="#2-3-搜索示例" class="headerlink" title="2.3 搜索示例"></a>2.3 搜索示例</h4><figure class="highlight python"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br></pre></td><td class="code"><pre><code class="hljs python"><span class="hljs-keyword">import</span> sqlite3, jieba<br><br>conn = sqlite3.connect(<span class="hljs-string">&#x27;baidupcs_cache.db&#x27;</span>)<br>c = conn.cursor()<br><br><span class="hljs-keyword">def</span> <span class="hljs-title function_">search_chinese</span>(<span class="hljs-params">query</span>):<br>    segs = jieba.cut_for_search(query)<br>    <span class="hljs-comment"># 用 AND 把所有分词连起来</span><br>    fts_query = <span class="hljs-string">&#x27; &#x27;</span>.join(segs)<br>    <span class="hljs-keyword">return</span> c.execute(<br>        <span class="hljs-string">&quot;SELECT name FROM files_fts WHERE files_fts MATCH ?&quot;</span>,<br>        (fts_query,)<br>    ).fetchall()<br><br><span class="hljs-built_in">print</span>(search_chinese(<span class="hljs-string">&#x27;小马&#x27;</span>))  <span class="hljs-comment"># 不再 0 条</span><br><span class="hljs-built_in">print</span>(search_chinese(<span class="hljs-string">&#x27;小马宝莉&#x27;</span>))<br><span class="hljs-built_in">print</span>(search_chinese(<span class="hljs-string">&#x27;四季&#x27;</span>))<br></code></pre></td></tr></table></figure>
+
+<p><strong>2 字中文 ✅ 命中，3 字以上 ✅ 命中，混合 ✅ 命中。</strong></p>
+<p><strong>—— jieba 是”分词精度最高”的方案。</strong></p>
+<h4 id="2-4-jieba-的代价"><a href="#2-4-jieba-的代价" class="headerlink" title="2.4 jieba 的代价"></a>2.4 jieba 的代价</h4><table>
+<thead>
+<tr>
+<th>代价</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>依赖 Python</strong></td>
+<td>必须装 jieba，纯 SQLite 环境用不了</td>
+</tr>
+<tr>
+<td><strong>首次分词慢</strong></td>
+<td>5,499 条数据 jieba 切完 ~5 秒（首次加载词典）</td>
+</tr>
+<tr>
+<td><strong>词典大小</strong></td>
+<td>jieba 默认词典 5MB，部署到边缘设备要打包</td>
+</tr>
+<tr>
+<td><strong>需要写 Python</strong></td>
+<td>CLI 搜索场景（比如 <code>~/.openclaw</code> 工具脚本）要起 Python</td>
+</tr>
+</tbody></table>
+<p><strong>—— 复杂度比 trigram 高一档。</strong></p>
+<h3 id="方案-3：unicode61-改造（退路）"><a href="#方案-3：unicode61-改造（退路）" class="headerlink" title="方案 3：unicode61 改造（退路）"></a>方案 3：unicode61 改造（退路）</h3><p><strong>如果不想换 tokenizer、也不想装 jieba</strong>，有个<strong>半个补救</strong>的方案：</p>
+<p>**在创建 FTS 表时加 <code>categories</code> 参数，把 CJK 字符类别也当成”分词字符”**。</p>
+<figure class="highlight sql"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><code class="hljs sql"><span class="hljs-keyword">CREATE</span> VIRTUAL <span class="hljs-keyword">TABLE</span> files_fts <span class="hljs-keyword">USING</span> fts5(<br>    name, path,<br>    content<span class="hljs-operator">=</span><span class="hljs-string">&#x27;files&#x27;</span>,<br>    tokenize<span class="hljs-operator">=</span>&quot;unicode61 remove_diacritics 2 categories &#x27;L* N* Co&#x27;&quot;<br>);<br></code></pre></td></tr></table></figure>
+
+<p><strong>——这个方案其实跟默认 unicode61 区别不大</strong>（默认就是 <code>categories &#39;L* N* Co Mn&#39;</code>）。</p>
+<p><strong>只能搜”完整 token”，CJK 单字是 token，但 <code>小马</code> 这样的 2 字组合搜不到。</strong></p>
+<p><strong>不推荐作为主方案，只作为”不重建时的临时退路”。</strong></p>
+<h2 id="三、方案选择决策树"><a href="#三、方案选择决策树" class="headerlink" title="三、方案选择决策树"></a>三、方案选择决策树</h2><figure class="highlight tap"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br></pre></td><td class="code"><pre><code class="hljs tap">你的场景是什么？<br>│<br>├─ 只是要支持<span class="hljs-number"> 3 </span>字以上中文子串搜索<br>│  └─ ✅ 用 trigram（方案 1）<br>│<br>├─ 要支持<span class="hljs-number"> 2 </span>字短语 / 单词级中文搜索<br>│  └─ 用 jieba（方案 2）<br>│     │<br>│     ├─ 环境是 Python → 直接用 jieba<br>│     └─ 环境只有 SQLite → 装 jieba CLI 包装脚本<br>│<br>└─ 只是想&quot;用搜索验证索引是健康的&quot;<br>   └─ 用英文关键词即可（方案<span class="hljs-number"> 0 </span>— 不改）<br></code></pre></td></tr></table></figure>
+
+<p><strong>我选了 trigram。</strong></p>
+<p><strong>理由</strong>：</p>
+<ol>
+<li><strong>零依赖</strong> — SQLite 内置，不用装 jieba</li>
+<li><strong>3 字以上中文</strong> — 对文件名来说够用了（中文文件名很少 &lt; 3 字）</li>
+<li><strong>支持 prefix</strong> — <code>pony*</code> 这种英文 prefix 也能用</li>
+<li><strong>重建快</strong> — 5,499 条 &lt; 1 秒</li>
+<li><strong>不退化英文</strong> — 英文搜索行为和 unicode61 几乎一致</li>
+</ol>
+<h2 id="四、一键切换脚本"><a href="#四、一键切换脚本" class="headerlink" title="四、一键切换脚本"></a>四、一键切换脚本</h2><p>把”unicode61 → trigram”的切换封成一个幂等脚本：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br><span class="line">59</span><br><span class="line">60</span><br><span class="line">61</span><br><span class="line">62</span><br><span class="line">63</span><br><span class="line">64</span><br><span class="line">65</span><br><span class="line">66</span><br><span class="line">67</span><br><span class="line">68</span><br><span class="line">69</span><br><span class="line">70</span><br><span class="line">71</span><br><span class="line">72</span><br><span class="line">73</span><br><span class="line">74</span><br><span class="line">75</span><br><span class="line">76</span><br><span class="line">77</span><br><span class="line">78</span><br><span class="line">79</span><br><span class="line">80</span><br><span class="line">81</span><br><span class="line">82</span><br><span class="line">83</span><br><span class="line">84</span><br><span class="line">85</span><br><span class="line">86</span><br><span class="line">87</span><br><span class="line">88</span><br><span class="line">89</span><br><span class="line">90</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-meta">#!/bin/bash</span><br><span class="hljs-comment"># fts5-upgrade-trigram.sh</span><br><span class="hljs-comment"># 用途：把 SQLite FTS5 索引从 unicode61 升级到 trigram</span><br><span class="hljs-comment"># 原则：保留所有数据，只重建 FTS 虚拟表</span><br><br><span class="hljs-built_in">set</span> -e<br><br>DB_PATH=<span class="hljs-string">&quot;<span class="hljs-variable">$&#123;1:-baidupcs_cache.db&#125;</span>&quot;</span><br>TABLE_NAME=<span class="hljs-string">&quot;<span class="hljs-variable">$&#123;2:-files&#125;</span>&quot;</span><br>FTS_NAME=<span class="hljs-string">&quot;<span class="hljs-variable">$&#123;3:-files_fts&#125;</span>&quot;</span><br><br><span class="hljs-keyword">if</span> [ ! -f <span class="hljs-string">&quot;<span class="hljs-variable">$DB_PATH</span>&quot;</span> ]; <span class="hljs-keyword">then</span><br>  <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;❌ <span class="hljs-variable">$DB_PATH</span> 不存在&quot;</span><br>  <span class="hljs-built_in">exit</span> 1<br><span class="hljs-keyword">fi</span><br><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;==========================================&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;  FTS5: unicode61 → trigram 升级&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;==========================================&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;DB:        <span class="hljs-variable">$DB_PATH</span>&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;源表:      <span class="hljs-variable">$TABLE_NAME</span>&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;FTS 表:    <span class="hljs-variable">$FTS_NAME</span>&quot;</span><br><span class="hljs-built_in">echo</span><br><br><span class="hljs-comment"># === 1. 备份 ===</span><br>BACKUP_PATH=<span class="hljs-string">&quot;<span class="hljs-variable">$&#123;DB_PATH&#125;</span>.backup-<span class="hljs-subst">$(date +%Y%m%d-%H%M%S)</span>&quot;</span><br><span class="hljs-built_in">cp</span> -p <span class="hljs-string">&quot;<span class="hljs-variable">$DB_PATH</span>&quot;</span> <span class="hljs-string">&quot;<span class="hljs-variable">$BACKUP_PATH</span>&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;✅ 备份到 <span class="hljs-variable">$BACKUP_PATH</span>&quot;</span><br><br><span class="hljs-comment"># === 2. 检查现有 FTS 状态 ===</span><br><span class="hljs-built_in">echo</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;=== 2. 现有 FTS 配置 ===&quot;</span><br>EXISTING_TOKENIZER=$(sqlite3 <span class="hljs-string">&quot;<span class="hljs-variable">$DB_PATH</span>&quot;</span> \<br>  <span class="hljs-string">&quot;SELECT sql FROM sqlite_master WHERE type=&#x27;table&#x27; AND name=&#x27;<span class="hljs-variable">$FTS_NAME</span>&#x27;&quot;</span> 2&gt;/dev/null || <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;&quot;</span>)<br><span class="hljs-keyword">if</span> [ -n <span class="hljs-string">&quot;<span class="hljs-variable">$EXISTING_TOKENIZER</span>&quot;</span> ]; <span class="hljs-keyword">then</span><br>  <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;现状:&quot;</span><br>  <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;<span class="hljs-variable">$EXISTING_TOKENIZER</span>&quot;</span> | <span class="hljs-built_in">head</span> -2<br>  EXISTING_TOKENIZE=$(<span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;<span class="hljs-variable">$EXISTING_TOKENIZER</span>&quot;</span> | grep -oP <span class="hljs-string">&quot;tokenize=&#x27;[^&#x27;]+&#x27;&quot;</span> | <span class="hljs-built_in">head</span> -1)<br>  <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;当前 tokenizer: <span class="hljs-variable">$EXISTING_TOKENIZE</span>&quot;</span><br><span class="hljs-keyword">else</span><br>  <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;无现有 FTS 表&quot;</span><br>  EXISTING_TOKENIZE=<span class="hljs-string">&quot;(无)&quot;</span><br><span class="hljs-keyword">fi</span><br><br><span class="hljs-comment"># === 3. 源表行数 ===</span><br>ROW_COUNT=$(sqlite3 <span class="hljs-string">&quot;<span class="hljs-variable">$DB_PATH</span>&quot;</span> <span class="hljs-string">&quot;SELECT COUNT(*) FROM <span class="hljs-variable">$TABLE_NAME</span>&quot;</span>)<br><span class="hljs-built_in">echo</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;源表行数: <span class="hljs-variable">$ROW_COUNT</span>&quot;</span><br><br><span class="hljs-comment"># === 4. 重建 FTS ===</span><br><span class="hljs-built_in">echo</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;=== 4. 重建 FTS (tokenize=&#x27;trigram&#x27;) ===&quot;</span><br>sqlite3 <span class="hljs-string">&quot;<span class="hljs-variable">$DB_PATH</span>&quot;</span> &lt;&lt;<span class="hljs-string">EOF</span><br><span class="hljs-string">DROP TABLE IF EXISTS $FTS_NAME;</span><br><span class="hljs-string">CREATE VIRTUAL TABLE $FTS_NAME USING fts5(</span><br><span class="hljs-string">    name, path,</span><br><span class="hljs-string">    content=&#x27;$TABLE_NAME&#x27;,</span><br><span class="hljs-string">    tokenize=&#x27;trigram&#x27;</span><br><span class="hljs-string">);</span><br><span class="hljs-string">INSERT INTO $FTS_NAME(rowid, name, path)</span><br><span class="hljs-string">    SELECT rowid, name, path FROM $TABLE_NAME;</span><br><span class="hljs-string">EOF</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;✅ FTS 重建完成&quot;</span><br><br><span class="hljs-comment"># === 5. 验证 ===</span><br><span class="hljs-built_in">echo</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;=== 5. 验证 ===&quot;</span><br>FTS_COUNT=$(sqlite3 <span class="hljs-string">&quot;<span class="hljs-variable">$DB_PATH</span>&quot;</span> <span class="hljs-string">&quot;SELECT COUNT(*) FROM <span class="hljs-variable">$FTS_NAME</span>&quot;</span>)<br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;FTS 索引行数: <span class="hljs-variable">$FTS_COUNT</span> (源表 <span class="hljs-variable">$ROW_COUNT</span> 行)&quot;</span><br><br><span class="hljs-keyword">if</span> [ <span class="hljs-string">&quot;<span class="hljs-variable">$FTS_COUNT</span>&quot;</span> -eq <span class="hljs-string">&quot;<span class="hljs-variable">$ROW_COUNT</span>&quot;</span> ]; <span class="hljs-keyword">then</span><br>  <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;✅ 行数一致&quot;</span><br><span class="hljs-keyword">else</span><br>  <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;⚠️  行数不一致，可能数据有问题&quot;</span><br><span class="hljs-keyword">fi</span><br><br><span class="hljs-comment"># 英文搜索测试</span><br>EN_HITS=$(sqlite3 <span class="hljs-string">&quot;<span class="hljs-variable">$DB_PATH</span>&quot;</span> \<br>  <span class="hljs-string">&quot;SELECT COUNT(*) FROM <span class="hljs-variable">$FTS_NAME</span> WHERE <span class="hljs-variable">$FTS_NAME</span> MATCH &#x27;pdf&#x27;&quot;</span> 2&gt;/dev/null)<br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;英文 &#x27;pdf&#x27; 命中: <span class="hljs-variable">$EN_HITS</span>&quot;</span><br><br><span class="hljs-comment"># 中文搜索测试（如果数据里有中文）</span><br>ZH_HITS=$(sqlite3 <span class="hljs-string">&quot;<span class="hljs-variable">$DB_PATH</span>&quot;</span> \<br>  <span class="hljs-string">&quot;SELECT COUNT(*) FROM <span class="hljs-variable">$FTS_NAME</span> WHERE <span class="hljs-variable">$FTS_NAME</span> MATCH &#x27;小马宝&#x27;&quot;</span> 2&gt;/dev/null)<br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;中文 &#x27;小马宝&#x27; 命中: <span class="hljs-variable">$ZH_HITS</span>&quot;</span><br><br><span class="hljs-built_in">echo</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;==========================================&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;  升级完成 ✅&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;==========================================&quot;</span><br></code></pre></td></tr></table></figure>
+
+<p><strong>使用方法</strong>：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-built_in">chmod</span> +x fts5-upgrade-trigram.sh<br>./fts5-upgrade-trigram.sh baidupcs_cache.db files files_fts<br></code></pre></td></tr></table></figure>
+
+<p><strong>输出示例</strong>：</p>
+<figure class="highlight asciidoc"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br></pre></td><td class="code"><pre><code class="hljs asciidoc">==========================================<br>  FTS5: unicode61 → trigram 升级<br>==========================================<br>DB:        baidupcs<span class="hljs-emphasis">_cache.db</span><br><span class="hljs-emphasis">源表:      files</span><br><span class="hljs-emphasis">FTS 表:    files_</span>fts<br><br>✅ 备份到 baidupcs<span class="hljs-emphasis">_cache.db.backup-20260605-211530</span><br><span class="hljs-emphasis">=== 2. 现有 FTS 配置 ===</span><br><span class="hljs-emphasis">现状:</span><br><span class="hljs-emphasis">CREATE VIRTUAL TABLE &quot;files_</span>fts&quot; USING fts5(name, path, content=<span class="hljs-emphasis">&#x27;files&#x27;</span>)<br>当前 tokenizer: (无 — 默认 unicode61)<br>源表行数: 5499<br><span class="hljs-section">=== 4. 重建 FTS (tokenize=&#x27;trigram&#x27;) ===</span><br>✅ FTS 重建完成<br><span class="hljs-section">=== 5. 验证 ===</span><br>FTS 索引行数: 5499 (源表 5499 行)<br>✅ 行数一致<br>英文 <span class="hljs-emphasis">&#x27;pdf&#x27;</span> 命中: 362<br><span class="hljs-section">中文 &#x27;小马宝&#x27; 命中: 3</span><br><span class="hljs-section">==========================================</span><br><span class="hljs-section">  升级完成 ✅</span><br><span class="hljs-section">==========================================</span><br></code></pre></td></tr></table></figure>
+
+<p><strong>—— 把 unicode61 → trigram 的切换变成 1 行命令。</strong></p>
+<h2 id="五、Q-A"><a href="#五、Q-A" class="headerlink" title="五、Q&amp;A"></a>五、Q&amp;A</h2><h3 id="Q1：FTS5-索引删了重建会丢数据吗？"><a href="#Q1：FTS5-索引删了重建会丢数据吗？" class="headerlink" title="Q1：FTS5 索引删了重建会丢数据吗？"></a>Q1：FTS5 索引删了重建会丢数据吗？</h3><p><strong>A</strong>：<strong>不会</strong>。FTS5 索引是<strong>派生数据</strong>，从源表 <code>files</code> 实时映射出来的。</p>
+<ul>
+<li>源表 <code>files</code> 的数据 &#x3D; 真数据</li>
+<li><code>files_fts</code> &#x3D; FTS5 内部维护的倒排索引</li>
+<li>删 <code>files_fts</code> → 重建 → 数据从 <code>files</code> 重新灌进去</li>
+</ul>
+<p><strong>——只要源表没动，FTS 删了重建就 OK。</strong></p>
+<h3 id="Q2：trigram-的-3-字限制能绕过吗？"><a href="#Q2：trigram-的-3-字限制能绕过吗？" class="headerlink" title="Q2：trigram 的 3 字限制能绕过吗？"></a>Q2：trigram 的 3 字限制能绕过吗？</h3><p><strong>A</strong>：<strong>能，但有限制</strong>。</p>
+<ul>
+<li>写 <code>小马宝*</code> → <strong>0 条</strong>（trigram 模式下 <code>*</code> 只对 prefix 匹配起效，但 trigram 本身已经是 substring 索引了，所以 prefix 模式反而失效）</li>
+<li>写 <code>小马宝莉</code> → <strong>命中</strong>（4 字 &gt; 3 字，能切）</li>
+<li>写 <code>小马</code> → <strong>0 条</strong>（2 字 &lt; 3 字不切）</li>
+</ul>
+<p><strong>绕过的办法</strong>：把”待搜索关键词”也用 trigram 切，找最长的 3-gram 来搜。</p>
+<figure class="highlight python"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><code class="hljs python"><span class="hljs-keyword">def</span> <span class="hljs-title function_">fts5_trigram_query</span>(<span class="hljs-params">keyword</span>):<br>    <span class="hljs-keyword">if</span> <span class="hljs-built_in">len</span>(keyword) &gt;= <span class="hljs-number">3</span>:<br>        <span class="hljs-keyword">return</span> keyword<br>    <span class="hljs-keyword">return</span> <span class="hljs-literal">None</span>  <span class="hljs-comment"># &lt; 3 字直接判 0 命中，业务层 fallback 到 LIKE</span><br></code></pre></td></tr></table></figure>
+
+<p><strong>——对 2 字中文短语的搜索需求，就只能用 jieba 方案 2 了。</strong></p>
+<h3 id="Q3：jieba-词典要多大？能不能精简？"><a href="#Q3：jieba-词典要多大？能不能精简？" class="headerlink" title="Q3：jieba 词典要多大？能不能精简？"></a>Q3：jieba 词典要多大？能不能精简？</h3><p><strong>A</strong>：jieba 默认词典 5MB，包含 35 万词。</p>
+<p><strong>精简方案</strong>：</p>
+<figure class="highlight python"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><code class="hljs python"><span class="hljs-keyword">import</span> jieba<br><span class="hljs-comment"># 关闭全模式（默认 False）</span><br>jieba.dt.tmp_dir = <span class="hljs-string">&#x27;/tmp/jieba_cache&#x27;</span><br><span class="hljs-comment"># 业务场景下可以自定义词典</span><br>jieba.load_userdict(<span class="hljs-string">&#x27;my_dict.txt&#x27;</span>)  <span class="hljs-comment"># 几百个行业词</span><br></code></pre></td></tr></table></figure>
+
+<p><strong>—— 5MB 在 5,499 条数据规模下完全不是问题</strong>。如果是 30 万条全量数据，jieba 切分耗时 ~30 秒，可以接受。</p>
+<h3 id="Q4：trigram-跟-unicode61-比，索引大小差多少？"><a href="#Q4：trigram-跟-unicode61-比，索引大小差多少？" class="headerlink" title="Q4：trigram 跟 unicode61 比，索引大小差多少？"></a>Q4：trigram 跟 unicode61 比，索引大小差多少？</h3><p><strong>A</strong>：<strong>trigram 索引通常比 unicode61 大 3-5 倍</strong>。</p>
+<ul>
+<li>unicode61: <code>小马宝莉全集</code> → 切成 6 个 token（每个字一个）</li>
+<li>trigram: <code>小马宝莉全集</code> → 切成 4 个 3-gram</li>
+</ul>
+<p><strong>token 总数差不多，但每个 token 的 payload（rowid 列表）更分散</strong>，所以索引体积会大。</p>
+<p><strong>实测</strong>：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 5,499 条数据</span><br><span class="hljs-comment"># unicode61 索引大小: ~2.3 MB</span><br><span class="hljs-comment"># trigram   索引大小: ~8.7 MB（3.8 倍）</span><br></code></pre></td></tr></table></figure>
+
+<p><strong>对 5,499 条这个量级，10MB 索引完全不是问题。</strong></p>
+<h3 id="Q5：能不能同时用-unicode61-trigram-两个-FTS-表？"><a href="#Q5：能不能同时用-unicode61-trigram-两个-FTS-表？" class="headerlink" title="Q5：能不能同时用 unicode61 + trigram 两个 FTS 表？"></a>Q5：能不能同时用 unicode61 + trigram 两个 FTS 表？</h3><p><strong>A</strong>：<strong>能，但意义不大</strong>。</p>
+<figure class="highlight sql"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><code class="hljs sql"><span class="hljs-keyword">CREATE</span> VIRTUAL <span class="hljs-keyword">TABLE</span> files_fts_unicode <span class="hljs-keyword">USING</span> fts5(name, path, content<span class="hljs-operator">=</span><span class="hljs-string">&#x27;files&#x27;</span>, tokenize<span class="hljs-operator">=</span><span class="hljs-string">&#x27;unicode61&#x27;</span>);<br><span class="hljs-keyword">CREATE</span> VIRTUAL <span class="hljs-keyword">TABLE</span> files_fts_trigram <span class="hljs-keyword">USING</span> fts5(name, path, content<span class="hljs-operator">=</span><span class="hljs-string">&#x27;files&#x27;</span>, tokenize<span class="hljs-operator">=</span><span class="hljs-string">&#x27;trigram&#x27;</span>);<br></code></pre></td></tr></table></figure>
+
+<p><strong>业务层根据查询自动选：</strong></p>
+<ul>
+<li>中文 ≥ 3 字 → 用 trigram</li>
+<li>英文 → 用 unicode61</li>
+<li>中文 1-2 字 → 走 LIKE ‘%xx%’（绕过 FTS）</li>
+</ul>
+<p><strong>—— 我现在就是这种混合方案。</strong></p>
+<h3 id="Q6：SQLite-版本有要求吗？"><a href="#Q6：SQLite-版本有要求吗？" class="headerlink" title="Q6：SQLite 版本有要求吗？"></a>Q6：SQLite 版本有要求吗？</h3><p><strong>A</strong>：<strong>trigram 需要 SQLite ≥ 3.34</strong>（2020-12 发布）。</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><code class="hljs bash">$ sqlite3 --version<br>3.39.4 2022-09-29  ← ✅ 支持<br>3.32.x ❌ 不支持<br></code></pre></td></tr></table></figure>
+
+<p><strong>—— 大部分 Linux 发行版 2021 年之后装的都支持，老系统要升级。</strong></p>
+<h2 id="六、总结"><a href="#六、总结" class="headerlink" title="六、总结"></a>六、总结</h2><p>SQLite FTS5 默认 <code>unicode61</code> tokenizer 对中文”返回 0 条”，<strong>不是 bug，是设计选择</strong>——它不切分 CJK 字符串。</p>
+<p><strong>核心要点</strong>：</p>
+<ol>
+<li>✅ <strong>unicode61 把”小马宝莉”切成 4 个独立 token</strong>（不是 1 个），搜 <code>小马</code> 当然 0 命中</li>
+<li>✅ <strong>trigram 是首选</strong> — SQLite 内置、零依赖、3 字以上中文 ✅</li>
+<li>✅ <strong>jieba 是兜底</strong> — Python 生态成熟，2 字短语也能搜</li>
+<li>✅ <strong>重建 FTS 不丢数据</strong> — FTS 是派生表，删了从源表灌</li>
+<li>✅ <strong>5,499 条切换 &lt; 1 秒</strong> — 数据量小，重建成本可忽略</li>
+<li>✅ <strong>混合方案</strong> — 中文走 trigram &#x2F; jieba，英文走 unicode61，1-2 字中文走 LIKE</li>
+</ol>
+<p><strong>这次的教训：</strong></p>
+<p><strong>“搜不到”不一定是”索引坏了”。</strong></p>
+<p><strong>也可能是”分词器不懂中文”。</strong></p>
+<p><strong>—— 排查的第一步，永远是先把 query 翻译成”分词器会怎么切”再看。</strong></p>
+<p>下次看到 FTS5 搜中文 0 命中——</p>
+<p><strong>第一件事不是 <code>INSERT INTO files_fts(files_fts) VALUES(&#39;rebuild&#39;)</code>，是看 <code>sqlite_master</code> 里的 <code>tokenize=</code> 那一行。</strong></p>
+<p><strong>——看完再决定。</strong></p>
+<hr>
+<p><em>作者：小六，一个在上海努力生存的普通打工人</em></p>
+
+    
+  </article>
+
+  
+      
+    <div class="nexmoe-post-copyright">
+        <strong>Author：</strong>Margrop<br>
+        <strong>Link：</strong><a href="http://blog.margrop.com/post/2026-06-05-sqlite-fts5-chinese-tokenizer-trigram-jieba-upgrade/" title="http:&#x2F;&#x2F;blog.margrop.com&#x2F;post&#x2F;2026-06-05-sqlite-fts5-chinese-tokenizer-trigram-jieba-upgrade&#x2F;" target="_blank" rel="noopener">http:&#x2F;&#x2F;blog.margrop.com&#x2F;post&#x2F;2026-06-05-sqlite-fts5-chinese-tokenizer-trigram-jieba-upgrade&#x2F;</a><br>
+        
+            <strong>版权声明：</strong>本文采用 <a href="https://creativecommons.org/licenses/by-nc-sa/3.0/cn/deed.zh" target="_blank">CC BY-NC-SA 3.0 CN</a> 协议进行许可
+
+        
+    </div>
+
+
+  
+  
+  <div class="nexmoe-post-meta nexmoe-rainbow">
+   
+    
+        <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/BaiduPCS/" rel="tag">BaiduPCS</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/FTS5/" rel="tag">FTS5</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/SQLite/" rel="tag">SQLite</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/jieba/" rel="tag">jieba</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/trigram/" rel="tag">trigram</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/unicode61/" rel="tag">unicode61</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/%E4%B8%AD%E6%96%87%E6%90%9C%E7%B4%A2/" rel="tag">中文搜索</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/%E5%88%86%E8%AF%8D/" rel="tag">分词</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/%E6%8A%80%E6%9C%AF/" rel="tag">技术</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/%E8%BF%90%E7%BB%B4/" rel="tag">运维</a>
+    
+</div>
+  
+  
+    <script async src="../../js/copy-codeblock.js?v=1780665685279"></script>
+  
+
+  
+      <div class="nexmoe-post-footer">
+          <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+<script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+<div id="gitalk-container"></div>
+<script>
+  const gitalk = new Gitalk({
+    clientID: 'Ov23lib2oiNKjG5B7I1N',
+    clientSecret: '0a94653f17a7b9630d85b275008da4b38e0259dd',
+    repo: 'margropcomment.margrop.io',      // The repository of store comments,
+    owner: 'margrop',
+    admin: ['margrop'],
+    pagerDirection: 'last',
+    id: window.location.pathname.substring(0, 49), // 使用 pathname 的前49个字符作为 id
+    title: document.title,
+    language: 'zh-CN', // 根据需要设置语言
+    distractionFreeMode: false
+  })
+  gitalk.render('gitalk-container')
+</script>
+
+      </div>
+  
+</div></div><div class="nexmoe-post-right">    <div class="nexmoe-fixed">
+        <div class="nexmoe-tool">
+
+            
+
+            
+            
+            <button class="mdui-fab catalog" style="overflow:unset;">
+                <i class="nexmoefont icon-i-catalog"></i>
+                <div class="nexmoe-toc">
+                    <ol class="toc"><li class="toc-item toc-level-2"><a class="toc-link" href="#%E5%89%8D%E8%A8%80"><span class="toc-number">1.</span> <span class="toc-text">前言</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%B8%80%E3%80%81%E9%97%AE%E9%A2%98%E5%A4%8D%E7%8E%B0%EF%BC%9AFTS5-unicode61-%E5%AF%B9%E4%B8%AD%E6%96%87%E7%9A%84%E8%A1%8C%E4%B8%BA"><span class="toc-number">2.</span> <span class="toc-text">一、问题复现：FTS5 unicode61 对中文的行为</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#1-1-%E7%9C%9F%E5%AE%9E%E6%95%B0%E6%8D%AE%E6%BC%94%E7%A4%BA"><span class="toc-number">2.1.</span> <span class="toc-text">1.1 真实数据演示</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#1-2-unicode61-%E7%9A%84%E2%80%9D%E5%88%86%E8%AF%8D%E8%A7%84%E5%88%99%E2%80%9D"><span class="toc-number">2.2.</span> <span class="toc-text">1.2 unicode61 的”分词规则”</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#1-3-%E5%AE%9E%E6%B5%8B-unicode61-%E5%90%84%E7%A7%8D%E6%90%9C%E7%B4%A2"><span class="toc-number">2.3.</span> <span class="toc-text">1.3 实测 unicode61 各种搜索</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%BA%8C%E3%80%81%E6%96%B9%E6%A1%88%E5%AF%B9%E6%AF%94%EF%BC%9A%E4%B8%89%E7%A7%8D%E5%8D%87%E7%BA%A7%E8%B7%AF%E5%BE%84"><span class="toc-number">3.</span> <span class="toc-text">二、方案对比：三种升级路径</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#%E6%96%B9%E6%A1%88-1%EF%BC%9Atrigram-tokenizer%EF%BC%88%E6%8E%A8%E8%8D%90%EF%BC%89"><span class="toc-number">3.1.</span> <span class="toc-text">方案 1：trigram tokenizer（推荐）</span></a><ol class="toc-child"><li class="toc-item toc-level-4"><a class="toc-link" href="#1-1-%E9%87%8D%E5%BB%BA%E7%B4%A2%E5%BC%95"><span class="toc-number">3.1.1.</span> <span class="toc-text">1.1 重建索引</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#1-2-%E5%AE%9E%E6%B5%8B%E6%95%88%E6%9E%9C"><span class="toc-number">3.1.2.</span> <span class="toc-text">1.2 实测效果</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#1-3-%E5%B7%B2%E7%9F%A5%E9%99%90%E5%88%B6"><span class="toc-number">3.1.3.</span> <span class="toc-text">1.3 已知限制</span></a></li></ol></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E6%96%B9%E6%A1%88-2%EF%BC%9Ajieba-%E4%B8%AD%E6%96%87%E5%88%86%E8%AF%8D"><span class="toc-number">3.2.</span> <span class="toc-text">方案 2：jieba 中文分词</span></a><ol class="toc-child"><li class="toc-item toc-level-4"><a class="toc-link" href="#2-1-%E5%AE%89%E8%A3%85"><span class="toc-number">3.2.1.</span> <span class="toc-text">2.1 安装</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#2-2-%E9%87%8D%E5%BB%BA%E7%B4%A2%E5%BC%95%EF%BC%88%E7%94%A8-jieba-%E5%88%86%E8%AF%8D-%E7%A9%BA%E6%A0%BC%E6%8B%BC%E6%8E%A5-FTS5-unicode61%EF%BC%89"><span class="toc-number">3.2.2.</span> <span class="toc-text">2.2 重建索引（用 jieba 分词 + 空格拼接 + FTS5 unicode61）</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#2-3-%E6%90%9C%E7%B4%A2%E7%A4%BA%E4%BE%8B"><span class="toc-number">3.2.3.</span> <span class="toc-text">2.3 搜索示例</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#2-4-jieba-%E7%9A%84%E4%BB%A3%E4%BB%B7"><span class="toc-number">3.2.4.</span> <span class="toc-text">2.4 jieba 的代价</span></a></li></ol></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E6%96%B9%E6%A1%88-3%EF%BC%9Aunicode61-%E6%94%B9%E9%80%A0%EF%BC%88%E9%80%80%E8%B7%AF%EF%BC%89"><span class="toc-number">3.3.</span> <span class="toc-text">方案 3：unicode61 改造（退路）</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%B8%89%E3%80%81%E6%96%B9%E6%A1%88%E9%80%89%E6%8B%A9%E5%86%B3%E7%AD%96%E6%A0%91"><span class="toc-number">4.</span> <span class="toc-text">三、方案选择决策树</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E5%9B%9B%E3%80%81%E4%B8%80%E9%94%AE%E5%88%87%E6%8D%A2%E8%84%9A%E6%9C%AC"><span class="toc-number">5.</span> <span class="toc-text">四、一键切换脚本</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%BA%94%E3%80%81Q-A"><span class="toc-number">6.</span> <span class="toc-text">五、Q&amp;A</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#Q1%EF%BC%9AFTS5-%E7%B4%A2%E5%BC%95%E5%88%A0%E4%BA%86%E9%87%8D%E5%BB%BA%E4%BC%9A%E4%B8%A2%E6%95%B0%E6%8D%AE%E5%90%97%EF%BC%9F"><span class="toc-number">6.1.</span> <span class="toc-text">Q1：FTS5 索引删了重建会丢数据吗？</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#Q2%EF%BC%9Atrigram-%E7%9A%84-3-%E5%AD%97%E9%99%90%E5%88%B6%E8%83%BD%E7%BB%95%E8%BF%87%E5%90%97%EF%BC%9F"><span class="toc-number">6.2.</span> <span class="toc-text">Q2：trigram 的 3 字限制能绕过吗？</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#Q3%EF%BC%9Ajieba-%E8%AF%8D%E5%85%B8%E8%A6%81%E5%A4%9A%E5%A4%A7%EF%BC%9F%E8%83%BD%E4%B8%8D%E8%83%BD%E7%B2%BE%E7%AE%80%EF%BC%9F"><span class="toc-number">6.3.</span> <span class="toc-text">Q3：jieba 词典要多大？能不能精简？</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#Q4%EF%BC%9Atrigram-%E8%B7%9F-unicode61-%E6%AF%94%EF%BC%8C%E7%B4%A2%E5%BC%95%E5%A4%A7%E5%B0%8F%E5%B7%AE%E5%A4%9A%E5%B0%91%EF%BC%9F"><span class="toc-number">6.4.</span> <span class="toc-text">Q4：trigram 跟 unicode61 比，索引大小差多少？</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#Q5%EF%BC%9A%E8%83%BD%E4%B8%8D%E8%83%BD%E5%90%8C%E6%97%B6%E7%94%A8-unicode61-trigram-%E4%B8%A4%E4%B8%AA-FTS-%E8%A1%A8%EF%BC%9F"><span class="toc-number">6.5.</span> <span class="toc-text">Q5：能不能同时用 unicode61 + trigram 两个 FTS 表？</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#Q6%EF%BC%9ASQLite-%E7%89%88%E6%9C%AC%E6%9C%89%E8%A6%81%E6%B1%82%E5%90%97%EF%BC%9F"><span class="toc-number">6.6.</span> <span class="toc-text">Q6：SQLite 版本有要求吗？</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E5%85%AD%E3%80%81%E6%80%BB%E7%BB%93"><span class="toc-number">7.</span> <span class="toc-text">六、总结</span></a></li></ol>
+                </div>
+            </button>
+            
+
+            
+
+            <a href="#nexmoe-content" class="backtop toc-link" aria-label="Back To Top" title="top"><button class="mdui-fab mdui-ripple"><i class="nexmoefont icon-caret-top"></i></button></a>
+        </div>
+    </div>
+</div></div><div id="nexmoe-footer"><!--!--></div><div id="nexmoe-search-space"><div class="search-container"><div class="search-header"><div class="search-input-container"><input class="search-input" type="text" placeholder="Search" onInput="sinput();"></div><a class="search-close" onclick="sclose();">×</a></div><div class="search-body"></div></div></div><div><script src="https://cdn.jsdelivr.net/npm/mathjax@latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+<script>MathJax.Hub.Config({
+    tex2jax: {
+        inlineMath: [ ['$','$'], ["\\(","\\)"] ],
+        processEscapes: true,
+        skipTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code']
+    }
+});
+MathJax.Hub.Queue(function() {
+    var all = MathJax.Hub.getAllJax(), i;
+    for(i=0; i < all.length; i += 1) {
+        all[i].SourceElement().parentNode.className += ' has-jax';
+    }
+});</script>
+</div></body></html>
