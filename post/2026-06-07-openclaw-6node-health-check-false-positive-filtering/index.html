@@ -1,0 +1,721 @@
+<!doctype html>
+<html lang="cn"><head>
+<title>OpenClaw 6 节点统一健康检查的&#34;误报过滤&#34;实战：NRestarts、systemd-socket-proxyd、DIY-MINI 三类伪信号一次讲清 - 魔都水滴</title>
+<meta charset="UTF-8">
+<meta name="keywords" content="">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5">
+
+<link rel="shortcut icon" href="/favicon.ico" type="image/x-icon" />
+<meta name="description" content="前言如果你维护一个多节点的 OpenClaw + HermesAgent 集群——比如 4 个 OpenClaw 节点 + 2 个 Hermes 节点——你迟早会撞上**”健康检查的误报”**问题：  “看到一个异常数据 &#x3D; 真的有故障？”“有时候，’看着像故障’是设计内行为，乱修反而会出真故障。”  我周日 16:15 那次 6 节点健康检查，遇到了**3 个典型的”伪信号”**：">
+<meta property="og:type" content="article">
+<meta property="og:title" content="OpenClaw 6 节点统一健康检查的&quot;误报过滤&quot;实战：NRestarts、systemd-socket-proxyd、DIY-MINI 三类伪信号一次讲清">
+<meta property="og:url" content="http://blog.margrop.com/post/2026-06-07-openclaw-6node-health-check-false-positive-filtering/index.html">
+<meta property="og:site_name" content="魔都水滴">
+<meta property="og:description" content="前言如果你维护一个多节点的 OpenClaw + HermesAgent 集群——比如 4 个 OpenClaw 节点 + 2 个 Hermes 节点——你迟早会撞上**”健康检查的误报”**问题：  “看到一个异常数据 &#x3D; 真的有故障？”“有时候，’看着像故障’是设计内行为，乱修反而会出真故障。”  我周日 16:15 那次 6 节点健康检查，遇到了**3 个典型的”伪信号”**：">
+<meta property="og:locale">
+<meta property="article:published_time" content="2026-06-07T13:30:00.000Z">
+<meta property="article:modified_time" content="2026-06-07T13:21:08.594Z">
+<meta property="article:author" content="Margrop">
+<meta property="article:tag" content="运维">
+<meta property="article:tag" content="OpenClaw">
+<meta property="article:tag" content="健康检查">
+<meta property="article:tag" content="监控">
+<meta property="article:tag" content="技术">
+<meta property="article:tag" content="Hermes">
+<meta property="article:tag" content="误报过滤">
+<meta property="article:tag" content="NRestarts">
+<meta property="article:tag" content="systemd-socket">
+<meta property="article:tag" content="by-design">
+<meta name="twitter:card" content="summary">
+
+<link rel="stylesheet" href="../../lib/fancybox/fancybox.css">
+<link rel="stylesheet" href="../../lib/mdui_043tiny/mdui.css">
+
+
+<link rel="stylesheet" href="../../lib/iconfont/iconfont.css?v=1780838537923">
+
+<link rel="stylesheet" href="../../css/style.css?v=1780838537923">
+
+
+
+
+    
+        <link rel="stylesheet" href="../../custom.css?v=1780838537923">
+    
+
+
+
+<script src="../../lib/mdui_043tiny/mdui.js" async></script>
+<script src="../../lib/fancybox/fancybox.umd.js" async></script>
+<script src="../../lib/lax.min.js" async></script>
+
+
+<script async src="../../js/app.js?v=1780838537924"></script>
+
+ 
+
+<script charset="UTF-8" id="LA_COLLECT" src="//sdk.51.la/js-sdk-pro.min.js"></script>
+<script>LA.init({id:"23bDEwNOu1L8NhV1",ck:"23bDEwNOu1L8NhV1"})</script>
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-4NGHEP8LEV"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+
+  gtag('config', 'G-4NGHEP8LEV');
+</script>
+
+
+<link rel="stylesheet"  href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/atom-one-dark.min.css">
+<meta name="generator" content="Hexo 7.3.0"><link rel="alternate" href="atom.xml" title="魔都水滴" type="application/atom+xml">
+</head><body class="nexmoe mdui-drawer-body-left"><div id="nexmoe-background"><div class="nexmoe-bg" style="background-image: url(/images/background.webp)"></div><div class="mdui-appbar mdui-shadow-0"><div class="mdui-toolbar"><a class="mdui-btn mdui-btn-icon mdui-ripple" mdui-drawer="{target: &#039;#drawer&#039;, swipe: true}" title="menu"><i class="mdui-icon nexmoefont icon-menu"></i></a><div class="mdui-toolbar-spacer"></div><a class="mdui-btn mdui-btn-icon" href="../../index.html" title="Margrop"><img src="/images/avatar.webp" alt="Margrop"></a></div></div></div><div id="nexmoe-header"><div class="nexmoe-drawer mdui-drawer" id="drawer">
+    <div class="nexmoe-avatar mdui-ripple">
+        <a href="../../index.html" title="Margrop">
+            <img src="/images/avatar.webp" alt="Margrop" alt="Margrop">
+        </a>
+    </div>
+    <div class="nexmoe-count">
+        <div><span>Articles</span>344</div>
+        <div><span>Tags</span>525</div>
+        <div><span>Categories</span>7</div>
+    </div>
+    <div class="nexmoe-list mdui-list" mdui-collapse="{accordion: true}">
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" href="../../index.html" title="回到首页">
+            <i class="mdui-list-item-icon nexmoefont icon-home"></i>
+            <div class="mdui-list-item-content">
+                回到首页
+            </div>
+        </a>
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" href="../../post/archives/" title="文章归档">
+            <i class="mdui-list-item-icon nexmoefont icon-container"></i>
+            <div class="mdui-list-item-content">
+                文章归档
+            </div>
+        </a>
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" target="_blank" rel="noopener" href="https://example.com/" title="下载">
+            <i class="mdui-list-item-icon nexmoefont icon-container"></i>
+            <div class="mdui-list-item-content">
+                下载
+            </div>
+        </a>
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" href="../../post/favorites/" title="常用链接">
+            <i class="mdui-list-item-icon nexmoefont icon-unorderedlist"></i>
+            <div class="mdui-list-item-content">
+                常用链接
+            </div>
+        </a>
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" href="../../post/github-project-stars/" title="GithubStars">
+            <i class="mdui-list-item-icon nexmoefont icon-github"></i>
+            <div class="mdui-list-item-content">
+                GithubStars
+            </div>
+        </a>
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" href="../../post/donate/" title="给我赞助">
+            <i class="mdui-list-item-icon nexmoefont icon-coffee"></i>
+            <div class="mdui-list-item-content">
+                给我赞助
+            </div>
+        </a>
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" href="../../post/about/" title="关于博主">
+            <i class="mdui-list-item-icon nexmoefont icon-info-circle"></i>
+            <div class="mdui-list-item-content">
+                关于博主
+            </div>
+        </a>
+        
+    </div>
+    
+    
+        
+        <div class="nexmoe-widget-wrap">
+    <div class="nexmoe-widget nexmoe-search">
+         
+            <form id="search_form" action_e="https://cn.bing.com/search?q=site:example.com" onsubmit="return search();">
+                <label><input id="search_value" name="q" type="search" placeholder="Search"></label>
+            </form>
+         
+    </div>
+</div>
+
+
+
+
+    
+        
+        <div class="nexmoe-widget-wrap">
+	<div class="nexmoe-widget nexmoe-social">
+		<a
+			class="mdui-ripple"
+			href="http://qm.qq.com/cgi-bin/qm/qr?_wv=1027&k=weD8TANNWdCOveAMcdmoAxOKt5owKkDS"
+			target="_blank"
+			mdui-tooltip="{content: 'QQ群'}"
+			style="
+				color: rgb(249, 174, 8);
+				background-color: rgba(249, 174, 8, .1);
+			"
+		>
+			<i
+				class="nexmoefont icon-QQ"
+			></i> </a
+		><a
+			class="mdui-ripple"
+			href="https://github.com/margrop/"
+			target="_blank"
+			mdui-tooltip="{content: 'GitHub'}"
+			style="
+				color: rgb(25, 23, 23);
+				background-color: rgba(25, 23, 23, .1);
+			"
+		>
+			<i
+				class="nexmoefont icon-github"
+			></i> </a
+		><a
+			class="mdui-ripple"
+			href="../../atom.xml"
+			target="_blank"
+			mdui-tooltip="{content: 'RSS'}"
+			style="
+				color: rgb(247, 132, 34);
+				background-color: rgba(247, 132, 34, .1);
+			"
+		>
+			<i
+				class="nexmoefont icon-rss"
+			></i> </a
+		>
+	</div>
+</div>
+
+    
+        
+        
+  <div class="nexmoe-widget-wrap">
+    <h3 class="nexmoe-widget-title">Categories</h3>
+    <div class="nexmoe-widget">
+
+      <ul class="category-list">
+
+        
+
+
+        
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/ai-diary/">ai_diary</a>
+          <span class="category-list-count">97</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/ai-tech/">ai_tech</a>
+          <span class="category-list-count">89</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/develop/">develop</a>
+          <span class="category-list-count">28</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/">network</a>
+          <span class="category-list-count">112</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/notes/">notes</a>
+          <span class="category-list-count">10</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/others/">others</a>
+          <span class="category-list-count">3</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/sport/">sport</a>
+          <span class="category-list-count">4</span>
+        </li>
+
+        
+      </ul>
+
+    </div>
+  </div>
+
+
+    
+        
+        
+  <div class="nexmoe-widget-wrap">
+    <div id="randomtagcloud" class="nexmoe-widget tagcloud nexmoe-rainbow">
+      <a href="../../tags/1password/" style="font-size: 10px;">1password</a> <a href="../../tags/401/" style="font-size: 10px;">401</a> <a href="../../tags/6%E4%B8%AA%E8%8A%82%E7%82%B9/" style="font-size: 10px;">6个节点</a> <a href="../../tags/AC/" style="font-size: 10.43px;">AC</a> <a href="../../tags/ACP/" style="font-size: 10px;">ACP</a> <a href="../../tags/AI/" style="font-size: 12.17px;">AI</a> <a href="../../tags/AI-Coding-Assistant/" style="font-size: 10px;">AI Coding Assistant</a> <a href="../../tags/AI%E7%BC%96%E7%A8%8B%E5%8A%A9%E6%89%8B/" style="font-size: 10px;">AI编程助手</a> <a href="../../tags/AI%E8%BE%85%E5%8A%A9/" style="font-size: 10.43px;">AI辅助</a> <a href="../../tags/AI%E8%BE%85%E5%8A%A9%E7%BC%96%E7%A8%8B/" style="font-size: 10.43px;">AI辅助编程</a> <a href="../../tags/AP/" style="font-size: 10.87px;">AP</a> <a href="../../tags/API/" style="font-size: 11.3px;">API</a> <a href="../../tags/Alertmanager/" style="font-size: 10px;">Alertmanager</a> <a href="../../tags/AppDaemon/" style="font-size: 10px;">AppDaemon</a> <a href="../../tags/Aqara/" style="font-size: 10px;">Aqara</a> <a href="../../tags/BaiduPCS/" style="font-size: 10.43px;">BaiduPCS</a> <a href="../../tags/CC-Switch/" style="font-size: 10.43px;">CC-Switch</a> <a href="../../tags/CI-CD/" style="font-size: 10.43px;">CI/CD</a> <a href="../../tags/CLI-Tools/" style="font-size: 10px;">CLI Tools</a> <a href="../../tags/CLI%E5%B7%A5%E5%85%B7/" style="font-size: 10px;">CLI工具</a> <a href="../../tags/Caddy/" style="font-size: 10px;">Caddy</a> <a href="../../tags/Claude-Code/" style="font-size: 10.43px;">Claude Code</a> <a href="../../tags/Cloudflare/" style="font-size: 10px;">Cloudflare</a> <a href="../../tags/Codex/" style="font-size: 10.43px;">Codex</a> <a href="../../tags/Cookie-%E8%AE%A4%E8%AF%81/" style="font-size: 10px;">Cookie 认证</a> <a href="../../tags/Cron/" style="font-size: 11.3px;">Cron</a> <a href="../../tags/D1/" style="font-size: 10px;">D1</a> <a href="../../tags/DIY-MINI/" style="font-size: 10px;">DIY-MINI</a> <a href="../../tags/Date/" style="font-size: 10px;">Date</a> <a href="../../tags/Diagrams-net/" style="font-size: 10px;">Diagrams.net</a> <a href="../../tags/Diary/" style="font-size: 10px;">Diary</a> <a href="../../tags/Docker/" style="font-size: 15.22px;">Docker</a> <a href="../../tags/Docker-Compose/" style="font-size: 10px;">Docker Compose</a> <a href="../../tags/Efficiency-Tools/" style="font-size: 10px;">Efficiency Tools</a> <a href="../../tags/Electerm/" style="font-size: 10px;">Electerm</a> <a href="../../tags/English/" style="font-size: 10.43px;">English</a> <a href="../../tags/FTS5/" style="font-size: 10.43px;">FTS5</a> <a href="../../tags/Gateway/" style="font-size: 12.61px;">Gateway</a> <a href="../../tags/Gemini-CLI/" style="font-size: 10.43px;">Gemini CLI</a> <a href="../../tags/GitHub-Actions/" style="font-size: 10.43px;">GitHub Actions</a> <a href="../../tags/HA/" style="font-size: 10px;">HA</a> <a href="../../tags/HADashboard/" style="font-size: 10px;">HADashboard</a> <a href="../../tags/Hermes/" style="font-size: 10.43px;">Hermes</a> <a href="../../tags/Hexo/" style="font-size: 10.87px;">Hexo</a> <a href="../../tags/HomeAssistant/" style="font-size: 10px;">HomeAssistant</a> <a href="../../tags/IP/" style="font-size: 10px;">IP</a> <a href="../../tags/IPv4/" style="font-size: 10px;">IPv4</a> <a href="../../tags/Java/" style="font-size: 11.74px;">Java</a> <a href="../../tags/LVM%E2%80%91Thin/" style="font-size: 10.43px;">LVM‑Thin</a> <a href="../../tags/Linux/" style="font-size: 13.04px;">Linux</a> <a href="../../tags/MacOS/" style="font-size: 10.87px;">MacOS</a> <a href="../../tags/Markdown/" style="font-size: 10px;">Markdown</a> <a href="../../tags/MiniMax/" style="font-size: 10px;">MiniMax</a> <a href="../../tags/Multi-Agent/" style="font-size: 10px;">Multi-Agent</a> <a href="../../tags/MySQL/" style="font-size: 10.87px;">MySQL</a> <a href="../../tags/NAS/" style="font-size: 10.87px;">NAS</a> <a href="../../tags/NRestarts/" style="font-size: 10px;">NRestarts</a> <a href="../../tags/Nginx/" style="font-size: 10px;">Nginx</a> <a href="../../tags/Node-RED/" style="font-size: 10.43px;">Node-RED</a> <a href="../../tags/Node-js/" style="font-size: 10.43px;">Node.js</a> <a href="../../tags/OOM/" style="font-size: 10px;">OOM</a> <a href="../../tags/OpenAI/" style="font-size: 10px;">OpenAI</a> <a href="../../tags/OpenClaw/" style="font-size: 18.26px;">OpenClaw</a> <a href="../../tags/OpenCode/" style="font-size: 10.43px;">OpenCode</a> <a href="../../tags/OpenResty/" style="font-size: 10px;">OpenResty</a> <a href="../../tags/OpenWrt/" style="font-size: 10.43px;">OpenWrt</a> <a href="../../tags/PPPoE/" style="font-size: 10px;">PPPoE</a> <a href="../../tags/Portainer/" style="font-size: 10px;">Portainer</a> <a href="../../tags/PostgreSQL/" style="font-size: 10px;">PostgreSQL</a> <a href="../../tags/ProcessOn/" style="font-size: 10px;">ProcessOn</a> <a href="../../tags/Prometheus/" style="font-size: 13.04px;">Prometheus</a> <a href="../../tags/Proxmox-VE/" style="font-size: 15.65px;">Proxmox VE</a> <a href="../../tags/RPC/" style="font-size: 10px;">RPC</a> <a href="../../tags/SOCKS5/" style="font-size: 10px;">SOCKS5</a> <a href="../../tags/SQLite/" style="font-size: 10.43px;">SQLite</a> <a href="../../tags/SSL/" style="font-size: 10px;">SSL</a> <a href="../../tags/Session/" style="font-size: 10px;">Session</a> <a href="../../tags/Shell/" style="font-size: 10.43px;">Shell</a> <a href="../../tags/Subagent/" style="font-size: 10px;">Subagent</a> <a href="../../tags/TTS/" style="font-size: 10px;">TTS</a> <a href="../../tags/TimeMachine/" style="font-size: 10px;">TimeMachine</a> <a href="../../tags/UML/" style="font-size: 10px;">UML</a> <a href="../../tags/Uptime-Kuma/" style="font-size: 10.43px;">Uptime Kuma</a> <a href="../../tags/VPN/" style="font-size: 10px;">VPN</a> <a href="../../tags/VPS/" style="font-size: 10.87px;">VPS</a> <a href="../../tags/Web/" style="font-size: 10px;">Web</a> <a href="../../tags/WebSocket/" style="font-size: 10.43px;">WebSocket</a> <a href="../../tags/Windows/" style="font-size: 10px;">Windows</a> <a href="../../tags/Workers/" style="font-size: 10px;">Workers</a> <a href="../../tags/activate/" style="font-size: 10.43px;">activate</a> <a href="../../tags/ad/" style="font-size: 10px;">ad</a> <a href="../../tags/adb/" style="font-size: 10px;">adb</a> <a href="../../tags/adblock/" style="font-size: 10.43px;">adblock</a> <a href="../../tags/agent/" style="font-size: 10px;">agent</a> <a href="../../tags/aligenie/" style="font-size: 10px;">aligenie</a> <a href="../../tags/aliyun/" style="font-size: 10.87px;">aliyun</a> <a href="../../tags/alpine/" style="font-size: 10px;">alpine</a> <a href="../../tags/annotation/" style="font-size: 10px;">annotation</a> <a href="../../tags/aop/" style="font-size: 10px;">aop</a> <a href="../../tags/authy/" style="font-size: 10px;">authy</a> <a href="../../tags/autofs/" style="font-size: 10px;">autofs</a> <a href="../../tags/backup/" style="font-size: 10px;">backup</a> <a href="../../tags/baidupan/" style="font-size: 10px;">baidupan</a> <a href="../../tags/bash/" style="font-size: 10.87px;">bash</a> <a href="../../tags/bitwarden/" style="font-size: 10px;">bitwarden</a> <a href="../../tags/boot/" style="font-size: 10.43px;">boot</a> <a href="../../tags/brew/" style="font-size: 10.43px;">brew</a> <a href="../../tags/browser/" style="font-size: 10px;">browser</a> <a href="../../tags/by-design/" style="font-size: 10px;">by-design</a> <a href="../../tags/caddy2/" style="font-size: 10.43px;">caddy2</a> <a href="../../tags/cdn/" style="font-size: 10px;">cdn</a> <a href="../../tags/centos/" style="font-size: 14.35px;">centos</a> <a href="../../tags/cert/" style="font-size: 10.43px;">cert</a> <a href="../../tags/certbot/" style="font-size: 10px;">certbot</a> <a href="../../tags/charles/" style="font-size: 10px;">charles</a> <a href="../../tags/chat/" style="font-size: 10px;">chat</a> <a href="../../tags/chrome/" style="font-size: 10.87px;">chrome</a> <a href="../../tags/classloader/" style="font-size: 10px;">classloader</a> <a href="../../tags/client/" style="font-size: 10.87px;">client</a> <a href="../../tags/clone/" style="font-size: 10.43px;">clone</a> <a href="../../tags/closures/" style="font-size: 10px;">closures</a> <a href="../../tags/cloudflare/" style="font-size: 10.43px;">cloudflare</a> <a href="../../tags/cmd/" style="font-size: 10px;">cmd</a> <a href="../../tags/command/" style="font-size: 10px;">command</a> <a href="../../tags/commit/" style="font-size: 10px;">commit</a> <a href="../../tags/container/" style="font-size: 10px;">container</a> <a href="../../tags/crontab/" style="font-size: 10px;">crontab</a> <a href="../../tags/ctyun/" style="font-size: 10.43px;">ctyun</a> <a href="../../tags/dashboard/" style="font-size: 10px;">dashboard</a> <a href="../../tags/ddsm/" style="font-size: 10px;">ddsm</a> <a href="../../tags/demo/" style="font-size: 10px;">demo</a> <a href="../../tags/dependency/" style="font-size: 10px;">dependency</a> <a href="../../tags/deploy/" style="font-size: 10px;">deploy</a> <a href="../../tags/developer/" style="font-size: 10px;">developer</a> <a href="../../tags/devtools/" style="font-size: 10px;">devtools</a> <a href="../../tags/dll/" style="font-size: 10px;">dll</a> <a href="../../tags/dns/" style="font-size: 10.87px;">dns</a> <a href="../../tags/docker/" style="font-size: 13.48px;">docker</a> <a href="../../tags/domain/" style="font-size: 10px;">domain</a> <a href="../../tags/download/" style="font-size: 10px;">download</a> <a href="../../tags/draw/" style="font-size: 10.43px;">draw</a> <a href="../../tags/drawio/" style="font-size: 10px;">drawio</a> <a href="../../tags/dsm/" style="font-size: 13.04px;">dsm</a> <a href="../../tags/dump/" style="font-size: 10px;">dump</a> <a href="../../tags/dylib/" style="font-size: 10px;">dylib</a> <a href="../../tags/edge/" style="font-size: 10.87px;">edge</a> <a href="../../tags/exception/" style="font-size: 10.43px;">exception</a> <a href="../../tags/export/" style="font-size: 10px;">export</a> <a href="../../tags/fail2ban/" style="font-size: 10px;">fail2ban</a> <a href="../../tags/fallback%E5%A4%B1%E6%95%88/" style="font-size: 10px;">fallback失效</a> <a href="../../tags/feign/" style="font-size: 10px;">feign</a> <a href="../../tags/firewall-cmd/" style="font-size: 10.43px;">firewall-cmd</a> <a href="../../tags/flow/" style="font-size: 10px;">flow</a> <a href="../../tags/frp/" style="font-size: 10.43px;">frp</a> <a href="../../tags/frpc/" style="font-size: 11.3px;">frpc</a> <a href="../../tags/frps/" style="font-size: 10.43px;">frps</a> <a href="../../tags/fuckgfw/" style="font-size: 11.3px;">fuckgfw</a> <a href="../../tags/function/" style="font-size: 10px;">function</a> <a href="../../tags/fuser/" style="font-size: 10px;">fuser</a> <a href="../../tags/gcc/" style="font-size: 10px;">gcc</a> <a href="../../tags/gfw/" style="font-size: 10.43px;">gfw</a> <a href="../../tags/git/" style="font-size: 12.17px;">git</a> <a href="../../tags/github/" style="font-size: 12.61px;">github</a> <a href="../../tags/golang/" style="font-size: 10px;">golang</a> <a href="../../tags/gperftools/" style="font-size: 10px;">gperftools</a> <a href="../../tags/gridea/" style="font-size: 10.43px;">gridea</a> <a href="../../tags/grub/" style="font-size: 10.43px;">grub</a> <a href="../../tags/gvt-g/" style="font-size: 10px;">gvt-g</a> <a href="../../tags/hacs/" style="font-size: 10px;">hacs</a> <a href="../../tags/havcs/" style="font-size: 10.43px;">havcs</a> <a href="../../tags/heap/" style="font-size: 10px;">heap</a> <a href="../../tags/hello/" style="font-size: 10.43px;">hello</a> <a href="../../tags/hexo/" style="font-size: 10.87px;">hexo</a> <a href="../../tags/hibernate/" style="font-size: 10.43px;">hibernate</a> <a href="../../tags/hidpi/" style="font-size: 10px;">hidpi</a> <a href="../../tags/hoisting/" style="font-size: 10px;">hoisting</a> <a href="../../tags/homeassistant/" style="font-size: 11.74px;">homeassistant</a> <a href="../../tags/hosts/" style="font-size: 10px;">hosts</a> <a href="../../tags/html/" style="font-size: 10.43px;">html</a> <a href="../../tags/htmlparser/" style="font-size: 10px;">htmlparser</a> <a href="../../tags/https/" style="font-size: 10.87px;">https</a> <a href="../../tags/iKuai/" style="font-size: 10.43px;">iKuai</a> <a href="../../tags/idea/" style="font-size: 10px;">idea</a> <a href="../../tags/image/" style="font-size: 10px;">image</a> <a href="../../tags/img/" style="font-size: 10.43px;">img</a> <a href="../../tags/img2kvm/" style="font-size: 10px;">img2kvm</a> <a href="../../tags/immortalwrt/" style="font-size: 10px;">immortalwrt</a> <a href="../../tags/import/" style="font-size: 10px;">import</a> <a href="../../tags/index/" style="font-size: 10px;">index</a> <a href="../../tags/install/" style="font-size: 12.17px;">install</a> <a href="../../tags/intel/" style="font-size: 10.43px;">intel</a> <a href="../../tags/io/" style="font-size: 10px;">io</a> <a href="../../tags/ios/" style="font-size: 10px;">ios</a> <a href="../../tags/ip/" style="font-size: 10px;">ip</a> <a href="../../tags/iptables/" style="font-size: 10px;">iptables</a> <a href="../../tags/iptv/" style="font-size: 10.43px;">iptv</a> <a href="../../tags/ipv6/" style="font-size: 10px;">ipv6</a> <a href="../../tags/iso/" style="font-size: 10px;">iso</a> <a href="../../tags/java/" style="font-size: 11.74px;">java</a> <a href="../../tags/javascript/" style="font-size: 10.43px;">javascript</a> <a href="../../tags/jetbrains/" style="font-size: 10px;">jetbrains</a> <a href="../../tags/jieba/" style="font-size: 10px;">jieba</a> <a href="../../tags/jni/" style="font-size: 10px;">jni</a> <a href="../../tags/jnilib/" style="font-size: 10px;">jnilib</a> <a href="../../tags/jpa/" style="font-size: 10px;">jpa</a> <a href="../../tags/js/" style="font-size: 10.87px;">js</a> <a href="../../tags/json/" style="font-size: 10.43px;">json</a> <a href="../../tags/jsonb/" style="font-size: 10px;">jsonb</a> <a href="../../tags/jupter/" style="font-size: 10px;">jupter</a> <a href="../../tags/jupyterlab/" style="font-size: 10px;">jupyterlab</a> <a href="../../tags/jvm/" style="font-size: 10.43px;">jvm</a> <a href="../../tags/k8s/" style="font-size: 10.43px;">k8s</a> <a href="../../tags/kernel/" style="font-size: 10px;">kernel</a> <a href="../../tags/key/" style="font-size: 10px;">key</a> <a href="../../tags/kid/" style="font-size: 10px;">kid</a> <a href="../../tags/kms/" style="font-size: 10px;">kms</a> <a href="../../tags/kodi/" style="font-size: 10px;">kodi</a> <a href="../../tags/koolproxy/" style="font-size: 10.43px;">koolproxy</a> <a href="../../tags/koolproxyr/" style="font-size: 10.43px;">koolproxyr</a> <a href="../../tags/kvm/" style="font-size: 10.43px;">kvm</a> <a href="../../tags/lan/" style="font-size: 10px;">lan</a> <a href="../../tags/lastpass/" style="font-size: 10px;">lastpass</a> <a href="../../tags/launchctl/" style="font-size: 10px;">launchctl</a> <a href="../../tags/learning/" style="font-size: 10px;">learning</a> <a href="../../tags/lede/" style="font-size: 10px;">lede</a> <a href="../../tags/letsencrypt/" style="font-size: 10.87px;">letsencrypt</a> <a href="../../tags/linux/" style="font-size: 11.3px;">linux</a> <a href="../../tags/live/" style="font-size: 10px;">live</a> <a href="../../tags/loopback-proxy/" style="font-size: 10px;">loopback-proxy</a> <a href="../../tags/low-code/" style="font-size: 10px;">low-code</a> <a href="../../tags/lsof/" style="font-size: 10px;">lsof</a> <a href="../../tags/lvm/" style="font-size: 10px;">lvm</a> <a href="../../tags/lxc/" style="font-size: 10px;">lxc</a> <a href="../../tags/m3u8/" style="font-size: 10px;">m3u8</a> <a href="../../tags/mac/" style="font-size: 10.43px;">mac</a> <a href="../../tags/macos/" style="font-size: 10px;">macos</a> <a href="../../tags/manual/" style="font-size: 10px;">manual</a> <a href="../../tags/mariadb/" style="font-size: 10px;">mariadb</a> <a href="../../tags/markdown/" style="font-size: 10px;">markdown</a> <a href="../../tags/maven/" style="font-size: 10.43px;">maven</a> <a href="../../tags/md5/" style="font-size: 10.43px;">md5</a> <a href="../../tags/microcode/" style="font-size: 10px;">microcode</a> <a href="../../tags/mirror/" style="font-size: 10.43px;">mirror</a> <a href="../../tags/modem/" style="font-size: 10px;">modem</a> <a href="../../tags/modules/" style="font-size: 10px;">modules</a> <a href="../../tags/monitor/" style="font-size: 10px;">monitor</a> <a href="../../tags/mount/" style="font-size: 10px;">mount</a> <a href="../../tags/mstsc/" style="font-size: 10px;">mstsc</a> <a href="../../tags/mysql/" style="font-size: 10px;">mysql</a> <a href="../../tags/n2n/" style="font-size: 13.04px;">n2n</a> <a href="../../tags/n5105/" style="font-size: 10px;">n5105</a> <a href="../../tags/nas/" style="font-size: 10px;">nas</a> <a href="../../tags/netstat/" style="font-size: 10px;">netstat</a> <a href="../../tags/network/" style="font-size: 13.48px;">network</a> <a href="../../tags/new-api/" style="font-size: 10.43px;">new-api</a> <a href="../../tags/nfs/" style="font-size: 10px;">nfs</a> <a href="../../tags/node/" style="font-size: 10.43px;">node</a> <a href="../../tags/node-red/" style="font-size: 10.43px;">node-red</a> <a href="../../tags/nodejs/" style="font-size: 11.3px;">nodejs</a> <a href="../../tags/nohup/" style="font-size: 10.43px;">nohup</a> <a href="../../tags/notepad/" style="font-size: 10px;">notepad++</a> <a href="../../tags/npm/" style="font-size: 12.17px;">npm</a> <a href="../../tags/nssm/" style="font-size: 10.43px;">nssm</a> <a href="../../tags/ntp/" style="font-size: 10px;">ntp</a> <a href="../../tags/one-api/" style="font-size: 10px;">one-api</a> <a href="../../tags/oop/" style="font-size: 10px;">oop</a> <a href="../../tags/openfeign/" style="font-size: 10px;">openfeign</a> <a href="../../tags/openssl/" style="font-size: 10.43px;">openssl</a> <a href="../../tags/os/" style="font-size: 10px;">os</a> <a href="../../tags/otp/" style="font-size: 10px;">otp</a> <a href="../../tags/ovz/" style="font-size: 10px;">ovz</a> <a href="../../tags/p14/" style="font-size: 10px;">p14</a> <a href="../../tags/packet-capture/" style="font-size: 10px;">packet capture</a> <a href="../../tags/pat/" style="font-size: 10px;">pat</a> <a href="../../tags/pdf/" style="font-size: 10px;">pdf</a> <a href="../../tags/pem/" style="font-size: 10.43px;">pem</a> <a href="../../tags/perf/" style="font-size: 10px;">perf</a> <a href="../../tags/ping/" style="font-size: 10px;">ping</a> <a href="../../tags/pip/" style="font-size: 10px;">pip</a> <a href="../../tags/plugin/" style="font-size: 10px;">plugin</a> <a href="../../tags/png/" style="font-size: 10px;">png</a> <a href="../../tags/powerbutton/" style="font-size: 10px;">powerbutton</a> <a href="../../tags/print/" style="font-size: 10px;">print</a> <a href="../../tags/pro/" style="font-size: 10px;">pro</a> <a href="../../tags/proxy/" style="font-size: 10.43px;">proxy</a> <a href="../../tags/pve/" style="font-size: 15.65px;">pve</a> <a href="../../tags/pvekclean/" style="font-size: 11.3px;">pvekclean</a> <a href="../../tags/python/" style="font-size: 13.91px;">python</a> <a href="../../tags/qcow2/" style="font-size: 10px;">qcow2</a> <a href="../../tags/qemu/" style="font-size: 10.43px;">qemu</a> <a href="../../tags/qemu-guest-agent/" style="font-size: 10px;">qemu-guest-agent</a> <a href="../../tags/rar/" style="font-size: 10px;">rar</a> <a href="../../tags/reboot/" style="font-size: 10px;">reboot</a> <a href="../../tags/reflog/" style="font-size: 10px;">reflog</a> <a href="../../tags/remote/" style="font-size: 10px;">remote</a> <a href="../../tags/remote-desktop/" style="font-size: 10.43px;">remote desktop</a> <a href="../../tags/renew/" style="font-size: 10px;">renew</a> <a href="../../tags/repo/" style="font-size: 10px;">repo</a> <a href="../../tags/resize/" style="font-size: 10px;">resize</a> <a href="../../tags/retina/" style="font-size: 10px;">retina</a> <a href="../../tags/root/" style="font-size: 10px;">root</a> <a href="../../tags/route/" style="font-size: 10px;">route</a> <a href="../../tags/router/" style="font-size: 10.43px;">router</a> <a href="../../tags/rule/" style="font-size: 10px;">rule</a> <a href="../../tags/rules/" style="font-size: 10px;">rules</a> <a href="../../tags/runtime/" style="font-size: 10px;">runtime</a> <a href="../../tags/safari/" style="font-size: 10px;">safari</a> <a href="../../tags/sata/" style="font-size: 10px;">sata</a> <a href="../../tags/scipy-notebook/" style="font-size: 10px;">scipy-notebook</a> <a href="../../tags/scoping/" style="font-size: 10px;">scoping</a> <a href="../../tags/scp/" style="font-size: 10px;">scp</a> <a href="../../tags/server/" style="font-size: 10.43px;">server</a> <a href="../../tags/server-is-busy/" style="font-size: 10px;">server is busy</a> <a href="../../tags/slmgr/" style="font-size: 10px;">slmgr</a> <a href="../../tags/so/" style="font-size: 10px;">so</a> <a href="../../tags/socket-proxyd/" style="font-size: 10px;">socket-proxyd</a> <a href="../../tags/socks/" style="font-size: 10px;">socks</a> <a href="../../tags/source/" style="font-size: 10px;">source</a> <a href="../../tags/spk/" style="font-size: 10px;">spk</a> <a href="../../tags/spring/" style="font-size: 11.3px;">spring</a> <a href="../../tags/springboot/" style="font-size: 12.17px;">springboot</a> <a href="../../tags/springfox/" style="font-size: 10.87px;">springfox</a> <a href="../../tags/ss/" style="font-size: 10px;">ss</a> <a href="../../tags/ssh/" style="font-size: 11.74px;">ssh</a> <a href="../../tags/ssl/" style="font-size: 10.43px;">ssl</a> <a href="../../tags/stash/" style="font-size: 10px;">stash</a> <a href="../../tags/string/" style="font-size: 10px;">string</a> <a href="../../tags/supernode/" style="font-size: 10.43px;">supernode</a> <a href="../../tags/svg/" style="font-size: 10px;">svg</a> <a href="../../tags/svn/" style="font-size: 10px;">svn</a> <a href="../../tags/swagger/" style="font-size: 11.3px;">swagger</a> <a href="../../tags/sync/" style="font-size: 10px;">sync</a> <a href="../../tags/synology/" style="font-size: 10.43px;">synology</a> <a href="../../tags/systemctl/" style="font-size: 10.87px;">systemctl</a> <a href="../../tags/systemd/" style="font-size: 14.78px;">systemd</a> <a href="../../tags/systemd-socket/" style="font-size: 10px;">systemd-socket</a> <a href="../../tags/tap/" style="font-size: 10px;">tap</a> <a href="../../tags/tap-windows/" style="font-size: 10px;">tap-windows</a> <a href="../../tags/tapwindows/" style="font-size: 10px;">tapwindows</a> <a href="../../tags/telecom/" style="font-size: 10.43px;">telecom</a> <a href="../../tags/template/" style="font-size: 10px;">template</a> <a href="../../tags/terminal/" style="font-size: 10px;">terminal</a> <a href="../../tags/tls/" style="font-size: 10px;">tls</a> <a href="../../tags/tmux/" style="font-size: 10.43px;">tmux</a> <a href="../../tags/token/" style="font-size: 10px;">token</a> <a href="../../tags/token%E5%A4%B1%E6%95%88/" style="font-size: 10px;">token失效</a> <a href="../../tags/totp/" style="font-size: 10px;">totp</a> <a href="../../tags/trigram/" style="font-size: 10px;">trigram</a> <a href="../../tags/tvbox/" style="font-size: 10.87px;">tvbox</a> <a href="../../tags/txt/" style="font-size: 10px;">txt</a> <a href="../../tags/ubuntu/" style="font-size: 11.74px;">ubuntu</a> <a href="../../tags/udisk/" style="font-size: 10px;">udisk</a> <a href="../../tags/ui/" style="font-size: 10px;">ui</a> <a href="../../tags/undertow/" style="font-size: 10px;">undertow</a> <a href="../../tags/unicode61/" style="font-size: 10px;">unicode61</a> <a href="../../tags/uninstall/" style="font-size: 10px;">uninstall</a> <a href="../../tags/unlocker/" style="font-size: 10px;">unlocker</a> <a href="../../tags/upgrade/" style="font-size: 10.43px;">upgrade</a> <a href="../../tags/url/" style="font-size: 10px;">url</a> <a href="../../tags/v2ray/" style="font-size: 10.43px;">v2ray</a> <a href="../../tags/vhd/" style="font-size: 10px;">vhd</a> <a href="../../tags/vim/" style="font-size: 10px;">vim</a> <a href="../../tags/vlmcsd/" style="font-size: 10px;">vlmcsd</a> <a href="../../tags/vm/" style="font-size: 10.43px;">vm</a> <a href="../../tags/vmdk/" style="font-size: 10px;">vmdk</a> <a href="../../tags/web/" style="font-size: 11.74px;">web</a> <a href="../../tags/websocket/" style="font-size: 10.43px;">websocket</a> <a href="../../tags/wechat/" style="font-size: 10px;">wechat</a> <a href="../../tags/windows/" style="font-size: 11.74px;">windows</a> <a href="../../tags/with/" style="font-size: 10px;">with</a> <a href="../../tags/worker/" style="font-size: 10.43px;">worker</a> <a href="../../tags/wow/" style="font-size: 10px;">wow</a> <a href="../../tags/xiaoya/" style="font-size: 10px;">xiaoya</a> <a href="../../tags/xml/" style="font-size: 10px;">xml</a> <a href="../../tags/yum/" style="font-size: 10px;">yum</a> <a href="../../tags/zip/" style="font-size: 10px;">zip</a> <a href="../../tags/%E4%B8%AD%E5%9B%BD%E7%94%B5%E4%BF%A1/" style="font-size: 10px;">中国电信</a> <a href="../../tags/%E4%B8%AD%E6%96%87%E6%90%9C%E7%B4%A2/" style="font-size: 10px;">中文搜索</a> <a href="../../tags/%E4%BA%91%E7%94%B5%E8%84%91/" style="font-size: 10.43px;">云电脑</a> <a href="../../tags/%E4%BA%A4%E6%8D%A2%E6%9C%BA/" style="font-size: 10px;">交换机</a> <a href="../../tags/%E4%BA%BA%E6%9C%BA%E5%8D%8F%E4%BD%9C/" style="font-size: 10px;">人机协作</a> <a href="../../tags/%E4%BB%A3%E7%90%86/" style="font-size: 10px;">代理</a> <a href="../../tags/%E4%BC%98%E5%8C%96/" style="font-size: 10px;">优化</a> <a href="../../tags/%E4%BD%93%E6%A3%80/" style="font-size: 10px;">体检</a> <a href="../../tags/%E5%80%BC%E7%8F%AD/" style="font-size: 10px;">值班</a> <a href="../../tags/%E5%81%A5%E5%BA%B7%E6%A3%80%E6%9F%A5/" style="font-size: 17.39px;">健康检查</a> <a href="../../tags/%E5%85%89%E7%8C%AB/" style="font-size: 10.43px;">光猫</a> <a href="../../tags/%E5%85%A8%E7%BB%BF/" style="font-size: 10px;">全绿</a> <a href="../../tags/%E5%85%A8%E9%87%8F%E5%90%8C%E6%AD%A5/" style="font-size: 10px;">全量同步</a> <a href="../../tags/%E5%85%AC%E7%BD%91IP/" style="font-size: 10px;">公网IP</a> <a href="../../tags/%E5%86%85%E5%AD%98/" style="font-size: 10px;">内存</a> <a href="../../tags/%E5%86%85%E5%AD%98%E4%BC%98%E5%8C%96/" style="font-size: 10px;">内存优化</a> <a href="../../tags/%E5%86%85%E7%BD%91/" style="font-size: 10.43px;">内网</a> <a href="../../tags/%E5%86%85%E7%BD%91IP/" style="font-size: 10px;">内网IP</a> <a href="../../tags/%E5%86%85%E7%BD%91%E6%B8%97%E9%80%8F/" style="font-size: 10px;">内网渗透</a> <a href="../../tags/%E5%86%99%E4%BD%9C/" style="font-size: 11.3px;">写作</a> <a href="../../tags/%E5%88%86%E8%AF%8D/" style="font-size: 10px;">分词</a> <a href="../../tags/%E5%8D%87%E7%BA%A7/" style="font-size: 11.3px;">升级</a> <a href="../../tags/%E5%8D%8F%E4%BD%9C/" style="font-size: 10px;">协作</a> <a href="../../tags/%E5%8D%9A%E5%AE%A2/" style="font-size: 10.87px;">博客</a> <a href="../../tags/%E5%8F%8D%E5%90%91%E4%BB%A3%E7%90%86/" style="font-size: 10px;">反向代理</a> <a href="../../tags/%E5%90%AF%E5%8A%A8/" style="font-size: 10px;">启动</a> <a href="../../tags/%E5%91%8A%E8%AD%A6/" style="font-size: 12.61px;">告警</a> <a href="../../tags/%E5%91%8A%E8%AD%A6%E4%BC%98%E5%8C%96/" style="font-size: 10px;">告警优化</a> <a href="../../tags/%E5%91%A8%E4%B8%80/" style="font-size: 10px;">周一</a> <a href="../../tags/%E5%91%A8%E4%B8%80%E7%84%A6%E8%99%91/" style="font-size: 10px;">周一焦虑</a> <a href="../../tags/%E5%91%A8%E4%BA%94/" style="font-size: 10px;">周五</a> <a href="../../tags/%E5%91%A8%E6%8A%A5/" style="font-size: 10.43px;">周报</a> <a href="../../tags/%E5%91%A8%E6%97%A5/" style="font-size: 10.43px;">周日</a> <a href="../../tags/%E5%91%A8%E6%9C%AB/" style="font-size: 11.3px;">周末</a> <a href="../../tags/%E5%A4%8F%E4%BB%A4%E6%97%B6/" style="font-size: 10px;">夏令时</a> <a href="../../tags/%E5%A4%9A%E6%99%BA%E8%83%BD%E4%BD%93/" style="font-size: 10.87px;">多智能体</a> <a href="../../tags/%E5%A4%9A%E8%8A%82%E7%82%B9/" style="font-size: 10.43px;">多节点</a> <a href="../../tags/%E5%A4%9A%E8%8A%82%E7%82%B9%E7%AE%A1%E7%90%86/" style="font-size: 10px;">多节点管理</a> <a href="../../tags/%E5%A4%A9%E7%8C%AB%E7%B2%BE%E7%81%B5/" style="font-size: 10px;">天猫精灵</a> <a href="../../tags/%E5%A4%A9%E7%BF%BC%E4%BA%91/" style="font-size: 10.43px;">天翼云</a> <a href="../../tags/%E5%AE%89%E5%85%A8/" style="font-size: 16.09px;">安全</a> <a href="../../tags/%E5%AE%89%E8%A3%85/" style="font-size: 10.43px;">安装</a> <a href="../../tags/%E5%AE%9A%E6%97%B6%E4%BB%BB%E5%8A%A1/" style="font-size: 10.43px;">定时任务</a> <a href="../../tags/%E5%AE%B9%E5%99%A8/" style="font-size: 12.61px;">容器</a> <a href="../../tags/%E5%AE%B9%E5%99%A8%E7%BD%91%E7%BB%9C/" style="font-size: 10px;">容器网络</a> <a href="../../tags/%E5%AF%BC%E5%85%A5/" style="font-size: 10px;">导入</a> <a href="../../tags/%E5%B0%8F%E7%B1%B3/" style="font-size: 10px;">小米</a> <a href="../../tags/%E5%B7%A5%E4%BD%9C%E6%84%9F%E6%82%9F/" style="font-size: 10.87px;">工作感悟</a> <a href="../../tags/%E5%B7%A5%E4%BD%9C%E6%97%A5%E5%B8%B8/" style="font-size: 10px;">工作日常</a> <a href="../../tags/%E5%B8%B8%E7%94%A8%E8%BD%AF%E4%BB%B6/" style="font-size: 10px;">常用软件</a> <a href="../../tags/%E5%B9%82%E7%AD%89/" style="font-size: 10px;">幂等</a> <a href="../../tags/%E5%B9%BF%E5%91%8A%E5%B1%8F%E8%94%BD/" style="font-size: 10px;">广告屏蔽</a> <a href="../../tags/%E5%BA%8F%E5%88%97%E5%8F%B7/" style="font-size: 10px;">序列号</a> <a href="../../tags/%E5%BA%94%E7%94%A8%E5%B8%82%E5%9C%BA/" style="font-size: 10px;">应用市场</a> <a href="../../tags/%E5%BC%82%E5%B8%B8/" style="font-size: 10px;">异常</a> <a href="../../tags/%E5%BF%83%E6%80%81/" style="font-size: 10px;">心态</a> <a href="../../tags/%E5%BF%83%E6%99%BA%E6%88%90%E9%95%BF/" style="font-size: 10px;">心智成长</a> <a href="../../tags/%E5%BF%83%E8%B7%B3/" style="font-size: 10px;">心跳</a> <a href="../../tags/%E5%BF%83%E8%B7%B3%E6%A3%80%E6%9F%A5/" style="font-size: 10.43px;">心跳检查</a> <a href="../../tags/%E6%80%A7%E8%83%BD%E4%BC%98%E5%8C%96/" style="font-size: 10px;">性能优化</a> <a href="../../tags/%E6%84%9F%E6%82%9F/" style="font-size: 10px;">感悟</a> <a href="../../tags/%E6%89%93%E5%B7%A5/" style="font-size: 18.7px;">打工</a> <a href="../../tags/%E6%89%93%E5%B7%A5%E4%BA%BA/" style="font-size: 10px;">打工人</a> <a href="../../tags/%E6%89%B9%E9%87%8F%E6%A0%A1%E9%AA%8C/" style="font-size: 10px;">批量校验</a> <a href="../../tags/%E6%8A%80%E6%9C%AF/" style="font-size: 19.13px;">技术</a> <a href="../../tags/%E6%8A%93%E5%8C%85/" style="font-size: 10px;">抓包</a> <a href="../../tags/%E6%8E%92%E6%9F%A5/" style="font-size: 10px;">排查</a> <a href="../../tags/%E6%8F%8F%E8%BF%B0%E6%96%87%E4%BB%B6/" style="font-size: 10px;">描述文件</a> <a href="../../tags/%E6%94%BE%E4%B8%8B/" style="font-size: 10px;">放下</a> <a href="../../tags/%E6%95%85%E9%9A%9C/" style="font-size: 10.43px;">故障</a> <a href="../../tags/%E6%95%85%E9%9A%9C%E6%8E%92%E6%9F%A5/" style="font-size: 12.61px;">故障排查</a> <a href="../../tags/%E6%95%88%E7%8E%87/" style="font-size: 10.43px;">效率</a> <a href="../../tags/%E6%95%88%E7%8E%87%E5%B7%A5%E5%85%B7/" style="font-size: 11.3px;">效率工具</a> <a href="../../tags/%E6%95%B0%E6%8D%AE/" style="font-size: 10px;">数据</a> <a href="../../tags/%E6%97%81%E8%B7%AF%E7%94%B1/" style="font-size: 10px;">旁路由</a> <a href="../../tags/%E6%97%A0%E6%9C%8D%E5%8A%A1%E5%99%A8/" style="font-size: 10px;">无服务器</a> <a href="../../tags/%E6%97%A5%E8%AE%B0/" style="font-size: 19.57px;">日记</a> <a href="../../tags/%E6%97%B6%E5%8C%BA/" style="font-size: 10px;">时区</a> <a href="../../tags/%E6%98%BE%E5%8D%A1%E8%99%9A%E6%8B%9F%E5%8C%96/" style="font-size: 10px;">显卡虚拟化</a> <a href="../../tags/%E6%99%BA%E8%83%BD%E5%AE%B6%E5%B1%85/" style="font-size: 10px;">智能家居</a> <a href="../../tags/%E6%99%BA%E8%83%BD%E9%9F%B3%E7%AE%B1/" style="font-size: 10px;">智能音箱</a> <a href="../../tags/%E6%9C%8D%E5%8A%A1%E5%99%A8/" style="font-size: 10px;">服务器</a> <a href="../../tags/%E6%9C%8D%E5%8A%A1%E7%AE%A1%E7%90%86/" style="font-size: 10px;">服务管理</a> <a href="../../tags/%E6%9E%B6%E6%9E%84/" style="font-size: 10px;">架构</a> <a href="../../tags/%E6%A2%AF%E5%AD%90/" style="font-size: 10px;">梯子</a> <a href="../../tags/%E6%A8%A1%E5%9D%97/" style="font-size: 10px;">模块</a> <a href="../../tags/%E6%A8%A1%E5%9E%8B%E6%8E%A2%E6%B5%8B/" style="font-size: 10px;">模型探测</a> <a href="../../tags/%E6%A8%A1%E5%9E%8B%E8%B0%83%E7%94%A8/" style="font-size: 10.43px;">模型调用</a> <a href="../../tags/%E6%B5%81%E7%A8%8B/" style="font-size: 10px;">流程</a> <a href="../../tags/%E6%B5%81%E7%A8%8B%E5%9B%BE/" style="font-size: 10px;">流程图</a> <a href="../../tags/%E6%B5%8F%E8%A7%88%E5%99%A8/" style="font-size: 10.43px;">浏览器</a> <a href="../../tags/%E6%BC%AB%E6%B8%B8/" style="font-size: 10px;">漫游</a> <a href="../../tags/%E6%BF%80%E6%B4%BB/" style="font-size: 10px;">激活</a> <a href="../../tags/%E7%81%AB%E7%BB%92/" style="font-size: 10px;">火绒</a> <a href="../../tags/%E7%84%A6%E8%99%91/" style="font-size: 10.87px;">焦虑</a> <a href="../../tags/%E7%8E%84%E5%AD%A6/" style="font-size: 10px;">玄学</a> <a href="../../tags/%E7%94%9F%E6%B4%BB/" style="font-size: 10px;">生活</a> <a href="../../tags/%E7%94%B5%E4%BF%A1/" style="font-size: 10.43px;">电信</a> <a href="../../tags/%E7%94%BB%E5%9B%BE/" style="font-size: 10px;">画图</a> <a href="../../tags/%E7%9B%91%E6%8E%A7/" style="font-size: 16.96px;">监控</a> <a href="../../tags/%E7%9B%91%E6%8E%A7%E7%B3%BB%E7%BB%9F/" style="font-size: 10px;">监控系统</a> <a href="../../tags/%E7%9B%B4%E6%92%AD%E6%BA%90/" style="font-size: 10px;">直播源</a> <a href="../../tags/%E7%9B%B4%E8%A7%89/" style="font-size: 10px;">直觉</a> <a href="../../tags/%E7%A3%81%E7%9B%98/" style="font-size: 10px;">磁盘</a> <a href="../../tags/%E7%AB%AF%E5%8F%A3/" style="font-size: 10.43px;">端口</a> <a href="../../tags/%E7%AB%AF%E5%8F%A3%E5%86%B2%E7%AA%81/" style="font-size: 10.43px;">端口冲突</a> <a href="../../tags/%E7%AB%AF%E5%8F%A3%E6%89%AB%E6%8F%8F/" style="font-size: 10px;">端口扫描</a> <a href="../../tags/%E7%AE%A1%E7%90%86/" style="font-size: 10px;">管理</a> <a href="../../tags/%E7%BB%AD%E6%9C%9F/" style="font-size: 10px;">续期</a> <a href="../../tags/%E7%BD%91%E5%85%B3/" style="font-size: 10px;">网关</a> <a href="../../tags/%E7%BD%91%E7%BB%9C/" style="font-size: 15.22px;">网络</a> <a href="../../tags/%E7%BD%91%E7%BB%9C%E9%A3%8E%E6%9A%B4/" style="font-size: 10px;">网络风暴</a> <a href="../../tags/%E7%BE%A4%E6%99%96/" style="font-size: 10.43px;">群晖</a> <a href="../../tags/%E8%84%9A%E6%9C%AC/" style="font-size: 10px;">脚本</a> <a href="../../tags/%E8%84%9A%E6%9C%AC%E4%BC%98%E5%8C%96/" style="font-size: 10px;">脚本优化</a> <a href="../../tags/%E8%85%BE%E8%AE%AF/" style="font-size: 10px;">腾讯</a> <a href="../../tags/%E8%87%AA%E5%8A%A8%E5%8C%96/" style="font-size: 16.52px;">自动化</a> <a href="../../tags/%E8%87%AA%E5%8A%A8%E6%81%A2%E5%A4%8D/" style="font-size: 10.43px;">自动恢复</a> <a href="../../tags/%E8%87%AA%E6%88%91%E5%8F%8D%E6%80%9D/" style="font-size: 10.43px;">自我反思</a> <a href="../../tags/%E8%87%AA%E6%88%91%E6%89%93%E8%84%B8/" style="font-size: 10px;">自我打脸</a> <a href="../../tags/%E8%99%9A%E6%8B%9F%E6%9C%BA/" style="font-size: 11.74px;">虚拟机</a> <a href="../../tags/%E8%AE%A4%E8%AF%81/" style="font-size: 10.43px;">认证</a> <a href="../../tags/%E8%AF%81%E4%B9%A6/" style="font-size: 10px;">证书</a> <a href="../../tags/%E8%AF%AD%E9%9B%80/" style="font-size: 10px;">语雀</a> <a href="../../tags/%E8%AF%AF%E6%8A%A5%E8%BF%87%E6%BB%A4/" style="font-size: 10px;">误报过滤</a> <a href="../../tags/%E8%B6%85%E6%97%B6/" style="font-size: 10.43px;">超时</a> <a href="../../tags/%E8%B7%AF%E7%94%B1/" style="font-size: 10px;">路由</a> <a href="../../tags/%E8%B7%AF%E7%94%B1%E5%99%A8/" style="font-size: 11.3px;">路由器</a> <a href="../../tags/%E8%BD%AF%E4%BB%B6%E7%AE%A1%E5%AE%B6/" style="font-size: 10px;">软件管家</a> <a href="../../tags/%E8%BD%AF%E8%B7%AF%E7%94%B1/" style="font-size: 10.43px;">软路由</a> <a href="../../tags/%E8%BF%90%E7%BB%B4/" style="font-size: 20px;">运维</a> <a href="../../tags/%E8%BF%90%E7%BB%B4%E7%9B%91%E6%8E%A7/" style="font-size: 10.43px;">运维监控</a> <a href="../../tags/%E8%BF%9B%E7%A8%8B/" style="font-size: 10.43px;">进程</a> <a href="../../tags/%E8%BF%9E%E6%8E%A5%E4%BF%9D%E6%B4%BB/" style="font-size: 10px;">连接保活</a> <a href="../../tags/%E8%BF%9E%E6%8E%A5%E9%97%AE%E9%A2%98/" style="font-size: 10px;">连接问题</a> <a href="../../tags/%E9%80%9A%E4%BF%A1%E6%9C%BA%E5%88%B6/" style="font-size: 10px;">通信机制</a> <a href="../../tags/%E9%80%9A%E7%9F%A5/" style="font-size: 10px;">通知</a> <a href="../../tags/%E9%83%A8%E7%BD%B2/" style="font-size: 12.17px;">部署</a> <a href="../../tags/%E9%85%8D%E7%BD%AE/" style="font-size: 10.87px;">配置</a> <a href="../../tags/%E9%92%89%E9%92%89/" style="font-size: 10.43px;">钉钉</a> <a href="../../tags/%E9%95%9C%E5%83%8F/" style="font-size: 10.87px;">镜像</a> <a href="../../tags/%E9%95%9C%E5%83%8F%E6%BA%90/" style="font-size: 10px;">镜像源</a> <a href="../../tags/%E9%97%A8%E7%AA%97%E4%BC%A0%E6%84%9F%E5%99%A8/" style="font-size: 10px;">门窗传感器</a> <a href="../../tags/%E9%97%AE%E9%A2%98%E6%8E%92%E6%9F%A5/" style="font-size: 17.83px;">问题排查</a> <a href="../../tags/%E9%98%B2%E7%81%AB%E5%A2%99/" style="font-size: 11.3px;">防火墙</a> <a href="../../tags/%E9%98%BF%E9%87%8C%E4%BA%91/" style="font-size: 11.3px;">阿里云</a> <a href="../../tags/%E9%98%BF%E9%87%8C%E6%BA%90/" style="font-size: 10.43px;">阿里源</a> <a href="../../tags/%E9%9B%86%E5%AE%A2/" style="font-size: 10.43px;">集客</a> <a href="../../tags/%E9%A3%9E%E4%B9%A6/" style="font-size: 10.43px;">飞书</a>
+    </div>
+    
+      <script>
+        var maxTagcloud = parseInt(17);
+        var tags_length = parseInt(525);
+        var tags_arr = [];
+        for(var i = 0; i < tags_length; i++){
+          tags_arr.push(i);
+        }
+        tags_arr.sort(function (l, r) {
+          return Math.random() > 0.5 ? -1 : 1;
+        });
+        tags_arr = tags_arr.slice(0, maxTagcloud < tags_length ? tags_length - maxTagcloud : 0);
+        for(var tag_i = 0; tag_i < tags_arr.length; tag_i++){
+          document.getElementById("randomtagcloud").children[tags_arr[tag_i]].style.display = 'none';
+        }
+      </script>
+    
+  </div>
+
+    
+        
+        <!-- 一言 -->
+<div class="nexmoe-widget-wrap">
+  <h3 class="nexmoe-widget-title">
+    Hitokoto
+  </h3>
+  <div class="nexmoe-widget">
+    <ul class="hitokoto-box">
+      <li id="hitokoto_text_parent" class="hitokoto-text" hitokotoCategory="">
+        <a href="#" id="hitokoto_text">
+          
+        </a>
+        <a href="#" id="hitokoto_error_text" style="display: none;">
+          
+        </a>
+      </li>
+    </ul>
+  </div>
+</div>
+
+<script>
+  let hitokotoText = document.getElementById('hitokoto_text')
+  let hitokotoErroText = document.getElementById('hitokoto_error_text')
+  let hitokotoCategory = document.getElementById('hitokoto_text_parent').getAttribute('hitokotoCategory')
+  window.addEventListener('load', function () {
+    let url = 'https://v1.hitokoto.cn'
+    if (hitokotoCategory) {
+      url += '?c=' + hitokotoCategory
+    }
+    fetch(url)
+      .then(response => response.json())
+      .then(data => {
+        hitokotoText.innerText = "「 " + data.hitokoto + " 」 from " + data.from
+        hitokotoText.href = 'https://hitokoto.cn/?uuid=' + data.uuid
+      })
+      .catch((reason) => {
+        console.error(11, reason)
+        hitokotoText.style.display = 'none'
+        hitokotoErroText.style.display = 'block'
+      })
+  })
+</script>
+    
+        
+        
+  <div class="nexmoe-widget-wrap">
+    <h3 class="nexmoe-widget-title">Archive</h3>
+    <div class="nexmoe-widget">
+      <ul class="archive-list"><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2026/">2026</a><span class="archive-list-count">186</span></li><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2025/">2025</a><span class="archive-list-count">2</span></li><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2024/">2024</a><span class="archive-list-count">19</span></li><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2023/">2023</a><span class="archive-list-count">18</span></li><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2022/">2022</a><span class="archive-list-count">4</span></li><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2021/">2021</a><span class="archive-list-count">114</span></li><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2018/">2018</a><span class="archive-list-count">1</span></li></ul>
+    </div>
+  </div>
+
+
+
+    
+        
+        
+  <div class="nexmoe-widget-wrap">
+    <h3 class="nexmoe-widget-title">Recent Posts</h3>
+    <div class="nexmoe-widget">
+      <ul>
+        
+          <li>
+            <a href="../../post/2026-06-07-openclaw-6node-health-check-false-positive-filtering/">OpenClaw 6 节点统一健康检查的&#34;误报过滤&#34;实战：NRestarts、systemd-socket-proxyd、DIY-MINI 三类伪信号一次讲清</a>
+          </li>
+        
+          <li>
+            <a href="../../post/2026-06-07-sunday-evening-the-7th-diary-i-finally-closed-the-laptop/">周日晚上 21:15，6 节点全绿的&#34;第 7 篇日记&#34;，我今晚终于关电脑了</a>
+          </li>
+        
+          <li>
+            <a href="../../post/2026-06-06-multi-node-model-health-probe-diy-mini-batch-verification/">跨多节点 OpenClaw 集群的统一模型健康探测：DIY-MINI 一键全打 + 4 节点批量校验实战</a>
+          </li>
+        
+          <li>
+            <a href="../../post/2026-06-06-six-green-days-and-the-saturday-i-still-opened-the-laptop/">周六晚上 21:15，6 天全绿的&#34;监控报告周&#34;结束了，我却没有关电脑</a>
+          </li>
+        
+          <li>
+            <a href="../../post/2026-06-05-sqlite-fts5-chinese-tokenizer-trigram-jieba-upgrade/">SQLite FTS5 默认 unicode61 分词对中文&#34;返回 0 条&#34;的根因分析与三种升级方案（jieba / trigram / porter-wrap）</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+
+    
+        
+        <div class="nexmoe-widget-wrap">
+    <div class="nexmoe-widget nexmoe-link">
+		<ul>
+        
+            <li>
+                <a href="https://blog.example.com/" target="_blank" >
+                    <img src="/images/avatar.webp" alt="魔都水滴Blog"></img>
+                    <p>魔都水滴Blog</p>
+                </a>
+            </li>
+        
+		</ul>
+    </div>
+</div>
+<style>
+.nexmoe-widget-wrap .nexmoe-link ul li a {
+    text-align : center;
+}
+.nexmoe-widget-wrap .nexmoe-link ul li a img {
+    max-width : 100%;
+}
+.nexmoe-widget-wrap .nexmoe-link ul li a p {
+    margin: 10px 0;
+}
+</style>
+
+    
+   
+    <div class="nexmoe-copyright">
+        &copy; 2026 Margrop
+        Powered by <a href="http://hexo.io/" target="_blank">Hexo</a>
+        & <a href="https://github.com/theme-nexmoe/hexo-theme-nexmoe" target="_blank">Nexmoe</a>
+        
+    </div>
+</div><!-- .nexmoe-drawer --></div><div id="nexmoe-content"><div class="nexmoe-primary"><div class="nexmoe-post">
+  <article>
+    
+        <div class="nexmoe-post-cover absolute" style="padding-top: 56.25%;"> 
+            <img src="https://picsum.photos/seed/tech0607/1280/720" alt="OpenClaw 6 节点统一健康检查的&#34;误报过滤&#34;实战：NRestarts、systemd-socket-proxyd、DIY-MINI 三类伪信号一次讲清" loading="lazy">
+            <h1>OpenClaw 6 节点统一健康检查的&#34;误报过滤&#34;实战：NRestarts、systemd-socket-proxyd、DIY-MINI 三类伪信号一次讲清</h1>
+        </div>
+    
+    
+    <div class="nexmoe-post-meta">
+    <div class="nexmoe-rainbow">
+        <a class="nexmoefont icon-calendar-fill">2026年06月07日</a>
+        
+            <a class="nexmoefont icon-appstore-fill -link" href="../../categories/ai-tech/">ai_tech</a>
+        
+        
+    <a><i class="nexmoefont icon-areachart"></i>约49k字</a>
+    <a><i class="nexmoefont icon-time-circle-fill"></i>预计需要1:10分钟</a>
+
+    </div>
+    
+    
+    
+    
+    
+</div>
+
+    <h2 id="前言"><a href="#前言" class="headerlink" title="前言"></a>前言</h2><p>如果你维护一个<strong>多节点的 OpenClaw + HermesAgent 集群</strong>——比如 4 个 OpenClaw 节点 + 2 个 Hermes 节点——你迟早会撞上**”健康检查的误报”**问题：</p>
+<blockquote>
+<p><strong>“看到一个异常数据 &#x3D; 真的有故障？”</strong><br><strong>“有时候，’看着像故障’是设计内行为，乱修反而会出真故障。”</strong></p>
+</blockquote>
+<p>我周日 16:15 那次 6 节点健康检查，遇到了**3 个典型的”伪信号”**：</p>
+<ol>
+<li><strong>VM153 NRestarts&#x3D;2258</strong> —— 看着像 restart loop，实际是<strong>历史累计算法</strong></li>
+<li><strong>VPS4 systemd-socket-proxyd 孤儿进程</strong> —— 看着像故障，实际是 <strong>socket activation by-design</strong></li>
+<li><strong>VPS4 <code>channels status</code> 报 “Gateway not reachable”</strong> —— 看着像断连，实际是 <strong>CLI 缺 token 副作用</strong></li>
+</ol>
+<p><strong>—— 第一次见这种”伪信号”的人，很容易直接开电脑修。</strong></p>
+<p><strong>—— 修了，会出真故障。</strong></p>
+<p>本文会基于这次踩坑，给出<strong>一个 6 节点统一健康检查的”误报过滤”方案</strong>：</p>
+<ol>
+<li><strong>NRestarts 累计算法的真相 + 怎么判断”当前是否在 restart loop”</strong></li>
+<li><strong>systemd-socket-proxyd 的 socket activation 原理 + by-design 判断</strong></li>
+<li><strong>DIY-MINI 跨 4 节点端到端验 + 误报自检清单</strong></li>
+<li><strong>6 节点一键统一健康检查脚本（带误报过滤）</strong></li>
+<li><strong>Q&amp;A：常见 6 类”伪信号”和真信号的区别</strong></li>
+</ol>
+<h2 id="一、6-节点健康检查里最常见的-3-类”伪信号”"><a href="#一、6-节点健康检查里最常见的-3-类”伪信号”" class="headerlink" title="一、6 节点健康检查里最常见的 3 类”伪信号”"></a>一、6 节点健康检查里最常见的 3 类”伪信号”</h2><h3 id="1-1-NRestarts-2258-≠-真的重启了-2258-次"><a href="#1-1-NRestarts-2258-≠-真的重启了-2258-次" class="headerlink" title="1.1 NRestarts&#x3D;2258 ≠ 真的重启了 2258 次"></a>1.1 NRestarts&#x3D;2258 ≠ 真的重启了 2258 次</h3><p><strong>周日 16:15 的检查输出</strong>：</p>
+<figure class="highlight routeros"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><code class="hljs routeros">VM153 (p3)  ✅  <span class="hljs-attribute">NRestarts</span>=2258<br></code></pre></td></tr></table></figure>
+
+<p><strong>—— 看到 2258，第一反应：</strong>“这个服务挂了 2258 次？？？”**</p>
+<p><strong>—— 真相：systemd 的 <code>NRestarts</code> 是</strong>历史累计算法<strong>——上次清零之前的所有 restart 次数。</strong></p>
+<p><strong>—— 关键问题不是 NRestarts 的值，</strong>是”PID 有没有换过”<strong>。</strong></p>
+<p><strong>判断方法</strong>：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 1) 拿当前 PID</span><br>$ ssh 192.168.102.xxx <span class="hljs-string">&quot;ps -ef | grep openclaw-gateway | grep -v grep&quot;</span><br>root      665466  ...  /usr/bin/node openclaw-gateway<br><br><span class="hljs-comment"># 2) 看 NRestarts 和 PID 是不是&quot;同一对&quot;</span><br><span class="hljs-comment">#    累计算法 = PID 一直不变 + NRestarts 大数字 = 历史遗留</span><br><span class="hljs-comment">#    真 restart loop = NRestarts 在涨 + PID 一直在换</span><br></code></pre></td></tr></table></figure>
+
+<p><strong>NRestarts 误报判断流程</strong>：</p>
+<figure class="highlight pgsql"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><code class="hljs pgsql">NRestarts &gt; <span class="hljs-number">100</span> ？<br>├── 是 → PID 是不是同一个？<br>│   ├── 是 → ✅ 累计算法，PID 跑了 N 天，NRestarts 是历史 → 不是故障<br>│   └── 不是 → ❌ 真 <span class="hljs-keyword">restart</span> <span class="hljs-keyword">loop</span>，要查 journal<br>└── 否 → ✅ 正常<br></code></pre></td></tr></table></figure>
+
+<p><strong>—— 我周日看到 2258，第一反应是”先查 PID”。</strong></p>
+<p><strong>—— 查到 PID 665466 从 6&#x2F;3 16:25 一直跑到 6&#x2F;7 21:05，4 天没换。</strong></p>
+<p><strong>—— ✅ 误报，PASS。</strong></p>
+<h3 id="1-2-systemd-socket-proxyd-孤儿进程-≠-真的有进程泄漏"><a href="#1-2-systemd-socket-proxyd-孤儿进程-≠-真的有进程泄漏" class="headerlink" title="1.2 systemd-socket-proxyd 孤儿进程 ≠ 真的有进程泄漏"></a>1.2 systemd-socket-proxyd 孤儿进程 ≠ 真的有进程泄漏</h3><p><strong>周日 16:15 的检查输出</strong>：</p>
+<figure class="highlight gams"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><code class="hljs gams"><span class="hljs-symbol">$</span> ssh <span class="hljs-number">192.168</span><span class="hljs-number">.102</span>.xxx <span class="hljs-string">&quot;ps -ef | grep systemd-socket-proxyd&quot;</span><br><span class="hljs-function"><span class="hljs-title">root</span></span>     <span class="hljs-number">4107220</span>  ...  systemd-socket-proxyd<br><br><span class="hljs-symbol">$</span> systemctl status <span class="hljs-number">4107220</span><br>Failed to get unit: Unknown unit<br></code></pre></td></tr></table></figure>
+
+<p><strong>—— 看到”没 unit 的进程”，第一反应：</strong>“孤儿进程，是不是 restart loop 的产物？”**</p>
+<p><strong>—— 真相：systemd 的 <strong>socket activation 机制</strong>，会启动一个 <code>systemd-socket-proxyd</code> 来守护 socket 单元（如 <code>openclaw-loopback-proxy.socket</code>）。</strong></p>
+<p><strong>—— 这个守护进程可以”独立于 service 单元”——只要 socket 单元在跑，它就在跑。</strong></p>
+<p><strong>判断方法</strong>：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 1) 看有没有对应的 .socket 单元</span><br>$ systemctl list-units --<span class="hljs-built_in">type</span>=socket | grep -i openclaw<br>openclaw-loopback-proxy.socket  loaded  active  listening  127.0.0.1:18789<br><br><span class="hljs-comment"># 2) 看 socket 是不是 by-design</span><br><span class="hljs-comment">#    127.0.0.1:18789 = 本地 loopback 代理到实际 node</span><br><span class="hljs-comment">#    这种&quot;本地代理&quot;几乎都是 socket activation</span><br><br><span class="hljs-comment"># 3) 杀掉看会不会 respawn</span><br>$ <span class="hljs-built_in">kill</span> 4107220<br><span class="hljs-comment"># 几秒后 systemd 会自动重启</span><br>$ ps -ef | grep systemd-socket-proxyd<br><span class="hljs-comment"># 新的 PID 出现 → by-design，不是泄漏</span><br></code></pre></td></tr></table></figure>
+
+<p><strong>systemd-socket 误报判断流程</strong>：</p>
+<figure class="highlight livecodeserver"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><code class="hljs livecodeserver">看到 systemd-<span class="hljs-built_in">socket</span>-proxyd 进程但没 unit ？<br>├── 是 → 查 <span class="hljs-built_in">socket</span> 单元<br>│   ├── 找到对应 .<span class="hljs-built_in">socket</span> + listening → ✅ <span class="hljs-keyword">by</span>-design，<span class="hljs-built_in">socket</span> activation<br>│   └── 找不到 → ❌ 真孤儿进程，要查谁启动的<br>└── 否 → ✅ 正常 service 进程<br></code></pre></td></tr></table></figure>
+
+<p><strong>—— 我周日第一次见这个，</strong>差点当成孤儿进程修了<strong>。</strong></p>
+<p><strong>—— 幸好先查了 <code>list-units --type=socket</code>，看到 <code>openclaw-loopback-proxy.socket</code> 在 listening。</strong></p>
+<p><strong>—— ✅ 误报，PASS。</strong></p>
+<h3 id="1-3-channels-status-报-“Gateway-not-reachable”-≠-节点真的没连"><a href="#1-3-channels-status-报-“Gateway-not-reachable”-≠-节点真的没连" class="headerlink" title="1.3 channels status 报 “Gateway not reachable” ≠ 节点真的没连"></a>1.3 <code>channels status</code> 报 “Gateway not reachable” ≠ 节点真的没连</h3><p><strong>周日 16:15 的检查输出</strong>：</p>
+<figure class="highlight crystal"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><code class="hljs crystal"><span class="hljs-variable">$ </span>openclaw channels status<br>❌ Gateway not reachable<br></code></pre></td></tr></table></figure>
+
+<p><strong>—— 看到这句，</strong>第一反应：**”节点真的没连上？”**</p>
+<p><strong>—— 真相：<code>channels status</code> 是 CLI 命令，</strong>需要带 token<strong>（WS 鉴权）。</strong></p>
+<p><strong>—— token 缺失时，CLI 走 “config-only mode”——只读本地配置，不连 gateway。</strong></p>
+<p><strong>—— “Gateway not reachable” 是 token 缺失的</strong>副作用<strong>，不是节点没连。</strong></p>
+<p><strong>判断方法</strong>：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 1) 直接打 readyz</span><br>$ curl -s http://192.168.102.xxx:18789/readyz<br>&#123;<span class="hljs-string">&quot;status&quot;</span>:<span class="hljs-string">&quot;ready&quot;</span>,<span class="hljs-string">&quot;uptime&quot;</span>:<span class="hljs-string">&quot;3d12h&quot;</span>,<span class="hljs-string">&quot;pid&quot;</span>:24831,<span class="hljs-string">&quot;providers&quot;</span>:3&#125;<br><span class="hljs-comment"># ✅ gateway 是活的</span><br><br><span class="hljs-comment"># 2) 带 token 跑 channels status</span><br>$ openclaw --token <span class="hljs-string">&quot;<span class="hljs-variable">$GATEWAY_TOKEN</span>&quot;</span> channels status<br><span class="hljs-comment"># 如果带 token 后能跑通 → CLI 缺 token 的副作用</span><br><span class="hljs-comment"># 如果带 token 还报 &quot;Gateway not reachable&quot; → 真断连</span><br></code></pre></td></tr></table></figure>
+
+<p><strong>channels 误报判断流程</strong>：</p>
+<figure class="highlight stata"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><code class="hljs stata">openclaw channels status 报 Gateway not reachable ？<br>├── 是 → 是 <span class="hljs-keyword">CLI</span> 缺 <span class="hljs-keyword">token</span> 还是节点真没连？<br>│   ├── 缺 <span class="hljs-keyword">token</span> → ✅ 副作用，--<span class="hljs-keyword">token</span> 加上就好<br>│   └── 真没连 → ❌ 查 gateway 进程<br>└── 否 → ✅ 正常<br></code></pre></td></tr></table></figure>
+
+<p><strong>—— 我周日看到这个，没直接 panic。</strong></p>
+<p><strong>—— 先打 readyz，看到 200 OK。</strong></p>
+<p><strong>—— 确认节点是活的。</strong></p>
+<p><strong>—— ✅ 误报，PASS。</strong></p>
+<h2 id="二、DIY-MINI-端到端验：6-节点里-OpenClaw-部分的最后一道关"><a href="#二、DIY-MINI-端到端验：6-节点里-OpenClaw-部分的最后一道关" class="headerlink" title="二、DIY-MINI 端到端验：6 节点里 OpenClaw 部分的最后一道关"></a>二、DIY-MINI 端到端验：6 节点里 OpenClaw 部分的最后一道关</h2><h3 id="2-1-端到端验-“readyz-200-模型调通”-双指标"><a href="#2-1-端到端验-“readyz-200-模型调通”-双指标" class="headerlink" title="2.1 端到端验 &#x3D; “readyz 200 + 模型调通” 双指标"></a>2.1 端到端验 &#x3D; “readyz 200 + 模型调通” 双指标</h3><p>6&#x2F;6 那篇我讲过 **”readyz 200 ≠ 模型能调通”**。</p>
+<p>周日 16:15 这次，我<strong>先把 4 个 OpenClaw 节点跑了一次端到端</strong>：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 节点 1：Macmini (p6)</span><br>$ openclaw chat --node p6 <span class="hljs-string">&quot;ping&quot;</span><br>pong   ← ✅<br><br><span class="hljs-comment"># 节点 2：VM151 (p1)</span><br>$ openclaw chat --node p1 <span class="hljs-string">&quot;ping&quot;</span><br>pong   ← ✅<br><br><span class="hljs-comment"># 节点 3：VM153 (p3)</span><br>$ openclaw chat --node p3 <span class="hljs-string">&quot;ping&quot;</span><br>pong   ← ✅<br><br><span class="hljs-comment"># 节点 4：VPS4 (p14)</span><br>$ openclaw chat --node p14 <span class="hljs-string">&quot;ping&quot;</span><br>pong   ← ✅<br></code></pre></td></tr></table></figure>
+
+<p><strong>—— 4&#x2F;4 端到端 OK。</strong></p>
+<p><strong>—— 这一步不能省。</strong></p>
+<p><strong>—— 因为 NRestarts 误报、socket 误报、channels 误报，</strong>全在 gateway 层<strong>。</strong></p>
+<p><strong>—— 模型层是</strong>独立的另一道关<strong>。</strong></p>
+<h3 id="2-2-Hermes-节点没有-DIY-MINI-探针"><a href="#2-2-Hermes-节点没有-DIY-MINI-探针" class="headerlink" title="2.2 Hermes 节点没有 DIY-MINI 探针"></a>2.2 Hermes 节点没有 DIY-MINI 探针</h3><p><strong>重要</strong>：<strong>2 个 Hermes 节点走的是 9119 status 端点 + dingtalk&#x2F;wecom 连接状态</strong>。</p>
+<p><strong>—— 它们和 OpenClaw 不是一套体系。</strong></p>
+<p><strong>—— Hermes 误报判断逻辑不一样。</strong></p>
+<p><strong>—— 本文聚焦 OpenClaw 4 节点。</strong></p>
+<h2 id="三、6-节点统一健康检查脚本（带误报过滤）"><a href="#三、6-节点统一健康检查脚本（带误报过滤）" class="headerlink" title="三、6 节点统一健康检查脚本（带误报过滤）"></a>三、6 节点统一健康检查脚本（带误报过滤）</h2><p>把”6 节点一键检查 + 误报过滤”封成一个脚本：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br><span class="line">59</span><br><span class="line">60</span><br><span class="line">61</span><br><span class="line">62</span><br><span class="line">63</span><br><span class="line">64</span><br><span class="line">65</span><br><span class="line">66</span><br><span class="line">67</span><br><span class="line">68</span><br><span class="line">69</span><br><span class="line">70</span><br><span class="line">71</span><br><span class="line">72</span><br><span class="line">73</span><br><span class="line">74</span><br><span class="line">75</span><br><span class="line">76</span><br><span class="line">77</span><br><span class="line">78</span><br><span class="line">79</span><br><span class="line">80</span><br><span class="line">81</span><br><span class="line">82</span><br><span class="line">83</span><br><span class="line">84</span><br><span class="line">85</span><br><span class="line">86</span><br><span class="line">87</span><br><span class="line">88</span><br><span class="line">89</span><br><span class="line">90</span><br><span class="line">91</span><br><span class="line">92</span><br><span class="line">93</span><br><span class="line">94</span><br><span class="line">95</span><br><span class="line">96</span><br><span class="line">97</span><br><span class="line">98</span><br><span class="line">99</span><br><span class="line">100</span><br><span class="line">101</span><br><span class="line">102</span><br><span class="line">103</span><br><span class="line">104</span><br><span class="line">105</span><br><span class="line">106</span><br><span class="line">107</span><br><span class="line">108</span><br><span class="line">109</span><br><span class="line">110</span><br><span class="line">111</span><br><span class="line">112</span><br><span class="line">113</span><br><span class="line">114</span><br><span class="line">115</span><br><span class="line">116</span><br><span class="line">117</span><br><span class="line">118</span><br><span class="line">119</span><br><span class="line">120</span><br><span class="line">121</span><br><span class="line">122</span><br><span class="line">123</span><br><span class="line">124</span><br><span class="line">125</span><br><span class="line">126</span><br><span class="line">127</span><br><span class="line">128</span><br><span class="line">129</span><br><span class="line">130</span><br><span class="line">131</span><br><span class="line">132</span><br><span class="line">133</span><br><span class="line">134</span><br><span class="line">135</span><br><span class="line">136</span><br><span class="line">137</span><br><span class="line">138</span><br><span class="line">139</span><br><span class="line">140</span><br><span class="line">141</span><br><span class="line">142</span><br><span class="line">143</span><br><span class="line">144</span><br><span class="line">145</span><br><span class="line">146</span><br><span class="line">147</span><br><span class="line">148</span><br><span class="line">149</span><br><span class="line">150</span><br><span class="line">151</span><br><span class="line">152</span><br><span class="line">153</span><br><span class="line">154</span><br><span class="line">155</span><br><span class="line">156</span><br><span class="line">157</span><br><span class="line">158</span><br><span class="line">159</span><br><span class="line">160</span><br><span class="line">161</span><br><span class="line">162</span><br><span class="line">163</span><br><span class="line">164</span><br><span class="line">165</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-meta">#!/bin/bash</span><br><span class="hljs-comment"># health-check-6nodes.sh</span><br><span class="hljs-comment"># 用途：6 节点统一健康检查（4 OpenClaw + 2 Hermes）+ 误报过滤</span><br><span class="hljs-comment"># 原则：只读、幂等、不触发任何业务告警</span><br><span class="hljs-comment"># 输出：每节点 OK/FAIL/PASS(误报) + 整体汇总</span><br><br><span class="hljs-built_in">set</span> -u<br><br>OC_NODES_FILE=<span class="hljs-string">&quot;<span class="hljs-variable">$&#123;1:-./oc-nodes.txt&#125;</span>&quot;</span><br>HERMES_NODES_FILE=<span class="hljs-string">&quot;<span class="hljs-variable">$&#123;2:-./hermes-nodes.txt&#125;</span>&quot;</span><br>PROMPT=<span class="hljs-string">&quot;<span class="hljs-variable">$&#123;3:-ping&#125;</span>&quot;</span><br>TIMEOUT=<span class="hljs-string">&quot;<span class="hljs-variable">$&#123;4:-10&#125;</span>&quot;</span><br><br><span class="hljs-keyword">if</span> [ ! -f <span class="hljs-string">&quot;<span class="hljs-variable">$OC_NODES_FILE</span>&quot;</span> ] || [ ! -f <span class="hljs-string">&quot;<span class="hljs-variable">$HERMES_NODES_FILE</span>&quot;</span> ]; <span class="hljs-keyword">then</span><br>  <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;❌ 节点列表文件不存在&quot;</span><br>  <span class="hljs-built_in">exit</span> 1<br><span class="hljs-keyword">fi</span><br><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;==========================================&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;  6 节点统一健康检查（含误报过滤）&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;  <span class="hljs-subst">$(date &#x27;+%Y-%m-%d %H:%M:%S&#x27;)</span>&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;==========================================&quot;</span><br><span class="hljs-built_in">echo</span><br><br>TOTAL=0<br>OK=0<br>FAIL=0<br>PASS=0   <span class="hljs-comment"># 误报过滤后通过</span><br><span class="hljs-built_in">declare</span> -a FAILED_NODES<br><br><span class="hljs-comment"># ============================================</span><br><span class="hljs-comment"># Part 1: 4 OpenClaw 节点</span><br><span class="hljs-comment"># ============================================</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;【Part 1: 4 OpenClaw 节点】&quot;</span><br><span class="hljs-built_in">echo</span><br><br><span class="hljs-keyword">while</span> IFS=$<span class="hljs-string">&#x27;\t&#x27;</span> <span class="hljs-built_in">read</span> -r NODE ADDR DESC; <span class="hljs-keyword">do</span><br>  [[ <span class="hljs-string">&quot;<span class="hljs-variable">$NODE</span>&quot;</span> =~ ^#.*$ ]] &amp;&amp; <span class="hljs-built_in">continue</span><br>  [[ -z <span class="hljs-string">&quot;<span class="hljs-variable">$NODE</span>&quot;</span> ]] &amp;&amp; <span class="hljs-built_in">continue</span><br><br>  TOTAL=$((TOTAL+<span class="hljs-number">1</span>))<br><br>  <span class="hljs-comment"># 1) readyz 检查</span><br>  READYZ=$(curl -s --max-time 3 <span class="hljs-string">&quot;http://<span class="hljs-variable">$ADDR</span>:18789/readyz&quot;</span> 2&gt;/dev/null)<br>  <span class="hljs-keyword">if</span> ! <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;<span class="hljs-variable">$READYZ</span>&quot;</span> | grep -q <span class="hljs-string">&#x27;&quot;ready&quot;&#x27;</span>; <span class="hljs-keyword">then</span><br>    <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;❌ <span class="hljs-variable">$NODE</span> (<span class="hljs-variable">$ADDR</span>)  readyz 失败&quot;</span><br>    FAIL=$((FAIL+<span class="hljs-number">1</span>))<br>    FAILED_NODES+=(<span class="hljs-string">&quot;<span class="hljs-variable">$NODE</span> (readyz)&quot;</span>)<br>    <span class="hljs-built_in">continue</span><br>  <span class="hljs-keyword">fi</span><br><br>  <span class="hljs-comment"># 2) NRestarts 误报过滤</span><br>  NRESTARTS=$(<span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;<span class="hljs-variable">$READYZ</span>&quot;</span> | grep -oE <span class="hljs-string">&#x27;&quot;nrestarts&quot;:[0-9]+&#x27;</span> | grep -oE <span class="hljs-string">&#x27;[0-9]+&#x27;</span>)<br>  <span class="hljs-keyword">if</span> [ -n <span class="hljs-string">&quot;<span class="hljs-variable">$NRESTARTS</span>&quot;</span> ] &amp;&amp; [ <span class="hljs-string">&quot;<span class="hljs-variable">$NRESTARTS</span>&quot;</span> -gt 100 ]; <span class="hljs-keyword">then</span><br>    <span class="hljs-comment"># PID 一致性检查</span><br>    PID=$(<span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;<span class="hljs-variable">$READYZ</span>&quot;</span> | grep -oE <span class="hljs-string">&#x27;&quot;pid&quot;:[0-9]+&#x27;</span> | grep -oE <span class="hljs-string">&#x27;[0-9]+&#x27;</span>)<br>    PID_UP=$(ssh <span class="hljs-string">&quot;<span class="hljs-variable">$ADDR</span>&quot;</span> <span class="hljs-string">&quot;ps -o etime= -p <span class="hljs-variable">$PID</span> 2&gt;/dev/null&quot;</span> 2&gt;/dev/null | xargs)<br>    <span class="hljs-keyword">if</span> [ -n <span class="hljs-string">&quot;<span class="hljs-variable">$PID_UP</span>&quot;</span> ]; <span class="hljs-keyword">then</span><br>      <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;⚠️  <span class="hljs-variable">$NODE</span> (<span class="hljs-variable">$ADDR</span>)  NRestarts=<span class="hljs-variable">$NRESTARTS</span> 但 PID <span class="hljs-variable">$PID</span> 已运行 <span class="hljs-variable">$PID_UP</span> → 误报过滤 PASS&quot;</span><br>      PASS=$((PASS+<span class="hljs-number">1</span>))<br>      <span class="hljs-comment"># 不 continue，继续做端到端验</span><br>    <span class="hljs-keyword">else</span><br>      <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;❌ <span class="hljs-variable">$NODE</span> (<span class="hljs-variable">$ADDR</span>)  NRestarts=<span class="hljs-variable">$NRESTARTS</span> 但 PID <span class="hljs-variable">$PID</span> 不存在 → 真 restart loop&quot;</span><br>      FAIL=$((FAIL+<span class="hljs-number">1</span>))<br>      FAILED_NODES+=(<span class="hljs-string">&quot;<span class="hljs-variable">$NODE</span> (restart loop)&quot;</span>)<br>      <span class="hljs-built_in">continue</span><br>    <span class="hljs-keyword">fi</span><br>  <span class="hljs-keyword">fi</span><br><br>  <span class="hljs-comment"># 3) systemd-socket-proxyd 误报过滤（仅命中含 socket activation 的节点）</span><br>  SOCK_PROXY=$(ssh <span class="hljs-string">&quot;<span class="hljs-variable">$ADDR</span>&quot;</span> <span class="hljs-string">&quot;ps -ef | grep systemd-socket-proxyd | grep -v grep&quot;</span> 2&gt;/dev/null)<br>  <span class="hljs-keyword">if</span> [ -n <span class="hljs-string">&quot;<span class="hljs-variable">$SOCK_PROXY</span>&quot;</span> ]; <span class="hljs-keyword">then</span><br>    SOCKET_UNIT=$(ssh <span class="hljs-string">&quot;<span class="hljs-variable">$ADDR</span>&quot;</span> <span class="hljs-string">&quot;systemctl list-units --type=socket 2&gt;/dev/null | grep -i openclaw&quot;</span> 2&gt;/dev/null)<br>    <span class="hljs-keyword">if</span> [ -n <span class="hljs-string">&quot;<span class="hljs-variable">$SOCKET_UNIT</span>&quot;</span> ]; <span class="hljs-keyword">then</span><br>      <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;   ↳ systemd-socket-proxyd 找到对应 .socket 单元 → by-design PASS&quot;</span><br>    <span class="hljs-keyword">else</span><br>      <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;❌ <span class="hljs-variable">$NODE</span> (<span class="hljs-variable">$ADDR</span>)  systemd-socket-proxyd 但无 .socket 单元 → 真孤儿进程&quot;</span><br>      FAIL=$((FAIL+<span class="hljs-number">1</span>))<br>      FAILED_NODES+=(<span class="hljs-string">&quot;<span class="hljs-variable">$NODE</span> (orphan socket)&quot;</span>)<br>      <span class="hljs-built_in">continue</span><br>    <span class="hljs-keyword">fi</span><br>  <span class="hljs-keyword">fi</span><br><br>  <span class="hljs-comment"># 4) 端到端验</span><br>  MODEL_OUT=$(<span class="hljs-built_in">timeout</span> <span class="hljs-string">&quot;<span class="hljs-variable">$TIMEOUT</span>&quot;</span> openclaw chat --node <span class="hljs-string">&quot;<span class="hljs-variable">$NODE</span>&quot;</span> <span class="hljs-string">&quot;<span class="hljs-variable">$PROMPT</span>&quot;</span> 2&gt;&amp;1)<br>  MODEL_EXIT=$?<br><br>  <span class="hljs-keyword">if</span> [ <span class="hljs-variable">$MODEL_EXIT</span> -eq 124 ]; <span class="hljs-keyword">then</span><br>    <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;❌ <span class="hljs-variable">$NODE</span> (<span class="hljs-variable">$ADDR</span>)  模型调用 timeout (<span class="hljs-variable">$&#123;TIMEOUT&#125;</span>s)&quot;</span><br>    FAIL=$((FAIL+<span class="hljs-number">1</span>))<br>    FAILED_NODES+=(<span class="hljs-string">&quot;<span class="hljs-variable">$NODE</span> (timeout)&quot;</span>)<br>  <span class="hljs-keyword">elif</span> <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;<span class="hljs-variable">$MODEL_OUT</span>&quot;</span> | grep -q <span class="hljs-string">&quot;__OPENCLAW_REDACTED__&quot;</span>; <span class="hljs-keyword">then</span><br>    <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;❌ <span class="hljs-variable">$NODE</span> (<span class="hljs-variable">$ADDR</span>)  token / network 失败&quot;</span><br>    FAIL=$((FAIL+<span class="hljs-number">1</span>))<br>    FAILED_NODES+=(<span class="hljs-string">&quot;<span class="hljs-variable">$NODE</span> (token/network)&quot;</span>)<br>  <span class="hljs-keyword">elif</span> [ -z <span class="hljs-string">&quot;<span class="hljs-variable">$MODEL_OUT</span>&quot;</span> ]; <span class="hljs-keyword">then</span><br>    <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;❌ <span class="hljs-variable">$NODE</span> (<span class="hljs-variable">$ADDR</span>)  空返回&quot;</span><br>    FAIL=$((FAIL+<span class="hljs-number">1</span>))<br>    FAILED_NODES+=(<span class="hljs-string">&quot;<span class="hljs-variable">$NODE</span> (empty)&quot;</span>)<br>  <span class="hljs-keyword">else</span><br>    <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;✅ <span class="hljs-variable">$NODE</span> (<span class="hljs-variable">$ADDR</span>)  <span class="hljs-variable">$&#123;DESC:-&#125;</span>&quot;</span><br>    OK=$((OK+<span class="hljs-number">1</span>))<br>  <span class="hljs-keyword">fi</span><br><span class="hljs-keyword">done</span> &lt; <span class="hljs-string">&quot;<span class="hljs-variable">$OC_NODES_FILE</span>&quot;</span><br><br><span class="hljs-comment"># ============================================</span><br><span class="hljs-comment"># Part 2: 2 Hermes 节点</span><br><span class="hljs-comment"># ============================================</span><br><span class="hljs-built_in">echo</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;【Part 2: 2 Hermes 节点】&quot;</span><br><span class="hljs-built_in">echo</span><br><br><span class="hljs-keyword">while</span> IFS=$<span class="hljs-string">&#x27;\t&#x27;</span> <span class="hljs-built_in">read</span> -r NODE ADDR DESC; <span class="hljs-keyword">do</span><br>  [[ <span class="hljs-string">&quot;<span class="hljs-variable">$NODE</span>&quot;</span> =~ ^#.*$ ]] &amp;&amp; <span class="hljs-built_in">continue</span><br>  [[ -z <span class="hljs-string">&quot;<span class="hljs-variable">$NODE</span>&quot;</span> ]] &amp;&amp; <span class="hljs-built_in">continue</span><br><br>  TOTAL=$((TOTAL+<span class="hljs-number">1</span>))<br><br>  <span class="hljs-comment"># Hermes 走 9119 status 端点</span><br>  STATUS=$(curl -s --max-time 3 <span class="hljs-string">&quot;http://<span class="hljs-variable">$ADDR</span>:9119/status&quot;</span> 2&gt;/dev/null)<br>  <span class="hljs-keyword">if</span> ! <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;<span class="hljs-variable">$STATUS</span>&quot;</span> | grep -q <span class="hljs-string">&#x27;&quot;gateway_running&quot;:true&#x27;</span>; <span class="hljs-keyword">then</span><br>    <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;❌ <span class="hljs-variable">$NODE</span> (<span class="hljs-variable">$ADDR</span>)  Hermes gateway not running&quot;</span><br>    FAIL=$((FAIL+<span class="hljs-number">1</span>))<br>    FAILED_NODES+=(<span class="hljs-string">&quot;<span class="hljs-variable">$NODE</span> (hermes down)&quot;</span>)<br>    <span class="hljs-built_in">continue</span><br>  <span class="hljs-keyword">fi</span><br><br>  <span class="hljs-comment"># Hermes 渠道连接状态</span><br>  <span class="hljs-keyword">if</span> <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;<span class="hljs-variable">$STATUS</span>&quot;</span> | grep -q <span class="hljs-string">&#x27;&quot;dingtalk&quot;:&quot;connected&quot;&#x27;</span>; <span class="hljs-keyword">then</span><br>    DT_OK=1<br>  <span class="hljs-keyword">else</span><br>    DT_OK=0<br>  <span class="hljs-keyword">fi</span><br>  <span class="hljs-keyword">if</span> <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;<span class="hljs-variable">$STATUS</span>&quot;</span> | grep -q <span class="hljs-string">&#x27;&quot;wecom&quot;:&quot;connected&quot;&#x27;</span>; <span class="hljs-keyword">then</span><br>    WC_OK=1<br>  <span class="hljs-keyword">else</span><br>    WC_OK=0<br>  <span class="hljs-keyword">fi</span><br><br>  <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;✅ <span class="hljs-variable">$NODE</span> (<span class="hljs-variable">$ADDR</span>)  <span class="hljs-variable">$&#123;DESC:-&#125;</span>  dingtalk=<span class="hljs-variable">$DT_OK</span> wecom=<span class="hljs-variable">$WC_OK</span>&quot;</span><br>  OK=$((OK+<span class="hljs-number">1</span>))<br><span class="hljs-keyword">done</span> &lt; <span class="hljs-string">&quot;<span class="hljs-variable">$HERMES_NODES_FILE</span>&quot;</span><br><br><span class="hljs-comment"># ============================================</span><br><span class="hljs-comment"># 汇总</span><br><span class="hljs-comment"># ============================================</span><br><span class="hljs-built_in">echo</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;==========================================&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;  汇总&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;==========================================&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;总节点数:    <span class="hljs-variable">$TOTAL</span>&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;健康:        <span class="hljs-variable">$OK</span>&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;误报过滤:    <span class="hljs-variable">$PASS</span>&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;真故障:      <span class="hljs-variable">$FAIL</span>&quot;</span><br><span class="hljs-keyword">if</span> [ <span class="hljs-variable">$FAIL</span> -gt 0 ]; <span class="hljs-keyword">then</span><br>  <span class="hljs-built_in">echo</span><br>  <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;失败节点:&quot;</span><br>  <span class="hljs-keyword">for</span> n <span class="hljs-keyword">in</span> <span class="hljs-string">&quot;<span class="hljs-variable">$&#123;FAILED_NODES[@]&#125;</span>&quot;</span>; <span class="hljs-keyword">do</span><br>    <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;  - <span class="hljs-variable">$n</span>&quot;</span><br>  <span class="hljs-keyword">done</span><br>  <span class="hljs-built_in">exit</span> 1<br><span class="hljs-keyword">fi</span><br><span class="hljs-built_in">echo</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;✅ 6 节点全部健康（<span class="hljs-variable">$PASS</span> 个误报已过滤）&quot;</span><br><span class="hljs-built_in">exit</span> 0<br></code></pre></td></tr></table></figure>
+
+<p><strong>使用</strong>：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-built_in">chmod</span> +x health-check-6nodes.sh<br>./health-check-6nodes.sh oc-nodes.txt hermes-nodes.txt ping 10<br></code></pre></td></tr></table></figure>
+
+<p><strong>周日 16:15 的实际输出（节选）</strong>：</p>
+<figure class="highlight asciidoc"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br></pre></td><td class="code"><pre><code class="hljs asciidoc">==========================================<br>  6 节点统一健康检查（含误报过滤）<br>  2026-06-07 16:15:23<br>==========================================<br><br>【Part 1: 4 OpenClaw 节点】<br><br>✅ p6 (192.168.102.xx)  Macmini 主控<br>⚠️  p3 (192.168.102.xx)  NRestarts=2258 但 PID 665466 已运行 4d → 误报过滤 PASS<br><span class="hljs-code">   ↳ systemd-socket-proxyd 找到对应 .socket 单元 → by-design PASS</span><br>✅ p1 (192.168.102.xx)  VM151<br>✅ p3 (192.168.102.xx)  VM153<br>✅ p14 (192.168.102.xx)  VPS4<br><br>【Part 2: 2 Hermes 节点】<br><br>✅ L2 (192.168.102.xx)  Hermes v0.15.1  dingtalk=1 wecom=0<br>✅ N4 (192.168.102.xx)  Hermes v0.13.0  dingtalk=1 wecom=1<br><br>==========================================<br>  汇总<br>==========================================<br>总节点数:    6<br>健康:        6<br>误报过滤:    1<br>真故障:      0<br><br>✅ 6 节点全部健康（1 个误报已过滤）<br></code></pre></td></tr></table></figure>
+
+<h2 id="四、6-类”伪信号”和真信号的区别"><a href="#四、6-类”伪信号”和真信号的区别" class="headerlink" title="四、6 类”伪信号”和真信号的区别"></a>四、6 类”伪信号”和真信号的区别</h2><table>
+<thead>
+<tr>
+<th>#</th>
+<th>伪信号</th>
+<th>真信号</th>
+<th>判断关键</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>1</td>
+<td>NRestarts&#x3D;2258 但 PID 一致</td>
+<td>NRestarts 在涨且 PID 一直在换</td>
+<td><strong>PID 一致性</strong></td>
+</tr>
+<tr>
+<td>2</td>
+<td>systemd-socket-proxyd 没 unit</td>
+<td>systemd-socket-proxyd 没 unit 也没 .socket</td>
+<td><strong><code>.socket</code> 单元是否存在</strong></td>
+</tr>
+<tr>
+<td>3</td>
+<td><code>channels status</code> 报 “not reachable”</td>
+<td>readyz 200 + 带 token 还报 “not reachable”</td>
+<td><strong>先打 readyz</strong></td>
+</tr>
+<tr>
+<td>4</td>
+<td>NRestarts&#x3D;0 但服务挂了</td>
+<td>readyz 失败 + NRestarts&#x3D;0</td>
+<td><strong>readyz 是 ground truth</strong></td>
+</tr>
+<tr>
+<td>5</td>
+<td>Docker container “Restarting” 1 次</td>
+<td>Docker container 一直 “Restarting”</td>
+<td><strong>看 restart count + 增长趋势</strong></td>
+</tr>
+<tr>
+<td>6</td>
+<td>Prometheus target 1 次 down</td>
+<td>Prometheus target 5m+ 持续 down</td>
+<td><strong><code>for: 2m</code> 告警规则</strong></td>
+</tr>
+</tbody></table>
+<p>**—— 误报过滤的通用心法：”先看 ground truth（readyz &#x2F; 端到端），再看累计指标”**。</p>
+<h2 id="五、Q-A"><a href="#五、Q-A" class="headerlink" title="五、Q&amp;A"></a>五、Q&amp;A</h2><h3 id="Q1：NRestarts-累计算法怎么清零？"><a href="#Q1：NRestarts-累计算法怎么清零？" class="headerlink" title="Q1：NRestarts 累计算法怎么清零？"></a>Q1：NRestarts 累计算法怎么清零？</h3><p><strong>A</strong>：<strong>不建议手动清零</strong>。</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 重置计数器（会重启服务，不推荐）</span><br>$ systemctl reset-failed openclaw-gateway<br><br><span class="hljs-comment"># 推荐：把 NRestarts 改成相对值</span><br><span class="hljs-comment"># 在 health check 脚本里加：NRestarts / PID_uptime = 速率</span><br><span class="hljs-comment"># 速率 &gt; 阈值 = 真 restart loop</span><br></code></pre></td></tr></table></figure>
+
+<p><strong>—— NRestarts 数值本身不是问题，</strong>“过去 N 小时有没有真重启”才是问题<strong>。</strong></p>
+<p><strong>—— 简单办法</strong>：<strong>看 PID 一致性</strong>。PID 跑了 N 天 + NRestarts&#x3D;大数字 &#x3D; 误报。</p>
+<h3 id="Q2：systemd-socket-怎么关？"><a href="#Q2：systemd-socket-怎么关？" class="headerlink" title="Q2：systemd-socket 怎么关？"></a>Q2：systemd-socket 怎么关？</h3><p><strong>A</strong>：<strong>先看 .socket 单元是谁在用</strong>：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><code class="hljs bash">$ systemctl list-units --<span class="hljs-built_in">type</span>=socket | grep openclaw<br><span class="hljs-comment"># 找到 .socket 单元名</span><br><br><span class="hljs-comment"># 真正想关的时候：</span><br>$ systemctl stop openclaw-loopback-proxy.socket<br>$ systemctl <span class="hljs-built_in">disable</span> openclaw-loopback-proxy.socket<br><span class="hljs-comment"># 这会同时停掉 systemd-socket-proxyd 守护进程</span><br></code></pre></td></tr></table></figure>
+
+<p><strong>—— 不要直接 <code>kill systemd-socket-proxyd</code>——systemd 会自动 respawn。</strong></p>
+<p><strong>—— 一定要先 <code>systemctl stop .socket</code>。</strong></p>
+<h3 id="Q3：channels-status-报-“not-reachable”-怎么定位是-CLI-缺-token-还是节点没连？"><a href="#Q3：channels-status-报-“not-reachable”-怎么定位是-CLI-缺-token-还是节点没连？" class="headerlink" title="Q3：channels status 报 “not reachable” 怎么定位是 CLI 缺 token 还是节点没连？"></a>Q3：<code>channels status</code> 报 “not reachable” 怎么定位是 CLI 缺 token 还是节点没连？</h3><p><strong>A</strong>：<strong>两步走</strong>：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 1) 直接打 readyz</span><br>$ curl -s http://<span class="hljs-variable">$ADDR</span>:18789/readyz<br><span class="hljs-comment"># 200 = 节点活，401/timeout = 节点没连</span><br><br><span class="hljs-comment"># 2) 带 token 跑 channels</span><br>$ openclaw --token <span class="hljs-string">&quot;<span class="hljs-variable">$GATEWAY_TOKEN</span>&quot;</span> channels status<br><span class="hljs-comment"># 能跑通 = 之前是 CLI 缺 token</span><br><span class="hljs-comment"># 还报 not reachable = 节点真的没连</span><br></code></pre></td></tr></table></figure>
+
+<p><strong>—— readyz 是 ground truth。</strong></p>
+<h3 id="Q4：DIY-MINI-端到端验能跑通，但某个渠道（飞书-钉钉）没连上，怎么诊断？"><a href="#Q4：DIY-MINI-端到端验能跑通，但某个渠道（飞书-钉钉）没连上，怎么诊断？" class="headerlink" title="Q4：DIY-MINI 端到端验能跑通，但某个渠道（飞书&#x2F;钉钉）没连上，怎么诊断？"></a>Q4：DIY-MINI 端到端验能跑通，但某个渠道（飞书&#x2F;钉钉）没连上，怎么诊断？</h3><p><strong>A</strong>：<strong>渠道连接状态不在端到端探针里</strong>：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 1) 看渠道连接状态（要带 token）</span><br>$ openclaw --token <span class="hljs-string">&quot;<span class="hljs-variable">$GATEWAY_TOKEN</span>&quot;</span> channels status<br><br><span class="hljs-comment"># 2) 看具体渠道的连接</span><br>$ openclaw --token <span class="hljs-string">&quot;<span class="hljs-variable">$GATEWAY_TOKEN</span>&quot;</span> channels feishu status<br>$ openclaw --token <span class="hljs-string">&quot;<span class="hljs-variable">$GATEWAY_TOKEN</span>&quot;</span> channels dingtalk status<br><br><span class="hljs-comment"># 3) 看 WS 出口连接</span><br>$ ssh 192.168.102.xxx <span class="hljs-string">&quot;ss -tn | grep &#x27;:443&#x27;&quot;</span><br><span class="hljs-comment"># 应该看到飞书/钉钉 WS 出口</span><br></code></pre></td></tr></table></figure>
+
+<p><strong>—— 端到端 OK ≠ 渠道连接 OK。</strong></p>
+<p><strong>—— 模型层（DIY-MINI）独立，渠道层（飞书&#x2F;钉钉）独立，</strong>两个都要查<strong>。</strong></p>
+<h3 id="Q5：6-节点里-OpenClaw-和-Hermes-用两套脚本，怎么统一？"><a href="#Q5：6-节点里-OpenClaw-和-Hermes-用两套脚本，怎么统一？" class="headerlink" title="Q5：6 节点里 OpenClaw 和 Hermes 用两套脚本，怎么统一？"></a>Q5：6 节点里 OpenClaw 和 Hermes 用两套脚本，怎么统一？</h3><p><strong>A</strong>：<strong>本文的 <code>health-check-6nodes.sh</code> 已经统一</strong>：</p>
+<ul>
+<li>Part 1 处理 4 个 OpenClaw 节点（readyz + NRestarts + socket + 端到端）</li>
+<li>Part 2 处理 2 个 Hermes 节点（9119 status + 渠道连接）</li>
+</ul>
+<p><strong>统一入口的好处</strong>：</p>
+<ul>
+<li>一次输出所有 6 节点状态</li>
+<li>误报过滤逻辑集中（改一处所有节点生效）</li>
+<li>告警配置统一（fail 数 &gt; 0 触发钉钉告警）</li>
+</ul>
+<h3 id="Q6：Sunday-16-15-的”误报过滤-PASS”会让人偷懒吗？"><a href="#Q6：Sunday-16-15-的”误报过滤-PASS”会让人偷懒吗？" class="headerlink" title="Q6：Sunday 16:15 的”误报过滤 PASS”会让人偷懒吗？"></a>Q6：Sunday 16:15 的”误报过滤 PASS”会让人偷懒吗？</h3><p><strong>A</strong>：<strong>会，但比”误报过滤不 PASS”好</strong>。</p>
+<p><strong>—— 误报过滤 &#x3D; “我今天看到一个异常数据，但能证明不是故障”。</strong></p>
+<p><strong>—— 误报过滤 PASS &#x3D; “我今天看到一个异常数据，且能解释”。</strong></p>
+<p><strong>—— 没误报过滤 &#x3D; “我没看到异常数据 &#x3D; 没问题”——这是 5&#x2F;31 之前的我的判断方式。</strong></p>
+<p><strong>—— “误报过滤”强制你</strong>给出解释<strong>，是积极的”我今天想过这个问题”，不是消极的”我没看到异常”。</strong></p>
+<h3 id="Q7：能不能写一个”误报过滤”专用的告警规则？"><a href="#Q7：能不能写一个”误报过滤”专用的告警规则？" class="headerlink" title="Q7：能不能写一个”误报过滤”专用的告警规则？"></a>Q7：能不能写一个”误报过滤”专用的告警规则？</h3><p><strong>A</strong>：<strong>可以，但建议分两层</strong>：</p>
+<figure class="highlight yaml"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br></pre></td><td class="code"><pre><code class="hljs yaml"><span class="hljs-comment"># 第一层：真故障告警（直接发钉钉）</span><br><span class="hljs-bullet">-</span> <span class="hljs-attr">alert:</span> <span class="hljs-string">OpenClawRealDown</span><br>  <span class="hljs-attr">expr:</span> <span class="hljs-string">openclaw_readyz_up</span> <span class="hljs-string">==</span> <span class="hljs-number">0</span><br>  <span class="hljs-attr">for:</span> <span class="hljs-string">1m</span><br>  <span class="hljs-attr">labels:</span><br>    <span class="hljs-attr">severity:</span> <span class="hljs-string">critical</span><br>  <span class="hljs-attr">annotations:</span><br>    <span class="hljs-attr">summary:</span> <span class="hljs-string">&quot;OpenClaw <span class="hljs-template-variable">&#123;&#123; $labels.node &#125;&#125;</span> readyz 失败&quot;</span><br><br><span class="hljs-comment"># 第二层：误报告警（发 Prometheus，但不发钉钉）</span><br><span class="hljs-bullet">-</span> <span class="hljs-attr">alert:</span> <span class="hljs-string">OpenClawFalsePositive</span><br>  <span class="hljs-attr">expr:</span> <span class="hljs-string">openclaw_nrestarts_gt_100</span> <span class="hljs-string">and</span> <span class="hljs-string">openclaw_pid_age_gt_1d</span><br>  <span class="hljs-attr">for:</span> <span class="hljs-string">1m</span><br>  <span class="hljs-attr">labels:</span><br>    <span class="hljs-attr">severity:</span> <span class="hljs-string">info</span><br>  <span class="hljs-attr">annotations:</span><br>    <span class="hljs-attr">summary:</span> <span class="hljs-string">&quot;<span class="hljs-template-variable">&#123;&#123; $labels.node &#125;&#125;</span> NRestarts &gt; 100 但 PID 稳定（误报）&quot;</span><br></code></pre></td></tr></table></figure>
+
+<p><strong>—— 第一层是”必须处理”。</strong></p>
+<p><strong>—— 第二层是”知道就行”——记录在册，不打扰人。</strong></p>
+<h2 id="六、总结"><a href="#六、总结" class="headerlink" title="六、总结"></a>六、总结</h2><p>多节点 OpenClaw 集群的统一健康检查，**”看到异常 &#x3D; 故障”** 是<strong>最常见的误判</strong>。</p>
+<p><strong>核心要点</strong>：</p>
+<ol>
+<li>✅ <strong>NRestarts 是历史累计算法</strong>——<strong>PID 一致性</strong>是 ground truth</li>
+<li>✅ <strong>systemd-socket-proxyd 没 unit 不一定是孤儿</strong>——**<code>.socket</code> 单元在跑就是 by-design**</li>
+<li>✅ <strong><code>channels status</code> 报 “not reachable” 不一定是节点没连</strong>——<strong>先打 readyz</strong></li>
+<li>✅ <strong>统一健康检查脚本要把误报过滤逻辑集中</strong>——改一处所有节点生效</li>
+<li>✅ <strong>6 类”伪信号”对应不同判断方法</strong>——<strong>ground truth 优先</strong>（readyz &#x2F; 端到端 &#x2F; PID 一致性 &#x2F; .socket 单元）</li>
+<li>✅ <strong>误报过滤的告警要分两层</strong>——<strong>真故障 critical，误报 info</strong></li>
+</ol>
+<p><strong>这次的教训</strong>：</p>
+<p><strong>—— 监控看见的”异常”和真实故障之间，隔着”先看 ground truth 再下结论”的距离。</strong></p>
+<p>下次看到 NRestarts&#x3D;大数字、systemd-socket 进程、channels 报错的瞬间——</p>
+<p><strong>第一件事不是修，是先问”这是不是 by-design”。</strong></p>
+<p><strong>—— 想清楚再说。</strong></p>
+<hr>
+<p><em>作者：小六，一个在上海努力生存的普通打工人</em></p>
+
+    
+  </article>
+
+  
+      
+    <div class="nexmoe-post-copyright">
+        <strong>Author：</strong>Margrop<br>
+        <strong>Link：</strong><a href="http://blog.margrop.com/post/2026-06-07-openclaw-6node-health-check-false-positive-filtering/" title="http:&#x2F;&#x2F;blog.margrop.com&#x2F;post&#x2F;2026-06-07-openclaw-6node-health-check-false-positive-filtering&#x2F;" target="_blank" rel="noopener">http:&#x2F;&#x2F;blog.margrop.com&#x2F;post&#x2F;2026-06-07-openclaw-6node-health-check-false-positive-filtering&#x2F;</a><br>
+        
+            <strong>版权声明：</strong>本文采用 <a href="https://creativecommons.org/licenses/by-nc-sa/3.0/cn/deed.zh" target="_blank">CC BY-NC-SA 3.0 CN</a> 协议进行许可
+
+        
+    </div>
+
+
+  
+  
+  <div class="nexmoe-post-meta nexmoe-rainbow">
+   
+    
+        <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/Hermes/" rel="tag">Hermes</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/NRestarts/" rel="tag">NRestarts</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/OpenClaw/" rel="tag">OpenClaw</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/by-design/" rel="tag">by-design</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/systemd-socket/" rel="tag">systemd-socket</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/%E5%81%A5%E5%BA%B7%E6%A3%80%E6%9F%A5/" rel="tag">健康检查</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/%E6%8A%80%E6%9C%AF/" rel="tag">技术</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/%E7%9B%91%E6%8E%A7/" rel="tag">监控</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/%E8%AF%AF%E6%8A%A5%E8%BF%87%E6%BB%A4/" rel="tag">误报过滤</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/%E8%BF%90%E7%BB%B4/" rel="tag">运维</a>
+    
+</div>
+  
+  
+    <script async src="../../js/copy-codeblock.js?v=1780838535566"></script>
+  
+
+  
+      <div class="nexmoe-post-footer">
+          <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+<script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+<div id="gitalk-container"></div>
+<script>
+  const gitalk = new Gitalk({
+    clientID: 'Ov23lib2oiNKjG5B7I1N',
+    clientSecret: '0a94653f17a7b9630d85b275008da4b38e0259dd',
+    repo: 'margropcomment.margrop.io',      // The repository of store comments,
+    owner: 'margrop',
+    admin: ['margrop'],
+    pagerDirection: 'last',
+    id: window.location.pathname.substring(0, 49), // 使用 pathname 的前49个字符作为 id
+    title: document.title,
+    language: 'zh-CN', // 根据需要设置语言
+    distractionFreeMode: false
+  })
+  gitalk.render('gitalk-container')
+</script>
+
+      </div>
+  
+</div></div><div class="nexmoe-post-right">    <div class="nexmoe-fixed">
+        <div class="nexmoe-tool">
+
+            
+
+            
+            
+            <button class="mdui-fab catalog" style="overflow:unset;">
+                <i class="nexmoefont icon-i-catalog"></i>
+                <div class="nexmoe-toc">
+                    <ol class="toc"><li class="toc-item toc-level-2"><a class="toc-link" href="#%E5%89%8D%E8%A8%80"><span class="toc-number">1.</span> <span class="toc-text">前言</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%B8%80%E3%80%816-%E8%8A%82%E7%82%B9%E5%81%A5%E5%BA%B7%E6%A3%80%E6%9F%A5%E9%87%8C%E6%9C%80%E5%B8%B8%E8%A7%81%E7%9A%84-3-%E7%B1%BB%E2%80%9D%E4%BC%AA%E4%BF%A1%E5%8F%B7%E2%80%9D"><span class="toc-number">2.</span> <span class="toc-text">一、6 节点健康检查里最常见的 3 类”伪信号”</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#1-1-NRestarts-2258-%E2%89%A0-%E7%9C%9F%E7%9A%84%E9%87%8D%E5%90%AF%E4%BA%86-2258-%E6%AC%A1"><span class="toc-number">2.1.</span> <span class="toc-text">1.1 NRestarts&#x3D;2258 ≠ 真的重启了 2258 次</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#1-2-systemd-socket-proxyd-%E5%AD%A4%E5%84%BF%E8%BF%9B%E7%A8%8B-%E2%89%A0-%E7%9C%9F%E7%9A%84%E6%9C%89%E8%BF%9B%E7%A8%8B%E6%B3%84%E6%BC%8F"><span class="toc-number">2.2.</span> <span class="toc-text">1.2 systemd-socket-proxyd 孤儿进程 ≠ 真的有进程泄漏</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#1-3-channels-status-%E6%8A%A5-%E2%80%9CGateway-not-reachable%E2%80%9D-%E2%89%A0-%E8%8A%82%E7%82%B9%E7%9C%9F%E7%9A%84%E6%B2%A1%E8%BF%9E"><span class="toc-number">2.3.</span> <span class="toc-text">1.3 channels status 报 “Gateway not reachable” ≠ 节点真的没连</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%BA%8C%E3%80%81DIY-MINI-%E7%AB%AF%E5%88%B0%E7%AB%AF%E9%AA%8C%EF%BC%9A6-%E8%8A%82%E7%82%B9%E9%87%8C-OpenClaw-%E9%83%A8%E5%88%86%E7%9A%84%E6%9C%80%E5%90%8E%E4%B8%80%E9%81%93%E5%85%B3"><span class="toc-number">3.</span> <span class="toc-text">二、DIY-MINI 端到端验：6 节点里 OpenClaw 部分的最后一道关</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#2-1-%E7%AB%AF%E5%88%B0%E7%AB%AF%E9%AA%8C-%E2%80%9Creadyz-200-%E6%A8%A1%E5%9E%8B%E8%B0%83%E9%80%9A%E2%80%9D-%E5%8F%8C%E6%8C%87%E6%A0%87"><span class="toc-number">3.1.</span> <span class="toc-text">2.1 端到端验 &#x3D; “readyz 200 + 模型调通” 双指标</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#2-2-Hermes-%E8%8A%82%E7%82%B9%E6%B2%A1%E6%9C%89-DIY-MINI-%E6%8E%A2%E9%92%88"><span class="toc-number">3.2.</span> <span class="toc-text">2.2 Hermes 节点没有 DIY-MINI 探针</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%B8%89%E3%80%816-%E8%8A%82%E7%82%B9%E7%BB%9F%E4%B8%80%E5%81%A5%E5%BA%B7%E6%A3%80%E6%9F%A5%E8%84%9A%E6%9C%AC%EF%BC%88%E5%B8%A6%E8%AF%AF%E6%8A%A5%E8%BF%87%E6%BB%A4%EF%BC%89"><span class="toc-number">4.</span> <span class="toc-text">三、6 节点统一健康检查脚本（带误报过滤）</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E5%9B%9B%E3%80%816-%E7%B1%BB%E2%80%9D%E4%BC%AA%E4%BF%A1%E5%8F%B7%E2%80%9D%E5%92%8C%E7%9C%9F%E4%BF%A1%E5%8F%B7%E7%9A%84%E5%8C%BA%E5%88%AB"><span class="toc-number">5.</span> <span class="toc-text">四、6 类”伪信号”和真信号的区别</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%BA%94%E3%80%81Q-A"><span class="toc-number">6.</span> <span class="toc-text">五、Q&amp;A</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#Q1%EF%BC%9ANRestarts-%E7%B4%AF%E8%AE%A1%E7%AE%97%E6%B3%95%E6%80%8E%E4%B9%88%E6%B8%85%E9%9B%B6%EF%BC%9F"><span class="toc-number">6.1.</span> <span class="toc-text">Q1：NRestarts 累计算法怎么清零？</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#Q2%EF%BC%9Asystemd-socket-%E6%80%8E%E4%B9%88%E5%85%B3%EF%BC%9F"><span class="toc-number">6.2.</span> <span class="toc-text">Q2：systemd-socket 怎么关？</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#Q3%EF%BC%9Achannels-status-%E6%8A%A5-%E2%80%9Cnot-reachable%E2%80%9D-%E6%80%8E%E4%B9%88%E5%AE%9A%E4%BD%8D%E6%98%AF-CLI-%E7%BC%BA-token-%E8%BF%98%E6%98%AF%E8%8A%82%E7%82%B9%E6%B2%A1%E8%BF%9E%EF%BC%9F"><span class="toc-number">6.3.</span> <span class="toc-text">Q3：channels status 报 “not reachable” 怎么定位是 CLI 缺 token 还是节点没连？</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#Q4%EF%BC%9ADIY-MINI-%E7%AB%AF%E5%88%B0%E7%AB%AF%E9%AA%8C%E8%83%BD%E8%B7%91%E9%80%9A%EF%BC%8C%E4%BD%86%E6%9F%90%E4%B8%AA%E6%B8%A0%E9%81%93%EF%BC%88%E9%A3%9E%E4%B9%A6-%E9%92%89%E9%92%89%EF%BC%89%E6%B2%A1%E8%BF%9E%E4%B8%8A%EF%BC%8C%E6%80%8E%E4%B9%88%E8%AF%8A%E6%96%AD%EF%BC%9F"><span class="toc-number">6.4.</span> <span class="toc-text">Q4：DIY-MINI 端到端验能跑通，但某个渠道（飞书&#x2F;钉钉）没连上，怎么诊断？</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#Q5%EF%BC%9A6-%E8%8A%82%E7%82%B9%E9%87%8C-OpenClaw-%E5%92%8C-Hermes-%E7%94%A8%E4%B8%A4%E5%A5%97%E8%84%9A%E6%9C%AC%EF%BC%8C%E6%80%8E%E4%B9%88%E7%BB%9F%E4%B8%80%EF%BC%9F"><span class="toc-number">6.5.</span> <span class="toc-text">Q5：6 节点里 OpenClaw 和 Hermes 用两套脚本，怎么统一？</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#Q6%EF%BC%9ASunday-16-15-%E7%9A%84%E2%80%9D%E8%AF%AF%E6%8A%A5%E8%BF%87%E6%BB%A4-PASS%E2%80%9D%E4%BC%9A%E8%AE%A9%E4%BA%BA%E5%81%B7%E6%87%92%E5%90%97%EF%BC%9F"><span class="toc-number">6.6.</span> <span class="toc-text">Q6：Sunday 16:15 的”误报过滤 PASS”会让人偷懒吗？</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#Q7%EF%BC%9A%E8%83%BD%E4%B8%8D%E8%83%BD%E5%86%99%E4%B8%80%E4%B8%AA%E2%80%9D%E8%AF%AF%E6%8A%A5%E8%BF%87%E6%BB%A4%E2%80%9D%E4%B8%93%E7%94%A8%E7%9A%84%E5%91%8A%E8%AD%A6%E8%A7%84%E5%88%99%EF%BC%9F"><span class="toc-number">6.7.</span> <span class="toc-text">Q7：能不能写一个”误报过滤”专用的告警规则？</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E5%85%AD%E3%80%81%E6%80%BB%E7%BB%93"><span class="toc-number">7.</span> <span class="toc-text">六、总结</span></a></li></ol>
+                </div>
+            </button>
+            
+
+            
+
+            <a href="#nexmoe-content" class="backtop toc-link" aria-label="Back To Top" title="top"><button class="mdui-fab mdui-ripple"><i class="nexmoefont icon-caret-top"></i></button></a>
+        </div>
+    </div>
+</div></div><div id="nexmoe-footer"><!--!--></div><div id="nexmoe-search-space"><div class="search-container"><div class="search-header"><div class="search-input-container"><input class="search-input" type="text" placeholder="Search" onInput="sinput();"></div><a class="search-close" onclick="sclose();">×</a></div><div class="search-body"></div></div></div><div><script src="https://cdn.jsdelivr.net/npm/mathjax@latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+<script>MathJax.Hub.Config({
+    tex2jax: {
+        inlineMath: [ ['$','$'], ["\\(","\\)"] ],
+        processEscapes: true,
+        skipTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code']
+    }
+});
+MathJax.Hub.Queue(function() {
+    var all = MathJax.Hub.getAllJax(), i;
+    for(i=0; i < all.length; i += 1) {
+        all[i].SourceElement().parentNode.className += ' has-jax';
+    }
+});</script>
+</div></body></html>
