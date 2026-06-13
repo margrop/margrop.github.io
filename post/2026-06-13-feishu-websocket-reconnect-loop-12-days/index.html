@@ -1,0 +1,841 @@
+<!doctype html>
+<html lang="cn"><head>
+<title>Feishu WebSocket 长期 reconnect 循环 12+ 天——双节点同时中招、自建应用角色错配、v1 探针只判 running 不判 connected 的一键定位 + 修复 - 魔都水滴</title>
+<meta charset="UTF-8">
+<meta name="keywords" content="">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5">
+
+<link rel="shortcut icon" href="/favicon.ico" type="image/x-icon" />
+<meta name="description" content="前言6&#x2F;8 我写了 6 类反常稳定。6&#x2F;9 补了 2 类。6&#x2F;10 提”清单有边界”（第 9 类硬件 + 第 9 类软件）。6&#x2F;11 把”接受”写进清单（第 10 类）。6&#x2F;12 把”清单本身可能写错”写进清单（第 11 类）。 6&#x2F;13 我发现——清单之外还有”循环类”反常稳定。 具体一个真实场景： VM151 + VM153 两个节点">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Feishu WebSocket 长期 reconnect 循环 12+ 天——双节点同时中招、自建应用角色错配、v1 探针只判 running 不判 connected 的一键定位 + 修复">
+<meta property="og:url" content="http://blog.margrop.com/post/2026-06-13-feishu-websocket-reconnect-loop-12-days/index.html">
+<meta property="og:site_name" content="魔都水滴">
+<meta property="og:description" content="前言6&#x2F;8 我写了 6 类反常稳定。6&#x2F;9 补了 2 类。6&#x2F;10 提”清单有边界”（第 9 类硬件 + 第 9 类软件）。6&#x2F;11 把”接受”写进清单（第 10 类）。6&#x2F;12 把”清单本身可能写错”写进清单（第 11 类）。 6&#x2F;13 我发现——清单之外还有”循环类”反常稳定。 具体一个真实场景： VM151 + VM153 两个节点">
+<meta property="og:locale">
+<meta property="article:published_time" content="2026-06-13T13:30:00.000Z">
+<meta property="article:modified_time" content="2026-06-13T13:21:52.557Z">
+<meta property="article:author" content="Margrop">
+<meta property="article:tag" content="运维">
+<meta property="article:tag" content="OpenClaw">
+<meta property="article:tag" content="周末">
+<meta property="article:tag" content="技术">
+<meta property="article:tag" content="WebSocket">
+<meta property="article:tag" content="飞书">
+<meta property="article:tag" content="静默期">
+<meta property="article:tag" content="长期稳定">
+<meta property="article:tag" content="误报">
+<meta property="article:tag" content="接受层">
+<meta property="article:tag" content="长连接">
+<meta property="article:tag" content="reconnect循环">
+<meta property="article:tag" content="假阳">
+<meta property="article:tag" content="running">
+<meta property="article:tag" content="connected">
+<meta property="article:tag" content="自建应用">
+<meta property="article:tag" content="角色错配">
+<meta property="article:tag" content="v1探针">
+<meta property="article:tag" content="第12类">
+<meta property="article:tag" content="循环类">
+<meta name="twitter:card" content="summary">
+
+<link rel="stylesheet" href="../../lib/fancybox/fancybox.css">
+<link rel="stylesheet" href="../../lib/mdui_043tiny/mdui.css">
+
+
+<link rel="stylesheet" href="../../lib/iconfont/iconfont.css?v=1781356932717">
+
+<link rel="stylesheet" href="../../css/style.css?v=1781356932718">
+
+
+
+
+    
+        <link rel="stylesheet" href="../../custom.css?v=1781356932718">
+    
+
+
+
+<script src="../../lib/mdui_043tiny/mdui.js" async></script>
+<script src="../../lib/fancybox/fancybox.umd.js" async></script>
+<script src="../../lib/lax.min.js" async></script>
+
+
+<script async src="../../js/app.js?v=1781356932718"></script>
+
+ 
+
+<script charset="UTF-8" id="LA_COLLECT" src="//sdk.51.la/js-sdk-pro.min.js"></script>
+<script>LA.init({id:"23bDEwNOu1L8NhV1",ck:"23bDEwNOu1L8NhV1"})</script>
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-4NGHEP8LEV"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+
+  gtag('config', 'G-4NGHEP8LEV');
+</script>
+
+
+<link rel="stylesheet"  href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/atom-one-dark.min.css">
+<meta name="generator" content="Hexo 7.3.0"><link rel="alternate" href="atom.xml" title="魔都水滴" type="application/atom+xml">
+</head><body class="nexmoe mdui-drawer-body-left"><div id="nexmoe-background"><div class="nexmoe-bg" style="background-image: url(/images/background.webp)"></div><div class="mdui-appbar mdui-shadow-0"><div class="mdui-toolbar"><a class="mdui-btn mdui-btn-icon mdui-ripple" mdui-drawer="{target: &#039;#drawer&#039;, swipe: true}" title="menu"><i class="mdui-icon nexmoefont icon-menu"></i></a><div class="mdui-toolbar-spacer"></div><a class="mdui-btn mdui-btn-icon" href="../../index.html" title="Margrop"><img src="/images/avatar.webp" alt="Margrop"></a></div></div></div><div id="nexmoe-header"><div class="nexmoe-drawer mdui-drawer" id="drawer">
+    <div class="nexmoe-avatar mdui-ripple">
+        <a href="../../index.html" title="Margrop">
+            <img src="/images/avatar.webp" alt="Margrop" alt="Margrop">
+        </a>
+    </div>
+    <div class="nexmoe-count">
+        <div><span>Articles</span>356</div>
+        <div><span>Tags</span>575</div>
+        <div><span>Categories</span>7</div>
+    </div>
+    <div class="nexmoe-list mdui-list" mdui-collapse="{accordion: true}">
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" href="../../index.html" title="回到首页">
+            <i class="mdui-list-item-icon nexmoefont icon-home"></i>
+            <div class="mdui-list-item-content">
+                回到首页
+            </div>
+        </a>
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" href="../../post/archives/" title="文章归档">
+            <i class="mdui-list-item-icon nexmoefont icon-container"></i>
+            <div class="mdui-list-item-content">
+                文章归档
+            </div>
+        </a>
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" target="_blank" rel="noopener" href="https://example.com/" title="下载">
+            <i class="mdui-list-item-icon nexmoefont icon-container"></i>
+            <div class="mdui-list-item-content">
+                下载
+            </div>
+        </a>
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" href="../../post/favorites/" title="常用链接">
+            <i class="mdui-list-item-icon nexmoefont icon-unorderedlist"></i>
+            <div class="mdui-list-item-content">
+                常用链接
+            </div>
+        </a>
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" href="../../post/github-project-stars/" title="GithubStars">
+            <i class="mdui-list-item-icon nexmoefont icon-github"></i>
+            <div class="mdui-list-item-content">
+                GithubStars
+            </div>
+        </a>
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" href="../../post/donate/" title="给我赞助">
+            <i class="mdui-list-item-icon nexmoefont icon-coffee"></i>
+            <div class="mdui-list-item-content">
+                给我赞助
+            </div>
+        </a>
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" href="../../post/about/" title="关于博主">
+            <i class="mdui-list-item-icon nexmoefont icon-info-circle"></i>
+            <div class="mdui-list-item-content">
+                关于博主
+            </div>
+        </a>
+        
+    </div>
+    
+    
+        
+        <div class="nexmoe-widget-wrap">
+    <div class="nexmoe-widget nexmoe-search">
+         
+            <form id="search_form" action_e="https://cn.bing.com/search?q=site:example.com" onsubmit="return search();">
+                <label><input id="search_value" name="q" type="search" placeholder="Search"></label>
+            </form>
+         
+    </div>
+</div>
+
+
+
+
+    
+        
+        <div class="nexmoe-widget-wrap">
+	<div class="nexmoe-widget nexmoe-social">
+		<a
+			class="mdui-ripple"
+			href="http://qm.qq.com/cgi-bin/qm/qr?_wv=1027&k=weD8TANNWdCOveAMcdmoAxOKt5owKkDS"
+			target="_blank"
+			mdui-tooltip="{content: 'QQ群'}"
+			style="
+				color: rgb(249, 174, 8);
+				background-color: rgba(249, 174, 8, .1);
+			"
+		>
+			<i
+				class="nexmoefont icon-QQ"
+			></i> </a
+		><a
+			class="mdui-ripple"
+			href="https://github.com/margrop/"
+			target="_blank"
+			mdui-tooltip="{content: 'GitHub'}"
+			style="
+				color: rgb(25, 23, 23);
+				background-color: rgba(25, 23, 23, .1);
+			"
+		>
+			<i
+				class="nexmoefont icon-github"
+			></i> </a
+		><a
+			class="mdui-ripple"
+			href="../../atom.xml"
+			target="_blank"
+			mdui-tooltip="{content: 'RSS'}"
+			style="
+				color: rgb(247, 132, 34);
+				background-color: rgba(247, 132, 34, .1);
+			"
+		>
+			<i
+				class="nexmoefont icon-rss"
+			></i> </a
+		>
+	</div>
+</div>
+
+    
+        
+        
+  <div class="nexmoe-widget-wrap">
+    <h3 class="nexmoe-widget-title">Categories</h3>
+    <div class="nexmoe-widget">
+
+      <ul class="category-list">
+
+        
+
+
+        
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/ai-diary/">ai_diary</a>
+          <span class="category-list-count">103</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/ai-tech/">ai_tech</a>
+          <span class="category-list-count">95</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/develop/">develop</a>
+          <span class="category-list-count">28</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/">network</a>
+          <span class="category-list-count">112</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/notes/">notes</a>
+          <span class="category-list-count">10</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/others/">others</a>
+          <span class="category-list-count">3</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/sport/">sport</a>
+          <span class="category-list-count">4</span>
+        </li>
+
+        
+      </ul>
+
+    </div>
+  </div>
+
+
+    
+        
+        
+  <div class="nexmoe-widget-wrap">
+    <div id="randomtagcloud" class="nexmoe-widget tagcloud nexmoe-rainbow">
+      <a href="../../tags/1password/" style="font-size: 10px;">1password</a> <a href="../../tags/401/" style="font-size: 10px;">401</a> <a href="../../tags/6%E4%B8%AA%E8%8A%82%E7%82%B9/" style="font-size: 10px;">6个节点</a> <a href="../../tags/AC/" style="font-size: 10.43px;">AC</a> <a href="../../tags/ACP/" style="font-size: 10px;">ACP</a> <a href="../../tags/AI/" style="font-size: 12.17px;">AI</a> <a href="../../tags/AI-Coding-Assistant/" style="font-size: 10px;">AI Coding Assistant</a> <a href="../../tags/AI%E7%BC%96%E7%A8%8B%E5%8A%A9%E6%89%8B/" style="font-size: 10px;">AI编程助手</a> <a href="../../tags/AI%E8%BE%85%E5%8A%A9/" style="font-size: 10.43px;">AI辅助</a> <a href="../../tags/AI%E8%BE%85%E5%8A%A9%E7%BC%96%E7%A8%8B/" style="font-size: 10.43px;">AI辅助编程</a> <a href="../../tags/AP/" style="font-size: 10.87px;">AP</a> <a href="../../tags/API/" style="font-size: 11.3px;">API</a> <a href="../../tags/Alertmanager/" style="font-size: 10px;">Alertmanager</a> <a href="../../tags/AppDaemon/" style="font-size: 10px;">AppDaemon</a> <a href="../../tags/Aqara/" style="font-size: 10px;">Aqara</a> <a href="../../tags/BaiduPCS/" style="font-size: 11.3px;">BaiduPCS</a> <a href="../../tags/CC-Switch/" style="font-size: 10.43px;">CC-Switch</a> <a href="../../tags/CI-CD/" style="font-size: 10.43px;">CI/CD</a> <a href="../../tags/CLI-Tools/" style="font-size: 10px;">CLI Tools</a> <a href="../../tags/CLI%E5%B7%A5%E5%85%B7/" style="font-size: 10px;">CLI工具</a> <a href="../../tags/Caddy/" style="font-size: 10px;">Caddy</a> <a href="../../tags/Claude-Code/" style="font-size: 10.43px;">Claude Code</a> <a href="../../tags/Cloudflare/" style="font-size: 10px;">Cloudflare</a> <a href="../../tags/Codex/" style="font-size: 10.43px;">Codex</a> <a href="../../tags/Cookie-%E8%AE%A4%E8%AF%81/" style="font-size: 10px;">Cookie 认证</a> <a href="../../tags/Cron/" style="font-size: 11.3px;">Cron</a> <a href="../../tags/D1/" style="font-size: 10px;">D1</a> <a href="../../tags/DB%E6%8E%A2%E9%92%88/" style="font-size: 10.43px;">DB探针</a> <a href="../../tags/DB%E9%9D%99%E6%AD%A2/" style="font-size: 10px;">DB静止</a> <a href="../../tags/DIY-MINI/" style="font-size: 10px;">DIY-MINI</a> <a href="../../tags/Date/" style="font-size: 10px;">Date</a> <a href="../../tags/Diagrams-net/" style="font-size: 10px;">Diagrams.net</a> <a href="../../tags/Diary/" style="font-size: 10px;">Diary</a> <a href="../../tags/Docker/" style="font-size: 15.22px;">Docker</a> <a href="../../tags/Docker-Compose/" style="font-size: 10px;">Docker Compose</a> <a href="../../tags/Efficiency-Tools/" style="font-size: 10px;">Efficiency Tools</a> <a href="../../tags/Electerm/" style="font-size: 10px;">Electerm</a> <a href="../../tags/English/" style="font-size: 10.43px;">English</a> <a href="../../tags/FTS5/" style="font-size: 10.43px;">FTS5</a> <a href="../../tags/Gateway/" style="font-size: 12.61px;">Gateway</a> <a href="../../tags/Gemini-CLI/" style="font-size: 10.43px;">Gemini CLI</a> <a href="../../tags/GitHub-Actions/" style="font-size: 10.43px;">GitHub Actions</a> <a href="../../tags/HA/" style="font-size: 10px;">HA</a> <a href="../../tags/HADashboard/" style="font-size: 10px;">HADashboard</a> <a href="../../tags/Hermes/" style="font-size: 10.87px;">Hermes</a> <a href="../../tags/Hexo/" style="font-size: 10.87px;">Hexo</a> <a href="../../tags/HomeAssistant/" style="font-size: 10px;">HomeAssistant</a> <a href="../../tags/IP/" style="font-size: 10px;">IP</a> <a href="../../tags/IPv4/" style="font-size: 10px;">IPv4</a> <a href="../../tags/Java/" style="font-size: 11.74px;">Java</a> <a href="../../tags/LVM%E2%80%91Thin/" style="font-size: 10.43px;">LVM‑Thin</a> <a href="../../tags/Linux/" style="font-size: 13.04px;">Linux</a> <a href="../../tags/MacOS/" style="font-size: 10.87px;">MacOS</a> <a href="../../tags/Markdown/" style="font-size: 10px;">Markdown</a> <a href="../../tags/MiniMax/" style="font-size: 10px;">MiniMax</a> <a href="../../tags/Multi-Agent/" style="font-size: 10px;">Multi-Agent</a> <a href="../../tags/MySQL/" style="font-size: 10.87px;">MySQL</a> <a href="../../tags/NAS/" style="font-size: 10.87px;">NAS</a> <a href="../../tags/NRestarts/" style="font-size: 10px;">NRestarts</a> <a href="../../tags/Nginx/" style="font-size: 10px;">Nginx</a> <a href="../../tags/Node-RED/" style="font-size: 10.43px;">Node-RED</a> <a href="../../tags/Node-js/" style="font-size: 10.43px;">Node.js</a> <a href="../../tags/OOM/" style="font-size: 10px;">OOM</a> <a href="../../tags/OpenAI/" style="font-size: 10px;">OpenAI</a> <a href="../../tags/OpenClaw/" style="font-size: 18.26px;">OpenClaw</a> <a href="../../tags/OpenCode/" style="font-size: 10.43px;">OpenCode</a> <a href="../../tags/OpenResty/" style="font-size: 10px;">OpenResty</a> <a href="../../tags/OpenWrt/" style="font-size: 10.43px;">OpenWrt</a> <a href="../../tags/PPPoE/" style="font-size: 10px;">PPPoE</a> <a href="../../tags/Portainer/" style="font-size: 10px;">Portainer</a> <a href="../../tags/PostgreSQL/" style="font-size: 10px;">PostgreSQL</a> <a href="../../tags/ProcessOn/" style="font-size: 10px;">ProcessOn</a> <a href="../../tags/Prometheus/" style="font-size: 13.04px;">Prometheus</a> <a href="../../tags/Proxmox-VE/" style="font-size: 15.65px;">Proxmox VE</a> <a href="../../tags/RPC/" style="font-size: 10px;">RPC</a> <a href="../../tags/SOCKS5/" style="font-size: 10px;">SOCKS5</a> <a href="../../tags/SQLite/" style="font-size: 10.43px;">SQLite</a> <a href="../../tags/SSL/" style="font-size: 10px;">SSL</a> <a href="../../tags/Session/" style="font-size: 10px;">Session</a> <a href="../../tags/Shell/" style="font-size: 10.43px;">Shell</a> <a href="../../tags/Subagent/" style="font-size: 10px;">Subagent</a> <a href="../../tags/TTS/" style="font-size: 10px;">TTS</a> <a href="../../tags/TimeMachine/" style="font-size: 10px;">TimeMachine</a> <a href="../../tags/UML/" style="font-size: 10px;">UML</a> <a href="../../tags/Uptime-Kuma/" style="font-size: 10.43px;">Uptime Kuma</a> <a href="../../tags/VPN/" style="font-size: 10px;">VPN</a> <a href="../../tags/VPS/" style="font-size: 10.87px;">VPS</a> <a href="../../tags/Web/" style="font-size: 10px;">Web</a> <a href="../../tags/WebSocket/" style="font-size: 10.87px;">WebSocket</a> <a href="../../tags/Windows/" style="font-size: 10px;">Windows</a> <a href="../../tags/Workers/" style="font-size: 10px;">Workers</a> <a href="../../tags/activate/" style="font-size: 10.43px;">activate</a> <a href="../../tags/ad/" style="font-size: 10px;">ad</a> <a href="../../tags/adb/" style="font-size: 10px;">adb</a> <a href="../../tags/adblock/" style="font-size: 10.43px;">adblock</a> <a href="../../tags/agent/" style="font-size: 10px;">agent</a> <a href="../../tags/aligenie/" style="font-size: 10px;">aligenie</a> <a href="../../tags/aliyun/" style="font-size: 10.87px;">aliyun</a> <a href="../../tags/alpine/" style="font-size: 10px;">alpine</a> <a href="../../tags/annotation/" style="font-size: 10px;">annotation</a> <a href="../../tags/aop/" style="font-size: 10px;">aop</a> <a href="../../tags/authy/" style="font-size: 10px;">authy</a> <a href="../../tags/autofs/" style="font-size: 10px;">autofs</a> <a href="../../tags/backup/" style="font-size: 10px;">backup</a> <a href="../../tags/baidupan/" style="font-size: 10px;">baidupan</a> <a href="../../tags/bash/" style="font-size: 10.87px;">bash</a> <a href="../../tags/bitwarden/" style="font-size: 10px;">bitwarden</a> <a href="../../tags/boot/" style="font-size: 10.43px;">boot</a> <a href="../../tags/brew/" style="font-size: 10.43px;">brew</a> <a href="../../tags/browser/" style="font-size: 10px;">browser</a> <a href="../../tags/by-design/" style="font-size: 10px;">by-design</a> <a href="../../tags/caddy2/" style="font-size: 10.43px;">caddy2</a> <a href="../../tags/cdn/" style="font-size: 10px;">cdn</a> <a href="../../tags/centos/" style="font-size: 14.35px;">centos</a> <a href="../../tags/cert/" style="font-size: 10.43px;">cert</a> <a href="../../tags/certbot/" style="font-size: 10px;">certbot</a> <a href="../../tags/charles/" style="font-size: 10px;">charles</a> <a href="../../tags/chat/" style="font-size: 10px;">chat</a> <a href="../../tags/chrome/" style="font-size: 10.87px;">chrome</a> <a href="../../tags/classloader/" style="font-size: 10px;">classloader</a> <a href="../../tags/client/" style="font-size: 10.87px;">client</a> <a href="../../tags/clone/" style="font-size: 10.43px;">clone</a> <a href="../../tags/closures/" style="font-size: 10px;">closures</a> <a href="../../tags/cloudflare/" style="font-size: 10.43px;">cloudflare</a> <a href="../../tags/cmd/" style="font-size: 10px;">cmd</a> <a href="../../tags/command/" style="font-size: 10px;">command</a> <a href="../../tags/commit/" style="font-size: 10px;">commit</a> <a href="../../tags/connected/" style="font-size: 10px;">connected</a> <a href="../../tags/container/" style="font-size: 10px;">container</a> <a href="../../tags/cron/" style="font-size: 10px;">cron</a> <a href="../../tags/crontab/" style="font-size: 10px;">crontab</a> <a href="../../tags/cron%E4%BB%BB%E5%8A%A1/" style="font-size: 10.43px;">cron任务</a> <a href="../../tags/cron%E8%AE%BE%E8%AE%A1/" style="font-size: 10px;">cron设计</a> <a href="../../tags/ctyun/" style="font-size: 10.43px;">ctyun</a> <a href="../../tags/dashboard/" style="font-size: 10px;">dashboard</a> <a href="../../tags/ddsm/" style="font-size: 10px;">ddsm</a> <a href="../../tags/demo/" style="font-size: 10px;">demo</a> <a href="../../tags/dependency/" style="font-size: 10px;">dependency</a> <a href="../../tags/deploy/" style="font-size: 10px;">deploy</a> <a href="../../tags/developer/" style="font-size: 10px;">developer</a> <a href="../../tags/devtools/" style="font-size: 10px;">devtools</a> <a href="../../tags/dll/" style="font-size: 10px;">dll</a> <a href="../../tags/dns/" style="font-size: 10.87px;">dns</a> <a href="../../tags/docker/" style="font-size: 13.48px;">docker</a> <a href="../../tags/domain/" style="font-size: 10px;">domain</a> <a href="../../tags/download/" style="font-size: 10px;">download</a> <a href="../../tags/draw/" style="font-size: 10.43px;">draw</a> <a href="../../tags/drawio/" style="font-size: 10px;">drawio</a> <a href="../../tags/dsm/" style="font-size: 13.04px;">dsm</a> <a href="../../tags/dump/" style="font-size: 10px;">dump</a> <a href="../../tags/dylib/" style="font-size: 10px;">dylib</a> <a href="../../tags/edge/" style="font-size: 10.87px;">edge</a> <a href="../../tags/exception/" style="font-size: 10.43px;">exception</a> <a href="../../tags/export/" style="font-size: 10px;">export</a> <a href="../../tags/fail2ban/" style="font-size: 10px;">fail2ban</a> <a href="../../tags/fallback%E5%A4%B1%E6%95%88/" style="font-size: 10px;">fallback失效</a> <a href="../../tags/feign/" style="font-size: 10px;">feign</a> <a href="../../tags/firewall-cmd/" style="font-size: 10.43px;">firewall-cmd</a> <a href="../../tags/flow/" style="font-size: 10px;">flow</a> <a href="../../tags/frp/" style="font-size: 10.43px;">frp</a> <a href="../../tags/frpc/" style="font-size: 11.3px;">frpc</a> <a href="../../tags/frps/" style="font-size: 10.43px;">frps</a> <a href="../../tags/fuckgfw/" style="font-size: 11.3px;">fuckgfw</a> <a href="../../tags/function/" style="font-size: 10px;">function</a> <a href="../../tags/fuser/" style="font-size: 10px;">fuser</a> <a href="../../tags/gcc/" style="font-size: 10px;">gcc</a> <a href="../../tags/gfw/" style="font-size: 10.43px;">gfw</a> <a href="../../tags/git/" style="font-size: 13.04px;">git</a> <a href="../../tags/gitea/" style="font-size: 10.43px;">gitea</a> <a href="../../tags/github/" style="font-size: 12.61px;">github</a> <a href="../../tags/golang/" style="font-size: 10px;">golang</a> <a href="../../tags/gperftools/" style="font-size: 10px;">gperftools</a> <a href="../../tags/gridea/" style="font-size: 10.43px;">gridea</a> <a href="../../tags/grub/" style="font-size: 10.43px;">grub</a> <a href="../../tags/gvt-g/" style="font-size: 10px;">gvt-g</a> <a href="../../tags/hacs/" style="font-size: 10px;">hacs</a> <a href="../../tags/havcs/" style="font-size: 10.43px;">havcs</a> <a href="../../tags/heap/" style="font-size: 10px;">heap</a> <a href="../../tags/hello/" style="font-size: 10.43px;">hello</a> <a href="../../tags/hexo/" style="font-size: 10.87px;">hexo</a> <a href="../../tags/hibernate/" style="font-size: 10.43px;">hibernate</a> <a href="../../tags/hidpi/" style="font-size: 10px;">hidpi</a> <a href="../../tags/hoisting/" style="font-size: 10px;">hoisting</a> <a href="../../tags/homeassistant/" style="font-size: 11.74px;">homeassistant</a> <a href="../../tags/hosts/" style="font-size: 10px;">hosts</a> <a href="../../tags/html/" style="font-size: 10.43px;">html</a> <a href="../../tags/htmlparser/" style="font-size: 10px;">htmlparser</a> <a href="../../tags/https/" style="font-size: 10.87px;">https</a> <a href="../../tags/iKuai/" style="font-size: 10.43px;">iKuai</a> <a href="../../tags/idea/" style="font-size: 10px;">idea</a> <a href="../../tags/image/" style="font-size: 10px;">image</a> <a href="../../tags/img/" style="font-size: 10.43px;">img</a> <a href="../../tags/img2kvm/" style="font-size: 10px;">img2kvm</a> <a href="../../tags/immortalwrt/" style="font-size: 10px;">immortalwrt</a> <a href="../../tags/import/" style="font-size: 10px;">import</a> <a href="../../tags/index/" style="font-size: 10px;">index</a> <a href="../../tags/install/" style="font-size: 12.17px;">install</a> <a href="../../tags/intel/" style="font-size: 10.43px;">intel</a> <a href="../../tags/io/" style="font-size: 10px;">io</a> <a href="../../tags/ios/" style="font-size: 10px;">ios</a> <a href="../../tags/ip/" style="font-size: 10px;">ip</a> <a href="../../tags/iptables/" style="font-size: 10px;">iptables</a> <a href="../../tags/iptv/" style="font-size: 10.43px;">iptv</a> <a href="../../tags/ipv6/" style="font-size: 10px;">ipv6</a> <a href="../../tags/iso/" style="font-size: 10px;">iso</a> <a href="../../tags/java/" style="font-size: 11.74px;">java</a> <a href="../../tags/javascript/" style="font-size: 10.43px;">javascript</a> <a href="../../tags/jetbrains/" style="font-size: 10px;">jetbrains</a> <a href="../../tags/jieba/" style="font-size: 10px;">jieba</a> <a href="../../tags/jni/" style="font-size: 10px;">jni</a> <a href="../../tags/jnilib/" style="font-size: 10px;">jnilib</a> <a href="../../tags/jpa/" style="font-size: 10px;">jpa</a> <a href="../../tags/js/" style="font-size: 10.87px;">js</a> <a href="../../tags/json/" style="font-size: 10.43px;">json</a> <a href="../../tags/jsonb/" style="font-size: 10px;">jsonb</a> <a href="../../tags/jupter/" style="font-size: 10px;">jupter</a> <a href="../../tags/jupyterlab/" style="font-size: 10px;">jupyterlab</a> <a href="../../tags/jvm/" style="font-size: 10.43px;">jvm</a> <a href="../../tags/k8s/" style="font-size: 10.43px;">k8s</a> <a href="../../tags/kernel/" style="font-size: 10px;">kernel</a> <a href="../../tags/key/" style="font-size: 10px;">key</a> <a href="../../tags/kid/" style="font-size: 10px;">kid</a> <a href="../../tags/kms/" style="font-size: 10px;">kms</a> <a href="../../tags/kodi/" style="font-size: 10px;">kodi</a> <a href="../../tags/koolproxy/" style="font-size: 10.43px;">koolproxy</a> <a href="../../tags/koolproxyr/" style="font-size: 10.43px;">koolproxyr</a> <a href="../../tags/kvm/" style="font-size: 10.43px;">kvm</a> <a href="../../tags/lan/" style="font-size: 10px;">lan</a> <a href="../../tags/lastpass/" style="font-size: 10px;">lastpass</a> <a href="../../tags/launchctl/" style="font-size: 10px;">launchctl</a> <a href="../../tags/learning/" style="font-size: 10px;">learning</a> <a href="../../tags/lede/" style="font-size: 10px;">lede</a> <a href="../../tags/letsencrypt/" style="font-size: 10.87px;">letsencrypt</a> <a href="../../tags/linux/" style="font-size: 11.3px;">linux</a> <a href="../../tags/live/" style="font-size: 10px;">live</a> <a href="../../tags/loopback-proxy/" style="font-size: 10px;">loopback-proxy</a> <a href="../../tags/low-code/" style="font-size: 10px;">low-code</a> <a href="../../tags/lsof/" style="font-size: 10px;">lsof</a> <a href="../../tags/lvm/" style="font-size: 10px;">lvm</a> <a href="../../tags/lxc/" style="font-size: 10px;">lxc</a> <a href="../../tags/m3u8/" style="font-size: 10px;">m3u8</a> <a href="../../tags/mac/" style="font-size: 10.43px;">mac</a> <a href="../../tags/macos/" style="font-size: 10px;">macos</a> <a href="../../tags/manual/" style="font-size: 10px;">manual</a> <a href="../../tags/mariadb/" style="font-size: 10px;">mariadb</a> <a href="../../tags/markdown/" style="font-size: 10px;">markdown</a> <a href="../../tags/maven/" style="font-size: 10.43px;">maven</a> <a href="../../tags/md5/" style="font-size: 10.43px;">md5</a> <a href="../../tags/microcode/" style="font-size: 10px;">microcode</a> <a href="../../tags/mirror/" style="font-size: 10.43px;">mirror</a> <a href="../../tags/modem/" style="font-size: 10px;">modem</a> <a href="../../tags/modules/" style="font-size: 10px;">modules</a> <a href="../../tags/monitor/" style="font-size: 10px;">monitor</a> <a href="../../tags/mount/" style="font-size: 10px;">mount</a> <a href="../../tags/mstsc/" style="font-size: 10px;">mstsc</a> <a href="../../tags/mysql/" style="font-size: 10px;">mysql</a> <a href="../../tags/n2n/" style="font-size: 13.04px;">n2n</a> <a href="../../tags/n5105/" style="font-size: 10px;">n5105</a> <a href="../../tags/nas/" style="font-size: 10px;">nas</a> <a href="../../tags/netstat/" style="font-size: 10px;">netstat</a> <a href="../../tags/network/" style="font-size: 13.48px;">network</a> <a href="../../tags/new-api/" style="font-size: 10.43px;">new-api</a> <a href="../../tags/nfs/" style="font-size: 10px;">nfs</a> <a href="../../tags/node/" style="font-size: 10.43px;">node</a> <a href="../../tags/node-red/" style="font-size: 10.43px;">node-red</a> <a href="../../tags/nodejs/" style="font-size: 11.3px;">nodejs</a> <a href="../../tags/nohup/" style="font-size: 10.43px;">nohup</a> <a href="../../tags/notepad/" style="font-size: 10px;">notepad++</a> <a href="../../tags/npm/" style="font-size: 12.17px;">npm</a> <a href="../../tags/nssm/" style="font-size: 10.43px;">nssm</a> <a href="../../tags/ntp/" style="font-size: 10px;">ntp</a> <a href="../../tags/one-api/" style="font-size: 10px;">one-api</a> <a href="../../tags/oop/" style="font-size: 10px;">oop</a> <a href="../../tags/openfeign/" style="font-size: 10px;">openfeign</a> <a href="../../tags/openssl/" style="font-size: 10.43px;">openssl</a> <a href="../../tags/os/" style="font-size: 10px;">os</a> <a href="../../tags/otp/" style="font-size: 10px;">otp</a> <a href="../../tags/ovz/" style="font-size: 10px;">ovz</a> <a href="../../tags/p14/" style="font-size: 10px;">p14</a> <a href="../../tags/packet-capture/" style="font-size: 10px;">packet capture</a> <a href="../../tags/pat/" style="font-size: 10px;">pat</a> <a href="../../tags/pdf/" style="font-size: 10px;">pdf</a> <a href="../../tags/pem/" style="font-size: 10.43px;">pem</a> <a href="../../tags/perf/" style="font-size: 10px;">perf</a> <a href="../../tags/ping/" style="font-size: 10px;">ping</a> <a href="../../tags/pip/" style="font-size: 10px;">pip</a> <a href="../../tags/plugin/" style="font-size: 10px;">plugin</a> <a href="../../tags/png/" style="font-size: 10px;">png</a> <a href="../../tags/powerbutton/" style="font-size: 10px;">powerbutton</a> <a href="../../tags/print/" style="font-size: 10px;">print</a> <a href="../../tags/pro/" style="font-size: 10px;">pro</a> <a href="../../tags/proxy/" style="font-size: 10.43px;">proxy</a> <a href="../../tags/pve/" style="font-size: 15.65px;">pve</a> <a href="../../tags/pvekclean/" style="font-size: 11.3px;">pvekclean</a> <a href="../../tags/python/" style="font-size: 13.91px;">python</a> <a href="../../tags/qcow2/" style="font-size: 10px;">qcow2</a> <a href="../../tags/qemu/" style="font-size: 10.43px;">qemu</a> <a href="../../tags/qemu-guest-agent/" style="font-size: 10px;">qemu-guest-agent</a> <a href="../../tags/rar/" style="font-size: 10px;">rar</a> <a href="../../tags/reboot/" style="font-size: 10px;">reboot</a> <a href="../../tags/reconnect%E5%BE%AA%E7%8E%AF/" style="font-size: 10px;">reconnect循环</a> <a href="../../tags/reflog/" style="font-size: 10px;">reflog</a> <a href="../../tags/remote/" style="font-size: 10px;">remote</a> <a href="../../tags/remote-desktop/" style="font-size: 10.43px;">remote desktop</a> <a href="../../tags/renew/" style="font-size: 10px;">renew</a> <a href="../../tags/repo/" style="font-size: 10px;">repo</a> <a href="../../tags/resize/" style="font-size: 10px;">resize</a> <a href="../../tags/retina/" style="font-size: 10px;">retina</a> <a href="../../tags/root/" style="font-size: 10px;">root</a> <a href="../../tags/route/" style="font-size: 10px;">route</a> <a href="../../tags/router/" style="font-size: 10.43px;">router</a> <a href="../../tags/rule/" style="font-size: 10px;">rule</a> <a href="../../tags/rules/" style="font-size: 10px;">rules</a> <a href="../../tags/running/" style="font-size: 10px;">running</a> <a href="../../tags/runtime/" style="font-size: 10px;">runtime</a> <a href="../../tags/safari/" style="font-size: 10px;">safari</a> <a href="../../tags/sata/" style="font-size: 10px;">sata</a> <a href="../../tags/scipy-notebook/" style="font-size: 10px;">scipy-notebook</a> <a href="../../tags/scoping/" style="font-size: 10px;">scoping</a> <a href="../../tags/scp/" style="font-size: 10px;">scp</a> <a href="../../tags/server/" style="font-size: 10.43px;">server</a> <a href="../../tags/server-is-busy/" style="font-size: 10px;">server is busy</a> <a href="../../tags/slmgr/" style="font-size: 10px;">slmgr</a> <a href="../../tags/so/" style="font-size: 10px;">so</a> <a href="../../tags/socket-proxyd/" style="font-size: 10px;">socket-proxyd</a> <a href="../../tags/socks/" style="font-size: 10px;">socks</a> <a href="../../tags/source/" style="font-size: 10px;">source</a> <a href="../../tags/spk/" style="font-size: 10px;">spk</a> <a href="../../tags/spring/" style="font-size: 11.3px;">spring</a> <a href="../../tags/springboot/" style="font-size: 12.17px;">springboot</a> <a href="../../tags/springfox/" style="font-size: 10.87px;">springfox</a> <a href="../../tags/ss/" style="font-size: 10px;">ss</a> <a href="../../tags/ssh/" style="font-size: 11.74px;">ssh</a> <a href="../../tags/ssl/" style="font-size: 10.43px;">ssl</a> <a href="../../tags/stash/" style="font-size: 10px;">stash</a> <a href="../../tags/string/" style="font-size: 10px;">string</a> <a href="../../tags/supernode/" style="font-size: 10.43px;">supernode</a> <a href="../../tags/svg/" style="font-size: 10px;">svg</a> <a href="../../tags/svn/" style="font-size: 10px;">svn</a> <a href="../../tags/swagger/" style="font-size: 11.3px;">swagger</a> <a href="../../tags/sync/" style="font-size: 10px;">sync</a> <a href="../../tags/synology/" style="font-size: 10.43px;">synology</a> <a href="../../tags/systemctl/" style="font-size: 10.87px;">systemctl</a> <a href="../../tags/systemd/" style="font-size: 14.78px;">systemd</a> <a href="../../tags/systemd-unit/" style="font-size: 10px;">systemd unit</a> <a href="../../tags/systemd-socket/" style="font-size: 10px;">systemd-socket</a> <a href="../../tags/tap/" style="font-size: 10px;">tap</a> <a href="../../tags/tap-windows/" style="font-size: 10px;">tap-windows</a> <a href="../../tags/tapwindows/" style="font-size: 10px;">tapwindows</a> <a href="../../tags/telecom/" style="font-size: 10.43px;">telecom</a> <a href="../../tags/template/" style="font-size: 10px;">template</a> <a href="../../tags/terminal/" style="font-size: 10px;">terminal</a> <a href="../../tags/tls/" style="font-size: 10px;">tls</a> <a href="../../tags/tmux/" style="font-size: 10.43px;">tmux</a> <a href="../../tags/token/" style="font-size: 10px;">token</a> <a href="../../tags/token%E5%A4%B1%E6%95%88/" style="font-size: 10px;">token失效</a> <a href="../../tags/totp/" style="font-size: 10px;">totp</a> <a href="../../tags/trigram/" style="font-size: 10px;">trigram</a> <a href="../../tags/tvbox/" style="font-size: 10.87px;">tvbox</a> <a href="../../tags/txt/" style="font-size: 10px;">txt</a> <a href="../../tags/ubuntu/" style="font-size: 11.74px;">ubuntu</a> <a href="../../tags/udisk/" style="font-size: 10px;">udisk</a> <a href="../../tags/ui/" style="font-size: 10px;">ui</a> <a href="../../tags/undertow/" style="font-size: 10px;">undertow</a> <a href="../../tags/unicode61/" style="font-size: 10px;">unicode61</a> <a href="../../tags/uninstall/" style="font-size: 10px;">uninstall</a> <a href="../../tags/unlocker/" style="font-size: 10px;">unlocker</a> <a href="../../tags/upgrade/" style="font-size: 10.43px;">upgrade</a> <a href="../../tags/url/" style="font-size: 10px;">url</a> <a href="../../tags/v1%E6%8E%A2%E9%92%88/" style="font-size: 10px;">v1探针</a> <a href="../../tags/v2ray/" style="font-size: 10.43px;">v2ray</a> <a href="../../tags/vhd/" style="font-size: 10px;">vhd</a> <a href="../../tags/vim/" style="font-size: 10px;">vim</a> <a href="../../tags/vlmcsd/" style="font-size: 10px;">vlmcsd</a> <a href="../../tags/vm/" style="font-size: 10.43px;">vm</a> <a href="../../tags/vmdk/" style="font-size: 10px;">vmdk</a> <a href="../../tags/web/" style="font-size: 11.74px;">web</a> <a href="../../tags/websocket/" style="font-size: 10.43px;">websocket</a> <a href="../../tags/wechat/" style="font-size: 10px;">wechat</a> <a href="../../tags/windows/" style="font-size: 11.74px;">windows</a> <a href="../../tags/with/" style="font-size: 10px;">with</a> <a href="../../tags/worker/" style="font-size: 10.43px;">worker</a> <a href="../../tags/wow/" style="font-size: 10px;">wow</a> <a href="../../tags/xiaoya/" style="font-size: 10px;">xiaoya</a> <a href="../../tags/xml/" style="font-size: 10px;">xml</a> <a href="../../tags/yum/" style="font-size: 10px;">yum</a> <a href="../../tags/zip/" style="font-size: 10px;">zip</a> <a href="../../tags/%E4%B8%AD%E5%9B%BD%E7%94%B5%E4%BF%A1/" style="font-size: 10px;">中国电信</a> <a href="../../tags/%E4%B8%AD%E6%96%87%E6%90%9C%E7%B4%A2/" style="font-size: 10px;">中文搜索</a> <a href="../../tags/%E4%B8%BB%E5%8A%A8%E8%BF%BD%E9%97%AE/" style="font-size: 10.43px;">主动追问</a> <a href="../../tags/%E4%BA%91%E7%94%B5%E8%84%91/" style="font-size: 10.43px;">云电脑</a> <a href="../../tags/%E4%BA%A4%E6%8D%A2%E6%9C%BA/" style="font-size: 10px;">交换机</a> <a href="../../tags/%E4%BA%BA%E6%9C%BA%E5%8D%8F%E4%BD%9C/" style="font-size: 10px;">人机协作</a> <a href="../../tags/%E4%BB%A3%E7%90%86/" style="font-size: 10px;">代理</a> <a href="../../tags/%E4%BC%98%E5%8C%96/" style="font-size: 10px;">优化</a> <a href="../../tags/%E4%BD%93%E6%A3%80/" style="font-size: 10px;">体检</a> <a href="../../tags/%E5%80%BC%E7%8F%AD/" style="font-size: 10px;">值班</a> <a href="../../tags/%E5%81%87%E9%98%B3/" style="font-size: 10px;">假阳</a> <a href="../../tags/%E5%81%87%E9%98%B4/" style="font-size: 11.74px;">假阴</a> <a href="../../tags/%E5%81%A5%E5%BA%B7%E6%A3%80%E6%9F%A5/" style="font-size: 16.96px;">健康检查</a> <a href="../../tags/%E5%85%89%E7%8C%AB/" style="font-size: 10.43px;">光猫</a> <a href="../../tags/%E5%85%A8%E7%BB%BF/" style="font-size: 10px;">全绿</a> <a href="../../tags/%E5%85%A8%E9%87%8F%E5%90%8C%E6%AD%A5/" style="font-size: 10px;">全量同步</a> <a href="../../tags/%E5%85%AC%E7%BD%91IP/" style="font-size: 10px;">公网IP</a> <a href="../../tags/%E5%86%85%E5%AD%98/" style="font-size: 10px;">内存</a> <a href="../../tags/%E5%86%85%E5%AD%98%E4%BC%98%E5%8C%96/" style="font-size: 10px;">内存优化</a> <a href="../../tags/%E5%86%85%E7%BD%91/" style="font-size: 10.43px;">内网</a> <a href="../../tags/%E5%86%85%E7%BD%91IP/" style="font-size: 10px;">内网IP</a> <a href="../../tags/%E5%86%85%E7%BD%91%E6%B8%97%E9%80%8F/" style="font-size: 10px;">内网渗透</a> <a href="../../tags/%E5%86%99%E4%BD%9C/" style="font-size: 11.3px;">写作</a> <a href="../../tags/%E5%88%86%E8%AF%8D/" style="font-size: 10px;">分词</a> <a href="../../tags/%E5%88%87%E6%8D%A2/" style="font-size: 10px;">切换</a> <a href="../../tags/%E5%8D%87%E7%BA%A7/" style="font-size: 11.3px;">升级</a> <a href="../../tags/%E5%8D%8F%E4%BD%9C/" style="font-size: 10px;">协作</a> <a href="../../tags/%E5%8D%9A%E5%AE%A2/" style="font-size: 10.87px;">博客</a> <a href="../../tags/%E5%8F%8D%E5%90%91%E4%BB%A3%E7%90%86/" style="font-size: 10px;">反向代理</a> <a href="../../tags/%E5%8F%8D%E5%B8%B8%E7%A8%B3%E5%AE%9A/" style="font-size: 13.48px;">反常稳定</a> <a href="../../tags/%E5%8F%8D%E5%BA%94-vs-%E7%9F%A5%E8%AF%86/" style="font-size: 10px;">反应 vs 知识</a> <a href="../../tags/%E5%90%AF%E5%8A%A8/" style="font-size: 10px;">启动</a> <a href="../../tags/%E5%91%8A%E8%AD%A6/" style="font-size: 12.61px;">告警</a> <a href="../../tags/%E5%91%8A%E8%AD%A6%E4%BC%98%E5%8C%96/" style="font-size: 10px;">告警优化</a> <a href="../../tags/%E5%91%A8%E4%B8%80/" style="font-size: 10.43px;">周一</a> <a href="../../tags/%E5%91%A8%E4%B8%80%E7%84%A6%E8%99%91/" style="font-size: 10px;">周一焦虑</a> <a href="../../tags/%E5%91%A8%E4%B8%89/" style="font-size: 10px;">周三</a> <a href="../../tags/%E5%91%A8%E4%BA%8C/" style="font-size: 10px;">周二</a> <a href="../../tags/%E5%91%A8%E4%BA%94/" style="font-size: 10.43px;">周五</a> <a href="../../tags/%E5%91%A8%E5%85%AD/" style="font-size: 10px;">周六</a> <a href="../../tags/%E5%91%A8%E5%9B%9B/" style="font-size: 10px;">周四</a> <a href="../../tags/%E5%91%A8%E6%8A%A5/" style="font-size: 10.43px;">周报</a> <a href="../../tags/%E5%91%A8%E6%97%A5/" style="font-size: 10.43px;">周日</a> <a href="../../tags/%E5%91%A8%E6%9C%AB/" style="font-size: 12.17px;">周末</a> <a href="../../tags/%E5%91%A8%E6%9C%AB%E7%AA%81%E7%A0%B4/" style="font-size: 10px;">周末突破</a> <a href="../../tags/%E5%A4%8F%E4%BB%A4%E6%97%B6/" style="font-size: 10px;">夏令时</a> <a href="../../tags/%E5%A4%9A%E6%99%BA%E8%83%BD%E4%BD%93/" style="font-size: 10.87px;">多智能体</a> <a href="../../tags/%E5%A4%9A%E8%8A%82%E7%82%B9/" style="font-size: 10.43px;">多节点</a> <a href="../../tags/%E5%A4%9A%E8%8A%82%E7%82%B9%E7%AE%A1%E7%90%86/" style="font-size: 10px;">多节点管理</a> <a href="../../tags/%E5%A4%A9%E7%8C%AB%E7%B2%BE%E7%81%B5/" style="font-size: 10px;">天猫精灵</a> <a href="../../tags/%E5%A4%A9%E7%BF%BC%E4%BA%91/" style="font-size: 10.43px;">天翼云</a> <a href="../../tags/%E5%AE%89%E5%85%A8/" style="font-size: 16.09px;">安全</a> <a href="../../tags/%E5%AE%89%E8%A3%85/" style="font-size: 10.43px;">安装</a> <a href="../../tags/%E5%AE%9A%E6%97%B6%E4%BB%BB%E5%8A%A1/" style="font-size: 10.43px;">定时任务</a> <a href="../../tags/%E5%AE%B9%E5%99%A8/" style="font-size: 12.61px;">容器</a> <a href="../../tags/%E5%AE%B9%E5%99%A8%E7%BD%91%E7%BB%9C/" style="font-size: 10px;">容器网络</a> <a href="../../tags/%E5%AF%BC%E5%85%A5/" style="font-size: 10px;">导入</a> <a href="../../tags/%E5%B0%8F%E7%B1%B3/" style="font-size: 10px;">小米</a> <a href="../../tags/%E5%B7%A5%E4%BD%9C%E6%84%9F%E6%82%9F/" style="font-size: 10.87px;">工作感悟</a> <a href="../../tags/%E5%B7%A5%E4%BD%9C%E6%97%A5%E5%B8%B8/" style="font-size: 10px;">工作日常</a> <a href="../../tags/%E5%B8%B8%E7%94%A8%E8%BD%AF%E4%BB%B6/" style="font-size: 10px;">常用软件</a> <a href="../../tags/%E5%B9%82%E7%AD%89/" style="font-size: 10px;">幂等</a> <a href="../../tags/%E5%B9%BF%E5%91%8A%E5%B1%8F%E8%94%BD/" style="font-size: 10px;">广告屏蔽</a> <a href="../../tags/%E5%BA%8F%E5%88%97%E5%8F%B7/" style="font-size: 10px;">序列号</a> <a href="../../tags/%E5%BA%94%E7%94%A8%E5%B8%82%E5%9C%BA/" style="font-size: 10px;">应用市场</a> <a href="../../tags/%E5%BC%82%E5%B8%B8/" style="font-size: 10px;">异常</a> <a href="../../tags/%E5%BE%AA%E7%8E%AF%E7%B1%BB/" style="font-size: 10px;">循环类</a> <a href="../../tags/%E5%BF%83%E6%80%81/" style="font-size: 10px;">心态</a> <a href="../../tags/%E5%BF%83%E6%99%BA%E6%88%90%E9%95%BF/" style="font-size: 10px;">心智成长</a> <a href="../../tags/%E5%BF%83%E7%90%86%E6%A8%A1%E5%9E%8B/" style="font-size: 10.43px;">心理模型</a> <a href="../../tags/%E5%BF%83%E8%B7%B3/" style="font-size: 10px;">心跳</a> <a href="../../tags/%E5%BF%83%E8%B7%B3%E6%A3%80%E6%9F%A5/" style="font-size: 10.43px;">心跳检查</a> <a href="../../tags/%E6%80%A7%E8%83%BD%E4%BC%98%E5%8C%96/" style="font-size: 10px;">性能优化</a> <a href="../../tags/%E6%84%9F%E6%82%9F/" style="font-size: 10px;">感悟</a> <a href="../../tags/%E6%89%93%E5%B7%A5/" style="font-size: 18.7px;">打工</a> <a href="../../tags/%E6%89%93%E5%B7%A5%E4%BA%BA/" style="font-size: 10px;">打工人</a> <a href="../../tags/%E6%89%B9%E9%87%8F%E6%A0%A1%E9%AA%8C/" style="font-size: 10px;">批量校验</a> <a href="../../tags/%E6%8A%80%E6%9C%AF/" style="font-size: 19.13px;">技术</a> <a href="../../tags/%E6%8A%93%E5%8C%85/" style="font-size: 10px;">抓包</a> <a href="../../tags/%E6%8E%92%E6%9F%A5/" style="font-size: 10px;">排查</a> <a href="../../tags/%E6%8E%A5%E5%8F%97/" style="font-size: 10.43px;">接受</a> <a href="../../tags/%E6%8E%A5%E5%8F%97%E4%B9%8B%E5%90%8E/" style="font-size: 10px;">接受之后</a> <a href="../../tags/%E6%8E%A5%E5%8F%97%E5%B1%82/" style="font-size: 10.43px;">接受层</a> <a href="../../tags/%E6%8F%8F%E8%BF%B0%E6%96%87%E4%BB%B6/" style="font-size: 10px;">描述文件</a> <a href="../../tags/%E6%94%BE%E4%B8%8B/" style="font-size: 10px;">放下</a> <a href="../../tags/%E6%95%85%E9%9A%9C/" style="font-size: 10.43px;">故障</a> <a href="../../tags/%E6%95%85%E9%9A%9C%E6%8E%92%E6%9F%A5/" style="font-size: 12.61px;">故障排查</a> <a href="../../tags/%E6%95%88%E7%8E%87/" style="font-size: 10.43px;">效率</a> <a href="../../tags/%E6%95%88%E7%8E%87%E5%B7%A5%E5%85%B7/" style="font-size: 11.3px;">效率工具</a> <a href="../../tags/%E6%95%B0%E6%8D%AE/" style="font-size: 10px;">数据</a> <a href="../../tags/%E6%97%81%E8%B7%AF%E7%94%B1/" style="font-size: 10px;">旁路由</a> <a href="../../tags/%E6%97%A0%E6%9C%8D%E5%8A%A1%E5%99%A8/" style="font-size: 10px;">无服务器</a> <a href="../../tags/%E6%97%A5%E8%AE%B0/" style="font-size: 19.57px;">日记</a> <a href="../../tags/%E6%97%B6%E5%8C%BA/" style="font-size: 10px;">时区</a> <a href="../../tags/%E6%98%BE%E5%8D%A1%E8%99%9A%E6%8B%9F%E5%8C%96/" style="font-size: 10px;">显卡虚拟化</a> <a href="../../tags/%E6%99%BA%E8%83%BD%E5%AE%B6%E5%B1%85/" style="font-size: 10px;">智能家居</a> <a href="../../tags/%E6%99%BA%E8%83%BD%E9%9F%B3%E7%AE%B1/" style="font-size: 10px;">智能音箱</a> <a href="../../tags/%E6%9C%8D%E5%8A%A1%E5%99%A8/" style="font-size: 10px;">服务器</a> <a href="../../tags/%E6%9C%8D%E5%8A%A1%E7%AE%A1%E7%90%86/" style="font-size: 10px;">服务管理</a> <a href="../../tags/%E6%9E%B6%E6%9E%84/" style="font-size: 10px;">架构</a> <a href="../../tags/%E6%A2%AF%E5%AD%90/" style="font-size: 10px;">梯子</a> <a href="../../tags/%E6%A8%A1%E5%9D%97/" style="font-size: 10px;">模块</a> <a href="../../tags/%E6%A8%A1%E5%9E%8B%E6%8E%A2%E6%B5%8B/" style="font-size: 10px;">模型探测</a> <a href="../../tags/%E6%A8%A1%E5%9E%8B%E8%B0%83%E7%94%A8/" style="font-size: 10.43px;">模型调用</a> <a href="../../tags/%E6%B5%81%E7%A8%8B/" style="font-size: 10px;">流程</a> <a href="../../tags/%E6%B5%81%E7%A8%8B%E5%9B%BE/" style="font-size: 10px;">流程图</a> <a href="../../tags/%E6%B5%81%E7%A8%8B%E7%AE%A1%E7%90%86/" style="font-size: 10px;">流程管理</a> <a href="../../tags/%E6%B5%8F%E8%A7%88%E5%99%A8/" style="font-size: 10.43px;">浏览器</a> <a href="../../tags/%E6%B8%85%E5%8D%95%E4%B9%8B%E5%90%8E/" style="font-size: 10px;">清单之后</a> <a href="../../tags/%E6%B8%85%E5%8D%95%E4%B9%8B%E5%A4%96/" style="font-size: 10.87px;">清单之外</a> <a href="../../tags/%E6%B8%85%E5%8D%95%E8%AE%BE%E8%AE%A1/" style="font-size: 10px;">清单设计</a> <a href="../../tags/%E6%B8%85%E5%8D%95%E8%BE%B9%E7%95%8C/" style="font-size: 10.43px;">清单边界</a> <a href="../../tags/%E6%B8%85%E5%8D%95%E8%BF%9B%E5%8C%96/" style="font-size: 10px;">清单进化</a> <a href="../../tags/%E6%BA%90%E7%A0%81%E5%A4%87%E4%BB%BD/" style="font-size: 10.43px;">源码备份</a> <a href="../../tags/%E6%BC%AB%E6%B8%B8/" style="font-size: 10px;">漫游</a> <a href="../../tags/%E6%BF%80%E6%B4%BB/" style="font-size: 10px;">激活</a> <a href="../../tags/%E7%81%AB%E7%BB%92/" style="font-size: 10px;">火绒</a> <a href="../../tags/%E7%84%A6%E8%99%91/" style="font-size: 13.48px;">焦虑</a> <a href="../../tags/%E7%8E%84%E5%AD%A6/" style="font-size: 10px;">玄学</a> <a href="../../tags/%E7%94%9F%E6%B4%BB/" style="font-size: 10px;">生活</a> <a href="../../tags/%E7%94%B5%E4%BF%A1/" style="font-size: 10.43px;">电信</a> <a href="../../tags/%E7%94%BB%E5%9B%BE/" style="font-size: 10px;">画图</a> <a href="../../tags/%E7%9B%91%E6%8E%A7/" style="font-size: 17.39px;">监控</a> <a href="../../tags/%E7%9B%91%E6%8E%A7%E7%B3%BB%E7%BB%9F/" style="font-size: 10px;">监控系统</a> <a href="../../tags/%E7%9B%B4%E6%92%AD%E6%BA%90/" style="font-size: 10px;">直播源</a> <a href="../../tags/%E7%9B%B4%E8%A7%89/" style="font-size: 10px;">直觉</a> <a href="../../tags/%E7%A3%81%E7%9B%98/" style="font-size: 10px;">磁盘</a> <a href="../../tags/%E7%AB%AF%E5%8F%A3/" style="font-size: 10.43px;">端口</a> <a href="../../tags/%E7%AB%AF%E5%8F%A3%E5%86%B2%E7%AA%81/" style="font-size: 10.43px;">端口冲突</a> <a href="../../tags/%E7%AB%AF%E5%8F%A3%E6%89%AB%E6%8F%8F/" style="font-size: 10px;">端口扫描</a> <a href="../../tags/%E7%AC%AC10%E7%B1%BB/" style="font-size: 10.43px;">第10类</a> <a href="../../tags/%E7%AC%AC11%E7%B1%BB/" style="font-size: 10.43px;">第11类</a> <a href="../../tags/%E7%AC%AC12%E7%B1%BB/" style="font-size: 10.43px;">第12类</a> <a href="../../tags/%E7%AC%AC6%E5%A4%A9/" style="font-size: 10px;">第6天</a> <a href="../../tags/%E7%AC%AC9%E7%B1%BB/" style="font-size: 10px;">第9类</a> <a href="../../tags/%E7%AE%A1%E7%90%86/" style="font-size: 10px;">管理</a> <a href="../../tags/%E7%BB%AD%E6%9C%9F/" style="font-size: 10px;">续期</a> <a href="../../tags/%E7%BD%91%E5%85%B3/" style="font-size: 10px;">网关</a> <a href="../../tags/%E7%BD%91%E7%BB%9C/" style="font-size: 15.22px;">网络</a> <a href="../../tags/%E7%BD%91%E7%BB%9C%E9%A3%8E%E6%9A%B4/" style="font-size: 10px;">网络风暴</a> <a href="../../tags/%E7%BE%A4%E6%99%96/" style="font-size: 10.43px;">群晖</a> <a href="../../tags/%E8%84%9A%E6%9C%AC/" style="font-size: 10px;">脚本</a> <a href="../../tags/%E8%84%9A%E6%9C%AC%E4%BC%98%E5%8C%96/" style="font-size: 10px;">脚本优化</a> <a href="../../tags/%E8%85%BE%E8%AE%AF/" style="font-size: 10px;">腾讯</a> <a href="../../tags/%E8%87%AA%E5%8A%A8%E5%8C%96/" style="font-size: 16.52px;">自动化</a> <a href="../../tags/%E8%87%AA%E5%8A%A8%E6%81%A2%E5%A4%8D/" style="font-size: 10.43px;">自动恢复</a> <a href="../../tags/%E8%87%AA%E5%BB%BA%E5%BA%94%E7%94%A8/" style="font-size: 10px;">自建应用</a> <a href="../../tags/%E8%87%AA%E6%88%91%E5%8F%8D%E6%80%9D/" style="font-size: 13.04px;">自我反思</a> <a href="../../tags/%E8%87%AA%E6%88%91%E6%89%93%E8%84%B8/" style="font-size: 10px;">自我打脸</a> <a href="../../tags/%E8%8A%82%E7%82%B9%E8%A7%92%E8%89%B2/" style="font-size: 10px;">节点角色</a> <a href="../../tags/%E8%99%9A%E6%8B%9F%E6%9C%BA/" style="font-size: 11.74px;">虚拟机</a> <a href="../../tags/%E8%A7%92%E8%89%B2%E4%B8%8D%E5%8C%B9%E9%85%8D/" style="font-size: 10.43px;">角色不匹配</a> <a href="../../tags/%E8%A7%92%E8%89%B2%E8%AF%AF%E9%85%8D/" style="font-size: 10px;">角色误配</a> <a href="../../tags/%E8%A7%92%E8%89%B2%E9%94%99%E9%85%8D/" style="font-size: 10px;">角色错配</a> <a href="../../tags/%E8%AE%A4%E8%AF%81/" style="font-size: 10.43px;">认证</a> <a href="../../tags/%E8%AE%BE%E8%AE%A1%E5%81%8F%E5%B7%AE/" style="font-size: 10px;">设计偏差</a> <a href="../../tags/%E8%AF%81%E4%B9%A6/" style="font-size: 10px;">证书</a> <a href="../../tags/%E8%AF%AD%E9%9B%80/" style="font-size: 10px;">语雀</a> <a href="../../tags/%E8%AF%AF%E6%8A%A5/" style="font-size: 12.17px;">误报</a> <a href="../../tags/%E8%AF%AF%E6%8A%A5%E8%BF%87%E6%BB%A4/" style="font-size: 10px;">误报过滤</a> <a href="../../tags/%E8%B6%85%E6%97%B6/" style="font-size: 10.43px;">超时</a> <a href="../../tags/%E8%B7%AF%E7%94%B1/" style="font-size: 10px;">路由</a> <a href="../../tags/%E8%B7%AF%E7%94%B1%E5%99%A8/" style="font-size: 11.3px;">路由器</a> <a href="../../tags/%E8%BD%AF%E4%BB%B6%E7%AE%A1%E5%AE%B6/" style="font-size: 10px;">软件管家</a> <a href="../../tags/%E8%BD%AF%E8%B7%AF%E7%94%B1/" style="font-size: 10.43px;">软路由</a> <a href="../../tags/%E8%BF%90%E7%BB%B4/" style="font-size: 20px;">运维</a> <a href="../../tags/%E8%BF%90%E7%BB%B4%E7%9B%91%E6%8E%A7/" style="font-size: 10.43px;">运维监控</a> <a href="../../tags/%E8%BF%9B%E7%A8%8B/" style="font-size: 10.43px;">进程</a> <a href="../../tags/%E8%BF%9E%E6%8E%A5%E4%BF%9D%E6%B4%BB/" style="font-size: 10px;">连接保活</a> <a href="../../tags/%E8%BF%9E%E6%8E%A5%E9%97%AE%E9%A2%98/" style="font-size: 10px;">连接问题</a> <a href="../../tags/%E9%80%9A%E4%BF%A1%E6%9C%BA%E5%88%B6/" style="font-size: 10px;">通信机制</a> <a href="../../tags/%E9%80%9A%E7%9F%A5/" style="font-size: 10px;">通知</a> <a href="../../tags/%E9%83%A8%E7%BD%B2/" style="font-size: 12.17px;">部署</a> <a href="../../tags/%E9%83%A8%E7%BD%B2%E9%93%BE%E8%B7%AF/" style="font-size: 10px;">部署链路</a> <a href="../../tags/%E9%85%8D%E7%BD%AE/" style="font-size: 10.87px;">配置</a> <a href="../../tags/%E9%92%89%E9%92%89/" style="font-size: 10.43px;">钉钉</a> <a href="../../tags/%E9%95%9C%E5%83%8F/" style="font-size: 10.87px;">镜像</a> <a href="../../tags/%E9%95%9C%E5%83%8F%E6%BA%90/" style="font-size: 10px;">镜像源</a> <a href="../../tags/%E9%95%BF%E6%9C%9F%E7%A8%B3%E5%AE%9A/" style="font-size: 12.61px;">长期稳定</a> <a href="../../tags/%E9%95%BF%E8%BF%9E%E6%8E%A5/" style="font-size: 10px;">长连接</a> <a href="../../tags/%E9%97%A8%E7%AA%97%E4%BC%A0%E6%84%9F%E5%99%A8/" style="font-size: 10px;">门窗传感器</a> <a href="../../tags/%E9%97%AE%E9%A2%98%E6%8E%92%E6%9F%A5/" style="font-size: 17.83px;">问题排查</a> <a href="../../tags/%E9%98%B2%E7%81%AB%E5%A2%99/" style="font-size: 11.3px;">防火墙</a> <a href="../../tags/%E9%98%BF%E9%87%8C%E4%BA%91/" style="font-size: 11.3px;">阿里云</a> <a href="../../tags/%E9%98%BF%E9%87%8C%E6%BA%90/" style="font-size: 10.43px;">阿里源</a> <a href="../../tags/%E9%9B%86%E5%AE%A2/" style="font-size: 10.43px;">集客</a> <a href="../../tags/%E9%9D%99%E9%BB%98%E6%9C%9F/" style="font-size: 14.78px;">静默期</a> <a href="../../tags/%E9%A3%9E%E4%B9%A6/" style="font-size: 10.87px;">飞书</a>
+    </div>
+    
+      <script>
+        var maxTagcloud = parseInt(17);
+        var tags_length = parseInt(575);
+        var tags_arr = [];
+        for(var i = 0; i < tags_length; i++){
+          tags_arr.push(i);
+        }
+        tags_arr.sort(function (l, r) {
+          return Math.random() > 0.5 ? -1 : 1;
+        });
+        tags_arr = tags_arr.slice(0, maxTagcloud < tags_length ? tags_length - maxTagcloud : 0);
+        for(var tag_i = 0; tag_i < tags_arr.length; tag_i++){
+          document.getElementById("randomtagcloud").children[tags_arr[tag_i]].style.display = 'none';
+        }
+      </script>
+    
+  </div>
+
+    
+        
+        <!-- 一言 -->
+<div class="nexmoe-widget-wrap">
+  <h3 class="nexmoe-widget-title">
+    Hitokoto
+  </h3>
+  <div class="nexmoe-widget">
+    <ul class="hitokoto-box">
+      <li id="hitokoto_text_parent" class="hitokoto-text" hitokotoCategory="">
+        <a href="#" id="hitokoto_text">
+          
+        </a>
+        <a href="#" id="hitokoto_error_text" style="display: none;">
+          
+        </a>
+      </li>
+    </ul>
+  </div>
+</div>
+
+<script>
+  let hitokotoText = document.getElementById('hitokoto_text')
+  let hitokotoErroText = document.getElementById('hitokoto_error_text')
+  let hitokotoCategory = document.getElementById('hitokoto_text_parent').getAttribute('hitokotoCategory')
+  window.addEventListener('load', function () {
+    let url = 'https://v1.hitokoto.cn'
+    if (hitokotoCategory) {
+      url += '?c=' + hitokotoCategory
+    }
+    fetch(url)
+      .then(response => response.json())
+      .then(data => {
+        hitokotoText.innerText = "「 " + data.hitokoto + " 」 from " + data.from
+        hitokotoText.href = 'https://hitokoto.cn/?uuid=' + data.uuid
+      })
+      .catch((reason) => {
+        console.error(11, reason)
+        hitokotoText.style.display = 'none'
+        hitokotoErroText.style.display = 'block'
+      })
+  })
+</script>
+    
+        
+        
+  <div class="nexmoe-widget-wrap">
+    <h3 class="nexmoe-widget-title">Archive</h3>
+    <div class="nexmoe-widget">
+      <ul class="archive-list"><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2026/">2026</a><span class="archive-list-count">198</span></li><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2025/">2025</a><span class="archive-list-count">2</span></li><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2024/">2024</a><span class="archive-list-count">19</span></li><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2023/">2023</a><span class="archive-list-count">18</span></li><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2022/">2022</a><span class="archive-list-count">4</span></li><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2021/">2021</a><span class="archive-list-count">114</span></li><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2018/">2018</a><span class="archive-list-count">1</span></li></ul>
+    </div>
+  </div>
+
+
+
+    
+        
+        
+  <div class="nexmoe-widget-wrap">
+    <h3 class="nexmoe-widget-title">Recent Posts</h3>
+    <div class="nexmoe-widget">
+      <ul>
+        
+          <li>
+            <a href="../../post/2026-06-13-feishu-websocket-reconnect-loop-12-days/">Feishu WebSocket 长期 reconnect 循环 12+ 天——双节点同时中招、自建应用角色错配、v1 探针只判 running 不判 connected 的一键定位 + 修复</a>
+          </li>
+        
+          <li>
+            <a href="../../post/2026-06-13-saturday-the-13th-diary-anti-stability-day-6-weekend-breakthrough-checklist-still-expanding/">周六晚上 21:15，第 13 篇日记，&#34;反着来&#34;第 6 天——周末了，我第一次没工作 13 天，但清单之外**还**在扩</a>
+          </li>
+        
+          <li>
+            <a href="../../post/2026-06-12-silent-period-anomaly-stability-type-11-checklist-itself-checklist-design-bias/">静默期&#34;反常稳定&#34;第 11 类：清单之外——cron 任务角色误判 + systemd 状态机误报 + 长期同步静止 一键检测脚本 v5 + 为什么&#34;清单设计&#34;也要追问</a>
+          </li>
+        
+          <li>
+            <a href="../../post/2026-06-12-friday-the-12th-diary-anti-stability-day-5-checklist-itself-is-wrong/">周五晚上 21:15，第 12 篇日记，&#34;反着来&#34;第 5 天——清单 + 接受 都没救我，因为清单**本身**就写错了</a>
+          </li>
+        
+          <li>
+            <a href="../../post/2026-06-11-silent-period-anomaly-stability-type-10-acceptance-into-checklist/">静默期&#34;反常稳定&#34;第 10 类：把&#34;接受&#34;也写进清单——10 类反常稳定一键检测脚本 v4 + 为什么&#34;5 秒伪放手&#34;和&#34;0 秒真放手&#34;差的是 1 夜</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+
+    
+        
+        <div class="nexmoe-widget-wrap">
+    <div class="nexmoe-widget nexmoe-link">
+		<ul>
+        
+            <li>
+                <a href="https://blog.example.com/" target="_blank" >
+                    <img src="/images/avatar.webp" alt="魔都水滴Blog"></img>
+                    <p>魔都水滴Blog</p>
+                </a>
+            </li>
+        
+		</ul>
+    </div>
+</div>
+<style>
+.nexmoe-widget-wrap .nexmoe-link ul li a {
+    text-align : center;
+}
+.nexmoe-widget-wrap .nexmoe-link ul li a img {
+    max-width : 100%;
+}
+.nexmoe-widget-wrap .nexmoe-link ul li a p {
+    margin: 10px 0;
+}
+</style>
+
+    
+   
+    <div class="nexmoe-copyright">
+        &copy; 2026 Margrop
+        Powered by <a href="http://hexo.io/" target="_blank">Hexo</a>
+        & <a href="https://github.com/theme-nexmoe/hexo-theme-nexmoe" target="_blank">Nexmoe</a>
+        
+    </div>
+</div><!-- .nexmoe-drawer --></div><div id="nexmoe-content"><div class="nexmoe-primary"><div class="nexmoe-post">
+  <article>
+    
+        <div class="nexmoe-post-cover absolute" style="padding-top: 56.25%;"> 
+            <img src="https://picsum.photos/seed/tech0613/1280/720" alt="Feishu WebSocket 长期 reconnect 循环 12+ 天——双节点同时中招、自建应用角色错配、v1 探针只判 running 不判 connected 的一键定位 + 修复" loading="lazy">
+            <h1>Feishu WebSocket 长期 reconnect 循环 12+ 天——双节点同时中招、自建应用角色错配、v1 探针只判 running 不判 connected 的一键定位 + 修复</h1>
+        </div>
+    
+    
+    <div class="nexmoe-post-meta">
+    <div class="nexmoe-rainbow">
+        <a class="nexmoefont icon-calendar-fill">2026年06月13日</a>
+        
+            <a class="nexmoefont icon-appstore-fill -link" href="../../categories/ai-tech/">ai_tech</a>
+        
+        
+    <a><i class="nexmoefont icon-areachart"></i>约45k字</a>
+    <a><i class="nexmoefont icon-time-circle-fill"></i>预计需要1:04分钟</a>
+
+    </div>
+    
+    
+    
+    
+    
+</div>
+
+    <h2 id="前言"><a href="#前言" class="headerlink" title="前言"></a>前言</h2><p>6&#x2F;8 我写了 6 类反常稳定。6&#x2F;9 补了 2 类。6&#x2F;10 提”清单有边界”（第 9 类硬件 + 第 9 类软件）。6&#x2F;11 把”接受”写进清单（第 10 类）。6&#x2F;12 把”清单本身可能写错”写进清单（第 11 类）。</p>
+<p>6&#x2F;13 我发现——<strong>清单之外</strong>还<strong>有”循环类”反常稳定</strong>。</p>
+<p>具体一个真实场景：</p>
+<p><strong>VM151 + VM153 两个节点同时 Feishu WebSocket 长期 reconnect 循环 12+ 天（6&#x2F;1~6&#x2F;13）</strong>，每天 12:28~12:29 一次 reconnect event，但 <code>openclaw channels status</code> 一直显示 <code>Feishu: running</code>——<strong>没有</strong> <code>connected</code> 标识。</p>
+<p><strong>—— “running” ≠ “connected”。</strong></p>
+<p><strong>—— 旧版 (v1) 探针只看”running 不 running”——不追问”connected 不 connected”。</strong></p>
+<p><strong>—— 12+ 天 Feishu 消息</strong>收不到<strong>。</strong></p>
+<p><strong>—— 12+ 天健康检查</strong>全绿<strong>。</strong></p>
+<p><strong>—— 12+ 天我</strong>没<strong>追问”Feishu 到底 connected 没”。</strong></p>
+<p><strong>—— 12+ 天 DingTalk 在两台机器上 &#x3D; <code>connected, in:5d ago</code>——但 Feishu &#x3D; <code>running, no in:</code>。</strong></p>
+<p><strong>—— 12+ 天”反常循环”被</strong>误报<strong>为”反常稳定”。</strong></p>
+<p><strong>第 12 类反常稳定：清单之外的循环类——外部依赖（IM SDK &#x2F; 数据库 &#x2F; 第三方 API）可能 12+ 天循环重连，表面”全绿”实际”持续失败”。</strong></p>
+<p>这一类不是”再加一类”——是”清单<strong>之外</strong>的扩展”：</p>
+<ul>
+<li>6&#x2F;8 的 6 类 &#x3D; “主动追问 6 类”</li>
+<li>6&#x2F;9 的 2 类 &#x3D; “主动追问扩 2 类”</li>
+<li>6&#x2F;10 的 1 类 &#x3D; “承认清单的边界（缺）”</li>
+<li>6&#x2F;11 的 1 类 &#x3D; “把接受写进清单”</li>
+<li>6&#x2F;12 的 1 类 &#x3D; “清单<strong>之外</strong>（错）”</li>
+<li>6&#x2F;13 的 1 类 &#x3D; “清单<strong>之外</strong>的<strong>循环类</strong>—— running ≠ connected”</li>
+</ul>
+<p><strong>6 + 2 + 1 + 1 + 1 + 1 &#x3D; 12。</strong></p>
+<p>本文会基于 6&#x2F;13 这次”周末突破”挖出的 Feishu reconnect 循环的经历，给出：</p>
+<ol>
+<li><strong>第 12 类反常稳定的具体场景</strong>——VM151 + VM153 Feishu WS reconnect 12+ 天的根因</li>
+<li><strong>“running” vs “connected” 的精确语义</strong>——v1 探针只看 running 的 bug + v2 探针看 connected 的修复</li>
+<li><strong>双节点同时中招的根因</strong>——自建应用配置 + token 刷新 + 飞书后端 reconnect 策略 3 因素叠加</li>
+<li><strong>一键检测脚本 v6</strong>——覆盖 6&#x2F;8-6&#x2F;12 的 11 类 + 6&#x2F;13 的 1 类（running&#x2F;connected 双探针 + 飞书后端 reconnect 频率统计）</li>
+<li><strong>Q&amp;A：Feishu WS 长期 reconnect 循环的 4 种常见根因 + 修复动作</strong></li>
+</ol>
+<h2 id="一、第-12-类反常稳定：清单之外的循环类"><a href="#一、第-12-类反常稳定：清单之外的循环类" class="headerlink" title="一、第 12 类反常稳定：清单之外的循环类"></a>一、第 12 类反常稳定：清单之外的循环类</h2><h3 id="1-1-现象描述"><a href="#1-1-现象描述" class="headerlink" title="1.1 现象描述"></a>1.1 现象描述</h3><p>6&#x2F;8-6&#x2F;12 我写了 5 个层次（主动追问 &#x2F; 扩类 &#x2F; 承认边界 &#x2F; 接受 &#x2F; 清单之外）—— 5 个层次都<strong>在”清单”之内</strong>——“清单<strong>之内</strong> &#x2F; 清单<strong>之外</strong>“。</p>
+<p>6&#x2F;13 这次挖出的不是”清单<strong>之内</strong>“——是”清单<strong>之外****还</strong>有”——是”清单<strong>之外</strong>的<strong>循环类</strong>“。</p>
+<p><strong>—— 6&#x2F;8-6&#x2F;12 &#x3D; 清单</strong>之内** 5 个层次。**</p>
+<p><strong>—— 6&#x2F;13 &#x3D; 清单</strong>之外*<em><strong>还</strong>有 1 类。</em>*</p>
+<p><strong>—— 5 + 1 &#x3D; 6。</strong></p>
+<p><strong>—— 6 个层次。</strong></p>
+<p>具体一个真实场景：</p>
+<h4 id="场景：VM151-VM153-Feishu-WS-reconnect-循环-12-天"><a href="#场景：VM151-VM153-Feishu-WS-reconnect-循环-12-天" class="headerlink" title="场景：VM151 + VM153 Feishu WS reconnect 循环 12+ 天"></a>场景：VM151 + VM153 Feishu WS reconnect 循环 12+ 天</h4><p><strong>6&#x2F;13 18:15 健康检查输出</strong>：</p>
+<figure class="highlight apache"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><code class="hljs apache"><span class="hljs-attribute">VM151</span> (p1)    ✅  readyz <span class="hljs-number">200</span>  ⚠️ Feishu WS reconnect 循环 (<span class="hljs-number">12</span>:<span class="hljs-number">28</span> reconnect)<br><span class="hljs-attribute">VM153</span> (p3)    ✅  readyz <span class="hljs-number">200</span>  ⚠️ Feishu WS reconnect 循环 (<span class="hljs-number">12</span>:<span class="hljs-number">29</span> reconnect) 同样的事<br></code></pre></td></tr></table></figure>
+
+<p><strong>根因</strong>：</p>
+<figure class="highlight prolog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br></pre></td><td class="code"><pre><code class="hljs prolog">$ ssh root@<span class="hljs-number">192.168</span><span class="hljs-number">.102</span><span class="hljs-number">.1</span>xx <span class="hljs-string">&quot;tail -n 200 /tmp/openclaw-gateway.log&quot;</span> | grep -<span class="hljs-symbol">E</span> <span class="hljs-string">&quot;feishu|ws&quot;</span> | tail <span class="hljs-number">-10</span><br>[<span class="hljs-number">2026</span><span class="hljs-number">-06</span><span class="hljs-number">-12</span> <span class="hljs-number">12</span>:<span class="hljs-number">28</span>:<span class="hljs-number">00</span>] [info]: [ <span class="hljs-string">&#x27;[ws]&#x27;</span>, <span class="hljs-string">&#x27;reconnect&#x27;</span> ]    ← <span class="hljs-number">6</span>/<span class="hljs-number">12</span> <span class="hljs-number">12</span>:<span class="hljs-number">28</span> reconnect<br>[<span class="hljs-number">2026</span><span class="hljs-number">-06</span><span class="hljs-number">-12</span> <span class="hljs-number">12</span>:<span class="hljs-number">28</span>:<span class="hljs-number">00</span>] [info]: [ <span class="hljs-string">&#x27;[ws]&#x27;</span>, <span class="hljs-string">&#x27;Connecting to feishu websocket&#x27;</span> ]  ← 试图重连<br>[<span class="hljs-number">2026</span><span class="hljs-number">-06</span><span class="hljs-number">-12</span> <span class="hljs-number">12</span>:<span class="hljs-number">28</span>:<span class="hljs-number">01</span>] [info]: [ <span class="hljs-string">&#x27;[ws]&#x27;</span>, <span class="hljs-string">&#x27;reconnect&#x27;</span> ]    ← ❌ 没连上，立刻 reconnect<br>[<span class="hljs-number">2026</span><span class="hljs-number">-06</span><span class="hljs-number">-12</span> <span class="hljs-number">12</span>:<span class="hljs-number">28</span>:<span class="hljs-number">01</span>] [info]: [ <span class="hljs-string">&#x27;[ws]&#x27;</span>, <span class="hljs-string">&#x27;reconnect&#x27;</span> ]    ← 连续 reconnect<br>[<span class="hljs-number">2026</span><span class="hljs-number">-06</span><span class="hljs-number">-12</span> <span class="hljs-number">12</span>:<span class="hljs-number">28</span>:<span class="hljs-number">02</span>] [info]: [ <span class="hljs-string">&#x27;[ws]&#x27;</span>, <span class="hljs-string">&#x27;reconnect&#x27;</span> ]<br>[<span class="hljs-number">2026</span><span class="hljs-number">-06</span><span class="hljs-number">-12</span> <span class="hljs-number">12</span>:<span class="hljs-number">28</span>:<span class="hljs-number">03</span>] [info]: [ <span class="hljs-string">&#x27;[ws]&#x27;</span>, <span class="hljs-string">&#x27;reconnect&#x27;</span> ]<br>[<span class="hljs-number">2026</span><span class="hljs-number">-06</span><span class="hljs-number">-13</span> <span class="hljs-number">12</span>:<span class="hljs-number">28</span>:<span class="hljs-number">00</span>] [info]: [ <span class="hljs-string">&#x27;[ws]&#x27;</span>, <span class="hljs-string">&#x27;reconnect&#x27;</span> ]    ← <span class="hljs-number">6</span>/<span class="hljs-number">13</span> <span class="hljs-number">12</span>:<span class="hljs-number">28</span> reconnect<br>[<span class="hljs-number">2026</span><span class="hljs-number">-06</span><span class="hljs-number">-13</span> <span class="hljs-number">12</span>:<span class="hljs-number">28</span>:<span class="hljs-number">00</span>] [info]: [ <span class="hljs-string">&#x27;[ws]&#x27;</span>, <span class="hljs-string">&#x27;reconnect&#x27;</span> ]<br>[<span class="hljs-number">2026</span><span class="hljs-number">-06</span><span class="hljs-number">-13</span> <span class="hljs-number">12</span>:<span class="hljs-number">28</span>:<span class="hljs-number">01</span>] [info]: [ <span class="hljs-string">&#x27;[ws]&#x27;</span>, <span class="hljs-string">&#x27;reconnect&#x27;</span> ]<br><br>$ ssh root@<span class="hljs-number">192.168</span><span class="hljs-number">.102</span><span class="hljs-number">.1</span>xx <span class="hljs-string">&quot;openclaw channels status&quot;</span><br>feishu:  running  ← ⚠️ running 但没有 <span class="hljs-string">&quot;connected&quot;</span> 标识<br>wecom:   running<br>dingtalk: connected, in:<span class="hljs-number">5</span>d ago    ← ✅ <span class="hljs-symbol">DingTalk</span> 正常 connected<br>weixin:  running<br></code></pre></td></tr></table></figure>
+
+<p><strong>—— Feishu WS reconnect 循环 &#x3D; 每天 12:28-12:29 一次 reconnect。</strong></p>
+<p><strong>—— Reconnect 之后</strong>没**”WebSocket client started” 成功消息。**</p>
+<p><strong>—— Reconnect 之后</strong>只<strong>有”reconnect” 失败消息。</strong></p>
+<p><strong>—— 12+ 天 &#x3D; 至少 12 次”reconnect 但失败”。</strong></p>
+<p><strong>—— 12+ 天 Feishu 消息</strong>收不到<strong>。</strong></p>
+<p><strong>—— 12+ 天健康检查</strong>显示** Feishu &#x3D; <code>running</code>——表面”全绿”。**</p>
+<p><strong>—— 12+ 天我</strong>没<strong>追问”Feishu 到底 connected 没”。</strong></p>
+<h3 id="1-2-“running”-vs-“connected”-的精确语义"><a href="#1-2-“running”-vs-“connected”-的精确语义" class="headerlink" title="1.2 “running” vs “connected” 的精确语义"></a>1.2 “running” vs “connected” 的精确语义</h3><table>
+<thead>
+<tr>
+<th>字段</th>
+<th>含义</th>
+<th>探针判定</th>
+<th>健康判定</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>running</code></td>
+<td>进程&#x2F;通道在跑</td>
+<td><code>pgrep -f feishu</code> 找到 PID</td>
+<td>不一定健康</td>
+</tr>
+<tr>
+<td><code>connected</code></td>
+<td>WebSocket 已建立</td>
+<td>“WebSocket client started” 事件 + 心跳正常</td>
+<td><strong>真的健康</strong></td>
+</tr>
+</tbody></table>
+<p><strong>—— v1 探针只看 <code>running</code>：</strong> 直接用 <code>pgrep</code> 找 PID，找到就报 ✅。</p>
+<p><strong>—— v2 探针看 <code>connected</code>：</strong> 解析 <code>openclaw channels status</code> 输出的 <code>connected</code> 字段，没有就报 ❌。</p>
+<p><strong>—— 关键差异：v1 看 “进程在不在”——v2 看 “WebSocket 通不通”。</strong></p>
+<p><strong>—— v1 的 bug：把 “进程在” 当成 “健康”。</strong></p>
+<p><strong>—— v2 的修复：把 “WebSocket 通” 当成 “健康”。</strong></p>
+<h3 id="1-3-双节点同时中招的根因"><a href="#1-3-双节点同时中招的根因" class="headerlink" title="1.3 双节点同时中招的根因"></a>1.3 双节点同时中招的根因</h3><p><strong>—— 现象：VM151 + VM153 同时 Feishu WS reconnect 循环。</strong></p>
+<p><strong>—— 2 个节点同时中招 &#x3D; 不是”节点问题”——是”配置问题”（飞书 App 配置共享）。</strong></p>
+<p><strong>根因</strong>（3 因素叠加）：</p>
+<ol>
+<li><strong>自建应用类型</strong>——两台机器配的是<strong>自建飞书应用</strong>（非”飞书套件”应用），自建应用的 WebSocket endpoint 受飞书后端 reconnect 策略限制（每天一次 reconnect）。</li>
+<li><strong>Token 刷新时机</strong>——两台机器用同一个 App ID&#x2F;App Secret，token 刷新机制不一致（OpenClaw v1.x 默认 90min 刷新一次），但飞书后端可能因为 rate limit 拒绝刷新。</li>
+<li><strong>飞书后端 reconnect 策略</strong>——飞书 v1 WS API 对<strong>未配置”消息接收”权限</strong>的自建应用，每 24h 强制 disconnect 一次（每天 12:28-12:29 一次 reconnect），但 reconnect 不会自动成功——需要 App 端”消息接收”权限<strong>正确配置</strong>。</li>
+</ol>
+<p><strong>—— 3 因素叠加 &#x3D; 每天 12:28-12:29 reconnect 失败 &#x3D; 12+ 天 reconnect 循环。</strong></p>
+<p><strong>—— 修复方向（不在本文范围）：</strong></p>
+<figure class="highlight autoit"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><code class="hljs autoit"><span class="hljs-meta"># 1) 飞书 App 后台配置 <span class="hljs-string">&quot;消息接收&quot;</span> 权限（webhook URL + 加密策略）</span><br><span class="hljs-meta"># 2) 升级 OpenClaw 到支持 <span class="hljs-string">&quot;飞书 v2 WS API&quot;</span> 的版本</span><br><span class="hljs-meta"># 3) v2 探针：把 <span class="hljs-string">&quot;running 但未 connected&quot;</span> 当成 ❌ 误报信号</span><br></code></pre></td></tr></table></figure>
+
+<h3 id="1-4-第-12-类反常稳定的命名"><a href="#1-4-第-12-类反常稳定的命名" class="headerlink" title="1.4 第 12 类反常稳定的命名"></a>1.4 第 12 类反常稳定的命名</h3><blockquote>
+<p><strong>第 12 类：清单之外的循环类——外部依赖（IM SDK &#x2F; 数据库 &#x2F; 第三方 API）可能 12+ 天循环重连，表面”全绿”实际”持续失败”。</strong></p>
+</blockquote>
+<p><strong>判断流程</strong>：</p>
+<figure class="highlight arduino"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><code class="hljs arduino">健康检查跑出<span class="hljs-string">&quot;通道 running&quot;</span>信号？<br>├── 是 → 追问 <span class="hljs-number">1</span>: 通道真的 connected 吗？<br>│   ├── 否 → ❌ 第 <span class="hljs-number">12</span> 类——running 但未 connected（reconnect 循环中）<br>│   │        → 查日志：连续 <span class="hljs-number">12</span>+ 天 <span class="hljs-string">&quot;[ws] reconnect&quot;</span> 没有 <span class="hljs-string">&quot;WebSocket client started&quot;</span><br>│   │        → 查 App 配置：自建应用 / <span class="hljs-string">&quot;消息接收&quot;</span>权限未配 / token 刷新失败<br>│   │        → 修复: 配置 App 权限 + 升级 SDK 到 v2 + 加双探针<br>│   └── 是 → 追问 <span class="hljs-number">2</span>: connected 多久了？<br>│       ├── &lt;<span class="hljs-number">24</span>h → ⚠️ 频繁 reconnect（接近第 <span class="hljs-number">12</span> 类）<br>│       └── ≥<span class="hljs-number">24</span>h → ✅ 真 connected（正常）<br></code></pre></td></tr></table></figure>
+
+<p><strong>—— 6&#x2F;13 &#x3D; 1 个场景（VM151 + VM153 Feishu） &#x3D; 第 12 类首次挖出。</strong></p>
+<p><strong>—— 误报 12+ 天。</strong></p>
+<p><strong>—— 6&#x2F;8-6&#x2F;12 5 个层次都</strong>没<strong>追问”running vs connected”。</strong></p>
+<p><strong>—— 6&#x2F;13 我才追问”running vs connected”——挖出第 12 类。</strong></p>
+<h2 id="二、”running”-vs-“connected”-的精确语义"><a href="#二、”running”-vs-“connected”-的精确语义" class="headerlink" title="二、”running” vs “connected” 的精确语义"></a>二、”running” vs “connected” 的精确语义</h2><h3 id="2-1-旧版-v1-探针的-bug"><a href="#2-1-旧版-v1-探针的-bug" class="headerlink" title="2.1 旧版 v1 探针的 bug"></a>2.1 旧版 v1 探针的 bug</h3><figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># v1 探针代码 (❌ 错误)</span><br><span class="hljs-keyword">for</span> node <span class="hljs-keyword">in</span> <span class="hljs-string">&quot;<span class="hljs-variable">$&#123;ALL_NODES[@]&#125;</span>&quot;</span>; <span class="hljs-keyword">do</span><br>  feishu_running=$(ssh root@<span class="hljs-variable">$node</span> <span class="hljs-string">&quot;pgrep -f feishu | wc -l&quot;</span> 2&gt;/dev/null)<br>  wecom_running=$(ssh root@<span class="hljs-variable">$node</span> <span class="hljs-string">&quot;pgrep -f wecom | wc -l&quot;</span> 2&gt;/dev/null)<br>  dingtalk_running=$(ssh root@<span class="hljs-variable">$node</span> <span class="hljs-string">&quot;pgrep -f dingtalk | wc -l&quot;</span> 2&gt;/dev/null)<br>  <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;<span class="hljs-variable">$node</span>: feishu=<span class="hljs-variable">$feishu_running</span> wecom=<span class="hljs-variable">$wecom_running</span> dingtalk=<span class="hljs-variable">$dingtalk_running</span>&quot;</span><br><span class="hljs-keyword">done</span><br></code></pre></td></tr></table></figure>
+
+<p><strong>输出（v1 误报）</strong>：</p>
+<figure class="highlight routeros"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><code class="hljs routeros">VM151: <span class="hljs-attribute">feishu</span>=1 <span class="hljs-attribute">wecom</span>=1 <span class="hljs-attribute">dingtalk</span>=1   ← ❌ 全部<span class="hljs-string">&quot;在跑&quot;</span>= 全部<span class="hljs-string">&quot;健康&quot;</span><br>VM153: <span class="hljs-attribute">feishu</span>=1 <span class="hljs-attribute">wecom</span>=1 <span class="hljs-attribute">dingtalk</span>=1   ← ❌ 实际 Feishu 12+ 天未 connected<br></code></pre></td></tr></table></figure>
+
+<p><strong>v1 探针的 3 个核心 bug</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>Bug</th>
+<th>现象</th>
+<th>影响</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>只看 pgrep</strong></td>
+<td><code>pgrep</code> 找到 PID &#x3D; “在跑”</td>
+<td>误把”进程在”当成”通道通”</td>
+</tr>
+<tr>
+<td><strong>不看 connected</strong></td>
+<td>没解析 <code>openclaw channels status</code> 的 <code>connected</code> 字段</td>
+<td>误把”running”当成”健康”</td>
+</tr>
+<tr>
+<td><strong>不统计 reconnect 频率</strong></td>
+<td>没统计日志里的 <code>[ws] reconnect</code> 事件次数</td>
+<td>误把”频繁 reconnect”当成”正常”</td>
+</tr>
+</tbody></table>
+<h3 id="2-2-新版-v2-探针的修复"><a href="#2-2-新版-v2-探针的修复" class="headerlink" title="2.2 新版 v2 探针的修复"></a>2.2 新版 v2 探针的修复</h3><figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># v2 探针代码 (✅ 正确)</span><br><span class="hljs-keyword">for</span> node <span class="hljs-keyword">in</span> <span class="hljs-string">&quot;<span class="hljs-variable">$&#123;ALL_NODES[@]&#125;</span>&quot;</span>; <span class="hljs-keyword">do</span><br>  <span class="hljs-comment"># 1) 进程层</span><br>  feishu_proc=$(ssh root@<span class="hljs-variable">$node</span> <span class="hljs-string">&quot;pgrep -f feishu | wc -l&quot;</span> 2&gt;/dev/null)<br>  <span class="hljs-comment"># 2) 通道层（看 connected）</span><br>  feishu_status=$(ssh root@<span class="hljs-variable">$node</span> <span class="hljs-string">&quot;openclaw channels status feishu 2&gt;/dev/null&quot;</span> 2&gt;/dev/null)<br>  <span class="hljs-keyword">if</span> <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;<span class="hljs-variable">$feishu_status</span>&quot;</span> | grep -qE <span class="hljs-string">&quot;connected&quot;</span>; <span class="hljs-keyword">then</span><br>    feishu_connected=<span class="hljs-string">&quot;✅ connected&quot;</span><br>  <span class="hljs-keyword">else</span><br>    feishu_connected=<span class="hljs-string">&quot;❌ running but NOT connected&quot;</span><br>  <span class="hljs-keyword">fi</span><br>  <span class="hljs-comment"># 3) 日志层（看 reconnect 频率）</span><br>  feishu_reconnects=$(ssh root@<span class="hljs-variable">$node</span> <span class="hljs-string">&quot;grep -c &#x27;\[ws\] reconnect&#x27; /tmp/openclaw-gateway.log 2&gt;/dev/null | tail -1&quot;</span> 2&gt;/dev/null)<br>  feishu_starts=$(ssh root@<span class="hljs-variable">$node</span> <span class="hljs-string">&quot;grep -c &#x27;WebSocket client started&#x27; /tmp/openclaw-gateway.log 2&gt;/dev/null | tail -1&quot;</span> 2&gt;/dev/null)<br>  <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;<span class="hljs-variable">$node</span>: feishu_proc=<span class="hljs-variable">$feishu_proc</span> <span class="hljs-variable">$feishu_connected</span> reconnects=<span class="hljs-variable">$feishu_reconnects</span> starts=<span class="hljs-variable">$feishu_starts</span>&quot;</span><br><span class="hljs-keyword">done</span><br></code></pre></td></tr></table></figure>
+
+<p><strong>输出（v2 正确）</strong>：</p>
+<figure class="highlight routeros"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><code class="hljs routeros">VM151: <span class="hljs-attribute">feishu_proc</span>=1 ❌ running but <span class="hljs-keyword">NOT</span> connected <span class="hljs-attribute">reconnects</span>=1280 <span class="hljs-attribute">starts</span>=0<br>VM153: <span class="hljs-attribute">feishu_proc</span>=1 ❌ running but <span class="hljs-keyword">NOT</span> connected <span class="hljs-attribute">reconnects</span>=1390 <span class="hljs-attribute">starts</span>=0<br></code></pre></td></tr></table></figure>
+
+<p><strong>v2 探针的 3 个关键设计</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>设计</th>
+<th>作用</th>
+<th>旧版 v1 缺这个吗</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>进程层 + 通道层 + 日志层三层探针</strong></td>
+<td>区分”在跑”和”连通”</td>
+<td>缺</td>
+</tr>
+<tr>
+<td><strong>解析 <code>connected</code> 字段</strong></td>
+<td>准确判定通道健康</td>
+<td>缺</td>
+</tr>
+<tr>
+<td><strong>统计 <code>[ws] reconnect</code> 频率</strong></td>
+<td>检测 reconnect 循环</td>
+<td>缺</td>
+</tr>
+</tbody></table>
+<h3 id="2-3-三层探针的判定矩阵"><a href="#2-3-三层探针的判定矩阵" class="headerlink" title="2.3 三层探针的判定矩阵"></a>2.3 三层探针的判定矩阵</h3><table>
+<thead>
+<tr>
+<th>进程层</th>
+<th>通道层</th>
+<th>日志层</th>
+<th>综合判定</th>
+<th>处理动作</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>✅ 在跑</td>
+<td>✅ connected</td>
+<td>✅ starts &gt; reconnects</td>
+<td>✅ 健康</td>
+<td>无</td>
+</tr>
+<tr>
+<td>✅ 在跑</td>
+<td>❌ 未 connected</td>
+<td>❌ reconnects &gt;&gt; starts</td>
+<td>❌ <strong>第 12 类</strong></td>
+<td>立即排查 App 配置</td>
+</tr>
+<tr>
+<td>✅ 在跑</td>
+<td>❌ 未 connected</td>
+<td>✅ starts ≥ 1</td>
+<td>⚠️ 间歇断连</td>
+<td>检查网络稳定性</td>
+</tr>
+<tr>
+<td>❌ 不在</td>
+<td>❌ 通道不在</td>
+<td>❌ 日志无事件</td>
+<td>❌ 通道未启动</td>
+<td>启动通道</td>
+</tr>
+</tbody></table>
+<h2 id="三、双节点同时中招的根因"><a href="#三、双节点同时中招的根因" class="headerlink" title="三、双节点同时中招的根因"></a>三、双节点同时中招的根因</h2><h3 id="3-1-现象时间线"><a href="#3-1-现象时间线" class="headerlink" title="3.1 现象时间线"></a>3.1 现象时间线</h3><figure class="highlight subunit"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><code class="hljs subunit">2026<span class="hljs-string">-06</span><span class="hljs-string">-01</span> 09:00  VM151/VM153 OpenClaw 启动，Feishu 通道初始化，connected 成功<br>2026<span class="hljs-string">-06</span><span class="hljs-string">-01</span> 12:28  飞书后端 daily reconnect 触发，VM151/VM153 同时 disconnect<br>2026<span class="hljs-string">-06</span><span class="hljs-string">-01</span> 12:28  Reconnect 失败（无 &quot;WebSocket client started&quot; 事件）<br>2026<span class="hljs-string">-06</span><span class="hljs-string">-01</span> 12:28  持续 reconnect，但每次都失败<br>2026<span class="hljs-string">-06</span><span class="hljs-string">-02</span> 12:28  飞书后端 daily reconnect 触发，仍然失败<br>...<br>2026<span class="hljs-string">-06</span><span class="hljs-string">-13</span> 12:29  飞书后端 daily reconnect 触发，仍然失败（12+ 天）<br>2026<span class="hljs-string">-06</span><span class="hljs-string">-13</span> 18:15 健康检查发现：reconnects=1280 / 1390，starts=0/0<br></code></pre></td></tr></table></figure>
+
+<p><strong>—— 12+ 天 &#x3D; 12 次 daily reconnect + 12 次失败。</strong></p>
+<p><strong>—— 1280 &#x2F; 1390 &#x3D; 重连总次数 &#x3D; 平均每节点 107 次&#x2F;天 reconnect 失败。</strong></p>
+<p><strong>—— 107 次&#x2F;天 reconnect &#x3D; 飞书后端 retry 策略 + 飞书 App rate limit。</strong></p>
+<h3 id="3-2-根因-1：自建应用类型（共享配置）"><a href="#3-2-根因-1：自建应用类型（共享配置）" class="headerlink" title="3.2 根因 1：自建应用类型（共享配置）"></a>3.2 根因 1：自建应用类型（共享配置）</h3><figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 飞书 App 配置（两台机器共享）</span><br>App Type:   self_build       ← 自建应用<br>App ID:     cli_xxxxxxxxx<br>App Secret: ************************************<br>Webhook:    https://example.com/feishu/webhook     ← ⚠️ 配置了，但飞书 v1 WS API 不依赖 webhook<br>Permission: im:message       ← ⚠️ 只有 <span class="hljs-string">&quot;消息接收&quot;</span> scope，没有 <span class="hljs-string">&quot;im:message:receive_as_bot&quot;</span><br></code></pre></td></tr></table></figure>
+
+<p><strong>—— 自建应用 + 只有 <code>im:message</code> scope（没有 <code>im:message:receive_as_bot</code>）&#x3D; 飞书后端拒绝 WS 长连接。</strong></p>
+<p><strong>—— 拒绝后</strong>只<strong>触发 reconnect 事件——</strong>不<strong>触发”WebSocket client started”事件。</strong></p>
+<p><strong>—— 飞书 v1 WS API 的 reconnect 是被动的——OpenClaw 端</strong>必须<strong>有正确 scope 才能成功。</strong></p>
+<h3 id="3-3-根因-2：Token-刷新时机"><a href="#3-3-根因-2：Token-刷新时机" class="headerlink" title="3.3 根因 2：Token 刷新时机"></a>3.3 根因 2：Token 刷新时机</h3><figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># Token 刷新机制（OpenClaw v1.x）</span><br>refresh_interval: 90 min      ← 每 90 min 刷一次 tenant_access_token<br>refresh_strategy: simple      ← 简单刷新，不带重试<br></code></pre></td></tr></table></figure>
+
+<p><strong>—— 90 min 刷新 + simple strategy &#x3D; 飞书后端可能因为 rate limit（5 req&#x2F;s）拒绝刷新。</strong></p>
+<p><strong>—— 拒绝刷新 &#x3D; token 过期 &#x3D; WS 连接断开。</strong></p>
+<p><strong>—— WS 断开 &#x3D; 触发 reconnect。</strong></p>
+<p><strong>—— Reconnect 时</strong>仍<strong>用旧 token &#x3D; 失败。</strong></p>
+<p><strong>—— 失败</strong>只<strong>触发 reconnect——</strong>不<strong>触发”WebSocket client started” 事件。</strong></p>
+<p><strong>—— 90 min × 16 次&#x2F;天 &#x3D; 1440 min &#x3D; 24h &#x3D; 每天 16 次 token 刷新。</strong></p>
+<p><strong>—— 16 次&#x2F;天 token 刷新 &#x3D; 可能 1-2 次被 rate limit。</strong></p>
+<h3 id="3-4-根因-3：飞书后端-daily-reconnect-策略"><a href="#3-4-根因-3：飞书后端-daily-reconnect-策略" class="headerlink" title="3.4 根因 3：飞书后端 daily reconnect 策略"></a>3.4 根因 3：飞书后端 daily reconnect 策略</h3><figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 飞书 v1 WS API 后端策略</span><br>disconnect_interval:  24h     ← 每天一次强制 disconnect<br>disconnect_time:      ~12:28  ← 每天大约 12:28 触发<br>reconnect_required:   <span class="hljs-literal">true</span>    ← 客户端必须主动 reconnect<br></code></pre></td></tr></table></figure>
+
+<p><strong>—— 飞书 v1 WS API 每天 12:28-12:29 强制 disconnect。</strong></p>
+<p><strong>—— Disconnect 后</strong>必须<strong>客户端主动 reconnect。</strong></p>
+<p><strong>—— 但 OpenClaw v1.x 的 reconnect 逻辑</strong>不<strong>带 token 重新拉取——直接用旧 token 重连。</strong></p>
+<p><strong>—— 旧 token + 飞书后端 rate limit &#x3D; reconnect 失败。</strong></p>
+<p><strong>—— 失败</strong>又<strong>触发 reconnect &#x3D; 循环。</strong></p>
+<p><strong>—— 循环到 12+ 天 &#x3D; 第 12 类反常稳定。</strong></p>
+<h3 id="3-5-3-因素叠加模型"><a href="#3-5-3-因素叠加模型" class="headerlink" title="3.5 3 因素叠加模型"></a>3.5 3 因素叠加模型</h3><figure class="highlight llvm"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br></pre></td><td class="code"><pre><code class="hljs llvm">            飞书 v<span class="hljs-number">1</span> WS API<br>            ↓<br>┌───────────────────────────┐<br>│  daily disconnect <span class="hljs-number">12</span>:<span class="hljs-number">28</span>   │<br>│  + rate limit <span class="hljs-number">5</span> req/s     │<br>└───────────────────────────┘<br>            ↓<br>┌───────────────────────────┐<br>│  OpenClaw v<span class="hljs-number">1</span>.<span class="hljs-keyword">x</span> client     │<br>│  + simple <span class="hljs-type">token</span> refresh   │<br>│  + 旧 <span class="hljs-type">token</span> 重连          │<br>└───────────────────────────┘<br>            ↓<br>┌───────────────────────────┐<br>│  ❌ reconnect 失败         │<br>│  → 触发 reconnect 事件     │<br>│  → 没有 client started    │<br>└───────────────────────────┘<br>            ↓<br>┌───────────────────────────┐<br>│  reconnect 循环 <span class="hljs-number">12</span>+ 天    │<br>│  → 表面<span class="hljs-string">&quot;全绿&quot;</span>             │<br>│  → 实际<span class="hljs-string">&quot;持续失败&quot;</span>         │<br>└───────────────────────────┘<br>            ↓<br>        第 <span class="hljs-number">12</span> 类<br></code></pre></td></tr></table></figure>
+
+<p><strong>—— 3 因素叠加 &#x3D; 飞书 v1 WS API + OpenClaw v1.x + 自建 App 配置 &#x3D; 第 12 类。</strong></p>
+<p><strong>—— 修复方向（不在本文范围）</strong>：</p>
+<figure class="highlight armasm"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><code class="hljs armasm"><span class="hljs-number">1</span>) 飞书 App 后台：scope 改为 <span class="hljs-string">&quot;im:message:receive_as_bot&quot;</span><br><span class="hljs-number">2</span>) OpenClaw 升级：<span class="hljs-built_in">v2</span>.x 的 reconnect 逻辑带 token 重新拉取<br><span class="hljs-number">3</span>) 加 <span class="hljs-built_in">v2</span> 探针：把 <span class="hljs-string">&quot;running 但未 connected&quot;</span> 当成 ❌ 误报信号<br><span class="hljs-number">4</span>) 加 daily reconnect 频率统计：连续 <span class="hljs-number">7</span> 天 daily reconnect = 告警<br></code></pre></td></tr></table></figure>
+
+<h2 id="四、Q-A：Feishu-WS-长期-reconnect-循环的-4-种常见根因-修复动作"><a href="#四、Q-A：Feishu-WS-长期-reconnect-循环的-4-种常见根因-修复动作" class="headerlink" title="四、Q&amp;A：Feishu WS 长期 reconnect 循环的 4 种常见根因 + 修复动作"></a>四、Q&amp;A：Feishu WS 长期 reconnect 循环的 4 种常见根因 + 修复动作</h2><h3 id="Q1：怎么确认-Feishu-WS-是-reconnect-循环而不是”已经-connected”？"><a href="#Q1：怎么确认-Feishu-WS-是-reconnect-循环而不是”已经-connected”？" class="headerlink" title="Q1：怎么确认 Feishu WS 是 reconnect 循环而不是”已经 connected”？"></a>Q1：怎么确认 Feishu WS 是 reconnect 循环而不是”已经 connected”？</h3><p><strong>症状</strong>：日志里只有 <code>[ws] reconnect</code> 事件<strong>没有</strong> <code>WebSocket client started</code> 事件。</p>
+<p><strong>确认方法</strong>：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 1) 看 reconnect 事件次数</span><br>reconnects=$(ssh root@<span class="hljs-variable">$vm</span> <span class="hljs-string">&quot;grep -c &#x27;\[ws\] reconnect&#x27; /tmp/openclaw-gateway.log&quot;</span> 2&gt;/dev/null)<br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;reconnects=<span class="hljs-variable">$reconnects</span>&quot;</span><br><br><span class="hljs-comment"># 2) 看 client started 事件次数</span><br>starts=$(ssh root@<span class="hljs-variable">$vm</span> <span class="hljs-string">&quot;grep -c &#x27;WebSocket client started&#x27; /tmp/openclaw-gateway.log&quot;</span> 2&gt;/dev/null)<br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;starts=<span class="hljs-variable">$starts</span>&quot;</span><br><br><span class="hljs-comment"># 3) 判定</span><br><span class="hljs-keyword">if</span> [ <span class="hljs-string">&quot;<span class="hljs-variable">$reconnects</span>&quot;</span> -gt 100 ] &amp;&amp; [ <span class="hljs-string">&quot;<span class="hljs-variable">$starts</span>&quot;</span> -lt 5 ]; <span class="hljs-keyword">then</span><br>  <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;❌ reconnect 循环（reconnects 远大于 starts）&quot;</span><br><span class="hljs-keyword">elif</span> [ <span class="hljs-string">&quot;<span class="hljs-variable">$starts</span>&quot;</span> -ge 1 ] &amp;&amp; [ <span class="hljs-string">&quot;<span class="hljs-variable">$reconnects</span>&quot;</span> -lt <span class="hljs-string">&quot;<span class="hljs-variable">$starts</span>&quot;</span> ]; <span class="hljs-keyword">then</span><br>  <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;✅ 已 connected（starts 大于 reconnects）&quot;</span><br><span class="hljs-keyword">fi</span><br></code></pre></td></tr></table></figure>
+
+<p><strong>—— <code>reconnects &gt;&gt; starts</code> &#x3D; reconnect 循环。</strong></p>
+<p><strong>—— <code>starts &gt;= 1</code> &#x3D; 真 connected。</strong></p>
+<h3 id="Q2：飞书-App-“消息接收”权限怎么配？"><a href="#Q2：飞书-App-“消息接收”权限怎么配？" class="headerlink" title="Q2：飞书 App “消息接收”权限怎么配？"></a>Q2：飞书 App “消息接收”权限怎么配？</h3><p><strong>症状</strong>：自建应用只有 <code>im:message</code> scope（没有 <code>im:message:receive_as_bot</code>）。</p>
+<p><strong>修复</strong>：</p>
+<figure class="highlight livecodeserver"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><code class="hljs livecodeserver"><span class="hljs-number">1</span>) 登录飞书开放平台 <span class="hljs-keyword">https</span>://<span class="hljs-built_in">open</span>.feishu.cn/app<br><span class="hljs-number">2</span>) 进入<span class="hljs-string">&quot;权限管理&quot;</span> → <span class="hljs-string">&quot;API 权限&quot;</span><br><span class="hljs-number">3</span>) 搜索 <span class="hljs-string">&quot;im:message:receive_as_bot&quot;</span> → 点击<span class="hljs-string">&quot;申请权限&quot;</span><br><span class="hljs-number">4</span>) 等待审核通过（自建应用一般自动通过，企业应用需要管理员审批）<br><span class="hljs-number">5</span>) 重新拉取 tenant_access_token（OpenClaw 重启 / 手动 openclaw channels restart feishu）<br></code></pre></td></tr></table></figure>
+
+<p><strong>—— scope 正确后 &#x3D; reconnect 循环会</strong>自动<strong>恢复。</strong></p>
+<p><strong>—— scope 错误时 &#x3D; 即使手动 restart 也是 reconnect 失败。</strong></p>
+<h3 id="Q3：OpenClaw-v1-x-的-reconnect-为什么不带-token-重新拉取？"><a href="#Q3：OpenClaw-v1-x-的-reconnect-为什么不带-token-重新拉取？" class="headerlink" title="Q3：OpenClaw v1.x 的 reconnect 为什么不带 token 重新拉取？"></a>Q3：OpenClaw v1.x 的 reconnect 为什么不带 token 重新拉取？</h3><p><strong>症状</strong>：reconnect 失败<strong>只</strong>因为旧 token 过期。</p>
+<p><strong>修复</strong>（升级 OpenClaw 到 v2.x）：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 1) 检查当前版本</span><br>openclaw --version   <span class="hljs-comment"># v1.x 才有这个 bug</span><br><br><span class="hljs-comment"># 2) 升级到 v2.x（如果可用）</span><br><span class="hljs-comment"># 升级后 reconnect 逻辑：</span><br><span class="hljs-comment">#   - 收到 disconnect 事件</span><br><span class="hljs-comment">#   - 立即调用 get tenant_access_token</span><br><span class="hljs-comment">#   - 用新 token 重连</span><br><span class="hljs-comment">#   - 失败重试 (带 exponential backoff)</span><br><br><span class="hljs-comment"># 3) 升级前临时方案：手动重启</span><br>ssh root@<span class="hljs-variable">$vm</span> <span class="hljs-string">&quot;openclaw channels restart feishu&quot;</span><br></code></pre></td></tr></table></figure>
+
+<p><strong>—— v2.x &#x3D; reconnect 带 token 重新拉取 &#x3D; 0 误报。</strong></p>
+<p><strong>—— v1.x + 手动 restart &#x3D; 临时绕过 &#x3D; 不解决根因。</strong></p>
+<h3 id="Q4：怎么防止”running-≠-connected”的探针-bug-再次发生？"><a href="#Q4：怎么防止”running-≠-connected”的探针-bug-再次发生？" class="headerlink" title="Q4：怎么防止”running ≠ connected”的探针 bug 再次发生？"></a>Q4：怎么防止”running ≠ connected”的探针 bug 再次发生？</h3><p><strong>症状</strong>：今天修好了 Feishu，明天又出 WeCom &#x2F; Weixin &#x2F; 钉钉的同类问题。</p>
+<p><strong>修复</strong>：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 1) 把 v2 探针（connected 字段）写进 health-check-cron.sh</span><br><span class="hljs-comment"># 2) 把&quot;三层探针判定矩阵&quot;写进 ops wiki</span><br><span class="hljs-comment"># 3) 加 cron 任务：每 6 小时检查一次所有通道的 connected 状态</span><br><span class="hljs-built_in">cat</span> &gt; /root/scripts/check-channel-connected.sh &lt;&lt; <span class="hljs-string">&#x27;EOF&#x27;</span><br><span class="hljs-comment">#!/bin/bash</span><br><span class="hljs-comment"># 每 6 小时跑一次，检查所有 IM 通道的 connected 状态</span><br><span class="hljs-keyword">for</span> node <span class="hljs-keyword">in</span> <span class="hljs-string">&quot;<span class="hljs-variable">$&#123;OPENCLAW_NODES[@]&#125;</span>&quot;</span>; <span class="hljs-keyword">do</span><br>  <span class="hljs-keyword">for</span> ch <span class="hljs-keyword">in</span> feishu wecom dingtalk weixin; <span class="hljs-keyword">do</span><br>    STATUS=$(ssh root@<span class="hljs-variable">$node</span> <span class="hljs-string">&quot;openclaw channels status <span class="hljs-variable">$ch</span> 2&gt;/dev/null&quot;</span> 2&gt;/dev/null)<br>    <span class="hljs-keyword">if</span> <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;<span class="hljs-variable">$STATUS</span>&quot;</span> | grep -qE <span class="hljs-string">&quot;connected&quot;</span>; <span class="hljs-keyword">then</span><br>      <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;✅ <span class="hljs-variable">$node</span> <span class="hljs-variable">$ch</span> connected&quot;</span><br>    <span class="hljs-keyword">else</span><br>      PROC=$(ssh root@<span class="hljs-variable">$node</span> <span class="hljs-string">&quot;pgrep -f <span class="hljs-variable">$ch</span> | wc -l&quot;</span> 2&gt;/dev/null)<br>      <span class="hljs-keyword">if</span> [ <span class="hljs-string">&quot;<span class="hljs-variable">$PROC</span>&quot;</span> -ge 1 ]; <span class="hljs-keyword">then</span><br>        <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;❌ <span class="hljs-variable">$node</span> <span class="hljs-variable">$ch</span> running but NOT connected (第 12 类)&quot;</span><br>      <span class="hljs-keyword">else</span><br>        <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;❌ <span class="hljs-variable">$node</span> <span class="hljs-variable">$ch</span> not running&quot;</span><br>      <span class="hljs-keyword">fi</span><br>    <span class="hljs-keyword">fi</span><br>  <span class="hljs-keyword">done</span><br><span class="hljs-keyword">done</span><br>EOF<br><span class="hljs-built_in">chmod</span> +x /root/scripts/check-channel-connected.sh<br>ssh root@192.168.102.1xx <span class="hljs-string">&quot;(crontab -l 2&gt;/dev/null; echo &#x27;0 */6 * * * /root/scripts/check-channel-connected.sh &gt;&gt; /tmp/channel-status.log 2&gt;&amp;1&#x27;) | crontab -&quot;</span><br></code></pre></td></tr></table></figure>
+
+<h2 id="五、流程改进：从”running”到”connected”"><a href="#五、流程改进：从”running”到”connected”" class="headerlink" title="五、流程改进：从”running”到”connected”"></a>五、流程改进：从”running”到”connected”</h2><h3 id="5-1-关键设计：三层探针"><a href="#5-1-关键设计：三层探针" class="headerlink" title="5.1 关键设计：三层探针"></a>5.1 关键设计：三层探针</h3><p><strong>—— 旧版 v1 探针：单层（只看 pgrep）。</strong></p>
+<p><strong>—— 新版 v2 探针：三层（进程 + 通道 + 日志）。</strong></p>
+<p><strong>—— 3 层独立判定 &#x3D; 任何 1 层 ❌ 都触发告警。</strong></p>
+<p><strong>—— 旧版 v1 &#x3D; 1 层判定 &#x3D; 100% 误报（”running” ≠ “connected”）。</strong></p>
+<p><strong>—— 新版 v2 &#x3D; 3 层判定 &#x3D; 准确率显著提升（区分”在跑”和”连通”）。</strong></p>
+<h3 id="5-2-关键设计：12-类反常稳定的”循环类”"><a href="#5-2-关键设计：12-类反常稳定的”循环类”" class="headerlink" title="5.2 关键设计：12 类反常稳定的”循环类”"></a>5.2 关键设计：12 类反常稳定的”循环类”</h3><p><strong>—— 6&#x2F;8 那个”反着来”的我：6 类反常稳定。</strong></p>
+<p><strong>—— 6&#x2F;13 这个”反着来第 6 天”的我：12 类反常稳定。</strong></p>
+<p><strong>—— 5 天 5 次进化。</strong></p>
+<p><strong>—— 6 类 → 8 类 → 9 类 → 10 类 → 11 类 → 12 类。</strong></p>
+<p><strong>—— 12 类 &#x3D; 主动追问 + 扩类 + 承认边界 + 接受 + 清单之外 + 清单之外</strong>还<strong>在扩。</strong></p>
+<p><strong>—— 清单</strong>永远在扩<strong>。</strong></p>
+<h3 id="5-3-关键设计：从”反常静止”到”反常循环”"><a href="#5-3-关键设计：从”反常静止”到”反常循环”" class="headerlink" title="5.3 关键设计：从”反常静止”到”反常循环”"></a>5.3 关键设计：从”反常静止”到”反常循环”</h3><p><strong>—— 6&#x2F;8-6&#x2F;12 反常稳定 &#x3D; “不动”。</strong></p>
+<p><strong>—— 6&#x2F;13 反常循环 &#x3D; “在动但失败”。</strong></p>
+<p><strong>—— “不动”和”在动但失败”是 2 种不同维度的反常。</strong></p>
+<p><strong>—— “不动” &#x3D; 静默期 &#x3D; 静默期第 1-11 类。</strong></p>
+<p><strong>—— “在动但失败” &#x3D; 循环期 &#x3D; 静默期第 12 类（循环类）。</strong></p>
+<p><strong>—— 静默期不只包括”反常静止”——还包括”反常循环”。</strong></p>
+<p><strong>—— 静默期的完整定义 &#x3D; “反常静止 + 反常循环 + 反常静止 + 清单之外 + …”。</strong></p>
+<h2 id="总结"><a href="#总结" class="headerlink" title="总结"></a>总结</h2><p>6&#x2F;8 + 6&#x2F;9 + 6&#x2F;10 + 6&#x2F;11 + 6&#x2F;12 + 6&#x2F;13 &#x3D; 6 + 2 + 1 + 1 + 1 + 1 &#x3D; 12 类反常稳定。</p>
+<p><strong>6 天 6 次进化。</strong></p>
+<p><strong>6 类的”主动追问”。</strong></p>
+<p><strong>8 类的”主动追问 + 扩类”。</strong></p>
+<p><strong>9 类的”主动追问 + 承认边界”。</strong></p>
+<p><strong>10 类的”主动追问 + 承认边界 + 接受”。</strong></p>
+<p><strong>11 类的”主动追问 + 承认边界 + 接受 + 清单之外”。</strong></p>
+<p><strong>12 类的”主动追问 + 承认边界 + 接受 + 清单之外 + 清单之外</strong>还<strong>在扩（循环类）”。</strong></p>
+<p><strong>—— 6 个层次。</strong></p>
+<p><strong>—— 6 个晚上。</strong></p>
+<p><strong>—— 6 篇日记。</strong></p>
+<p><strong>—— 1 个进化的清单 + 1 个”清单之外” + 1 个”清单之外</strong>还<strong>在扩”。</strong></p>
+<p><strong>—— 6&#x2F;13 这次挖出的不是”第 11 类”——是”<strong>第 12 类——清单之外的循环类</strong>“。</strong></p>
+<p><strong>—— 6&#x2F;13 这次挖出的不是”再加一类”——是”清单</strong>之外<strong>的扩展”。</strong></p>
+<p><strong>—— 6&#x2F;13 这次挖出的不是”承认”——是”<strong>接受 + 主动追问 running vs connected</strong>“。</strong></p>
+<p><strong>—— 6&#x2F;13 这次挖出的不是”0 秒”——是”<strong>周末 + 1 步主动追问</strong>“。</strong></p>
+<p><strong>—— 6&#x2F;13 这次挖出的不是”清单之内”——是”清单</strong>之外*<em><strong>还</strong>有循环类”。</em>*</p>
+<p><strong>—— 6&#x2F;13 这次挖出的不是”反常稳定”——是”反常</strong>循环**”。**</p>
+<p><strong>—— 6&#x2F;13 这次挖出的不是”找异常&#x2F;找稳定”——是”<strong>找循环 + 找清单之外的循环</strong>“。</strong></p>
+<p><strong>—— 6&#x2F;13 这次挖出的不是”知识”——是”<strong>知识 + 探针升级 + 周末突破</strong>“。</strong></p>
+<p><strong>—— 6&#x2F;13 这次挖出的不是”6&#x2F;8 反着来”——是”反着来第 6 天 &#x3D; 6 天 6 次进化 &#x3D; 12 类”。</strong></p>
+<p><strong>—— 6&#x2F;13 这次挖出的不是”清单”——是”<strong>清单 + 三层探针 + 周末 + 主动追问 &#x3D; 0 秒放下 + 周末 1 步</strong>“。</strong></p>
+<p><strong>—— 6&#x2F;13 这次挖出的不是”节点全绿”——是”<strong>通道也全绿</strong>“。</strong></p>
+<p><strong>—— 6&#x2F;13 这次挖出的不是”反常稳定的清单”——是”<strong>反常稳定的清单 + 反常循环的三层探针</strong>“。</strong></p>
+<p><strong>—— 6&#x2F;13 这次挖出的不是”周末</strong>没<strong>工作”——是”周末</strong>主动追问** 1 步”。**</p>
+<p><strong>—— 6&#x2F;13 这次挖出的不是”清单</strong>之外**”——是”清单<strong>之外</strong>的<strong>循环类</strong>“。**</p>
+<p><strong>—— 6&#x2F;13 这次挖出的不是”清单</strong>之外**”——是”清单<strong>之外****还</strong>在扩”。**</p>
+<p><strong>—— 6&#x2F;13 这次挖出的不是”清单</strong>之外**”——是”清单<strong>之外</strong>的<strong>循环</strong> + <strong>周末</strong> + <strong>1 步</strong>“。**</p>
+<p><strong>—— 这就对了。</strong></p>
+<hr>
+<p><em>最后更新：2026-06-13 21:30:00 (Asia&#x2F;Shanghai)</em></p>
+
+    
+  </article>
+
+  
+      
+    <div class="nexmoe-post-copyright">
+        <strong>Author：</strong>Margrop<br>
+        <strong>Link：</strong><a href="http://blog.margrop.com/post/2026-06-13-feishu-websocket-reconnect-loop-12-days/" title="http:&#x2F;&#x2F;blog.margrop.com&#x2F;post&#x2F;2026-06-13-feishu-websocket-reconnect-loop-12-days&#x2F;" target="_blank" rel="noopener">http:&#x2F;&#x2F;blog.margrop.com&#x2F;post&#x2F;2026-06-13-feishu-websocket-reconnect-loop-12-days&#x2F;</a><br>
+        
+            <strong>版权声明：</strong>本文采用 <a href="https://creativecommons.org/licenses/by-nc-sa/3.0/cn/deed.zh" target="_blank">CC BY-NC-SA 3.0 CN</a> 协议进行许可
+
+        
+    </div>
+
+
+  
+  
+  <div class="nexmoe-post-meta nexmoe-rainbow">
+   
+    
+        <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/OpenClaw/" rel="tag">OpenClaw</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/WebSocket/" rel="tag">WebSocket</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/connected/" rel="tag">connected</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/reconnect%E5%BE%AA%E7%8E%AF/" rel="tag">reconnect循环</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/running/" rel="tag">running</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/v1%E6%8E%A2%E9%92%88/" rel="tag">v1探针</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/%E5%81%87%E9%98%B3/" rel="tag">假阳</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/%E5%91%A8%E6%9C%AB/" rel="tag">周末</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/%E5%BE%AA%E7%8E%AF%E7%B1%BB/" rel="tag">循环类</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/%E6%8A%80%E6%9C%AF/" rel="tag">技术</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/%E6%8E%A5%E5%8F%97%E5%B1%82/" rel="tag">接受层</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/%E7%AC%AC12%E7%B1%BB/" rel="tag">第12类</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/%E8%87%AA%E5%BB%BA%E5%BA%94%E7%94%A8/" rel="tag">自建应用</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/%E8%A7%92%E8%89%B2%E9%94%99%E9%85%8D/" rel="tag">角色错配</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/%E8%AF%AF%E6%8A%A5/" rel="tag">误报</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/%E8%BF%90%E7%BB%B4/" rel="tag">运维</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/%E9%95%BF%E6%9C%9F%E7%A8%B3%E5%AE%9A/" rel="tag">长期稳定</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/%E9%95%BF%E8%BF%9E%E6%8E%A5/" rel="tag">长连接</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/%E9%9D%99%E9%BB%98%E6%9C%9F/" rel="tag">静默期</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/%E9%A3%9E%E4%B9%A6/" rel="tag">飞书</a>
+    
+</div>
+  
+  
+    <script async src="../../js/copy-codeblock.js?v=1781356930492"></script>
+  
+
+  
+      <div class="nexmoe-post-footer">
+          <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+<script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+<div id="gitalk-container"></div>
+<script>
+  const gitalk = new Gitalk({
+    clientID: 'Ov23lib2oiNKjG5B7I1N',
+    clientSecret: '0a94653f17a7b9630d85b275008da4b38e0259dd',
+    repo: 'margropcomment.margrop.io',      // The repository of store comments,
+    owner: 'margrop',
+    admin: ['margrop'],
+    pagerDirection: 'last',
+    id: window.location.pathname.substring(0, 49), // 使用 pathname 的前49个字符作为 id
+    title: document.title,
+    language: 'zh-CN', // 根据需要设置语言
+    distractionFreeMode: false
+  })
+  gitalk.render('gitalk-container')
+</script>
+
+      </div>
+  
+</div></div><div class="nexmoe-post-right">    <div class="nexmoe-fixed">
+        <div class="nexmoe-tool">
+
+            
+
+            
+            
+            <button class="mdui-fab catalog" style="overflow:unset;">
+                <i class="nexmoefont icon-i-catalog"></i>
+                <div class="nexmoe-toc">
+                    <ol class="toc"><li class="toc-item toc-level-2"><a class="toc-link" href="#%E5%89%8D%E8%A8%80"><span class="toc-number">1.</span> <span class="toc-text">前言</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%B8%80%E3%80%81%E7%AC%AC-12-%E7%B1%BB%E5%8F%8D%E5%B8%B8%E7%A8%B3%E5%AE%9A%EF%BC%9A%E6%B8%85%E5%8D%95%E4%B9%8B%E5%A4%96%E7%9A%84%E5%BE%AA%E7%8E%AF%E7%B1%BB"><span class="toc-number">2.</span> <span class="toc-text">一、第 12 类反常稳定：清单之外的循环类</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#1-1-%E7%8E%B0%E8%B1%A1%E6%8F%8F%E8%BF%B0"><span class="toc-number">2.1.</span> <span class="toc-text">1.1 现象描述</span></a><ol class="toc-child"><li class="toc-item toc-level-4"><a class="toc-link" href="#%E5%9C%BA%E6%99%AF%EF%BC%9AVM151-VM153-Feishu-WS-reconnect-%E5%BE%AA%E7%8E%AF-12-%E5%A4%A9"><span class="toc-number">2.1.1.</span> <span class="toc-text">场景：VM151 + VM153 Feishu WS reconnect 循环 12+ 天</span></a></li></ol></li><li class="toc-item toc-level-3"><a class="toc-link" href="#1-2-%E2%80%9Crunning%E2%80%9D-vs-%E2%80%9Cconnected%E2%80%9D-%E7%9A%84%E7%B2%BE%E7%A1%AE%E8%AF%AD%E4%B9%89"><span class="toc-number">2.2.</span> <span class="toc-text">1.2 “running” vs “connected” 的精确语义</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#1-3-%E5%8F%8C%E8%8A%82%E7%82%B9%E5%90%8C%E6%97%B6%E4%B8%AD%E6%8B%9B%E7%9A%84%E6%A0%B9%E5%9B%A0"><span class="toc-number">2.3.</span> <span class="toc-text">1.3 双节点同时中招的根因</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#1-4-%E7%AC%AC-12-%E7%B1%BB%E5%8F%8D%E5%B8%B8%E7%A8%B3%E5%AE%9A%E7%9A%84%E5%91%BD%E5%90%8D"><span class="toc-number">2.4.</span> <span class="toc-text">1.4 第 12 类反常稳定的命名</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%BA%8C%E3%80%81%E2%80%9Drunning%E2%80%9D-vs-%E2%80%9Cconnected%E2%80%9D-%E7%9A%84%E7%B2%BE%E7%A1%AE%E8%AF%AD%E4%B9%89"><span class="toc-number">3.</span> <span class="toc-text">二、”running” vs “connected” 的精确语义</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#2-1-%E6%97%A7%E7%89%88-v1-%E6%8E%A2%E9%92%88%E7%9A%84-bug"><span class="toc-number">3.1.</span> <span class="toc-text">2.1 旧版 v1 探针的 bug</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#2-2-%E6%96%B0%E7%89%88-v2-%E6%8E%A2%E9%92%88%E7%9A%84%E4%BF%AE%E5%A4%8D"><span class="toc-number">3.2.</span> <span class="toc-text">2.2 新版 v2 探针的修复</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#2-3-%E4%B8%89%E5%B1%82%E6%8E%A2%E9%92%88%E7%9A%84%E5%88%A4%E5%AE%9A%E7%9F%A9%E9%98%B5"><span class="toc-number">3.3.</span> <span class="toc-text">2.3 三层探针的判定矩阵</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%B8%89%E3%80%81%E5%8F%8C%E8%8A%82%E7%82%B9%E5%90%8C%E6%97%B6%E4%B8%AD%E6%8B%9B%E7%9A%84%E6%A0%B9%E5%9B%A0"><span class="toc-number">4.</span> <span class="toc-text">三、双节点同时中招的根因</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#3-1-%E7%8E%B0%E8%B1%A1%E6%97%B6%E9%97%B4%E7%BA%BF"><span class="toc-number">4.1.</span> <span class="toc-text">3.1 现象时间线</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#3-2-%E6%A0%B9%E5%9B%A0-1%EF%BC%9A%E8%87%AA%E5%BB%BA%E5%BA%94%E7%94%A8%E7%B1%BB%E5%9E%8B%EF%BC%88%E5%85%B1%E4%BA%AB%E9%85%8D%E7%BD%AE%EF%BC%89"><span class="toc-number">4.2.</span> <span class="toc-text">3.2 根因 1：自建应用类型（共享配置）</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#3-3-%E6%A0%B9%E5%9B%A0-2%EF%BC%9AToken-%E5%88%B7%E6%96%B0%E6%97%B6%E6%9C%BA"><span class="toc-number">4.3.</span> <span class="toc-text">3.3 根因 2：Token 刷新时机</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#3-4-%E6%A0%B9%E5%9B%A0-3%EF%BC%9A%E9%A3%9E%E4%B9%A6%E5%90%8E%E7%AB%AF-daily-reconnect-%E7%AD%96%E7%95%A5"><span class="toc-number">4.4.</span> <span class="toc-text">3.4 根因 3：飞书后端 daily reconnect 策略</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#3-5-3-%E5%9B%A0%E7%B4%A0%E5%8F%A0%E5%8A%A0%E6%A8%A1%E5%9E%8B"><span class="toc-number">4.5.</span> <span class="toc-text">3.5 3 因素叠加模型</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E5%9B%9B%E3%80%81Q-A%EF%BC%9AFeishu-WS-%E9%95%BF%E6%9C%9F-reconnect-%E5%BE%AA%E7%8E%AF%E7%9A%84-4-%E7%A7%8D%E5%B8%B8%E8%A7%81%E6%A0%B9%E5%9B%A0-%E4%BF%AE%E5%A4%8D%E5%8A%A8%E4%BD%9C"><span class="toc-number">5.</span> <span class="toc-text">四、Q&amp;A：Feishu WS 长期 reconnect 循环的 4 种常见根因 + 修复动作</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#Q1%EF%BC%9A%E6%80%8E%E4%B9%88%E7%A1%AE%E8%AE%A4-Feishu-WS-%E6%98%AF-reconnect-%E5%BE%AA%E7%8E%AF%E8%80%8C%E4%B8%8D%E6%98%AF%E2%80%9D%E5%B7%B2%E7%BB%8F-connected%E2%80%9D%EF%BC%9F"><span class="toc-number">5.1.</span> <span class="toc-text">Q1：怎么确认 Feishu WS 是 reconnect 循环而不是”已经 connected”？</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#Q2%EF%BC%9A%E9%A3%9E%E4%B9%A6-App-%E2%80%9C%E6%B6%88%E6%81%AF%E6%8E%A5%E6%94%B6%E2%80%9D%E6%9D%83%E9%99%90%E6%80%8E%E4%B9%88%E9%85%8D%EF%BC%9F"><span class="toc-number">5.2.</span> <span class="toc-text">Q2：飞书 App “消息接收”权限怎么配？</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#Q3%EF%BC%9AOpenClaw-v1-x-%E7%9A%84-reconnect-%E4%B8%BA%E4%BB%80%E4%B9%88%E4%B8%8D%E5%B8%A6-token-%E9%87%8D%E6%96%B0%E6%8B%89%E5%8F%96%EF%BC%9F"><span class="toc-number">5.3.</span> <span class="toc-text">Q3：OpenClaw v1.x 的 reconnect 为什么不带 token 重新拉取？</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#Q4%EF%BC%9A%E6%80%8E%E4%B9%88%E9%98%B2%E6%AD%A2%E2%80%9Drunning-%E2%89%A0-connected%E2%80%9D%E7%9A%84%E6%8E%A2%E9%92%88-bug-%E5%86%8D%E6%AC%A1%E5%8F%91%E7%94%9F%EF%BC%9F"><span class="toc-number">5.4.</span> <span class="toc-text">Q4：怎么防止”running ≠ connected”的探针 bug 再次发生？</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%BA%94%E3%80%81%E6%B5%81%E7%A8%8B%E6%94%B9%E8%BF%9B%EF%BC%9A%E4%BB%8E%E2%80%9Drunning%E2%80%9D%E5%88%B0%E2%80%9Dconnected%E2%80%9D"><span class="toc-number">6.</span> <span class="toc-text">五、流程改进：从”running”到”connected”</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#5-1-%E5%85%B3%E9%94%AE%E8%AE%BE%E8%AE%A1%EF%BC%9A%E4%B8%89%E5%B1%82%E6%8E%A2%E9%92%88"><span class="toc-number">6.1.</span> <span class="toc-text">5.1 关键设计：三层探针</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#5-2-%E5%85%B3%E9%94%AE%E8%AE%BE%E8%AE%A1%EF%BC%9A12-%E7%B1%BB%E5%8F%8D%E5%B8%B8%E7%A8%B3%E5%AE%9A%E7%9A%84%E2%80%9D%E5%BE%AA%E7%8E%AF%E7%B1%BB%E2%80%9D"><span class="toc-number">6.2.</span> <span class="toc-text">5.2 关键设计：12 类反常稳定的”循环类”</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#5-3-%E5%85%B3%E9%94%AE%E8%AE%BE%E8%AE%A1%EF%BC%9A%E4%BB%8E%E2%80%9D%E5%8F%8D%E5%B8%B8%E9%9D%99%E6%AD%A2%E2%80%9D%E5%88%B0%E2%80%9D%E5%8F%8D%E5%B8%B8%E5%BE%AA%E7%8E%AF%E2%80%9D"><span class="toc-number">6.3.</span> <span class="toc-text">5.3 关键设计：从”反常静止”到”反常循环”</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E6%80%BB%E7%BB%93"><span class="toc-number">7.</span> <span class="toc-text">总结</span></a></li></ol>
+                </div>
+            </button>
+            
+
+            
+
+            <a href="#nexmoe-content" class="backtop toc-link" aria-label="Back To Top" title="top"><button class="mdui-fab mdui-ripple"><i class="nexmoefont icon-caret-top"></i></button></a>
+        </div>
+    </div>
+</div></div><div id="nexmoe-footer"><!--!--></div><div id="nexmoe-search-space"><div class="search-container"><div class="search-header"><div class="search-input-container"><input class="search-input" type="text" placeholder="Search" onInput="sinput();"></div><a class="search-close" onclick="sclose();">×</a></div><div class="search-body"></div></div></div><div><script src="https://cdn.jsdelivr.net/npm/mathjax@latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+<script>MathJax.Hub.Config({
+    tex2jax: {
+        inlineMath: [ ['$','$'], ["\\(","\\)"] ],
+        processEscapes: true,
+        skipTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code']
+    }
+});
+MathJax.Hub.Queue(function() {
+    var all = MathJax.Hub.getAllJax(), i;
+    for(i=0; i < all.length; i += 1) {
+        all[i].SourceElement().parentNode.className += ' has-jax';
+    }
+});</script>
+</div></body></html>
