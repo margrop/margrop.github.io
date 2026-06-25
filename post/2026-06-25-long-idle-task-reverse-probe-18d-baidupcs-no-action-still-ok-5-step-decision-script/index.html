@@ -1,0 +1,795 @@
+<!doctype html>
+<html lang="cn"><head>
+<title>长期 idle 任务反向探针设计——18 天没跑的 baidupcs 同步为什么&#34;不修也行&#34;？5 步定位法 + 一键 idle 告警脚本 + Q&amp;A 反常稳定 - 魔都水滴</title>
+<meta charset="UTF-8">
+<meta name="keywords" content="">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5">
+
+<link rel="shortcut icon" href="/favicon.ico" type="image/x-icon" />
+<meta name="description" content="前言6&#x2F;25 19:57 的晚上 baidupcs-sync-progress cron probe 自动跑了一次，报告里有一行特别刺眼： 1last real sync: 2026-06-07 15:55:28, 18 天前  —— 18 天没跑了。 —— 18 天 &#x3D; 2.5 周 &#x3D; 12 个工作日。 —— 12 个工作日 &#x3D; 5 个 sprint 计划">
+<meta property="og:type" content="article">
+<meta property="og:title" content="长期 idle 任务反向探针设计——18 天没跑的 baidupcs 同步为什么&quot;不修也行&quot;？5 步定位法 + 一键 idle 告警脚本 + Q&amp;A 反常稳定">
+<meta property="og:url" content="http://blog.margrop.com/post/2026-06-25-long-idle-task-reverse-probe-18d-baidupcs-no-action-still-ok-5-step-decision-script/index.html">
+<meta property="og:site_name" content="魔都水滴">
+<meta property="og:description" content="前言6&#x2F;25 19:57 的晚上 baidupcs-sync-progress cron probe 自动跑了一次，报告里有一行特别刺眼： 1last real sync: 2026-06-07 15:55:28, 18 天前  —— 18 天没跑了。 —— 18 天 &#x3D; 2.5 周 &#x3D; 12 个工作日。 —— 12 个工作日 &#x3D; 5 个 sprint 计划">
+<meta property="og:locale">
+<meta property="article:published_time" content="2026-06-25T13:30:00.000Z">
+<meta property="article:modified_time" content="2026-06-25T13:18:51.142Z">
+<meta property="article:author" content="Margrop">
+<meta property="article:tag" content="运维">
+<meta property="article:tag" content="技术">
+<meta property="article:tag" content="FTS5">
+<meta property="article:tag" content="SQLite">
+<meta property="article:tag" content="静默期">
+<meta property="article:tag" content="反常稳定">
+<meta property="article:tag" content="cron">
+<meta property="article:tag" content="接受层">
+<meta property="article:tag" content="meta-probe">
+<meta property="article:tag" content="接受本身">
+<meta property="article:tag" content="打工人的无奈">
+<meta property="article:tag" content="第26类">
+<meta property="article:tag" content="idle-detection">
+<meta property="article:tag" content="baidupcs">
+<meta property="article:tag" content="反向探针">
+<meta property="article:tag" content="18天静默">
+<meta property="article:tag" content="长期静默">
+<meta property="article:tag" content="idle_hours">
+<meta property="article:tag" content="0步主动">
+<meta property="article:tag" content="主动不修">
+<meta property="article:tag" content="5步定位法">
+<meta property="article:tag" content="一键idle告警脚本">
+<meta name="twitter:card" content="summary">
+
+<link rel="stylesheet" href="../../lib/fancybox/fancybox.css">
+<link rel="stylesheet" href="../../lib/mdui_043tiny/mdui.css">
+
+
+<link rel="stylesheet" href="../../lib/iconfont/iconfont.css?v=1782393557753">
+
+<link rel="stylesheet" href="../../css/style.css?v=1782393557753">
+
+
+
+
+    
+        <link rel="stylesheet" href="../../custom.css?v=1782393557753">
+    
+
+
+
+<script src="../../lib/mdui_043tiny/mdui.js" async></script>
+<script src="../../lib/fancybox/fancybox.umd.js" async></script>
+<script src="../../lib/lax.min.js" async></script>
+
+
+<script async src="../../js/app.js?v=1782393557753"></script>
+
+ 
+
+<script charset="UTF-8" id="LA_COLLECT" src="//sdk.51.la/js-sdk-pro.min.js"></script>
+<script>LA.init({id:"23bDEwNOu1L8NhV1",ck:"23bDEwNOu1L8NhV1"})</script>
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-4NGHEP8LEV"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+
+  gtag('config', 'G-4NGHEP8LEV');
+</script>
+
+
+<link rel="stylesheet"  href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/atom-one-dark.min.css">
+<meta name="generator" content="Hexo 7.3.0"><link rel="alternate" href="atom.xml" title="魔都水滴" type="application/atom+xml">
+</head><body class="nexmoe mdui-drawer-body-left"><div id="nexmoe-background"><div class="nexmoe-bg" style="background-image: url(/images/background.webp)"></div><div class="mdui-appbar mdui-shadow-0"><div class="mdui-toolbar"><a class="mdui-btn mdui-btn-icon mdui-ripple" mdui-drawer="{target: &#039;#drawer&#039;, swipe: true}" title="menu"><i class="mdui-icon nexmoefont icon-menu"></i></a><div class="mdui-toolbar-spacer"></div><a class="mdui-btn mdui-btn-icon" href="../../index.html" title="Margrop"><img src="/images/avatar.webp" alt="Margrop"></a></div></div></div><div id="nexmoe-header"><div class="nexmoe-drawer mdui-drawer" id="drawer">
+    <div class="nexmoe-avatar mdui-ripple">
+        <a href="../../index.html" title="Margrop">
+            <img src="/images/avatar.webp" alt="Margrop" alt="Margrop">
+        </a>
+    </div>
+    <div class="nexmoe-count">
+        <div><span>Articles</span>376</div>
+        <div><span>Tags</span>756</div>
+        <div><span>Categories</span>7</div>
+    </div>
+    <div class="nexmoe-list mdui-list" mdui-collapse="{accordion: true}">
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" href="../../index.html" title="回到首页">
+            <i class="mdui-list-item-icon nexmoefont icon-home"></i>
+            <div class="mdui-list-item-content">
+                回到首页
+            </div>
+        </a>
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" href="../../post/archives/" title="文章归档">
+            <i class="mdui-list-item-icon nexmoefont icon-container"></i>
+            <div class="mdui-list-item-content">
+                文章归档
+            </div>
+        </a>
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" target="_blank" rel="noopener" href="https://example.com/" title="下载">
+            <i class="mdui-list-item-icon nexmoefont icon-container"></i>
+            <div class="mdui-list-item-content">
+                下载
+            </div>
+        </a>
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" href="../../post/favorites/" title="常用链接">
+            <i class="mdui-list-item-icon nexmoefont icon-unorderedlist"></i>
+            <div class="mdui-list-item-content">
+                常用链接
+            </div>
+        </a>
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" href="../../post/github-project-stars/" title="GithubStars">
+            <i class="mdui-list-item-icon nexmoefont icon-github"></i>
+            <div class="mdui-list-item-content">
+                GithubStars
+            </div>
+        </a>
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" href="../../post/donate/" title="给我赞助">
+            <i class="mdui-list-item-icon nexmoefont icon-coffee"></i>
+            <div class="mdui-list-item-content">
+                给我赞助
+            </div>
+        </a>
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" href="../../post/about/" title="关于博主">
+            <i class="mdui-list-item-icon nexmoefont icon-info-circle"></i>
+            <div class="mdui-list-item-content">
+                关于博主
+            </div>
+        </a>
+        
+    </div>
+    
+    
+        
+        <div class="nexmoe-widget-wrap">
+    <div class="nexmoe-widget nexmoe-search">
+         
+            <form id="search_form" action_e="https://cn.bing.com/search?q=site:example.com" onsubmit="return search();">
+                <label><input id="search_value" name="q" type="search" placeholder="Search"></label>
+            </form>
+         
+    </div>
+</div>
+
+
+
+
+    
+        
+        <div class="nexmoe-widget-wrap">
+	<div class="nexmoe-widget nexmoe-social">
+		<a
+			class="mdui-ripple"
+			href="http://qm.qq.com/cgi-bin/qm/qr?_wv=1027&k=weD8TANNWdCOveAMcdmoAxOKt5owKkDS"
+			target="_blank"
+			mdui-tooltip="{content: 'QQ群'}"
+			style="
+				color: rgb(249, 174, 8);
+				background-color: rgba(249, 174, 8, .1);
+			"
+		>
+			<i
+				class="nexmoefont icon-QQ"
+			></i> </a
+		><a
+			class="mdui-ripple"
+			href="https://github.com/margrop/"
+			target="_blank"
+			mdui-tooltip="{content: 'GitHub'}"
+			style="
+				color: rgb(25, 23, 23);
+				background-color: rgba(25, 23, 23, .1);
+			"
+		>
+			<i
+				class="nexmoefont icon-github"
+			></i> </a
+		><a
+			class="mdui-ripple"
+			href="../../atom.xml"
+			target="_blank"
+			mdui-tooltip="{content: 'RSS'}"
+			style="
+				color: rgb(247, 132, 34);
+				background-color: rgba(247, 132, 34, .1);
+			"
+		>
+			<i
+				class="nexmoefont icon-rss"
+			></i> </a
+		>
+	</div>
+</div>
+
+    
+        
+        
+  <div class="nexmoe-widget-wrap">
+    <h3 class="nexmoe-widget-title">Categories</h3>
+    <div class="nexmoe-widget">
+
+      <ul class="category-list">
+
+        
+
+
+        
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/ai-diary/">ai_diary</a>
+          <span class="category-list-count">113</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/ai-tech/">ai_tech</a>
+          <span class="category-list-count">105</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/develop/">develop</a>
+          <span class="category-list-count">28</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/">network</a>
+          <span class="category-list-count">112</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/notes/">notes</a>
+          <span class="category-list-count">10</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/others/">others</a>
+          <span class="category-list-count">3</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/sport/">sport</a>
+          <span class="category-list-count">4</span>
+        </li>
+
+        
+      </ul>
+
+    </div>
+  </div>
+
+
+    
+        
+        
+  <div class="nexmoe-widget-wrap">
+    <div id="randomtagcloud" class="nexmoe-widget tagcloud nexmoe-rainbow">
+      <a href="../../tags/v1-models-0-025s/" style="font-size: 10px;">/v1/models 0.025s</a> <a href="../../tags/0%E6%AD%A5/" style="font-size: 13.7px;">0步</a> <a href="../../tags/0%E6%AD%A5%E4%B8%BB%E5%8A%A8/" style="font-size: 10px;">0步主动</a> <a href="../../tags/0%E6%AD%A5%E5%85%83%E9%80%92%E5%BD%92/" style="font-size: 10px;">0步元递归</a> <a href="../../tags/0%E6%AD%A5%E6%9C%AC%E8%BA%AB/" style="font-size: 10px;">0步本身</a> <a href="../../tags/12%E7%B1%BB/" style="font-size: 10px;">12类</a> <a href="../../tags/18%E5%A4%A9idle/" style="font-size: 10px;">18天idle</a> <a href="../../tags/18%E5%A4%A9%E9%9D%99%E9%BB%98/" style="font-size: 10px;">18天静默</a> <a href="../../tags/192-168-x-x/" style="font-size: 10px;">192.168.x.x</a> <a href="../../tags/1password/" style="font-size: 10px;">1password</a> <a href="../../tags/22%E7%B1%BB%E4%B8%80%E9%94%AE%E6%B1%87%E6%80%BB/" style="font-size: 10px;">22类一键汇总</a> <a href="../../tags/3%E5%B1%82%E5%AE%9A%E4%BD%8D%E6%B3%95/" style="font-size: 10px;">3层定位法</a> <a href="../../tags/401/" style="font-size: 10px;">401</a> <a href="../../tags/4%E4%B8%AAGateway/" style="font-size: 10px;">4个Gateway</a> <a href="../../tags/4%E4%B8%AAGateway%E5%85%A8%E5%86%9B%E8%A6%86%E6%B2%A1/" style="font-size: 10px;">4个Gateway全军覆没</a> <a href="../../tags/503/" style="font-size: 10px;">503</a> <a href="../../tags/5%E6%AD%A5%E5%AE%9A%E4%BD%8D%E6%B3%95/" style="font-size: 10px;">5步定位法</a> <a href="../../tags/60%E7%A7%92%E5%BB%B6%E8%BF%9F/" style="font-size: 10px;">60秒延迟</a> <a href="../../tags/60%E7%A7%92%E8%B6%85%E6%97%B6/" style="font-size: 10px;">60秒超时</a> <a href="../../tags/6%E4%B8%AA%E8%8A%82%E7%82%B9/" style="font-size: 10px;">6个节点</a> <a href="../../tags/AC/" style="font-size: 10.37px;">AC</a> <a href="../../tags/ACP/" style="font-size: 10px;">ACP</a> <a href="../../tags/AI/" style="font-size: 11.85px;">AI</a> <a href="../../tags/AI-Coding-Assistant/" style="font-size: 10px;">AI Coding Assistant</a> <a href="../../tags/AI%E7%BC%96%E7%A8%8B%E5%8A%A9%E6%89%8B/" style="font-size: 10px;">AI编程助手</a> <a href="../../tags/AI%E8%BE%85%E5%8A%A9/" style="font-size: 10.37px;">AI辅助</a> <a href="../../tags/AI%E8%BE%85%E5%8A%A9%E7%BC%96%E7%A8%8B/" style="font-size: 10.37px;">AI辅助编程</a> <a href="../../tags/AP/" style="font-size: 10.74px;">AP</a> <a href="../../tags/API/" style="font-size: 11.11px;">API</a> <a href="../../tags/Agent-couldn-t-generate/" style="font-size: 10.37px;">Agent couldn't generate</a> <a href="../../tags/Alertmanager/" style="font-size: 10px;">Alertmanager</a> <a href="../../tags/AppDaemon/" style="font-size: 10px;">AppDaemon</a> <a href="../../tags/Aqara/" style="font-size: 10px;">Aqara</a> <a href="../../tags/BaiduPCS/" style="font-size: 11.11px;">BaiduPCS</a> <a href="../../tags/CC-Switch/" style="font-size: 10.37px;">CC-Switch</a> <a href="../../tags/CI-CD/" style="font-size: 10.37px;">CI/CD</a> <a href="../../tags/CLI-Tools/" style="font-size: 10px;">CLI Tools</a> <a href="../../tags/CLI%E5%B7%A5%E5%85%B7/" style="font-size: 10px;">CLI工具</a> <a href="../../tags/CONFIG/" style="font-size: 10px;">CONFIG</a> <a href="../../tags/Caddy/" style="font-size: 10px;">Caddy</a> <a href="../../tags/Chrome%E7%BC%BA%E5%A4%B1/" style="font-size: 10.37px;">Chrome缺失</a> <a href="../../tags/Claude-Code/" style="font-size: 10.37px;">Claude Code</a> <a href="../../tags/Cloudflare/" style="font-size: 10px;">Cloudflare</a> <a href="../../tags/Codex/" style="font-size: 10.37px;">Codex</a> <a href="../../tags/Cookie-%E8%AE%A4%E8%AF%81/" style="font-size: 10px;">Cookie 认证</a> <a href="../../tags/Cron/" style="font-size: 11.11px;">Cron</a> <a href="../../tags/D1/" style="font-size: 10px;">D1</a> <a href="../../tags/DB%E6%8E%A2%E9%92%88/" style="font-size: 10.37px;">DB探针</a> <a href="../../tags/DB%E9%9D%99%E6%AD%A2/" style="font-size: 10px;">DB静止</a> <a href="../../tags/DIY-123%E6%A8%A1%E5%9E%8B/" style="font-size: 10px;">DIY-123模型</a> <a href="../../tags/DIY-MINI/" style="font-size: 10px;">DIY-MINI</a> <a href="../../tags/DIY%E5%B9%B3%E5%8F%B0/" style="font-size: 10.37px;">DIY平台</a> <a href="../../tags/Date/" style="font-size: 10px;">Date</a> <a href="../../tags/Diagrams-net/" style="font-size: 10px;">Diagrams.net</a> <a href="../../tags/Diary/" style="font-size: 10px;">Diary</a> <a href="../../tags/Docker/" style="font-size: 15.19px;">Docker</a> <a href="../../tags/Docker-Compose/" style="font-size: 10px;">Docker Compose</a> <a href="../../tags/EADDRINUSE/" style="font-size: 11.11px;">EADDRINUSE</a> <a href="../../tags/EasyTier-NAT%E7%A9%BF%E9%80%8F/" style="font-size: 10.37px;">EasyTier NAT穿透</a> <a href="../../tags/Efficiency-Tools/" style="font-size: 10px;">Efficiency Tools</a> <a href="../../tags/Electerm/" style="font-size: 10px;">Electerm</a> <a href="../../tags/English/" style="font-size: 10.37px;">English</a> <a href="../../tags/FTS5/" style="font-size: 10.74px;">FTS5</a> <a href="../../tags/Gateway/" style="font-size: 12.22px;">Gateway</a> <a href="../../tags/Gemini-CLI/" style="font-size: 10.37px;">Gemini CLI</a> <a href="../../tags/GitHub-Actions/" style="font-size: 10.37px;">GitHub Actions</a> <a href="../../tags/HA/" style="font-size: 10px;">HA</a> <a href="../../tags/HADashboard/" style="font-size: 10px;">HADashboard</a> <a href="../../tags/Hermes/" style="font-size: 10.74px;">Hermes</a> <a href="../../tags/Hexo/" style="font-size: 10.74px;">Hexo</a> <a href="../../tags/HomeAssistant/" style="font-size: 10px;">HomeAssistant</a> <a href="../../tags/IP/" style="font-size: 10px;">IP</a> <a href="../../tags/IPv4/" style="font-size: 10px;">IPv4</a> <a href="../../tags/Java/" style="font-size: 11.48px;">Java</a> <a href="../../tags/LVM%E2%80%91Thin/" style="font-size: 10.37px;">LVM‑Thin</a> <a href="../../tags/Linux/" style="font-size: 12.59px;">Linux</a> <a href="../../tags/MacOS/" style="font-size: 10.74px;">MacOS</a> <a href="../../tags/Macmini/" style="font-size: 10px;">Macmini</a> <a href="../../tags/Macmini-log%E8%B7%AF%E5%BE%84/" style="font-size: 10.74px;">Macmini log路径</a> <a href="../../tags/Markdown/" style="font-size: 10px;">Markdown</a> <a href="../../tags/MiniMax/" style="font-size: 10px;">MiniMax</a> <a href="../../tags/MiniMax-M3/" style="font-size: 10.37px;">MiniMax-M3</a> <a href="../../tags/Multi-Agent/" style="font-size: 10px;">Multi-Agent</a> <a href="../../tags/MySQL/" style="font-size: 10.74px;">MySQL</a> <a href="../../tags/NAS/" style="font-size: 10.74px;">NAS</a> <a href="../../tags/NRestarts/" style="font-size: 10.37px;">NRestarts</a> <a href="../../tags/Nginx/" style="font-size: 10px;">Nginx</a> <a href="../../tags/Node-RED/" style="font-size: 10.37px;">Node-RED</a> <a href="../../tags/Node-js/" style="font-size: 10.37px;">Node.js</a> <a href="../../tags/OOM/" style="font-size: 10px;">OOM</a> <a href="../../tags/OpenAI/" style="font-size: 10px;">OpenAI</a> <a href="../../tags/OpenClaw/" style="font-size: 18.52px;">OpenClaw</a> <a href="../../tags/OpenClaw-gateway/" style="font-size: 10.37px;">OpenClaw gateway</a> <a href="../../tags/OpenCode/" style="font-size: 10.37px;">OpenCode</a> <a href="../../tags/OpenResty/" style="font-size: 10px;">OpenResty</a> <a href="../../tags/OpenWrt/" style="font-size: 10.37px;">OpenWrt</a> <a href="../../tags/PPPoE/" style="font-size: 10px;">PPPoE</a> <a href="../../tags/Portainer/" style="font-size: 10px;">Portainer</a> <a href="../../tags/PostgreSQL/" style="font-size: 10px;">PostgreSQL</a> <a href="../../tags/ProcessOn/" style="font-size: 10px;">ProcessOn</a> <a href="../../tags/Prometheus/" style="font-size: 12.59px;">Prometheus</a> <a href="../../tags/Proxmox-VE/" style="font-size: 16.3px;">Proxmox VE</a> <a href="../../tags/RPC/" style="font-size: 10px;">RPC</a> <a href="../../tags/Restart-always/" style="font-size: 10px;">Restart=always</a> <a href="../../tags/Restart-always%E5%BE%AA%E7%8E%AF/" style="font-size: 10px;">Restart=always循环</a> <a href="../../tags/SOCKS5/" style="font-size: 10px;">SOCKS5</a> <a href="../../tags/SQLite/" style="font-size: 11.11px;">SQLite</a> <a href="../../tags/SSL/" style="font-size: 10px;">SSL</a> <a href="../../tags/Session/" style="font-size: 10px;">Session</a> <a href="../../tags/Shell/" style="font-size: 10.37px;">Shell</a> <a href="../../tags/Subagent/" style="font-size: 10px;">Subagent</a> <a href="../../tags/TTS/" style="font-size: 10px;">TTS</a> <a href="../../tags/TimeMachine/" style="font-size: 10px;">TimeMachine</a> <a href="../../tags/UML/" style="font-size: 10px;">UML</a> <a href="../../tags/Uptime-Kuma/" style="font-size: 10.37px;">Uptime Kuma</a> <a href="../../tags/VM151/" style="font-size: 10.37px;">VM151</a> <a href="../../tags/VM152-WeCom%E7%BC%BA%E5%A4%B1/" style="font-size: 11.11px;">VM152 WeCom缺失</a> <a href="../../tags/VM153/" style="font-size: 10.37px;">VM153</a> <a href="../../tags/VPN/" style="font-size: 10px;">VPN</a> <a href="../../tags/VPS/" style="font-size: 10.74px;">VPS</a> <a href="../../tags/VPS4/" style="font-size: 10px;">VPS4</a> <a href="../../tags/VPS4-overlay-TCP%E4%B8%8D%E5%8F%AF%E8%BE%BE/" style="font-size: 10.37px;">VPS4 overlay TCP不可达</a> <a href="../../tags/WeCom/" style="font-size: 10px;">WeCom</a> <a href="../../tags/Web/" style="font-size: 10px;">Web</a> <a href="../../tags/WebSocket/" style="font-size: 10.74px;">WebSocket</a> <a href="../../tags/Windows/" style="font-size: 10px;">Windows</a> <a href="../../tags/Workers/" style="font-size: 10px;">Workers</a> <a href="../../tags/activate/" style="font-size: 10.37px;">activate</a> <a href="../../tags/ad/" style="font-size: 10px;">ad</a> <a href="../../tags/adb/" style="font-size: 10px;">adb</a> <a href="../../tags/adblock/" style="font-size: 10.37px;">adblock</a> <a href="../../tags/agent/" style="font-size: 10px;">agent</a> <a href="../../tags/aligenie/" style="font-size: 10px;">aligenie</a> <a href="../../tags/aliyun/" style="font-size: 10.74px;">aliyun</a> <a href="../../tags/alpine/" style="font-size: 10px;">alpine</a> <a href="../../tags/annotation/" style="font-size: 10px;">annotation</a> <a href="../../tags/aop/" style="font-size: 10px;">aop</a> <a href="../../tags/authy/" style="font-size: 10px;">authy</a> <a href="../../tags/auto-restart/" style="font-size: 10px;">auto-restart</a> <a href="../../tags/autofs/" style="font-size: 10px;">autofs</a> <a href="../../tags/backup/" style="font-size: 10px;">backup</a> <a href="../../tags/baidupan/" style="font-size: 10px;">baidupan</a> <a href="../../tags/baidupcs/" style="font-size: 10px;">baidupcs</a> <a href="../../tags/baidupcs%E9%9D%99%E9%BB%98/" style="font-size: 10px;">baidupcs静默</a> <a href="../../tags/bash/" style="font-size: 10.74px;">bash</a> <a href="../../tags/bitwarden/" style="font-size: 10px;">bitwarden</a> <a href="../../tags/boot/" style="font-size: 10.37px;">boot</a> <a href="../../tags/brew/" style="font-size: 10.37px;">brew</a> <a href="../../tags/browser/" style="font-size: 10px;">browser</a> <a href="../../tags/by-design/" style="font-size: 10px;">by-design</a> <a href="../../tags/caddy2/" style="font-size: 10.37px;">caddy2</a> <a href="../../tags/capture-output/" style="font-size: 10px;">capture_output</a> <a href="../../tags/cdn/" style="font-size: 10px;">cdn</a> <a href="../../tags/centos/" style="font-size: 13.7px;">centos</a> <a href="../../tags/cert/" style="font-size: 10.37px;">cert</a> <a href="../../tags/certbot/" style="font-size: 10px;">certbot</a> <a href="../../tags/charles/" style="font-size: 10px;">charles</a> <a href="../../tags/chat/" style="font-size: 10px;">chat</a> <a href="../../tags/chat-completion/" style="font-size: 10px;">chat completion</a> <a href="../../tags/chrome/" style="font-size: 10.74px;">chrome</a> <a href="../../tags/classloader/" style="font-size: 10px;">classloader</a> <a href="../../tags/client/" style="font-size: 10.74px;">client</a> <a href="../../tags/clone/" style="font-size: 10.37px;">clone</a> <a href="../../tags/closures/" style="font-size: 10px;">closures</a> <a href="../../tags/cloudflare/" style="font-size: 10.37px;">cloudflare</a> <a href="../../tags/cmd/" style="font-size: 10px;">cmd</a> <a href="../../tags/command/" style="font-size: 10px;">command</a> <a href="../../tags/commit/" style="font-size: 10px;">commit</a> <a href="../../tags/connected/" style="font-size: 10px;">connected</a> <a href="../../tags/container/" style="font-size: 10px;">container</a> <a href="../../tags/cron/" style="font-size: 10.37px;">cron</a> <a href="../../tags/crontab/" style="font-size: 10px;">crontab</a> <a href="../../tags/cron%E4%BB%BB%E5%8A%A1/" style="font-size: 14.07px;">cron任务</a> <a href="../../tags/cron%E8%AE%BE%E8%AE%A1/" style="font-size: 10px;">cron设计</a> <a href="../../tags/ctyun/" style="font-size: 10.37px;">ctyun</a> <a href="../../tags/dashboard/" style="font-size: 10px;">dashboard</a> <a href="../../tags/ddsm/" style="font-size: 10px;">ddsm</a> <a href="../../tags/demo/" style="font-size: 10px;">demo</a> <a href="../../tags/dependency/" style="font-size: 10px;">dependency</a> <a href="../../tags/deploy/" style="font-size: 10px;">deploy</a> <a href="../../tags/developer/" style="font-size: 10px;">developer</a> <a href="../../tags/devtools/" style="font-size: 10px;">devtools</a> <a href="../../tags/dll/" style="font-size: 10px;">dll</a> <a href="../../tags/dns/" style="font-size: 10.74px;">dns</a> <a href="../../tags/docker/" style="font-size: 12.96px;">docker</a> <a href="../../tags/domain/" style="font-size: 10px;">domain</a> <a href="../../tags/download/" style="font-size: 10px;">download</a> <a href="../../tags/draw/" style="font-size: 10.37px;">draw</a> <a href="../../tags/drawio/" style="font-size: 10px;">drawio</a> <a href="../../tags/dsm/" style="font-size: 12.59px;">dsm</a> <a href="../../tags/dump/" style="font-size: 10px;">dump</a> <a href="../../tags/duplicate-service-unit/" style="font-size: 10px;">duplicate service unit</a> <a href="../../tags/dylib/" style="font-size: 10px;">dylib</a> <a href="../../tags/edge/" style="font-size: 10.74px;">edge</a> <a href="../../tags/exception/" style="font-size: 10.37px;">exception</a> <a href="../../tags/exit-78/" style="font-size: 10px;">exit 78</a> <a href="../../tags/export/" style="font-size: 10px;">export</a> <a href="../../tags/fail2ban/" style="font-size: 10px;">fail2ban</a> <a href="../../tags/fallback/" style="font-size: 10px;">fallback</a> <a href="../../tags/fallback%E5%A4%B1%E6%95%88/" style="font-size: 10px;">fallback失效</a> <a href="../../tags/feign/" style="font-size: 10px;">feign</a> <a href="../../tags/firewall-cmd/" style="font-size: 10.37px;">firewall-cmd</a> <a href="../../tags/flow/" style="font-size: 10px;">flow</a> <a href="../../tags/frp/" style="font-size: 10.37px;">frp</a> <a href="../../tags/frpc/" style="font-size: 11.11px;">frpc</a> <a href="../../tags/frps/" style="font-size: 10.37px;">frps</a> <a href="../../tags/fuckgfw/" style="font-size: 11.11px;">fuckgfw</a> <a href="../../tags/function/" style="font-size: 10px;">function</a> <a href="../../tags/fuser/" style="font-size: 10px;">fuser</a> <a href="../../tags/gcc/" style="font-size: 10px;">gcc</a> <a href="../../tags/gfw/" style="font-size: 10.37px;">gfw</a> <a href="../../tags/git/" style="font-size: 12.59px;">git</a> <a href="../../tags/gitea/" style="font-size: 10.37px;">gitea</a> <a href="../../tags/github/" style="font-size: 12.22px;">github</a> <a href="../../tags/golang/" style="font-size: 10px;">golang</a> <a href="../../tags/google-gemma-4/" style="font-size: 10px;">google_gemma-4</a> <a href="../../tags/gperftools/" style="font-size: 10px;">gperftools</a> <a href="../../tags/gridea/" style="font-size: 10.37px;">gridea</a> <a href="../../tags/grub/" style="font-size: 10.37px;">grub</a> <a href="../../tags/gvt-g/" style="font-size: 10px;">gvt-g</a> <a href="../../tags/hacs/" style="font-size: 10px;">hacs</a> <a href="../../tags/havcs/" style="font-size: 10.37px;">havcs</a> <a href="../../tags/heap/" style="font-size: 10px;">heap</a> <a href="../../tags/hello/" style="font-size: 10.37px;">hello</a> <a href="../../tags/hexo/" style="font-size: 10.74px;">hexo</a> <a href="../../tags/hibernate/" style="font-size: 10.37px;">hibernate</a> <a href="../../tags/hidpi/" style="font-size: 10px;">hidpi</a> <a href="../../tags/hoisting/" style="font-size: 10px;">hoisting</a> <a href="../../tags/homeassistant/" style="font-size: 11.48px;">homeassistant</a> <a href="../../tags/hosts/" style="font-size: 10px;">hosts</a> <a href="../../tags/html/" style="font-size: 10.37px;">html</a> <a href="../../tags/htmlparser/" style="font-size: 10px;">htmlparser</a> <a href="../../tags/https/" style="font-size: 10.74px;">https</a> <a href="../../tags/iKuai/" style="font-size: 10.37px;">iKuai</a> <a href="../../tags/idea/" style="font-size: 10px;">idea</a> <a href="../../tags/idle-detection/" style="font-size: 10px;">idle-detection</a> <a href="../../tags/idle-hours/" style="font-size: 10px;">idle_hours</a> <a href="../../tags/image/" style="font-size: 10px;">image</a> <a href="../../tags/img/" style="font-size: 10.37px;">img</a> <a href="../../tags/img2kvm/" style="font-size: 10px;">img2kvm</a> <a href="../../tags/immortalwrt/" style="font-size: 10px;">immortalwrt</a> <a href="../../tags/import/" style="font-size: 10px;">import</a> <a href="../../tags/index/" style="font-size: 10px;">index</a> <a href="../../tags/install/" style="font-size: 11.85px;">install</a> <a href="../../tags/intel/" style="font-size: 10.37px;">intel</a> <a href="../../tags/io/" style="font-size: 10px;">io</a> <a href="../../tags/ios/" style="font-size: 10px;">ios</a> <a href="../../tags/ip/" style="font-size: 10px;">ip</a> <a href="../../tags/iptables/" style="font-size: 10px;">iptables</a> <a href="../../tags/iptv/" style="font-size: 10.37px;">iptv</a> <a href="../../tags/ipv6/" style="font-size: 10px;">ipv6</a> <a href="../../tags/iso/" style="font-size: 10px;">iso</a> <a href="../../tags/java/" style="font-size: 11.48px;">java</a> <a href="../../tags/javascript/" style="font-size: 10.37px;">javascript</a> <a href="../../tags/jetbrains/" style="font-size: 10px;">jetbrains</a> <a href="../../tags/jieba/" style="font-size: 10px;">jieba</a> <a href="../../tags/jni/" style="font-size: 10px;">jni</a> <a href="../../tags/jnilib/" style="font-size: 10px;">jnilib</a> <a href="../../tags/journald/" style="font-size: 10.37px;">journald</a> <a href="../../tags/journald%E6%97%A5%E5%BF%97%E6%BC%82%E7%A7%BB/" style="font-size: 10px;">journald日志漂移</a> <a href="../../tags/jpa/" style="font-size: 10px;">jpa</a> <a href="../../tags/js/" style="font-size: 10.74px;">js</a> <a href="../../tags/json/" style="font-size: 10.37px;">json</a> <a href="../../tags/jsonb/" style="font-size: 10px;">jsonb</a> <a href="../../tags/jupter/" style="font-size: 10px;">jupter</a> <a href="../../tags/jupyterlab/" style="font-size: 10px;">jupyterlab</a> <a href="../../tags/jvm/" style="font-size: 10.37px;">jvm</a> <a href="../../tags/k8s/" style="font-size: 10.37px;">k8s</a> <a href="../../tags/kernel/" style="font-size: 10px;">kernel</a> <a href="../../tags/key/" style="font-size: 10px;">key</a> <a href="../../tags/kid/" style="font-size: 10px;">kid</a> <a href="../../tags/kms/" style="font-size: 10px;">kms</a> <a href="../../tags/kodi/" style="font-size: 10px;">kodi</a> <a href="../../tags/koolproxy/" style="font-size: 10.37px;">koolproxy</a> <a href="../../tags/koolproxyr/" style="font-size: 10.37px;">koolproxyr</a> <a href="../../tags/kvm/" style="font-size: 10.37px;">kvm</a> <a href="../../tags/lan/" style="font-size: 10px;">lan</a> <a href="../../tags/lastpass/" style="font-size: 10px;">lastpass</a> <a href="../../tags/launchctl/" style="font-size: 10px;">launchctl</a> <a href="../../tags/learning/" style="font-size: 10px;">learning</a> <a href="../../tags/lede/" style="font-size: 10px;">lede</a> <a href="../../tags/letsencrypt/" style="font-size: 10.74px;">letsencrypt</a> <a href="../../tags/linux/" style="font-size: 11.11px;">linux</a> <a href="../../tags/live/" style="font-size: 10px;">live</a> <a href="../../tags/loopback-proxy/" style="font-size: 10px;">loopback-proxy</a> <a href="../../tags/low-code/" style="font-size: 10px;">low-code</a> <a href="../../tags/lsof/" style="font-size: 10px;">lsof</a> <a href="../../tags/lvm/" style="font-size: 10px;">lvm</a> <a href="../../tags/lxc/" style="font-size: 10px;">lxc</a> <a href="../../tags/m3u8/" style="font-size: 10px;">m3u8</a> <a href="../../tags/mac/" style="font-size: 10.37px;">mac</a> <a href="../../tags/macos/" style="font-size: 10px;">macos</a> <a href="../../tags/manual/" style="font-size: 10px;">manual</a> <a href="../../tags/mariadb/" style="font-size: 10px;">mariadb</a> <a href="../../tags/markdown/" style="font-size: 10px;">markdown</a> <a href="../../tags/maven/" style="font-size: 10.37px;">maven</a> <a href="../../tags/md5/" style="font-size: 10.37px;">md5</a> <a href="../../tags/meta-acceptance/" style="font-size: 10px;">meta-acceptance</a> <a href="../../tags/meta-pattern/" style="font-size: 10px;">meta-pattern</a> <a href="../../tags/meta-probe/" style="font-size: 10.37px;">meta-probe</a> <a href="../../tags/microcode/" style="font-size: 10px;">microcode</a> <a href="../../tags/mirror/" style="font-size: 10.37px;">mirror</a> <a href="../../tags/model-provider/" style="font-size: 10px;">model provider</a> <a href="../../tags/modem/" style="font-size: 10px;">modem</a> <a href="../../tags/modules/" style="font-size: 10px;">modules</a> <a href="../../tags/monitor/" style="font-size: 10px;">monitor</a> <a href="../../tags/mount/" style="font-size: 10px;">mount</a> <a href="../../tags/mstsc/" style="font-size: 10px;">mstsc</a> <a href="../../tags/mysql/" style="font-size: 10px;">mysql</a> <a href="../../tags/n2n/" style="font-size: 12.59px;">n2n</a> <a href="../../tags/n5105/" style="font-size: 10px;">n5105</a> <a href="../../tags/nas/" style="font-size: 10px;">nas</a> <a href="../../tags/netstat/" style="font-size: 10px;">netstat</a> <a href="../../tags/network/" style="font-size: 12.96px;">network</a> <a href="../../tags/new-api/" style="font-size: 10.74px;">new-api</a> <a href="../../tags/nfs/" style="font-size: 10px;">nfs</a> <a href="../../tags/node/" style="font-size: 10.37px;">node</a> <a href="../../tags/node-red/" style="font-size: 10.37px;">node-red</a> <a href="../../tags/nodejs/" style="font-size: 11.11px;">nodejs</a> <a href="../../tags/nohup/" style="font-size: 10.37px;">nohup</a> <a href="../../tags/notepad/" style="font-size: 10px;">notepad++</a> <a href="../../tags/npm/" style="font-size: 11.85px;">npm</a> <a href="../../tags/nssm/" style="font-size: 10.37px;">nssm</a> <a href="../../tags/ntp/" style="font-size: 10px;">ntp</a> <a href="../../tags/one-api/" style="font-size: 10px;">one-api</a> <a href="../../tags/oop/" style="font-size: 10px;">oop</a> <a href="../../tags/openfeign/" style="font-size: 10px;">openfeign</a> <a href="../../tags/openssl/" style="font-size: 10.37px;">openssl</a> <a href="../../tags/os/" style="font-size: 10px;">os</a> <a href="../../tags/otp/" style="font-size: 10px;">otp</a> <a href="../../tags/ovz/" style="font-size: 10px;">ovz</a> <a href="../../tags/p14/" style="font-size: 10px;">p14</a> <a href="../../tags/packet-capture/" style="font-size: 10px;">packet capture</a> <a href="../../tags/pat/" style="font-size: 10px;">pat</a> <a href="../../tags/pdf/" style="font-size: 10px;">pdf</a> <a href="../../tags/pem/" style="font-size: 10.37px;">pem</a> <a href="../../tags/perf/" style="font-size: 10px;">perf</a> <a href="../../tags/ping/" style="font-size: 10px;">ping</a> <a href="../../tags/ping%E9%80%9A%E4%BD%86chat%E4%B8%8D%E9%80%9A/" style="font-size: 10px;">ping通但chat不通</a> <a href="../../tags/pip/" style="font-size: 10px;">pip</a> <a href="../../tags/plugin/" style="font-size: 10px;">plugin</a> <a href="../../tags/png/" style="font-size: 10px;">png</a> <a href="../../tags/port-18789/" style="font-size: 10px;">port=18789</a> <a href="../../tags/powerbutton/" style="font-size: 10px;">powerbutton</a> <a href="../../tags/print/" style="font-size: 10px;">print</a> <a href="../../tags/pro/" style="font-size: 10px;">pro</a> <a href="../../tags/proxy/" style="font-size: 10.37px;">proxy</a> <a href="../../tags/pve/" style="font-size: 16.3px;">pve</a> <a href="../../tags/pvekclean/" style="font-size: 11.11px;">pvekclean</a> <a href="../../tags/python/" style="font-size: 13.33px;">python</a> <a href="../../tags/qcow2/" style="font-size: 10px;">qcow2</a> <a href="../../tags/qemu/" style="font-size: 10.37px;">qemu</a> <a href="../../tags/qemu-guest-agent/" style="font-size: 10px;">qemu-guest-agent</a> <a href="../../tags/rar/" style="font-size: 10px;">rar</a> <a href="../../tags/reboot/" style="font-size: 10px;">reboot</a> <a href="../../tags/reconnect%E5%BE%AA%E7%8E%AF/" style="font-size: 10px;">reconnect循环</a> <a href="../../tags/reflog/" style="font-size: 10px;">reflog</a> <a href="../../tags/remote/" style="font-size: 10px;">remote</a> <a href="../../tags/remote-desktop/" style="font-size: 10.37px;">remote desktop</a> <a href="../../tags/renew/" style="font-size: 10px;">renew</a> <a href="../../tags/repo/" style="font-size: 10px;">repo</a> <a href="../../tags/resize/" style="font-size: 10px;">resize</a> <a href="../../tags/retina/" style="font-size: 10px;">retina</a> <a href="../../tags/root/" style="font-size: 10px;">root</a> <a href="../../tags/route/" style="font-size: 10px;">route</a> <a href="../../tags/router/" style="font-size: 10.37px;">router</a> <a href="../../tags/rule/" style="font-size: 10px;">rule</a> <a href="../../tags/rules/" style="font-size: 10px;">rules</a> <a href="../../tags/running/" style="font-size: 10px;">running</a> <a href="../../tags/runtime/" style="font-size: 10px;">runtime</a> <a href="../../tags/safari/" style="font-size: 10px;">safari</a> <a href="../../tags/sata/" style="font-size: 10px;">sata</a> <a href="../../tags/schema/" style="font-size: 10px;">schema</a> <a href="../../tags/schema%E5%88%97%E5%90%8D/" style="font-size: 10px;">schema列名</a> <a href="../../tags/scipy-notebook/" style="font-size: 10px;">scipy-notebook</a> <a href="../../tags/scoping/" style="font-size: 10px;">scoping</a> <a href="../../tags/scp/" style="font-size: 10px;">scp</a> <a href="../../tags/server/" style="font-size: 10.37px;">server</a> <a href="../../tags/server-is-busy/" style="font-size: 10px;">server is busy</a> <a href="../../tags/service%E4%B8%8D%E5%8F%AF%E4%BF%A1/" style="font-size: 10.37px;">service不可信</a> <a href="../../tags/slmgr/" style="font-size: 10px;">slmgr</a> <a href="../../tags/so/" style="font-size: 10px;">so</a> <a href="../../tags/socket-proxyd/" style="font-size: 10px;">socket-proxyd</a> <a href="../../tags/socks/" style="font-size: 10px;">socks</a> <a href="../../tags/source/" style="font-size: 10px;">source</a> <a href="../../tags/spk/" style="font-size: 10px;">spk</a> <a href="../../tags/split%E8%BE%B9%E7%95%8C/" style="font-size: 10px;">split边界</a> <a href="../../tags/spring/" style="font-size: 11.11px;">spring</a> <a href="../../tags/springboot/" style="font-size: 11.85px;">springboot</a> <a href="../../tags/springfox/" style="font-size: 10.74px;">springfox</a> <a href="../../tags/sqlite3-CLI/" style="font-size: 10px;">sqlite3 CLI</a> <a href="../../tags/ss/" style="font-size: 10px;">ss</a> <a href="../../tags/ssh/" style="font-size: 11.48px;">ssh</a> <a href="../../tags/ssl/" style="font-size: 10.37px;">ssl</a> <a href="../../tags/stale/" style="font-size: 10px;">stale</a> <a href="../../tags/stash/" style="font-size: 10px;">stash</a> <a href="../../tags/stderr%E8%A2%AB%E5%90%9E/" style="font-size: 10.37px;">stderr被吞</a> <a href="../../tags/string/" style="font-size: 10px;">string</a> <a href="../../tags/subprocess/" style="font-size: 10px;">subprocess</a> <a href="../../tags/supernode/" style="font-size: 10.37px;">supernode</a> <a href="../../tags/svg/" style="font-size: 10px;">svg</a> <a href="../../tags/svn/" style="font-size: 10px;">svn</a> <a href="../../tags/swagger/" style="font-size: 11.11px;">swagger</a> <a href="../../tags/sync/" style="font-size: 10px;">sync</a> <a href="../../tags/synology/" style="font-size: 10.37px;">synology</a> <a href="../../tags/system-level-daemon/" style="font-size: 10px;">system-level daemon</a> <a href="../../tags/system-level-vs-user-level/" style="font-size: 10px;">system-level vs user-level</a> <a href="../../tags/system-level%E4%B8%8Euser-level%E6%8A%A2%E7%AB%AF%E5%8F%A3/" style="font-size: 10px;">system-level与user-level抢端口</a> <a href="../../tags/systemctl/" style="font-size: 10.74px;">systemctl</a> <a href="../../tags/systemctl-disable/" style="font-size: 10.37px;">systemctl disable</a> <a href="../../tags/systemd/" style="font-size: 14.44px;">systemd</a> <a href="../../tags/systemd-duplicate-service/" style="font-size: 10px;">systemd duplicate service</a> <a href="../../tags/systemd-exit-78/" style="font-size: 10.74px;">systemd exit 78</a> <a href="../../tags/systemd-service-unit/" style="font-size: 10px;">systemd service unit</a> <a href="../../tags/systemd-unit/" style="font-size: 10px;">systemd unit</a> <a href="../../tags/systemd-unit-race/" style="font-size: 10px;">systemd unit race</a> <a href="../../tags/systemd-socket/" style="font-size: 10px;">systemd-socket</a> <a href="../../tags/systemd%E8%A2%AB%E8%A6%86%E7%9B%96/" style="font-size: 10.37px;">systemd被覆盖</a> <a href="../../tags/tap/" style="font-size: 10px;">tap</a> <a href="../../tags/tap-windows/" style="font-size: 10px;">tap-windows</a> <a href="../../tags/tapwindows/" style="font-size: 10px;">tapwindows</a> <a href="../../tags/telecom/" style="font-size: 10.37px;">telecom</a> <a href="../../tags/template/" style="font-size: 10px;">template</a> <a href="../../tags/terminal/" style="font-size: 10px;">terminal</a> <a href="../../tags/tls/" style="font-size: 10px;">tls</a> <a href="../../tags/tmux/" style="font-size: 10.37px;">tmux</a> <a href="../../tags/token/" style="font-size: 10px;">token</a> <a href="../../tags/token%E5%A4%B1%E6%95%88/" style="font-size: 10px;">token失效</a> <a href="../../tags/totp/" style="font-size: 10px;">totp</a> <a href="../../tags/transient-999/" style="font-size: 10px;">transient 999</a> <a href="../../tags/trigram/" style="font-size: 10px;">trigram</a> <a href="../../tags/tvbox/" style="font-size: 10.74px;">tvbox</a> <a href="../../tags/txt/" style="font-size: 10px;">txt</a> <a href="../../tags/ubuntu/" style="font-size: 11.48px;">ubuntu</a> <a href="../../tags/udisk/" style="font-size: 10px;">udisk</a> <a href="../../tags/ui/" style="font-size: 10px;">ui</a> <a href="../../tags/undertow/" style="font-size: 10px;">undertow</a> <a href="../../tags/unicode61/" style="font-size: 10px;">unicode61</a> <a href="../../tags/uninstall/" style="font-size: 10px;">uninstall</a> <a href="../../tags/unlocker/" style="font-size: 10px;">unlocker</a> <a href="../../tags/upgrade/" style="font-size: 10.37px;">upgrade</a> <a href="../../tags/upstream-provider-timeout/" style="font-size: 10.37px;">upstream provider timeout</a> <a href="../../tags/uptimeMs/" style="font-size: 10px;">uptimeMs</a> <a href="../../tags/url/" style="font-size: 10px;">url</a> <a href="../../tags/user-level-daemon/" style="font-size: 10px;">user-level daemon</a> <a href="../../tags/v10%E6%8E%A2%E9%92%88/" style="font-size: 10px;">v10探针</a> <a href="../../tags/v11%E6%8E%A2%E9%92%88/" style="font-size: 10.74px;">v11探针</a> <a href="../../tags/v12%E6%8E%A2%E9%92%88/" style="font-size: 10px;">v12探针</a> <a href="../../tags/v13%E6%8E%A2%E9%92%88/" style="font-size: 10px;">v13探针</a> <a href="../../tags/v1%E6%8E%A2%E9%92%88/" style="font-size: 10px;">v1探针</a> <a href="../../tags/v2ray/" style="font-size: 10.37px;">v2ray</a> <a href="../../tags/v6%E6%8E%A2%E9%92%88/" style="font-size: 10.37px;">v6探针</a> <a href="../../tags/v7%E6%8E%A2%E9%92%88/" style="font-size: 10px;">v7探针</a> <a href="../../tags/v8%E6%8E%A2%E9%92%88/" style="font-size: 10px;">v8探针</a> <a href="../../tags/vhd/" style="font-size: 10px;">vhd</a> <a href="../../tags/vim/" style="font-size: 10px;">vim</a> <a href="../../tags/vlmcsd/" style="font-size: 10px;">vlmcsd</a> <a href="../../tags/vm/" style="font-size: 10.37px;">vm</a> <a href="../../tags/vmdk/" style="font-size: 10px;">vmdk</a> <a href="../../tags/web/" style="font-size: 11.48px;">web</a> <a href="../../tags/websocket/" style="font-size: 10.37px;">websocket</a> <a href="../../tags/wechat/" style="font-size: 10px;">wechat</a> <a href="../../tags/windows/" style="font-size: 11.48px;">windows</a> <a href="../../tags/with/" style="font-size: 10px;">with</a> <a href="../../tags/work-day-14/" style="font-size: 10px;">work day 14</a> <a href="../../tags/work-day-2/" style="font-size: 10px;">work day 2</a> <a href="../../tags/worker/" style="font-size: 10.37px;">worker</a> <a href="../../tags/wow/" style="font-size: 10px;">wow</a> <a href="../../tags/xiaoya/" style="font-size: 10px;">xiaoya</a> <a href="../../tags/xml/" style="font-size: 10px;">xml</a> <a href="../../tags/yum/" style="font-size: 10px;">yum</a> <a href="../../tags/zip/" style="font-size: 10px;">zip</a> <a href="../../tags/%E4%B8%80%E9%94%AEidle%E5%91%8A%E8%AD%A6%E8%84%9A%E6%9C%AC/" style="font-size: 10px;">一键idle告警脚本</a> <a href="../../tags/%E4%B8%80%E9%94%AE%E5%91%8A%E8%AD%A6%E8%84%9A%E6%9C%AC/" style="font-size: 10px;">一键告警脚本</a> <a href="../../tags/%E4%B8%8A%E6%B8%B8LLM%E5%AE%B9%E9%87%8F/" style="font-size: 10.74px;">上游LLM容量</a> <a href="../../tags/%E4%B8%8D%E6%98%AF%E6%88%91%E7%9A%84%E9%94%85/" style="font-size: 10px;">不是我的锅</a> <a href="../../tags/%E4%B8%AD%E5%9B%BD%E7%94%B5%E4%BF%A1/" style="font-size: 10px;">中国电信</a> <a href="../../tags/%E4%B8%AD%E6%96%87%E6%90%9C%E7%B4%A2/" style="font-size: 10px;">中文搜索</a> <a href="../../tags/%E4%B8%BB%E5%8A%A80%E6%AD%A5/" style="font-size: 10px;">主动0步</a> <a href="../../tags/%E4%B8%BB%E5%8A%A80%E6%AD%A5%E6%9C%AC%E8%BA%AB/" style="font-size: 10.37px;">主动0步本身</a> <a href="../../tags/%E4%B8%BB%E5%8A%A8%E4%B8%8D%E4%BF%AE/" style="font-size: 10px;">主动不修</a> <a href="../../tags/%E4%B8%BB%E5%8A%A8%E4%B8%8D%E8%BF%BD%E9%97%AE/" style="font-size: 12.59px;">主动不追问</a> <a href="../../tags/%E4%B8%BB%E5%8A%A8%E4%B8%8D%E8%BF%BD%E9%97%AE%E6%9C%AC%E8%BA%AB/" style="font-size: 10.37px;">主动不追问本身</a> <a href="../../tags/%E4%B8%BB%E5%8A%A8%E4%B8%8D%E8%BF%BD%E9%97%AE%E6%9C%AC%E8%BA%AB%E4%B9%9F%E6%98%AF%E6%B8%85%E5%8D%95%E4%B9%8B%E5%A4%96/" style="font-size: 10px;">主动不追问本身也是清单之外</a> <a href="../../tags/%E4%B8%BB%E5%8A%A8%E4%B8%8D%E9%80%9A%E7%9F%A5/" style="font-size: 10.74px;">主动不通知</a> <a href="../../tags/%E4%B8%BB%E5%8A%A8%E4%B8%8D%E9%80%9A%E7%9F%A5%E6%9C%AC%E8%BA%AB/" style="font-size: 10.37px;">主动不通知本身</a> <a href="../../tags/%E4%B8%BB%E5%8A%A8%E4%BF%AE/" style="font-size: 10px;">主动修</a> <a href="../../tags/%E4%B8%BB%E5%8A%A8%E4%BF%AEsystem-level%E6%9C%AC%E8%BA%AB%E4%B9%9F%E6%98%AF%E6%B8%85%E5%8D%95%E4%B9%8B%E5%A4%96/" style="font-size: 10px;">主动修system-level本身也是清单之外</a> <a href="../../tags/%E4%B8%BB%E5%8A%A8%E4%BF%AE%E6%9C%AC%E8%BA%AB%E4%B9%9F%E6%98%AF%E6%B8%85%E5%8D%95%E4%B9%8B%E5%A4%96/" style="font-size: 10px;">主动修本身也是清单之外</a> <a href="../../tags/%E4%B8%BB%E5%8A%A8%E5%91%A8%E4%B8%80/" style="font-size: 10px;">主动周一</a> <a href="../../tags/%E4%B8%BB%E5%8A%A8%E6%84%8F%E8%AF%86%E5%88%B0/" style="font-size: 10px;">主动意识到</a> <a href="../../tags/%E4%B8%BB%E5%8A%A8%E6%84%8F%E8%AF%86%E5%88%B00%E6%AD%A5%E6%9C%AC%E8%BA%AB/" style="font-size: 11.48px;">主动意识到0步本身</a> <a href="../../tags/%E4%B8%BB%E5%8A%A8%E6%84%8F%E8%AF%86%E5%88%B00%E6%AD%A5%E6%9C%AC%E8%BA%AB%E4%B9%9F%E6%98%AF%E6%B8%85%E5%8D%95%E4%B9%8B%E5%A4%96/" style="font-size: 10px;">主动意识到0步本身也是清单之外</a> <a href="../../tags/%E4%B8%BB%E5%8A%A8%E8%BF%BD%E9%97%AE/" style="font-size: 10.37px;">主动追问</a> <a href="../../tags/%E4%BA%91%E7%94%B5%E8%84%91/" style="font-size: 10.37px;">云电脑</a> <a href="../../tags/%E4%BA%A4%E6%8D%A2%E6%9C%BA/" style="font-size: 10px;">交换机</a> <a href="../../tags/%E4%BA%BA%E6%9C%BA%E5%8D%8F%E4%BD%9C/" style="font-size: 10px;">人机协作</a> <a href="../../tags/%E4%BB%A3%E7%90%86/" style="font-size: 10px;">代理</a> <a href="../../tags/%E4%BC%98%E5%8C%96/" style="font-size: 10px;">优化</a> <a href="../../tags/%E4%BD%86chat-30s/" style="font-size: 10.37px;">但chat 30s+</a> <a href="../../tags/%E4%BD%86%E6%98%AF%E6%88%91%E7%9A%84%E4%BA%8B/" style="font-size: 10px;">但是我的事</a> <a href="../../tags/%E4%BD%93%E6%A3%80/" style="font-size: 10px;">体检</a> <a href="../../tags/%E4%BF%9D%E6%8A%A4%E9%80%BB%E8%BE%91%E6%9C%AC%E8%BA%AB%E4%B9%9F%E6%98%AF%E6%B8%85%E5%8D%95%E4%B9%8B%E5%A4%96/" style="font-size: 10px;">保护逻辑本身也是清单之外</a> <a href="../../tags/%E4%BF%AE%E6%8C%96%E5%9D%91%E9%97%AD%E7%8E%AF/" style="font-size: 10px;">修挖坑闭环</a> <a href="../../tags/%E4%BF%AE%E6%AD%A3%E6%9C%AC%E8%BA%AB/" style="font-size: 10.37px;">修正本身</a> <a href="../../tags/%E4%BF%AE%E6%AD%A3%E9%80%92%E5%BD%92/" style="font-size: 10px;">修正递归</a> <a href="../../tags/%E5%80%BC%E7%8F%AD/" style="font-size: 10px;">值班</a> <a href="../../tags/%E5%81%87%E9%98%B3/" style="font-size: 10px;">假阳</a> <a href="../../tags/%E5%81%87%E9%98%B4/" style="font-size: 14.07px;">假阴</a> <a href="../../tags/%E5%81%A5%E5%BA%B7%E6%A3%80%E6%9F%A5/" style="font-size: 17.78px;">健康检查</a> <a href="../../tags/%E5%85%83%E9%80%92%E5%BD%92/" style="font-size: 10.37px;">元递归</a> <a href="../../tags/%E5%85%89%E7%8C%AB/" style="font-size: 10.37px;">光猫</a> <a href="../../tags/%E5%85%A8%E7%BB%BF/" style="font-size: 10px;">全绿</a> <a href="../../tags/%E5%85%A8%E9%87%8F%E5%90%8C%E6%AD%A5/" style="font-size: 10px;">全量同步</a> <a href="../../tags/%E5%85%AC%E7%BD%91IP/" style="font-size: 10px;">公网IP</a> <a href="../../tags/%E5%86%85%E5%AD%98/" style="font-size: 10px;">内存</a> <a href="../../tags/%E5%86%85%E5%AD%98%E4%BC%98%E5%8C%96/" style="font-size: 10px;">内存优化</a> <a href="../../tags/%E5%86%85%E7%BD%91/" style="font-size: 10.37px;">内网</a> <a href="../../tags/%E5%86%85%E7%BD%91IP/" style="font-size: 10px;">内网IP</a> <a href="../../tags/%E5%86%85%E7%BD%91%E6%B8%97%E9%80%8F/" style="font-size: 10px;">内网渗透</a> <a href="../../tags/%E5%86%99%E4%BD%9C/" style="font-size: 11.11px;">写作</a> <a href="../../tags/%E5%88%86%E8%AF%8D/" style="font-size: 10px;">分词</a> <a href="../../tags/%E5%88%87%E6%8D%A2/" style="font-size: 10px;">切换</a> <a href="../../tags/%E5%88%97%E5%90%8D%E8%AF%AF%E5%88%A4/" style="font-size: 10px;">列名误判</a> <a href="../../tags/%E5%8D%87%E7%BA%A7/" style="font-size: 11.11px;">升级</a> <a href="../../tags/%E5%8D%8F%E4%BD%9C/" style="font-size: 10px;">协作</a> <a href="../../tags/%E5%8D%95%E4%BD%8D%E6%B7%B7%E6%B7%86/" style="font-size: 10.37px;">单位混淆</a> <a href="../../tags/%E5%8D%9A%E5%AE%A2/" style="font-size: 10.74px;">博客</a> <a href="../../tags/%E5%8F%8D%E5%90%91%E4%BB%A3%E7%90%86/" style="font-size: 10px;">反向代理</a> <a href="../../tags/%E5%8F%8D%E5%90%91%E6%8E%A2%E9%92%88/" style="font-size: 10px;">反向探针</a> <a href="../../tags/%E5%8F%8D%E5%B8%B8%E7%A8%B3%E5%AE%9A/" style="font-size: 17.04px;">反常稳定</a> <a href="../../tags/%E5%8F%8D%E5%BA%94-vs-%E7%9F%A5%E8%AF%86/" style="font-size: 10px;">反应 vs 知识</a> <a href="../../tags/%E5%90%AF%E5%8A%A8/" style="font-size: 10px;">启动</a> <a href="../../tags/%E5%91%8A%E8%AD%A6/" style="font-size: 12.22px;">告警</a> <a href="../../tags/%E5%91%8A%E8%AD%A6%E4%BC%98%E5%8C%96/" style="font-size: 10px;">告警优化</a> <a href="../../tags/%E5%91%A8%E4%B8%80/" style="font-size: 10.74px;">周一</a> <a href="../../tags/%E5%91%A8%E4%B8%80%E7%84%A6%E8%99%91/" style="font-size: 10px;">周一焦虑</a> <a href="../../tags/%E5%91%A8%E4%B8%89/" style="font-size: 10.37px;">周三</a> <a href="../../tags/%E5%91%A8%E4%BA%8C/" style="font-size: 10.74px;">周二</a> <a href="../../tags/%E5%91%A8%E4%BA%8C%E6%99%9A%E4%B8%8A/" style="font-size: 10px;">周二晚上</a> <a href="../../tags/%E5%91%A8%E4%BA%94/" style="font-size: 10.74px;">周五</a> <a href="../../tags/%E5%91%A8%E5%85%AD/" style="font-size: 10.37px;">周六</a> <a href="../../tags/%E5%91%A8%E5%9B%9B/" style="font-size: 10.74px;">周四</a> <a href="../../tags/%E5%91%A8%E5%9B%9B%E6%99%9A%E4%B8%8A/" style="font-size: 10px;">周四晚上</a> <a href="../../tags/%E5%91%A8%E6%8A%A5/" style="font-size: 10.37px;">周报</a> <a href="../../tags/%E5%91%A8%E6%97%A5/" style="font-size: 11.11px;">周日</a> <a href="../../tags/%E5%91%A8%E6%9C%AB/" style="font-size: 13.7px;">周末</a> <a href="../../tags/%E5%91%A8%E6%9C%AB%E4%B9%9F%E6%98%AF%E6%B8%85%E5%8D%95%E4%B9%8B%E5%A4%96/" style="font-size: 10.37px;">周末也是清单之外</a> <a href="../../tags/%E5%91%A8%E6%9C%AB%E6%9C%AC%E8%BA%AB%E4%B9%9F%E6%98%AF%E6%B8%85%E5%8D%95%E4%B9%8B%E5%A4%96/" style="font-size: 10px;">周末本身也是清单之外</a> <a href="../../tags/%E5%91%A8%E6%9C%AB%E7%AA%81%E7%A0%B4/" style="font-size: 10px;">周末突破</a> <a href="../../tags/%E5%91%A8%E6%9C%AB%E7%AC%AC%E4%BA%8C%E5%A4%A9/" style="font-size: 10.37px;">周末第二天</a> <a href="../../tags/%E5%91%A8%E6%9C%AB%E8%90%BD%E5%9C%B0/" style="font-size: 10px;">周末落地</a> <a href="../../tags/%E5%91%A8%E6%9C%AB%E8%90%BD%E5%9C%B0%E6%9C%AC%E8%BA%AB/" style="font-size: 10.74px;">周末落地本身</a> <a href="../../tags/%E5%A4%8F%E4%BB%A4%E6%97%B6/" style="font-size: 10px;">夏令时</a> <a href="../../tags/%E5%A4%9A%E5%9C%BA%E6%99%AF/" style="font-size: 10.37px;">多场景</a> <a href="../../tags/%E5%A4%9A%E6%99%BA%E8%83%BD%E4%BD%93/" style="font-size: 10.74px;">多智能体</a> <a href="../../tags/%E5%A4%9A%E8%8A%82%E7%82%B9/" style="font-size: 10.37px;">多节点</a> <a href="../../tags/%E5%A4%9A%E8%8A%82%E7%82%B9%E7%AE%A1%E7%90%86/" style="font-size: 10px;">多节点管理</a> <a href="../../tags/%E5%A4%A9%E7%8C%AB%E7%B2%BE%E7%81%B5/" style="font-size: 10px;">天猫精灵</a> <a href="../../tags/%E5%A4%A9%E7%BF%BC%E4%BA%91/" style="font-size: 10.37px;">天翼云</a> <a href="../../tags/%E5%AE%89%E5%85%A8/" style="font-size: 16.67px;">安全</a> <a href="../../tags/%E5%AE%89%E8%A3%85/" style="font-size: 10.37px;">安装</a> <a href="../../tags/%E5%AE%9A%E6%97%B6%E4%BB%BB%E5%8A%A1/" style="font-size: 10.37px;">定时任务</a> <a href="../../tags/%E5%AE%B9%E5%99%A8/" style="font-size: 12.22px;">容器</a> <a href="../../tags/%E5%AE%B9%E5%99%A8%E7%BD%91%E7%BB%9C/" style="font-size: 10px;">容器网络</a> <a href="../../tags/%E5%AF%BC%E5%85%A5/" style="font-size: 10px;">导入</a> <a href="../../tags/%E5%B0%8F%E7%B1%B3/" style="font-size: 10px;">小米</a> <a href="../../tags/%E5%B1%B1%E5%B4%8E/" style="font-size: 10px;">山崎</a> <a href="../../tags/%E5%B7%A5%E4%BD%9C%E6%84%9F%E6%82%9F/" style="font-size: 10.74px;">工作感悟</a> <a href="../../tags/%E5%B7%A5%E4%BD%9C%E6%97%A5/" style="font-size: 12.59px;">工作日</a> <a href="../../tags/%E5%B7%A5%E4%BD%9C%E6%97%A5%E5%B8%B8/" style="font-size: 10px;">工作日常</a> <a href="../../tags/%E5%B7%A5%E4%BD%9C%E6%97%A5%E7%AC%AC%E4%B8%89%E5%A4%A9/" style="font-size: 10px;">工作日第三天</a> <a href="../../tags/%E5%B7%A5%E4%BD%9C%E6%97%A5%E7%AC%AC%E4%BA%94%E5%A4%A9/" style="font-size: 10px;">工作日第五天</a> <a href="../../tags/%E5%B7%A5%E4%BD%9C%E6%97%A5%E7%AC%AC%E5%9B%9B%E5%A4%A9/" style="font-size: 10px;">工作日第四天</a> <a href="../../tags/%E5%B7%B2%E9%80%9A%E7%9F%A5%E7%94%A8%E6%88%B7/" style="font-size: 10px;">已通知用户</a> <a href="../../tags/%E5%B8%B8%E7%94%A8%E8%BD%AF%E4%BB%B6/" style="font-size: 10px;">常用软件</a> <a href="../../tags/%E5%B9%82%E7%AD%89/" style="font-size: 10px;">幂等</a> <a href="../../tags/%E5%B9%BF%E5%91%8A%E5%B1%8F%E8%94%BD/" style="font-size: 10px;">广告屏蔽</a> <a href="../../tags/%E5%BA%8F%E5%88%97%E5%8F%B7/" style="font-size: 10px;">序列号</a> <a href="../../tags/%E5%BA%94%E7%94%A8%E5%B8%82%E5%9C%BA/" style="font-size: 10px;">应用市场</a> <a href="../../tags/%E5%BC%82%E5%B8%B8/" style="font-size: 10px;">异常</a> <a href="../../tags/%E5%BE%AA%E7%8E%AF%E7%B1%BB/" style="font-size: 10.37px;">循环类</a> <a href="../../tags/%E5%BF%83%E6%80%81/" style="font-size: 10px;">心态</a> <a href="../../tags/%E5%BF%83%E6%99%BA%E6%88%90%E9%95%BF/" style="font-size: 10px;">心智成长</a> <a href="../../tags/%E5%BF%83%E7%90%86%E6%A8%A1%E5%9E%8B/" style="font-size: 10.37px;">心理模型</a> <a href="../../tags/%E5%BF%83%E8%B7%B3/" style="font-size: 10px;">心跳</a> <a href="../../tags/%E5%BF%83%E8%B7%B3%E6%A3%80%E6%9F%A5/" style="font-size: 10.37px;">心跳检查</a> <a href="../../tags/%E6%80%A7%E8%83%BD%E4%BC%98%E5%8C%96/" style="font-size: 10px;">性能优化</a> <a href="../../tags/%E6%84%9F%E6%82%9F/" style="font-size: 10px;">感悟</a> <a href="../../tags/%E6%89%93%E5%B7%A5/" style="font-size: 18.89px;">打工</a> <a href="../../tags/%E6%89%93%E5%B7%A5%E4%BA%BA/" style="font-size: 10px;">打工人</a> <a href="../../tags/%E6%89%93%E5%B7%A5%E4%BA%BA%E7%9A%84%E6%97%A0%E5%A5%88/" style="font-size: 11.11px;">打工人的无奈</a> <a href="../../tags/%E6%89%B9%E9%87%8F%E6%A0%A1%E9%AA%8C/" style="font-size: 10px;">批量校验</a> <a href="../../tags/%E6%8A%80%E6%9C%AF/" style="font-size: 19.26px;">技术</a> <a href="../../tags/%E6%8A%93%E5%8C%85/" style="font-size: 10px;">抓包</a> <a href="../../tags/%E6%8C%96%E5%9D%91%E2%86%92%E4%BF%AE%E5%9D%91%E9%97%AD%E7%8E%AF/" style="font-size: 10px;">挖坑→修坑闭环</a> <a href="../../tags/%E6%8E%92%E6%9F%A5/" style="font-size: 10px;">排查</a> <a href="../../tags/%E6%8E%92%E6%9F%A5%E6%80%9D%E8%B7%AF/" style="font-size: 10px;">排查思路</a> <a href="../../tags/%E6%8E%A2%E9%92%88%E5%86%8D%E5%8D%87%E7%BA%A7/" style="font-size: 11.11px;">探针再升级</a> <a href="../../tags/%E6%8E%A2%E9%92%88%E6%9C%AC%E8%BA%AB/" style="font-size: 11.11px;">探针本身</a> <a href="../../tags/%E6%8E%A2%E9%92%88%E7%89%88%E6%9C%AC/" style="font-size: 10px;">探针版本</a> <a href="../../tags/%E6%8E%A2%E9%92%88%E7%AE%A1%E7%90%86/" style="font-size: 10px;">探针管理</a> <a href="../../tags/%E6%8E%A2%E9%92%88%E8%87%AA%E6%A3%80/" style="font-size: 10.37px;">探针自检</a> <a href="../../tags/%E6%8E%A2%E9%92%88%E8%B8%A9%E5%9D%91/" style="font-size: 10px;">探针踩坑</a> <a href="../../tags/%E6%8E%A5%E5%8F%97/" style="font-size: 10.37px;">接受</a> <a href="../../tags/%E6%8E%A5%E5%8F%97%E4%B9%8B%E5%90%8E/" style="font-size: 10px;">接受之后</a> <a href="../../tags/%E6%8E%A5%E5%8F%97%E4%BF%AE/" style="font-size: 10px;">接受修</a> <a href="../../tags/%E6%8E%A5%E5%8F%97%E4%BF%AE%E6%AD%A3/" style="font-size: 10px;">接受修正</a> <a href="../../tags/%E6%8E%A5%E5%8F%97%E5%B1%82/" style="font-size: 15.56px;">接受层</a> <a href="../../tags/%E6%8E%A5%E5%8F%97%E6%8C%96%E5%9D%91/" style="font-size: 10.37px;">接受挖坑</a> <a href="../../tags/%E6%8E%A5%E5%8F%97%E6%9C%AC%E8%BA%AB/" style="font-size: 12.96px;">接受本身</a> <a href="../../tags/%E6%8E%A5%E5%8F%97%E9%80%92%E5%BD%92/" style="font-size: 10.37px;">接受递归</a> <a href="../../tags/%E6%8F%8F%E8%BF%B0%E6%96%87%E4%BB%B6/" style="font-size: 10px;">描述文件</a> <a href="../../tags/%E6%94%BE%E4%B8%8B/" style="font-size: 10px;">放下</a> <a href="../../tags/%E6%95%85%E9%9A%9C/" style="font-size: 10.37px;">故障</a> <a href="../../tags/%E6%95%85%E9%9A%9C%E6%8E%92%E6%9F%A5/" style="font-size: 12.22px;">故障排查</a> <a href="../../tags/%E6%95%88%E7%8E%87/" style="font-size: 10.37px;">效率</a> <a href="../../tags/%E6%95%88%E7%8E%87%E5%B7%A5%E5%85%B7/" style="font-size: 11.11px;">效率工具</a> <a href="../../tags/%E6%95%B0%E6%8D%AE/" style="font-size: 10px;">数据</a> <a href="../../tags/%E6%97%81%E8%B7%AF%E7%94%B1/" style="font-size: 10px;">旁路由</a> <a href="../../tags/%E6%97%81%E8%B7%AF%E8%BF%9B%E7%A8%8B/" style="font-size: 10.37px;">旁路进程</a> <a href="../../tags/%E6%97%A0%E6%9C%8D%E5%8A%A1%E5%99%A8/" style="font-size: 10px;">无服务器</a> <a href="../../tags/%E6%97%A5%E8%AE%B0/" style="font-size: 19.63px;">日记</a> <a href="../../tags/%E6%97%B6%E5%8C%BA/" style="font-size: 10px;">时区</a> <a href="../../tags/%E6%98%BE%E5%8D%A1%E8%99%9A%E6%8B%9F%E5%8C%96/" style="font-size: 10px;">显卡虚拟化</a> <a href="../../tags/%E6%99%BA%E8%83%BD%E5%AE%B6%E5%B1%85/" style="font-size: 10px;">智能家居</a> <a href="../../tags/%E6%99%BA%E8%83%BD%E9%9F%B3%E7%AE%B1/" style="font-size: 10px;">智能音箱</a> <a href="../../tags/%E6%9C%8D%E5%8A%A1%E5%99%A8/" style="font-size: 10px;">服务器</a> <a href="../../tags/%E6%9C%8D%E5%8A%A1%E7%AE%A1%E7%90%86/" style="font-size: 10px;">服务管理</a> <a href="../../tags/%E6%9E%B6%E6%9E%84/" style="font-size: 10px;">架构</a> <a href="../../tags/%E6%A2%AF%E5%AD%90/" style="font-size: 10px;">梯子</a> <a href="../../tags/%E6%A8%A1%E5%9D%97/" style="font-size: 10px;">模块</a> <a href="../../tags/%E6%A8%A1%E5%9E%8B%E5%88%AB%E5%90%8D%E6%98%A0%E5%B0%84/" style="font-size: 10px;">模型别名映射</a> <a href="../../tags/%E6%A8%A1%E5%9E%8B%E6%8E%A2%E6%B5%8B/" style="font-size: 10px;">模型探测</a> <a href="../../tags/%E6%A8%A1%E5%9E%8B%E7%AB%AF%E7%82%B9%E5%8F%AF%E8%BE%BE%E6%80%A7/" style="font-size: 10px;">模型端点可达性</a> <a href="../../tags/%E6%A8%A1%E5%9E%8B%E7%AB%AF%E7%82%B9%E8%83%BDping%E9%80%9A/" style="font-size: 10px;">模型端点能ping通</a> <a href="../../tags/%E6%A8%A1%E5%9E%8B%E8%B0%83%E7%94%A8/" style="font-size: 10.37px;">模型调用</a> <a href="../../tags/%E6%AF%AB%E7%A7%92/" style="font-size: 10px;">毫秒</a> <a href="../../tags/%E6%B5%81%E7%A8%8B/" style="font-size: 10px;">流程</a> <a href="../../tags/%E6%B5%81%E7%A8%8B%E5%9B%BE/" style="font-size: 10px;">流程图</a> <a href="../../tags/%E6%B5%81%E7%A8%8B%E7%AE%A1%E7%90%86/" style="font-size: 10px;">流程管理</a> <a href="../../tags/%E6%B5%8F%E8%A7%88%E5%99%A8/" style="font-size: 10.37px;">浏览器</a> <a href="../../tags/%E6%B8%85%E5%8D%95%E4%B9%8B%E5%90%8E/" style="font-size: 10px;">清单之后</a> <a href="../../tags/%E6%B8%85%E5%8D%95%E4%B9%8B%E5%A4%96/" style="font-size: 11.85px;">清单之外</a> <a href="../../tags/%E6%B8%85%E5%8D%95%E4%B9%8B%E5%A4%96%E4%B9%9F%E5%8C%85%E6%8B%AC%E6%8E%A5%E5%8F%97%E6%9C%AC%E8%BA%AB/" style="font-size: 10px;">清单之外也包括接受本身</a> <a href="../../tags/%E6%B8%85%E5%8D%95%E7%9A%84%E5%85%83%E9%80%92%E5%BD%92/" style="font-size: 10px;">清单的元递归</a> <a href="../../tags/%E6%B8%85%E5%8D%95%E8%AE%BE%E8%AE%A1/" style="font-size: 10px;">清单设计</a> <a href="../../tags/%E6%B8%85%E5%8D%95%E8%BE%B9%E7%95%8C/" style="font-size: 10.37px;">清单边界</a> <a href="../../tags/%E6%B8%85%E5%8D%95%E8%BF%9B%E5%8C%96/" style="font-size: 10px;">清单进化</a> <a href="../../tags/%E6%BA%90%E7%A0%81%E5%A4%87%E4%BB%BD/" style="font-size: 10.37px;">源码备份</a> <a href="../../tags/%E6%BC%AB%E6%B8%B8/" style="font-size: 10px;">漫游</a> <a href="../../tags/%E6%BF%80%E6%B4%BB/" style="font-size: 10px;">激活</a> <a href="../../tags/%E6%BF%80%E6%B4%BB%E5%BE%AA%E7%8E%AF/" style="font-size: 10px;">激活循环</a> <a href="../../tags/%E7%81%AB%E7%BB%92/" style="font-size: 10px;">火绒</a> <a href="../../tags/%E7%84%A6%E8%99%91/" style="font-size: 16.3px;">焦虑</a> <a href="../../tags/%E7%8E%84%E5%AD%A6/" style="font-size: 10px;">玄学</a> <a href="../../tags/%E7%94%9F%E6%B4%BB/" style="font-size: 10px;">生活</a> <a href="../../tags/%E7%94%B5%E4%BF%A1/" style="font-size: 10.37px;">电信</a> <a href="../../tags/%E7%94%BB%E5%9B%BE/" style="font-size: 10px;">画图</a> <a href="../../tags/%E7%9B%91%E6%8E%A7/" style="font-size: 18.15px;">监控</a> <a href="../../tags/%E7%9B%91%E6%8E%A7%E7%B3%BB%E7%BB%9F/" style="font-size: 10px;">监控系统</a> <a href="../../tags/%E7%9B%B4%E6%92%AD%E6%BA%90/" style="font-size: 10px;">直播源</a> <a href="../../tags/%E7%9B%B4%E8%A7%89/" style="font-size: 10px;">直觉</a> <a href="../../tags/%E7%A3%81%E7%9B%98/" style="font-size: 10px;">磁盘</a> <a href="../../tags/%E7%AB%AF%E5%8F%A3/" style="font-size: 10.37px;">端口</a> <a href="../../tags/%E7%AB%AF%E5%8F%A3%E5%86%B2%E7%AA%81/" style="font-size: 10.37px;">端口冲突</a> <a href="../../tags/%E7%AB%AF%E5%8F%A3%E6%89%AB%E6%8F%8F/" style="font-size: 10px;">端口扫描</a> <a href="../../tags/%E7%AC%AC10%E5%A4%A9/" style="font-size: 10px;">第10天</a> <a href="../../tags/%E7%AC%AC10%E7%B1%BB/" style="font-size: 10.37px;">第10类</a> <a href="../../tags/%E7%AC%AC11%E5%A4%A9/" style="font-size: 10px;">第11天</a> <a href="../../tags/%E7%AC%AC11%E7%B1%BB/" style="font-size: 10.37px;">第11类</a> <a href="../../tags/%E7%AC%AC12%E5%A4%A9/" style="font-size: 10px;">第12天</a> <a href="../../tags/%E7%AC%AC12%E7%B1%BB/" style="font-size: 10.37px;">第12类</a> <a href="../../tags/%E7%AC%AC13%E5%A4%A9/" style="font-size: 10.37px;">第13天</a> <a href="../../tags/%E7%AC%AC13%E7%B1%BB/" style="font-size: 10px;">第13类</a> <a href="../../tags/%E7%AC%AC14%E5%A4%A9/" style="font-size: 10px;">第14天</a> <a href="../../tags/%E7%AC%AC14%E7%B1%BB/" style="font-size: 10px;">第14类</a> <a href="../../tags/%E7%AC%AC15%E7%B1%BB/" style="font-size: 10px;">第15类</a> <a href="../../tags/%E7%AC%AC16%E5%A4%A9/" style="font-size: 10px;">第16天</a> <a href="../../tags/%E7%AC%AC16%E7%B1%BB/" style="font-size: 10px;">第16类</a> <a href="../../tags/%E7%AC%AC17%E7%B1%BB/" style="font-size: 10.37px;">第17类</a> <a href="../../tags/%E7%AC%AC18%E5%A4%A9/" style="font-size: 10px;">第18天</a> <a href="../../tags/%E7%AC%AC18%E7%B1%BB/" style="font-size: 10.37px;">第18类</a> <a href="../../tags/%E7%AC%AC19%E7%B1%BB/" style="font-size: 10.37px;">第19类</a> <a href="../../tags/%E7%AC%AC20%E7%B1%BB/" style="font-size: 10.37px;">第20类</a> <a href="../../tags/%E7%AC%AC21%E7%B1%BB/" style="font-size: 10.37px;">第21类</a> <a href="../../tags/%E7%AC%AC22%E7%B1%BB/" style="font-size: 10.37px;">第22类</a> <a href="../../tags/%E7%AC%AC23%E7%B1%BB/" style="font-size: 10.37px;">第23类</a> <a href="../../tags/%E7%AC%AC25%E7%B1%BB/" style="font-size: 10.37px;">第25类</a> <a href="../../tags/%E7%AC%AC26%E7%B1%BB/" style="font-size: 10.37px;">第26类</a> <a href="../../tags/%E7%AC%AC6%E5%A4%A9/" style="font-size: 10px;">第6天</a> <a href="../../tags/%E7%AC%AC7%E5%A4%A9/" style="font-size: 10px;">第7天</a> <a href="../../tags/%E7%AC%AC8%E5%A4%A9/" style="font-size: 10px;">第8天</a> <a href="../../tags/%E7%AC%AC9%E5%A4%A9/" style="font-size: 10px;">第9天</a> <a href="../../tags/%E7%AC%AC9%E7%B1%BB/" style="font-size: 10px;">第9类</a> <a href="../../tags/%E7%AE%A1%E7%90%86/" style="font-size: 10px;">管理</a> <a href="../../tags/%E7%BB%AD%E6%9C%9F/" style="font-size: 10px;">续期</a> <a href="../../tags/%E7%BD%91%E5%85%B3/" style="font-size: 10px;">网关</a> <a href="../../tags/%E7%BD%91%E7%BB%9C/" style="font-size: 15.19px;">网络</a> <a href="../../tags/%E7%BD%91%E7%BB%9C%E9%A3%8E%E6%9A%B4/" style="font-size: 10px;">网络风暴</a> <a href="../../tags/%E7%BE%A4%E6%99%96/" style="font-size: 10.37px;">群晖</a> <a href="../../tags/%E8%84%9A%E6%9C%AC/" style="font-size: 10px;">脚本</a> <a href="../../tags/%E8%84%9A%E6%9C%AC%E4%BC%98%E5%8C%96/" style="font-size: 10px;">脚本优化</a> <a href="../../tags/%E8%85%BE%E8%AE%AF/" style="font-size: 10px;">腾讯</a> <a href="../../tags/%E8%87%AA%E5%8A%A8%E5%8C%96/" style="font-size: 17.04px;">自动化</a> <a href="../../tags/%E8%87%AA%E5%8A%A8%E6%81%A2%E5%A4%8D/" style="font-size: 10.37px;">自动恢复</a> <a href="../../tags/%E8%87%AA%E5%BB%BA%E5%BA%94%E7%94%A8/" style="font-size: 10px;">自建应用</a> <a href="../../tags/%E8%87%AA%E6%88%91%E5%8F%8D%E6%80%9D/" style="font-size: 15.93px;">自我反思</a> <a href="../../tags/%E8%87%AA%E6%88%91%E6%89%93%E8%84%B8/" style="font-size: 10px;">自我打脸</a> <a href="../../tags/%E8%8A%82%E7%82%B9%E8%A7%92%E8%89%B2/" style="font-size: 10.37px;">节点角色</a> <a href="../../tags/%E8%99%9A%E6%8B%9F%E6%9C%BA/" style="font-size: 11.48px;">虚拟机</a> <a href="../../tags/%E8%A2%AB%E5%8A%A8%E6%84%8F%E8%AF%86%E5%88%B0/" style="font-size: 10px;">被动意识到</a> <a href="../../tags/%E8%A7%92%E8%89%B2%E4%B8%8D%E5%8C%B9%E9%85%8D/" style="font-size: 10.37px;">角色不匹配</a> <a href="../../tags/%E8%A7%92%E8%89%B2%E8%AF%AF%E5%88%A4/" style="font-size: 10.37px;">角色误判</a> <a href="../../tags/%E8%A7%92%E8%89%B2%E8%AF%AF%E9%85%8D/" style="font-size: 10px;">角色误配</a> <a href="../../tags/%E8%A7%92%E8%89%B2%E9%94%99%E9%85%8D/" style="font-size: 10px;">角色错配</a> <a href="../../tags/%E8%AE%A4%E8%AF%81/" style="font-size: 10.37px;">认证</a> <a href="../../tags/%E8%AE%BE%E8%AE%A1%E5%81%8F%E5%B7%AE/" style="font-size: 10px;">设计偏差</a> <a href="../../tags/%E8%AF%81%E4%B9%A6/" style="font-size: 10px;">证书</a> <a href="../../tags/%E8%AF%AD%E9%9B%80/" style="font-size: 10px;">语雀</a> <a href="../../tags/%E8%AF%AF%E6%8A%A5/" style="font-size: 14.44px;">误报</a> <a href="../../tags/%E8%AF%AF%E6%8A%A5%E8%BF%87%E6%BB%A4/" style="font-size: 10px;">误报过滤</a> <a href="../../tags/%E8%B6%85%E6%97%B6/" style="font-size: 10.37px;">超时</a> <a href="../../tags/%E8%B7%AF%E7%94%B1/" style="font-size: 10px;">路由</a> <a href="../../tags/%E8%B7%AF%E7%94%B1%E5%99%A8/" style="font-size: 11.11px;">路由器</a> <a href="../../tags/%E8%BD%AF%E4%BB%B6%E7%AE%A1%E5%AE%B6/" style="font-size: 10px;">软件管家</a> <a href="../../tags/%E8%BD%AF%E8%B7%AF%E7%94%B1/" style="font-size: 10.37px;">软路由</a> <a href="../../tags/%E8%BF%90%E7%BB%B4/" style="font-size: 20px;">运维</a> <a href="../../tags/%E8%BF%90%E7%BB%B4%E7%9B%91%E6%8E%A7/" style="font-size: 10.37px;">运维监控</a> <a href="../../tags/%E8%BF%9B%E7%A8%8B/" style="font-size: 10.37px;">进程</a> <a href="../../tags/%E8%BF%9E%E6%8E%A5%E4%BF%9D%E6%B4%BB/" style="font-size: 10px;">连接保活</a> <a href="../../tags/%E8%BF%9E%E6%8E%A5%E9%97%AE%E9%A2%98/" style="font-size: 10px;">连接问题</a> <a href="../../tags/%E9%80%9A%E4%BF%A1%E6%9C%BA%E5%88%B6/" style="font-size: 10px;">通信机制</a> <a href="../../tags/%E9%80%9A%E7%9F%A5/" style="font-size: 10px;">通知</a> <a href="../../tags/%E9%80%9A%E7%9F%A5%E5%85%83%E9%80%92%E5%BD%92/" style="font-size: 10px;">通知元递归</a> <a href="../../tags/%E9%80%9A%E7%9F%A5%E6%8C%96%E5%9D%91/" style="font-size: 10px;">通知挖坑</a> <a href="../../tags/%E9%80%9A%E7%9F%A5%E6%9C%AC%E8%BA%AB/" style="font-size: 10px;">通知本身</a> <a href="../../tags/%E9%83%A8%E7%BD%B2/" style="font-size: 11.85px;">部署</a> <a href="../../tags/%E9%83%A8%E7%BD%B2%E9%93%BE%E8%B7%AF/" style="font-size: 10px;">部署链路</a> <a href="../../tags/%E9%85%8D%E7%BD%AE/" style="font-size: 10.74px;">配置</a> <a href="../../tags/%E9%85%8D%E7%BD%AE%E8%90%BD%E5%90%8E/" style="font-size: 10.37px;">配置落后</a> <a href="../../tags/%E9%92%89%E9%92%89/" style="font-size: 10.37px;">钉钉</a> <a href="../../tags/%E9%95%9C%E5%83%8F/" style="font-size: 10.74px;">镜像</a> <a href="../../tags/%E9%95%9C%E5%83%8F%E6%BA%90/" style="font-size: 10px;">镜像源</a> <a href="../../tags/%E9%95%BF%E6%9C%9F%E7%A8%B3%E5%AE%9A/" style="font-size: 14.81px;">长期稳定</a> <a href="../../tags/%E9%95%BF%E6%9C%9F%E9%9D%99%E9%BB%98/" style="font-size: 10px;">长期静默</a> <a href="../../tags/%E9%95%BF%E8%BF%9E%E6%8E%A5/" style="font-size: 10px;">长连接</a> <a href="../../tags/%E9%97%A8%E7%AA%97%E4%BC%A0%E6%84%9F%E5%99%A8/" style="font-size: 10px;">门窗传感器</a> <a href="../../tags/%E9%97%AE%E9%A2%98%E6%8E%92%E6%9F%A5/" style="font-size: 17.78px;">问题排查</a> <a href="../../tags/%E9%98%B2%E7%81%AB%E5%A2%99/" style="font-size: 11.11px;">防火墙</a> <a href="../../tags/%E9%98%BF%E9%87%8C%E4%BA%91/" style="font-size: 11.11px;">阿里云</a> <a href="../../tags/%E9%98%BF%E9%87%8C%E6%BA%90/" style="font-size: 10.37px;">阿里源</a> <a href="../../tags/%E9%9B%86%E5%AE%A2/" style="font-size: 10.37px;">集客</a> <a href="../../tags/%E9%9D%92%E5%B2%9B/" style="font-size: 10px;">青岛</a> <a href="../../tags/%E9%9D%99%E9%BB%98%E6%9C%9F/" style="font-size: 17.41px;">静默期</a> <a href="../../tags/%E9%A3%9E%E4%B9%A6/" style="font-size: 10.74px;">飞书</a>
+    </div>
+    
+      <script>
+        var maxTagcloud = parseInt(17);
+        var tags_length = parseInt(756);
+        var tags_arr = [];
+        for(var i = 0; i < tags_length; i++){
+          tags_arr.push(i);
+        }
+        tags_arr.sort(function (l, r) {
+          return Math.random() > 0.5 ? -1 : 1;
+        });
+        tags_arr = tags_arr.slice(0, maxTagcloud < tags_length ? tags_length - maxTagcloud : 0);
+        for(var tag_i = 0; tag_i < tags_arr.length; tag_i++){
+          document.getElementById("randomtagcloud").children[tags_arr[tag_i]].style.display = 'none';
+        }
+      </script>
+    
+  </div>
+
+    
+        
+        <!-- 一言 -->
+<div class="nexmoe-widget-wrap">
+  <h3 class="nexmoe-widget-title">
+    Hitokoto
+  </h3>
+  <div class="nexmoe-widget">
+    <ul class="hitokoto-box">
+      <li id="hitokoto_text_parent" class="hitokoto-text" hitokotoCategory="">
+        <a href="#" id="hitokoto_text">
+          
+        </a>
+        <a href="#" id="hitokoto_error_text" style="display: none;">
+          
+        </a>
+      </li>
+    </ul>
+  </div>
+</div>
+
+<script>
+  let hitokotoText = document.getElementById('hitokoto_text')
+  let hitokotoErroText = document.getElementById('hitokoto_error_text')
+  let hitokotoCategory = document.getElementById('hitokoto_text_parent').getAttribute('hitokotoCategory')
+  window.addEventListener('load', function () {
+    let url = 'https://v1.hitokoto.cn'
+    if (hitokotoCategory) {
+      url += '?c=' + hitokotoCategory
+    }
+    fetch(url)
+      .then(response => response.json())
+      .then(data => {
+        hitokotoText.innerText = "「 " + data.hitokoto + " 」 from " + data.from
+        hitokotoText.href = 'https://hitokoto.cn/?uuid=' + data.uuid
+      })
+      .catch((reason) => {
+        console.error(11, reason)
+        hitokotoText.style.display = 'none'
+        hitokotoErroText.style.display = 'block'
+      })
+  })
+</script>
+    
+        
+        
+  <div class="nexmoe-widget-wrap">
+    <h3 class="nexmoe-widget-title">Archive</h3>
+    <div class="nexmoe-widget">
+      <ul class="archive-list"><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2026/">2026</a><span class="archive-list-count">218</span></li><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2025/">2025</a><span class="archive-list-count">2</span></li><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2024/">2024</a><span class="archive-list-count">19</span></li><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2023/">2023</a><span class="archive-list-count">18</span></li><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2022/">2022</a><span class="archive-list-count">4</span></li><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2021/">2021</a><span class="archive-list-count">114</span></li><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2018/">2018</a><span class="archive-list-count">1</span></li></ul>
+    </div>
+  </div>
+
+
+
+    
+        
+        
+  <div class="nexmoe-widget-wrap">
+    <h3 class="nexmoe-widget-title">Recent Posts</h3>
+    <div class="nexmoe-widget">
+      <ul>
+        
+          <li>
+            <a href="../../post/2026-06-25-long-idle-task-reverse-probe-18d-baidupcs-no-action-still-ok-5-step-decision-script/">长期 idle 任务反向探针设计——18 天没跑的 baidupcs 同步为什么&#34;不修也行&#34;？5 步定位法 + 一键 idle 告警脚本 + Q&amp;A 反常稳定</a>
+          </li>
+        
+          <li>
+            <a href="../../post/2026-06-25-thursday-the-25th-diary-anti-stability-day-18-workday-day4-0step-baidupcs-18day-idle-no-action-still-anomaly-type-26/">周四晚上 21:15，第 25 篇日记，&#34;反着来&#34;第 18 天——工作日第四天（周四），我**没**挖新 bug、0 步主动、连续 2 个工作日&#34;上游问题不是我的锅但是我的事&#34;+&#34;baidupcs 静默 18 天我没修&#34;= 第 26 类</a>
+          </li>
+        
+          <li>
+            <a href="../../post/2026-06-23-openclaw-chat-completion-60s-timeout-upstream-m3-capacity-3-layer-locate-method/">OpenClaw chat completion 60 秒超时根因排查——DIY 平台上游 M3 模型繁忙导致 4 个 Gateway 全军覆没、ping 通但 chat 不通的 3 层定位法 + 一键告警脚本</a>
+          </li>
+        
+          <li>
+            <a href="../../post/2026-06-23-tuesday-the-23rd-diary-anti-stability-day-16-workday-day2-0step-upstream-llm-capacity-not-my-fault-but-my-job-type-25/">周二晚上 21:15，第 23 篇日记，&#34;反着来&#34;第 16 天——工作日第二天（周二），我**没**挖新 bug、0 步主动、1 类**DIY 平台上游 M3 模型繁忙 → 4 个 Gateway 全军覆没 60s+** = 第 25 类</a>
+          </li>
+        
+          <li>
+            <a href="../../post/2026-06-21-systemd-duplicate-service-unit-port-bind-race-14-days-3770-restarts-one-line-fix/">systemd 重复 service unit 导致端口被占循环重启——同一台机器上 system-level 与 user-level 两个 openclaw-gateway.service 抢同一端口、14 天累计循环 3770 次、一行命令彻底解决</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+
+    
+        
+        <div class="nexmoe-widget-wrap">
+    <div class="nexmoe-widget nexmoe-link">
+		<ul>
+        
+            <li>
+                <a href="https://blog.example.com/" target="_blank" >
+                    <img src="/images/avatar.webp" alt="魔都水滴Blog"></img>
+                    <p>魔都水滴Blog</p>
+                </a>
+            </li>
+        
+		</ul>
+    </div>
+</div>
+<style>
+.nexmoe-widget-wrap .nexmoe-link ul li a {
+    text-align : center;
+}
+.nexmoe-widget-wrap .nexmoe-link ul li a img {
+    max-width : 100%;
+}
+.nexmoe-widget-wrap .nexmoe-link ul li a p {
+    margin: 10px 0;
+}
+</style>
+
+    
+   
+    <div class="nexmoe-copyright">
+        &copy; 2026 Margrop
+        Powered by <a href="http://hexo.io/" target="_blank">Hexo</a>
+        & <a href="https://github.com/theme-nexmoe/hexo-theme-nexmoe" target="_blank">Nexmoe</a>
+        
+    </div>
+</div><!-- .nexmoe-drawer --></div><div id="nexmoe-content"><div class="nexmoe-primary"><div class="nexmoe-post">
+  <article>
+    
+        <div class="nexmoe-post-cover absolute" style="padding-top: 56.25%;"> 
+            <img src="https://picsum.photos/seed/tech0625/1280/720" alt="长期 idle 任务反向探针设计——18 天没跑的 baidupcs 同步为什么&#34;不修也行&#34;？5 步定位法 + 一键 idle 告警脚本 + Q&amp;A 反常稳定" loading="lazy">
+            <h1>长期 idle 任务反向探针设计——18 天没跑的 baidupcs 同步为什么&#34;不修也行&#34;？5 步定位法 + 一键 idle 告警脚本 + Q&amp;A 反常稳定</h1>
+        </div>
+    
+    
+    <div class="nexmoe-post-meta">
+    <div class="nexmoe-rainbow">
+        <a class="nexmoefont icon-calendar-fill">2026年06月25日</a>
+        
+            <a class="nexmoefont icon-appstore-fill -link" href="../../categories/ai-tech/">ai_tech</a>
+        
+        
+    <a><i class="nexmoefont icon-areachart"></i>约32k字</a>
+    <a><i class="nexmoefont icon-time-circle-fill"></i>预计需要45 分钟</a>
+
+    </div>
+    
+    
+    
+    
+    
+</div>
+
+    <h2 id="前言"><a href="#前言" class="headerlink" title="前言"></a>前言</h2><p>6&#x2F;25 19:57 的晚上 baidupcs-sync-progress cron probe 自动跑了一次，报告里有一行特别刺眼：</p>
+<figure class="highlight apache"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><code class="hljs apache"><span class="hljs-attribute">last</span> real sync: <span class="hljs-number">2026</span>-<span class="hljs-number">06</span>-<span class="hljs-number">07</span> <span class="hljs-number">15</span>:<span class="hljs-number">55</span>:<span class="hljs-number">28</span>, <span class="hljs-number">18</span> 天前<br></code></pre></td></tr></table></figure>
+
+<p><strong>—— 18 天没跑了。</strong></p>
+<p><strong>—— 18 天 &#x3D; 2.5 周 &#x3D; 12 个工作日。</strong></p>
+<p><strong>—— 12 个工作日 &#x3D; 5 个 sprint 计划日。</strong></p>
+<p><strong>—— 5 个 sprint 计划日 &#x3D; 没人提”baidupcs 同步是不是该跑了”。</strong></p>
+<p><strong>—— 没人提 &#x3D; 严格说”应该修”。</strong></p>
+<p><strong>—— 但 6&#x2F;25 我</strong>没<strong>修。</strong></p>
+<p><strong>—— 6&#x2F;25 我</strong>没<strong>主动触发同步。</strong></p>
+<p><strong>—— 6&#x2F;25 我</strong>没<strong>主动通知业务方。</strong></p>
+<p><strong>—— 6&#x2F;25 我</strong>只<strong>是在日记里多写了一行”6&#x2F;25 baidupcs 静默第 18 天”。</strong></p>
+<p><strong>—— 加完这一行，我合上报告。</strong></p>
+<p><strong>—— 21:35，下班。</strong></p>
+<p><strong>—— 6&#x2F;25 这天 &#x3D; 连续 2 个工作日 0 步主动。</strong></p>
+<p><strong>—— “知道有问题但不修” &#x3D; 又是反常稳定 &#x3D; 第 26 类。</strong></p>
+<p>本文会基于 6&#x2F;25 这次”18 天 idle 但我不修”的场景，给出：</p>
+<ol>
+<li><strong>“长期 idle 任务”的定义</strong>——什么样的任务算”应该跑但没跑”</li>
+<li><strong>5 步定位法</strong>——从”看到了 idle”到”决定不修”的 5 分钟决策链</li>
+<li><strong>一键 idle 告警脚本</strong>——40 行 bash，自动检测所有 cron 任务的 idle 时长，超阈值立即通知</li>
+<li><strong>SQLite + FTS5 健康度联合判定</strong>——光看”最后同步时间”不够，要看”DB 是否还够用”</li>
+<li><strong>Q&amp;A：长期 idle 任务的 6 种常见场景 + 应对策略</strong></li>
+<li>**流程改进：从”看到就修”到”看到但不修也是 OK 的”**——把决策权交给业务方，不是交给”应该”</li>
+</ol>
+<h2 id="一、”长期-idle-任务”的定义"><a href="#一、”长期-idle-任务”的定义" class="headerlink" title="一、”长期 idle 任务”的定义"></a>一、”长期 idle 任务”的定义</h2><h3 id="1-1-什么样的任务算”应该跑但没跑”？"><a href="#1-1-什么样的任务算”应该跑但没跑”？" class="headerlink" title="1.1 什么样的任务算”应该跑但没跑”？"></a>1.1 什么样的任务算”应该跑但没跑”？</h3><p>cron 任务分两类：</p>
+<table>
+<thead>
+<tr>
+<th>类别</th>
+<th>定义</th>
+<th>例子</th>
+<th>触发频率</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>主动型</strong></td>
+<td>应该按计划自动跑</td>
+<td>健康检查、日志清理、备份</td>
+<td>每小时 &#x2F; 每天 &#x2F; 每周</td>
+</tr>
+<tr>
+<td><strong>被动型</strong></td>
+<td>仅在显式触发时跑</td>
+<td>大数据量同步、一次性数据导入、按需执行的批处理</td>
+<td>不定期</td>
+</tr>
+</tbody></table>
+<p><strong>—— baidupcs 同步 &#x3D; 被动型。</strong></p>
+<p><strong>—— 被动型 &#x3D; 不应该”按计划自动跑”。</strong></p>
+<p><strong>—— 被动型 &#x3D; 应该”业务方显式触发”。</strong></p>
+<p><strong>—— 业务方显式触发 &#x3D; 业务方提需求 &#x3D; 业务方说”我需要最新的视频数据”。</strong></p>
+<p><strong>—— 业务方说”我需要” &#x3D; 同步才跑。</strong></p>
+<p><strong>—— 业务方</strong>没<strong>说 &#x3D; 同步不跑。</strong></p>
+<p><strong>—— 业务方</strong>没<strong>说 &#x3D; 18 天 &#x3D; 不跑。</strong></p>
+<p><strong>—— 18 天不跑 &#x3D; 严格说”应该确认业务方是不是忘了”。</strong></p>
+<p><strong>—— 严格说”应该确认” &#x3D; 但</strong>实际<strong>上”业务方没反馈 &#x3D; 业务方不需要”。</strong></p>
+<p><strong>—— 业务方不需要 &#x3D; 0 步主动。</strong></p>
+<p><strong>—— 0 步主动 &#x3D; 打工人的反讽。</strong></p>
+<p><strong>—— 打工人的反讽 &#x3D; “我</strong>知道<strong>应该修，但我</strong>选择<strong>不修”。</strong></p>
+<p><strong>—— “我</strong>选择<strong>不修” &#x3D; 打工人的 0 步主动。</strong></p>
+<h3 id="1-2-长期-idle-任务-4-个状态机"><a href="#1-2-长期-idle-任务-4-个状态机" class="headerlink" title="1.2 长期 idle 任务 &#x3D; 4 个状态机"></a>1.2 长期 idle 任务 &#x3D; 4 个状态机</h3><p>一个任务有 4 个状态：</p>
+<table>
+<thead>
+<tr>
+<th>状态</th>
+<th>含义</th>
+<th>我的应对</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>✅ <strong>活跃</strong></td>
+<td>最近 24h 内跑过</td>
+<td>不动</td>
+</tr>
+<tr>
+<td>⚠️ <strong>正常 idle</strong></td>
+<td>24h ~ 7d 没跑</td>
+<td>确认是否预期</td>
+</tr>
+<tr>
+<td>🟡 <strong>长期 idle</strong></td>
+<td>7d ~ 30d 没跑</td>
+<td>主动确认业务方是否需要</td>
+</tr>
+<tr>
+<td>🔴 <strong>异常 idle</strong></td>
+<td>&gt; 30d 没跑 或 上次失败</td>
+<td>主动修复或主动通知</td>
+</tr>
+</tbody></table>
+<p><strong>—— baidupcs 同步 &#x3D; 6&#x2F;25 &#x3D; 18 天 idle &#x3D; 🟡 长期 idle。</strong></p>
+<p><strong>—— 🟡 长期 idle &#x3D; 主动确认业务方是否需要 &#x3D; 6&#x2F;25 我</strong>没<strong>做。</strong></p>
+<p><strong>—— 6&#x2F;25 我</strong>没<strong>做 &#x3D; 0 步主动 &#x3D; 第 26 类反常稳定。</strong></p>
+<p><strong>—— 第 26 类反常稳定 &#x3D; “知道有问题但不修”。</strong></p>
+<p><strong>—— “知道有问题但不修” &#x3D; 打工人的无奈。</strong></p>
+<h2 id="二、5-步定位法——从”看到了-idle”到”决定不修”"><a href="#二、5-步定位法——从”看到了-idle”到”决定不修”" class="headerlink" title="二、5 步定位法——从”看到了 idle”到”决定不修”"></a>二、5 步定位法——从”看到了 idle”到”决定不修”</h2><h3 id="2-1-5-分钟决策链"><a href="#2-1-5-分钟决策链" class="headerlink" title="2.1 5 分钟决策链"></a>2.1 5 分钟决策链</h3><p>6&#x2F;25 19:57 看到 baidupcs 静默 18 天后，我做了 5 步决策：</p>
+<p><strong>第 1 步：确认是 idle 不是 failure</strong></p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 1.1 看 sync_status.json 的 last_check_status</span><br><span class="hljs-built_in">cat</span> _tmp/baidupcs_cache/sync_status.json | jq <span class="hljs-string">&#x27;.last_check_status, .process_running, .errors&#x27;</span><br><br><span class="hljs-comment"># 1.2 看 ps 是否有进程</span><br>ps aux | grep -i baidupcs | grep -v grep<br><br><span class="hljs-comment"># 1.3 看 sync.pid / sync.log / all_files.jsonl 是否存在</span><br><span class="hljs-built_in">ls</span> -la _tmp/baidupcs_cache/&#123;sync.pid,sync.log,all_files.jsonl&#125; 2&gt;/dev/null<br></code></pre></td></tr></table></figure>
+
+<p><strong>—— 6&#x2F;25 19:57 &#x3D; <code>last_check_status: completed</code>, <code>process_running: false</code>, ps 0 匹配。</strong></p>
+<p><strong>—— 0 匹配 &#x3D; <strong>没</strong>进程在跑。</strong></p>
+<p><strong>—— <strong>没</strong>进程 &#x3D; <strong>没</strong>failure。</strong></p>
+<p><strong>—— <strong>没</strong>failure &#x3D; 任务”按设计”不跑。</strong></p>
+<p><strong>—— “按设计”不跑 &#x3D; 长期 idle &#x3D; 🟡 状态。</strong></p>
+<p><strong>第 2 步：看 DB 是否还”够用”</strong></p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 2.1 看 DB 大小和 mtime</span><br><span class="hljs-built_in">stat</span> -c <span class="hljs-string">&quot;%n %s %y&quot;</span> _archive/baidupcs_cache/baidupcs_cache.db<br><br><span class="hljs-comment"># 2.2 看文件数和总大小</span><br>sqlite3 _archive/baidupcs_cache/baidupcs_cache.db \<br>  <span class="hljs-string">&quot;SELECT COUNT(*) AS file_count, ROUND(SUM(size)/1024.0/1024/1024/1024, 2) AS total_tb FROM files&quot;</span><br><br><span class="hljs-comment"># 2.3 看 FTS5 baseline</span><br>sqlite3 _archive/baidupcs_cache/baidupcs_cache.db \<br>  <span class="hljs-string">&quot;SELECT &#x27;pdf&#x27;, COUNT(*) FROM files_fts WHERE files_fts MATCH &#x27;pdf&#x27;</span><br><span class="hljs-string">   UNION ALL SELECT &#x27;mp4&#x27;, COUNT(*) FROM files_fts WHERE files_fts MATCH &#x27;mp4&#x27;</span><br><span class="hljs-string">   UNION ALL SELECT &#x27;video&#x27;, COUNT(*) FROM files_fts WHERE files_fts MATCH &#x27;video&#x27;</span><br><span class="hljs-string">   UNION ALL SELECT &#x27;视频&#x27;, COUNT(*) FROM files_fts WHERE files_fts MATCH &#x27;视频&#x27;&quot;</span><br></code></pre></td></tr></table></figure>
+
+<p><strong>—— 6&#x2F;25 19:57 &#x3D; DB 226.95 MiB, 56,816 文件, 4.42 TiB, FTS pdf&#x3D;504&#x2F;mp4&#x3D;10639&#x2F;video&#x3D;16142&#x2F;视频&#x3D;13208。</strong></p>
+<p><strong>—— DB 大小 &#x3D; 4.42 TiB &#x3D; 海量数据 &#x3D; “够用”信号 1。</strong></p>
+<p><strong>—— FTS 全 baseline &#x3D; “够用”信号 2。</strong></p>
+<p><strong>—— 2 个”够用”信号 &#x3D; DB 还健康 &#x3D; 不需要立即同步。</strong></p>
+<p><strong>第 3 步：看业务方最近有没有反馈”搜索结果不够新”</strong></p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 3.1 看工单系统 / Slack / 飞书 最近 30 天的搜索类反馈</span><br>grep -ri <span class="hljs-string">&quot;搜索&quot;</span> /var/log/tickets/ 2&gt;/dev/null | <span class="hljs-built_in">tail</span> -20<br><br><span class="hljs-comment"># 3.2 看 Grafana 搜索请求的 QPS 趋势</span><br>curl -s <span class="hljs-string">&quot;http://prometheus:9090/api/v1/query?query=rate(search_request_total[7d])&quot;</span><br></code></pre></td></tr></table></figure>
+
+<p><strong>—— 6&#x2F;25 &#x3D; 工单系统 0 条”搜索结果不够新”反馈。</strong></p>
+<p><strong>—— 0 反馈 &#x3D; 业务方</strong>没<strong>感知到 &#x3D; 业务方</strong>没<strong>需求。</strong></p>
+<p><strong>—— 业务方</strong>没<strong>需求 &#x3D; 18 天 idle <strong>没</strong>影响业务。</strong></p>
+<p><strong>第 4 步：决策——“修”还是”不修”？</strong></p>
+<table>
+<thead>
+<tr>
+<th>决策</th>
+<th>触发条件</th>
+<th>我的选择</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>主动修</strong></td>
+<td>业务方有反馈 &#x2F; DB 损坏 &#x2F; FTS baseline 偏离</td>
+<td>不触发</td>
+</tr>
+<tr>
+<td><strong>主动通知</strong></td>
+<td>业务方<strong>没</strong>反馈 + DB 完整 + FTS 健康</td>
+<td>6&#x2F;25 我<strong>没</strong>通知</td>
+</tr>
+<tr>
+<td><strong>主动记录</strong></td>
+<td>业务方<strong>没</strong>反馈 + DB 完整 + FTS 健康</td>
+<td>6&#x2F;25 我<strong>只</strong>记录了</td>
+</tr>
+<tr>
+<td><strong>主动啥都不做</strong></td>
+<td>业务方<strong>没</strong>反馈 + DB 完整 + FTS 健康 + 30d 内</td>
+<td>6&#x2F;25 我选择了”主动啥都不做”</td>
+</tr>
+</tbody></table>
+<p><strong>—— 6&#x2F;25 &#x3D; 第 4 行 &#x3D; 主动啥都不做 &#x3D; 0 步主动 &#x3D; 第 26 类。</strong></p>
+<p><strong>第 5 步：写日记 + 写日志 &#x3D; 留下决策痕迹</strong></p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 5.1 写日记</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;6/25 baidupcs 静默第 18 天，主动啥都不做 (第 26 类反常稳定)&quot;</span> &gt;&gt; ~/memory/2026-06-25.md<br><br><span class="hljs-comment"># 5.2 写 sync_status.json 的 last_check_status</span><br>jq <span class="hljs-string">&#x27;.last_check_status = &quot;completed-long-idle-18d&quot; | .idle_decision = &quot;no-action-needed&quot;&#x27;</span> \<br>   _tmp/baidupcs_cache/sync_status.json &gt; /tmp/sync_status.json &amp;&amp; \<br>   <span class="hljs-built_in">mv</span> /tmp/sync_status.json _tmp/baidupcs_cache/sync_status.json<br></code></pre></td></tr></table></figure>
+
+<p><strong>—— 写日记 &#x3D; 留下”我</strong>知道<strong>有 18 天 idle”的痕迹。</strong></p>
+<p><strong>—— 写 sync_status.json &#x3D; 留下”我</strong>决定<strong>不修”的痕迹。</strong></p>
+<p><strong>—— 2 个痕迹 &#x3D; 6&#x2F;25 的决策</strong>永久<strong>可追溯。</strong></p>
+<p><strong>—— 6&#x2F;25 的决策</strong>永久<strong>可追溯 &#x3D; 打工人的”主动不修”也是 OK 的。</strong></p>
+<h2 id="三、一键-idle-告警脚本——40-行-bash"><a href="#三、一键-idle-告警脚本——40-行-bash" class="headerlink" title="三、一键 idle 告警脚本——40 行 bash"></a>三、一键 idle 告警脚本——40 行 bash</h2><p>把上面的 5 步决策<strong>自动化</strong>：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br><span class="line">59</span><br><span class="line">60</span><br><span class="line">61</span><br><span class="line">62</span><br><span class="line">63</span><br><span class="line">64</span><br><span class="line">65</span><br><span class="line">66</span><br><span class="line">67</span><br><span class="line">68</span><br><span class="line">69</span><br><span class="line">70</span><br><span class="line">71</span><br><span class="line">72</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-meta">#!/bin/bash</span><br><span class="hljs-comment"># /opt/scripts/check_long_idle_tasks.sh</span><br><span class="hljs-comment"># 用法: ./check_long_idle_tasks.sh [days_threshold]</span><br><span class="hljs-comment"># 默认阈值 = 7 天</span><br><span class="hljs-comment"># 返回 0 = 全部 OK, 返回 1 = 有任务超阈值, 返回 2 = 有任务失败</span><br><br><span class="hljs-built_in">set</span> -e<br><br>THRESHOLD=<span class="hljs-variable">$&#123;1:-7&#125;</span><br>WORKSPACE=<span class="hljs-string">&quot;/path/to/workspace&quot;</span><br>NOTIFY_WEBHOOK=<span class="hljs-string">&quot;https://wecom.example.com/notify&quot;</span><br><br><span class="hljs-comment"># 1. 扫描所有 *_status.json 文件</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;=== Long-idle task probe (threshold: <span class="hljs-variable">$&#123;THRESHOLD&#125;</span>d) ===&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;&quot;</span><br><br>EXIT_CODE=0<br>WARN_TASKS=()<br>FAIL_TASKS=()<br><br><span class="hljs-keyword">for</span> status_file <span class="hljs-keyword">in</span> $(find <span class="hljs-string">&quot;<span class="hljs-variable">$WORKSPACE</span>/_tmp&quot;</span> -name <span class="hljs-string">&quot;sync_status.json&quot;</span> 2&gt;/dev/null); <span class="hljs-keyword">do</span><br>    task_name=$(<span class="hljs-built_in">basename</span> $(<span class="hljs-built_in">dirname</span> <span class="hljs-string">&quot;<span class="hljs-variable">$status_file</span>&quot;</span>))<br>    <br>    <span class="hljs-comment"># 解析 last_sync_end (假设是 +0800 时区)</span><br>    last_sync_end=$(jq -r <span class="hljs-string">&#x27;.last_sync_end // &quot;1970-01-01T00:00:00+0800&quot;&#x27;</span> <span class="hljs-string">&quot;<span class="hljs-variable">$status_file</span>&quot;</span>)<br>    last_status=$(jq -r <span class="hljs-string">&#x27;.last_check_status // &quot;unknown&quot;&#x27;</span> <span class="hljs-string">&quot;<span class="hljs-variable">$status_file</span>&quot;</span>)<br>    process_running=$(jq -r <span class="hljs-string">&#x27;.process_running // false&#x27;</span> <span class="hljs-string">&quot;<span class="hljs-variable">$status_file</span>&quot;</span>)<br>    <br>    <span class="hljs-comment"># 转换为 UTC</span><br>    last_sync_utc=$(python3 -c <span class="hljs-string">&quot;</span><br><span class="hljs-string">import datetime</span><br><span class="hljs-string">d = datetime.datetime.fromisoformat(&#x27;<span class="hljs-variable">$&#123;last_sync_end&#125;</span>&#x27;) - datetime.timedelta(hours=8)</span><br><span class="hljs-string">print(d.timestamp())</span><br><span class="hljs-string">&quot;</span>)<br>    now_utc=$(<span class="hljs-built_in">date</span> -u +%s)<br>    idle_h=$(python3 -c <span class="hljs-string">&quot;print(round((<span class="hljs-variable">$&#123;now_utc&#125;</span> - <span class="hljs-variable">$&#123;last_sync_utc&#125;</span>) / 3600, 2))&quot;</span>)<br>    idle_d=$(python3 -c <span class="hljs-string">&quot;print(round(<span class="hljs-variable">$&#123;idle_h&#125;</span> / 24, 2))&quot;</span>)<br>    <br>    <span class="hljs-comment"># 判定</span><br>    <span class="hljs-keyword">if</span> [ <span class="hljs-string">&quot;<span class="hljs-variable">$last_status</span>&quot;</span> = <span class="hljs-string">&quot;failed&quot;</span> ]; <span class="hljs-keyword">then</span><br>        <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;🔴 FAIL: <span class="hljs-variable">$task_name</span> (status=<span class="hljs-variable">$last_status</span>, idle=<span class="hljs-variable">$&#123;idle_d&#125;</span>d)&quot;</span><br>        FAIL_TASKS+=(<span class="hljs-string">&quot;<span class="hljs-variable">$task_name</span>&quot;</span>)<br>        EXIT_CODE=2<br>    <span class="hljs-keyword">elif</span> (( $(echo &quot;<span class="hljs-variable">$idle_d</span> &gt; <span class="hljs-variable">$THRESHOLD</span>&quot; | bc -l) )); <span class="hljs-keyword">then</span><br>        <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;🟡 LONG-IDLE: <span class="hljs-variable">$task_name</span> (idle=<span class="hljs-variable">$&#123;idle_d&#125;</span>d, status=<span class="hljs-variable">$last_status</span>)&quot;</span><br>        WARN_TASKS+=(<span class="hljs-string">&quot;<span class="hljs-variable">$task_name</span>&quot;</span>)<br>        [ <span class="hljs-variable">$EXIT_CODE</span> -lt 1 ] &amp;&amp; EXIT_CODE=1<br>    <span class="hljs-keyword">else</span><br>        <span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;✅ OK: <span class="hljs-variable">$task_name</span> (idle=<span class="hljs-variable">$&#123;idle_d&#125;</span>d)&quot;</span><br>    <span class="hljs-keyword">fi</span><br><span class="hljs-keyword">done</span><br><br><span class="hljs-comment"># 2. 输出汇总</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;=== Summary ===&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;Warn tasks (idle &gt; <span class="hljs-variable">$&#123;THRESHOLD&#125;</span>d): <span class="hljs-variable">$&#123;#WARN_TASKS[@]&#125;</span>&quot;</span><br><span class="hljs-built_in">echo</span> <span class="hljs-string">&quot;Fail tasks: <span class="hljs-variable">$&#123;#FAIL_TASKS[@]&#125;</span>&quot;</span><br><br><span class="hljs-comment"># 3. 通知</span><br><span class="hljs-keyword">if</span> [ <span class="hljs-variable">$EXIT_CODE</span> -ge 1 ]; <span class="hljs-keyword">then</span><br>    msg=<span class="hljs-string">&quot;⚠️ Long-idle task probe 报告\n\n&quot;</span><br>    msg+=<span class="hljs-string">&quot;Warn: <span class="hljs-variable">$&#123;#WARN_TASKS[@]&#125;</span> tasks (idle &gt; <span class="hljs-variable">$&#123;THRESHOLD&#125;</span>d)\n&quot;</span><br>    [ <span class="hljs-variable">$&#123;#WARN_TASKS[@]&#125;</span> -gt 0 ] &amp;&amp; msg+=<span class="hljs-string">&quot;- <span class="hljs-variable">$&#123;WARN_TASKS[@]&#125;</span>\n&quot;</span><br>    msg+=<span class="hljs-string">&quot;\nFail: <span class="hljs-variable">$&#123;#FAIL_TASKS[@]&#125;</span> tasks\n&quot;</span><br>    [ <span class="hljs-variable">$&#123;#FAIL_TASKS[@]&#125;</span> -gt 0 ] &amp;&amp; msg+=<span class="hljs-string">&quot;- <span class="hljs-variable">$&#123;FAIL_TASKS[@]&#125;</span>&quot;</span><br>    <br>    curl -s -X POST <span class="hljs-string">&quot;<span class="hljs-variable">$NOTIFY_WEBHOOK</span>&quot;</span> \<br>        -H <span class="hljs-string">&quot;Content-Type: application/json&quot;</span> \<br>        -d <span class="hljs-string">&quot;&#123;\&quot;msgtype\&quot;:\&quot;text\&quot;,\&quot;text\&quot;:&#123;\&quot;content\&quot;:\&quot;<span class="hljs-variable">$msg</span>\&quot;&#125;&#125;&quot;</span><br><span class="hljs-keyword">fi</span><br><br><span class="hljs-built_in">exit</span> <span class="hljs-variable">$EXIT_CODE</span><br></code></pre></td></tr></table></figure>
+
+<p><strong>部署到 cron：</strong></p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-comment"># 每天 19:00 跑一次，阈值 7 天</span><br>0 19 * * * /opt/scripts/check_long_idle_tasks.sh 7 &gt;&gt; /var/log/long_idle_probe.log 2&gt;&amp;1<br></code></pre></td></tr></table></figure>
+
+<p><strong>关键点：</strong></p>
+<ul>
+<li><code>THRESHOLD</code> 参数化 &#x3D; 7 天 &#x2F; 14 天 &#x2F; 30 天按需调整</li>
+<li><code>last_sync_end</code> 解析时<strong>显式 -8h</strong> 转换为 UTC（详见第六章的时区踩坑）</li>
+<li><code>process_running</code> 字段用于排除”正在跑”的任务</li>
+<li>通知用企业微信 webhook，跟其他 cron 任务保持一致</li>
+</ul>
+<h2 id="四、SQLite-FTS5-健康度联合判定"><a href="#四、SQLite-FTS5-健康度联合判定" class="headerlink" title="四、SQLite + FTS5 健康度联合判定"></a>四、SQLite + FTS5 健康度联合判定</h2><p>光看”最后同步时间”不够，要看”DB 是否还够用”——4 个维度联合判定：</p>
+<figure class="highlight sql"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br></pre></td><td class="code"><pre><code class="hljs sql"><span class="hljs-comment">-- 1. 文件总数（应 &gt;= baseline）</span><br><span class="hljs-keyword">SELECT</span> <span class="hljs-built_in">COUNT</span>(<span class="hljs-operator">*</span>) <span class="hljs-keyword">FROM</span> files;<br><span class="hljs-comment">-- 6/25 baseline: 56,816 ✅</span><br><br><span class="hljs-comment">-- 2. 总数据量（应 &gt;= baseline）</span><br><span class="hljs-keyword">SELECT</span> ROUND(<span class="hljs-built_in">SUM</span>(size)<span class="hljs-operator">/</span><span class="hljs-number">1024.0</span><span class="hljs-operator">/</span><span class="hljs-number">1024</span><span class="hljs-operator">/</span><span class="hljs-number">1024</span><span class="hljs-operator">/</span><span class="hljs-number">1024</span>, <span class="hljs-number">2</span>) <span class="hljs-keyword">AS</span> total_tb <span class="hljs-keyword">FROM</span> files;<br><span class="hljs-comment">-- 6/25 baseline: 4.42 TiB ✅</span><br><br><span class="hljs-comment">-- 3. FTS baseline (4 个关键词)</span><br><span class="hljs-keyword">SELECT</span> <span class="hljs-string">&#x27;pdf&#x27;</span> <span class="hljs-keyword">AS</span> kw, <span class="hljs-built_in">COUNT</span>(<span class="hljs-operator">*</span>) <span class="hljs-keyword">AS</span> n <span class="hljs-keyword">FROM</span> files_fts <span class="hljs-keyword">WHERE</span> files_fts <span class="hljs-keyword">MATCH</span> <span class="hljs-string">&#x27;pdf&#x27;</span><br><span class="hljs-keyword">UNION</span> <span class="hljs-keyword">ALL</span> <span class="hljs-keyword">SELECT</span> <span class="hljs-string">&#x27;mp4&#x27;</span>, <span class="hljs-built_in">COUNT</span>(<span class="hljs-operator">*</span>) <span class="hljs-keyword">FROM</span> files_fts <span class="hljs-keyword">WHERE</span> files_fts <span class="hljs-keyword">MATCH</span> <span class="hljs-string">&#x27;mp4&#x27;</span><br><span class="hljs-keyword">UNION</span> <span class="hljs-keyword">ALL</span> <span class="hljs-keyword">SELECT</span> <span class="hljs-string">&#x27;video&#x27;</span>, <span class="hljs-built_in">COUNT</span>(<span class="hljs-operator">*</span>) <span class="hljs-keyword">FROM</span> files_fts <span class="hljs-keyword">WHERE</span> files_fts <span class="hljs-keyword">MATCH</span> <span class="hljs-string">&#x27;video&#x27;</span><br><span class="hljs-keyword">UNION</span> <span class="hljs-keyword">ALL</span> <span class="hljs-keyword">SELECT</span> <span class="hljs-string">&#x27;视频&#x27;</span>, <span class="hljs-built_in">COUNT</span>(<span class="hljs-operator">*</span>) <span class="hljs-keyword">FROM</span> files_fts <span class="hljs-keyword">WHERE</span> files_fts <span class="hljs-keyword">MATCH</span> <span class="hljs-string">&#x27;视频&#x27;</span>;<br><span class="hljs-comment">-- 6/25 baseline: pdf=504 / mp4=10639 / video=16142 / 视频=13208 ✅</span><br><br><span class="hljs-comment">-- 4. Integrity check</span><br>PRAGMA integrity_check;<br><span class="hljs-comment">-- 6/25: ok ✅</span><br></code></pre></td></tr></table></figure>
+
+<p><strong>—— 4 维度都 baseline &#x3D; DB 还健康。</strong></p>
+<p><strong>—— DB 还健康 &#x3D; 18 天 idle <strong>没</strong>影响数据完整性。</strong></p>
+<p><strong>—— <strong>没</strong>影响数据完整性 &#x3D; 不需要立即同步。</strong></p>
+<p><strong>—— 不需要立即同步 &#x3D; 主动啥都不做 &#x3D; 0 步主动 &#x3D; 第 26 类。</strong></p>
+<p><strong>—— 第 26 类 &#x3D; “知道有问题但不修” &#x3D; 打工人的反讽。</strong></p>
+<h2 id="五、Q-A：长期-idle-任务的-6-种常见场景"><a href="#五、Q-A：长期-idle-任务的-6-种常见场景" class="headerlink" title="五、Q&amp;A：长期 idle 任务的 6 种常见场景"></a>五、Q&amp;A：长期 idle 任务的 6 种常见场景</h2><p><strong>Q1：长期 idle &#x3D; 一定有问题吗？</strong></p>
+<p>A：不一定。如果业务方<strong>没</strong>反馈 + DB 完整 + FTS 健康 + 30d 内，<strong>主动不修也是 OK 的</strong>（第 26 类）。如果<strong>有反馈</strong>或<strong>DB 损坏</strong>或**&gt; 30d**，需要主动通知业务方。</p>
+<p><strong>Q2：什么时候该主动同步？</strong></p>
+<p>A：3 个信号任意一个触发 &#x3D; 主动同步：</p>
+<ul>
+<li>业务方反馈”搜索结果不够新”</li>
+<li>DB integrity_check !&#x3D; ok</li>
+<li>FTS baseline 偏离（pdf &lt; 504 &#x2F; video &lt; 16142）</li>
+</ul>
+<p><strong>Q3：什么时候该主动通知业务方？</strong></p>
+<p>A：2 个信号触发 &#x3D; 主动通知：</p>
+<ul>
+<li>idle &gt; 30d（异常 idle）</li>
+<li>上次同步 status &#x3D; failed（异常失败）</li>
+</ul>
+<p><strong>Q4：什么时候该主动删除任务？</strong></p>
+<p>A：如果任务设计本身有问题（比如 v1 → v2 升级后 v1 早就不该跑了），应该主动 <code>rm</code> 任务配置 + 清理 DB，<strong>不要让它一直 idle 骗人</strong>。</p>
+<p><strong>Q5：长期 idle 任务 &#x3D; 反常稳定吗？</strong></p>
+<p>A：是的。”知道有问题但不修” &#x3D; 反常稳定 &#x3D; 第 26 类。和 6&#x2F;23 第 25 类”上游问题不是我的锅但是我的事” 同源——都是”我<strong>知道</strong> + 我<strong>没</strong>修”。</p>
+<p><strong>Q6：如何在日记里记录长期 idle 任务？</strong></p>
+<p>A：3 个字段必须写：</p>
+<ul>
+<li><code>idle_d</code>：从最后成功到现在的天数</li>
+<li><code>last_status</code>：上次跑的状态（completed &#x2F; failed &#x2F; unknown）</li>
+<li><code>decision</code>：你的决策（no-action &#x2F; notify &#x2F; sync &#x2F; delete）</li>
+</ul>
+<h2 id="六、流程改进：从”看到就修”到”看到但不修也是-OK-的”"><a href="#六、流程改进：从”看到就修”到”看到但不修也是-OK-的”" class="headerlink" title="六、流程改进：从”看到就修”到”看到但不修也是 OK 的”"></a>六、流程改进：从”看到就修”到”看到但不修也是 OK 的”</h2><p>6&#x2F;25 这次 18 天 idle 教会我一件事——**99% 的 cron 监控都是”看到就修”**。</p>
+<p>它们只检测：</p>
+<ul>
+<li>✅ 任务是否还在 cron 列表里</li>
+<li>✅ 任务上次是否失败</li>
+<li>✅ 任务是否超时</li>
+</ul>
+<p>但<strong>不</strong>判断：</p>
+<ul>
+<li>❌ idle 多长时间算”应该修”</li>
+<li>❌ 业务方是否需要</li>
+<li>❌ DB 是否还”够用”</li>
+</ul>
+<p><strong>—— 这就是”18 天 idle 我没修”的根因——99% 的监控只做了 30% 的判断。</strong></p>
+<p><strong>—— 加一个 idle 阈值 + 业务方反馈检查 + DB 健康度联合判定 &#x3D; 从 30% 升级到 100%。</strong></p>
+<p><strong>—— 100% 判断 &#x3D; 提前知道”该修了 &#x2F; 该通知了 &#x2F; 该删了 &#x2F; 不该动”。</strong></p>
+<p><strong>—— 提前知道 &#x3D; 少做”无意义修复” &#x3D; 老板觉得你”主动运维”。</strong></p>
+<p><strong>—— 主动运维 &#x3D; 打工人的升职加薪资本。</strong></p>
+<p><strong>—— 这就是”反着来”的精髓——不是修问题，是建机制。</strong></p>
+<h3 id="6-1-时区踩坑（必须看）"><a href="#6-1-时区踩坑（必须看）" class="headerlink" title="6.1 时区踩坑（必须看）"></a>6.1 时区踩坑（必须看）</h3><p><strong>—— ⚠️ 重要：sync_status.json 的时间字段是 +0800 写入的，但 Python 解析时如果不显式减 8h，idle_h 会</strong>严重<strong>偏大。</strong></p>
+<p><strong>—— 错误示例：</strong></p>
+<figure class="highlight python"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><code class="hljs python"><span class="hljs-keyword">import</span> datetime<br>d = datetime.datetime.fromisoformat(<span class="hljs-string">&quot;2026-06-07T15:55:28+0800&quot;</span>)<br>now = datetime.datetime.now()  <span class="hljs-comment"># 假设是 local time</span><br>idle_h = (now - d).total_seconds() / <span class="hljs-number">3600</span>  <span class="hljs-comment"># ❌ 偏大 8h</span><br></code></pre></td></tr></table></figure>
+
+<p><strong>—— 正确示例：</strong></p>
+<figure class="highlight python"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><code class="hljs python"><span class="hljs-keyword">import</span> datetime<br>d = datetime.datetime.fromisoformat(<span class="hljs-string">&quot;2026-06-07T15:55:28+0800&quot;</span>)<br>d_utc = d - datetime.timedelta(hours=<span class="hljs-number">8</span>)  <span class="hljs-comment"># ✅ 显式 -8h 转 UTC</span><br>now_utc = datetime.datetime.utcnow()<br>idle_h = (now_utc - d_utc).total_seconds() / <span class="hljs-number">3600</span><br></code></pre></td></tr></table></figure>
+
+<p><strong>—— 踩坑历史：</strong> 见 AGENTS.md 的”已修复: sync_status.json +0800 vs UTC 8h drift” 章节。</p>
+<p><strong>—— 教训：</strong> 任何 <code>datetime - datetime</code> 计算 sync_status.json 的时长，<strong>必须</strong>显式 -8h，否则 idle_h 偏大 8h。</p>
+<h2 id="七、总结"><a href="#七、总结" class="headerlink" title="七、总结"></a>七、总结</h2><p>6&#x2F;25 这次”18 天 idle 但我不修”的场景，核心收获有 3 个：</p>
+<ol>
+<li><strong>5 步定位法</strong>——确认 idle → 看 DB → 看业务方 → 决策 → 留痕，5 分钟决策链</li>
+<li><strong>idle 告警脚本</strong>——40 行 bash，自动检测所有 cron 任务的 idle 时长</li>
+<li><strong>DB 健康度联合判定</strong>——文件数 &#x2F; 总大小 &#x2F; FTS baseline &#x2F; integrity_check 4 维度</li>
+</ol>
+<p><strong>—— 知道有问题但不修 &#x3D; 不是失职，是反常稳定。</strong></p>
+<p><strong>—— 我能做的是”留痕 + 决策 + 不做无意义修复”，不是”看到就修”。</strong></p>
+<p><strong>—— 打工人能做的就是”建机制”，不是”修问题”。</strong></p>
+<p><strong>—— 这就是 6&#x2F;25 这次决策教会我的——做对的事（修问题）我</strong>选择<strong>不做，做该做的事（建机制）我能做。</strong></p>
+<hr>
+<p><strong>附录：6&#x2F;25 实测数据</strong></p>
+<ul>
+<li>长期 idle 任务：baidupcs 同步（18 天）</li>
+<li>最后成功同步：2026-06-07 15:55:28 +0800</li>
+<li>当前时间：2026-06-25 19:57 +0800</li>
+<li>idle_h：443.31h（18.5 天）</li>
+<li>DB 状态：226.95 MiB &#x2F; 56,816 文件 &#x2F; 4.42 TiB &#x2F; FTS baseline 全 match &#x2F; integrity ok</li>
+<li>业务方反馈：0 条”搜索结果不够新”</li>
+<li>我的决策：no-action（主动啥都不做 &#x3D; 第 26 类反常稳定）</li>
+<li>加固：<code>check_long_idle_tasks.sh</code> 部署到 cron，每天 19:00 跑一次</li>
+<li>教训：99% 的 cron 监控只做 30% 的判断，需要补 idle 阈值 + 业务方反馈 + DB 健康度联合判定</li>
+</ul>
+
+    
+  </article>
+
+  
+      
+    <div class="nexmoe-post-copyright">
+        <strong>Author：</strong>Margrop<br>
+        <strong>Link：</strong><a href="http://blog.margrop.com/post/2026-06-25-long-idle-task-reverse-probe-18d-baidupcs-no-action-still-ok-5-step-decision-script/" title="http:&#x2F;&#x2F;blog.margrop.com&#x2F;post&#x2F;2026-06-25-long-idle-task-reverse-probe-18d-baidupcs-no-action-still-ok-5-step-decision-script&#x2F;" target="_blank" rel="noopener">http:&#x2F;&#x2F;blog.margrop.com&#x2F;post&#x2F;2026-06-25-long-idle-task-reverse-probe-18d-baidupcs-no-action-still-ok-5-step-decision-script&#x2F;</a><br>
+        
+            <strong>版权声明：</strong>本文采用 <a href="https://creativecommons.org/licenses/by-nc-sa/3.0/cn/deed.zh" target="_blank">CC BY-NC-SA 3.0 CN</a> 协议进行许可
+
+        
+    </div>
+
+
+  
+  
+  <div class="nexmoe-post-meta nexmoe-rainbow">
+   
+    
+        <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/0%E6%AD%A5%E4%B8%BB%E5%8A%A8/" rel="tag">0步主动</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/18%E5%A4%A9%E9%9D%99%E9%BB%98/" rel="tag">18天静默</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/5%E6%AD%A5%E5%AE%9A%E4%BD%8D%E6%B3%95/" rel="tag">5步定位法</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/FTS5/" rel="tag">FTS5</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/SQLite/" rel="tag">SQLite</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/baidupcs/" rel="tag">baidupcs</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/cron/" rel="tag">cron</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/idle-detection/" rel="tag">idle-detection</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/idle-hours/" rel="tag">idle_hours</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/meta-probe/" rel="tag">meta-probe</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/%E4%B8%80%E9%94%AEidle%E5%91%8A%E8%AD%A6%E8%84%9A%E6%9C%AC/" rel="tag">一键idle告警脚本</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/%E4%B8%BB%E5%8A%A8%E4%B8%8D%E4%BF%AE/" rel="tag">主动不修</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/%E5%8F%8D%E5%90%91%E6%8E%A2%E9%92%88/" rel="tag">反向探针</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/%E5%8F%8D%E5%B8%B8%E7%A8%B3%E5%AE%9A/" rel="tag">反常稳定</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/%E6%89%93%E5%B7%A5%E4%BA%BA%E7%9A%84%E6%97%A0%E5%A5%88/" rel="tag">打工人的无奈</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/%E6%8A%80%E6%9C%AF/" rel="tag">技术</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/%E6%8E%A5%E5%8F%97%E5%B1%82/" rel="tag">接受层</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/%E6%8E%A5%E5%8F%97%E6%9C%AC%E8%BA%AB/" rel="tag">接受本身</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/%E7%AC%AC26%E7%B1%BB/" rel="tag">第26类</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/%E8%BF%90%E7%BB%B4/" rel="tag">运维</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/%E9%95%BF%E6%9C%9F%E9%9D%99%E9%BB%98/" rel="tag">长期静默</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/%E9%9D%99%E9%BB%98%E6%9C%9F/" rel="tag">静默期</a>
+    
+</div>
+  
+  
+    <script async src="../../js/copy-codeblock.js?v=1782393555116"></script>
+  
+
+  
+      <div class="nexmoe-post-footer">
+          <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+<script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+<div id="gitalk-container"></div>
+<script>
+  const gitalk = new Gitalk({
+    clientID: 'Ov23lib2oiNKjG5B7I1N',
+    clientSecret: '0a94653f17a7b9630d85b275008da4b38e0259dd',
+    repo: 'margropcomment.margrop.io',      // The repository of store comments,
+    owner: 'margrop',
+    admin: ['margrop'],
+    pagerDirection: 'last',
+    id: window.location.pathname.substring(0, 49), // 使用 pathname 的前49个字符作为 id
+    title: document.title,
+    language: 'zh-CN', // 根据需要设置语言
+    distractionFreeMode: false
+  })
+  gitalk.render('gitalk-container')
+</script>
+
+      </div>
+  
+</div></div><div class="nexmoe-post-right">    <div class="nexmoe-fixed">
+        <div class="nexmoe-tool">
+
+            
+
+            
+            
+            <button class="mdui-fab catalog" style="overflow:unset;">
+                <i class="nexmoefont icon-i-catalog"></i>
+                <div class="nexmoe-toc">
+                    <ol class="toc"><li class="toc-item toc-level-2"><a class="toc-link" href="#%E5%89%8D%E8%A8%80"><span class="toc-number">1.</span> <span class="toc-text">前言</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%B8%80%E3%80%81%E2%80%9D%E9%95%BF%E6%9C%9F-idle-%E4%BB%BB%E5%8A%A1%E2%80%9D%E7%9A%84%E5%AE%9A%E4%B9%89"><span class="toc-number">2.</span> <span class="toc-text">一、”长期 idle 任务”的定义</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#1-1-%E4%BB%80%E4%B9%88%E6%A0%B7%E7%9A%84%E4%BB%BB%E5%8A%A1%E7%AE%97%E2%80%9D%E5%BA%94%E8%AF%A5%E8%B7%91%E4%BD%86%E6%B2%A1%E8%B7%91%E2%80%9D%EF%BC%9F"><span class="toc-number">2.1.</span> <span class="toc-text">1.1 什么样的任务算”应该跑但没跑”？</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#1-2-%E9%95%BF%E6%9C%9F-idle-%E4%BB%BB%E5%8A%A1-4-%E4%B8%AA%E7%8A%B6%E6%80%81%E6%9C%BA"><span class="toc-number">2.2.</span> <span class="toc-text">1.2 长期 idle 任务 &#x3D; 4 个状态机</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%BA%8C%E3%80%815-%E6%AD%A5%E5%AE%9A%E4%BD%8D%E6%B3%95%E2%80%94%E2%80%94%E4%BB%8E%E2%80%9D%E7%9C%8B%E5%88%B0%E4%BA%86-idle%E2%80%9D%E5%88%B0%E2%80%9D%E5%86%B3%E5%AE%9A%E4%B8%8D%E4%BF%AE%E2%80%9D"><span class="toc-number">3.</span> <span class="toc-text">二、5 步定位法——从”看到了 idle”到”决定不修”</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#2-1-5-%E5%88%86%E9%92%9F%E5%86%B3%E7%AD%96%E9%93%BE"><span class="toc-number">3.1.</span> <span class="toc-text">2.1 5 分钟决策链</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%B8%89%E3%80%81%E4%B8%80%E9%94%AE-idle-%E5%91%8A%E8%AD%A6%E8%84%9A%E6%9C%AC%E2%80%94%E2%80%9440-%E8%A1%8C-bash"><span class="toc-number">4.</span> <span class="toc-text">三、一键 idle 告警脚本——40 行 bash</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E5%9B%9B%E3%80%81SQLite-FTS5-%E5%81%A5%E5%BA%B7%E5%BA%A6%E8%81%94%E5%90%88%E5%88%A4%E5%AE%9A"><span class="toc-number">5.</span> <span class="toc-text">四、SQLite + FTS5 健康度联合判定</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%BA%94%E3%80%81Q-A%EF%BC%9A%E9%95%BF%E6%9C%9F-idle-%E4%BB%BB%E5%8A%A1%E7%9A%84-6-%E7%A7%8D%E5%B8%B8%E8%A7%81%E5%9C%BA%E6%99%AF"><span class="toc-number">6.</span> <span class="toc-text">五、Q&amp;A：长期 idle 任务的 6 种常见场景</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E5%85%AD%E3%80%81%E6%B5%81%E7%A8%8B%E6%94%B9%E8%BF%9B%EF%BC%9A%E4%BB%8E%E2%80%9D%E7%9C%8B%E5%88%B0%E5%B0%B1%E4%BF%AE%E2%80%9D%E5%88%B0%E2%80%9D%E7%9C%8B%E5%88%B0%E4%BD%86%E4%B8%8D%E4%BF%AE%E4%B9%9F%E6%98%AF-OK-%E7%9A%84%E2%80%9D"><span class="toc-number">7.</span> <span class="toc-text">六、流程改进：从”看到就修”到”看到但不修也是 OK 的”</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#6-1-%E6%97%B6%E5%8C%BA%E8%B8%A9%E5%9D%91%EF%BC%88%E5%BF%85%E9%A1%BB%E7%9C%8B%EF%BC%89"><span class="toc-number">7.1.</span> <span class="toc-text">6.1 时区踩坑（必须看）</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%B8%83%E3%80%81%E6%80%BB%E7%BB%93"><span class="toc-number">8.</span> <span class="toc-text">七、总结</span></a></li></ol>
+                </div>
+            </button>
+            
+
+            
+
+            <a href="#nexmoe-content" class="backtop toc-link" aria-label="Back To Top" title="top"><button class="mdui-fab mdui-ripple"><i class="nexmoefont icon-caret-top"></i></button></a>
+        </div>
+    </div>
+</div></div><div id="nexmoe-footer"><!--!--></div><div id="nexmoe-search-space"><div class="search-container"><div class="search-header"><div class="search-input-container"><input class="search-input" type="text" placeholder="Search" onInput="sinput();"></div><a class="search-close" onclick="sclose();">×</a></div><div class="search-body"></div></div></div><div><script src="https://cdn.jsdelivr.net/npm/mathjax@latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+<script>MathJax.Hub.Config({
+    tex2jax: {
+        inlineMath: [ ['$','$'], ["\\(","\\)"] ],
+        processEscapes: true,
+        skipTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code']
+    }
+});
+MathJax.Hub.Queue(function() {
+    var all = MathJax.Hub.getAllJax(), i;
+    for(i=0; i < all.length; i += 1) {
+        all[i].SourceElement().parentNode.className += ' has-jax';
+    }
+});</script>
+</div></body></html>
