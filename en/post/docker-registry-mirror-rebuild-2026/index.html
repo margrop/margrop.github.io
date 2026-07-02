@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="en-US">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>From 5m14s to 0.6s: How I Rebuilt My Docker Hub Mirror After Hitting Three Walls - Margrop Blog</title>
+<meta name="description" content="TL;DR My home lab had a registry:2 pull-through cache fronting Docker Hub for years, and it was fine. Then one day pulling a 5 MB alpine:3.19 took 5 minutes and …">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://blog.margrop.net/en/post/docker-registry-mirror-rebuild-2026/">
+
+<meta property="og:site_name" content="Margrop Blog">
+<meta property="og:title" content="From 5m14s to 0.6s: How I Rebuilt My Docker Hub Mirror After Hitting Three Walls - Margrop Blog">
+<meta property="og:description" content="TL;DR My home lab had a registry:2 pull-through cache fronting Docker Hub for years, and it was fine. Then one day pulling a 5 MB alpine:3.19 took 5 minutes and …">
+<meta property="og:url" content="https://blog.margrop.net/en/post/docker-registry-mirror-rebuild-2026/">
+<meta property="og:locale" content="en_US"><meta property="og:type" content="article"><meta property="og:locale:alternate" content="zh_CN"><meta property="og:image" content="https://blog.margrop.net/images/avatar.png"><meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="From 5m14s to 0.6s: How I Rebuilt My Docker Hub Mirror After Hitting Three Walls - Margrop Blog">
+<meta name="twitter:description" content="TL;DR My home lab had a registry:2 pull-through cache fronting Docker Hub for years, and it was fine. Then one day pulling a 5 MB alpine:3.19 took 5 minutes and …"><meta name="twitter:image" content="https://blog.margrop.net/images/avatar.png"><link rel="alternate" hreflang="zh-CN" href="https://blog.margrop.net/post/docker-registry-mirror-rebuild-2026/"><link rel="alternate" hreflang="en-US" href="https://blog.margrop.net/en/post/docker-registry-mirror-rebuild-2026/"><link rel="alternate" hreflang="x-default" href="https://blog.margrop.net/"><meta property="article:published_time" content="2026-06-13T07:20:00&#43;08:00">
+<meta property="article:modified_time" content="2026-06-13T07:20:00&#43;08:00"><meta property="article:tag" content="Docker"><meta property="article:tag" content="Registry"><meta property="article:tag" content="Pull-Through Cache"><meta property="article:tag" content="Mirror Acceleration"><meta property="article:tag" content="Crontab"><meta property="article:tag" content="Rate Limit"><meta property="article:tag" content="Infra"><meta property="article:tag" content="Troubleshooting"><script type="application/ld+json">{"@context":"https://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"Margrop"},"dateModified":"2026-06-13T07:20:00+08:00","datePublished":"2026-06-13T07:20:00+08:00","description":"TL;DR My home lab had a registry:2 pull-through cache fronting Docker Hub for years, and it was fine. Then one day pulling a 5 MB alpine:3.19 took 5 minutes and …","headline":"From 5m14s to 0.6s: How I Rebuilt My Docker Hub Mirror After Hitting Three Walls","mainEntityOfPage":"https://blog.margrop.net/en/post/docker-registry-mirror-rebuild-2026/","url":"https://blog.margrop.net/en/post/docker-registry-mirror-rebuild-2026/"}</script>
+    <meta name="baidu-site-verification" content="code-sVFZ8SER59" />
+
+    
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-3J2W592DHJ"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-3J2W592DHJ');
+    </script>
+
+    <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 860px; margin: 0 auto; padding: 20px; line-height: 1.7; color: #222; }
+    h1 { border-bottom: 2px solid #333; padding-bottom: 10px; }
+    .post-list { list-style: none; padding: 0; }
+    .post-list li { margin: 15px 0; }
+    .post-list a { text-decoration: none; color: #333; font-size: 18px; }
+    .post-list a:hover { color: #006CFF; }
+    .date { color: #666; font-size: 14px; margin-right: 10px; }
+    .tags { margin-top: 8px; }
+    .tag { background: #eee; padding: 2px 8px; border-radius: 3px; font-size: 12px; margin-right: 5px; display: inline-block; }
+    nav { margin-bottom: 18px; border-bottom: 1px solid #eee; padding-bottom: 15px; }
+    nav a { margin-right: 20px; text-decoration: none; color: #333; font-size: 16px; }
+    nav a:hover { color: #006CFF; }
+    .language-switcher { margin: -8px 0 26px; }
+    .language-switcher a { display: inline-block; margin-right: 10px; padding: 4px 10px; border: 1px solid #ddd; border-radius: 999px; color: #555; text-decoration: none; font-size: 14px; }
+    .language-switcher a.active { background: #006CFF; border-color: #006CFF; color: #fff; }
+    .content { line-height: 1.8; }
+    .content code { background: #f4f4f4; padding: 2px 5px; border-radius: 3px; }
+    .content pre { background: #f4f4f4; padding: 15px; overflow-x: auto; border-radius: 5px; }
+    .content img { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+    .content .code-snippet__fix {
+        margin: 0 0 1.5em;
+    }
+    .content .code-snippet__fix .code-snippet__line-index {
+        display: none !important;
+    }
+    .meta { color: #666; font-size: 14px; margin-bottom: 14px; }
+    a { color: #006CFF; }
+    @media (max-width: 680px) {
+        body { padding: 16px; }
+        nav a { display: inline-block; margin-right: 12px; margin-bottom: 8px; }
+    }
+</style>
+
+</head>
+<body>
+    <nav>
+  
+  <a href="/en/">Home</a>
+  <a href="/en/post/">Archive</a>
+  <a href="/en/tags/">Tags</a>
+  <a href="/en/post/about/">About</a>
+  <a href="https://download.margrop.net" target="_blank" rel="noopener">Download</a>
+  <a href="/en/post/favorites/">Links</a>
+  <a href="/en/post/github-project-stars/">Github</a>
+  
+</nav>
+
+    
+<div class="language-switcher">
+  
+    <a href="/post/docker-registry-mirror-rebuild-2026/" class="">中文</a>
+  
+    <a href="/en/post/docker-registry-mirror-rebuild-2026/" class="active">English</a>
+  
+</div>
+
+
+    
+    <article>
+        <h1>From 5m14s to 0.6s: How I Rebuilt My Docker Hub Mirror After Hitting Three Walls</h1>
+        <div class="meta">
+            Published: 2026-06-13
+        </div>
+        
+<div class="tags">
+    
+    <a href="/en/tag/docker/"><span class="tag">Docker</span></a>
+    
+    <a href="/en/tag/registry/"><span class="tag">Registry</span></a>
+    
+    <a href="/en/tag/pull-through-cache/"><span class="tag">Pull-Through Cache</span></a>
+    
+    <a href="/en/tag/mirror-acceleration/"><span class="tag">Mirror Acceleration</span></a>
+    
+    <a href="/en/tag/crontab/"><span class="tag">Crontab</span></a>
+    
+    <a href="/en/tag/rate-limit/"><span class="tag">Rate Limit</span></a>
+    
+    <a href="/en/tag/infra/"><span class="tag">Infra</span></a>
+    
+    <a href="/en/tag/troubleshooting/"><span class="tag">Troubleshooting</span></a>
+    
+</div>
+
+
+        <div class="content">
+            <blockquote>
+<p><strong>TL;DR</strong></p>
+<p>My home lab had a <code>registry:2</code> pull-through cache fronting Docker Hub for years, and it was fine. Then one day pulling a 5 MB <code>alpine:3.19</code> took 5 minutes and 14 seconds. This post is the full forensic log of how I traced the slowdown, evaluated 8 candidate mirrors with real measurements (not vibes), and finished with a 5-line bash script on cron that <strong>auto-fails-over</strong> when the primary mirror goes down. Every number in this article was captured on my own hardware, in my own network, at one specific moment in time.</p>
+<p>If you also self-host a Docker Hub mirror, or your team runs an internal registry, the Q&amp;A at the bottom will probably save you 3 hours of pain.</p>
+</blockquote>
+<p><img alt="Cover: 5m14s → 0.6s, real numbers from one 8082 host" src="/post-images/docker-registry-mirror-rebuild-2026/01-cover.svg"></p>
+<p><em>Figure 1: the <code>5m14s</code> on the left was the real first run; the <code>0.6s</code> on the right is the same image, same network, after the fix. The arrow in the middle is a sentence I keep repeating to myself — &ldquo;measure before you switch upstreams.&rdquo;</em></p>
+<hr>
+<h2 id="1-background-what-this-8082-was-doing">1. Background: What This 8082 Was Doing</h2>
+<p>I have a small home server running a few things: a <code>registry:2</code> Docker Hub pull-through proxy on <code>8082</code>, a <code>registry:2</code> GHCR mirror on <code>8083</code>, and Portainer on <code>9443</code>. The setup has been there for almost two years and basically worked. The Docker Hub mirror in particular was configured with one line of <code>proxy.remoteurl</code> pointing at a third-party mirror service, plus a host bind mount as the local blob cache (currently 9.4 GB).</p>
+<p>For the record, the entire config is this short:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-yaml" data-lang="yaml"><span style="display:flex;"><span><span style="color:#f92672">proxy</span>:
+</span></span><span style="display:flex;"><span>  <span style="color:#f92672">remoteurl</span>: <span style="color:#ae81ff">https://docker.1panel.live</span>
+</span></span></code></pre></div><p>Why 9.4 GB matters: <code>registry:2</code> is content-addressable. Every blob is stored as <code>sha256:&lt;digest&gt;</code> on disk. <strong>Any image the proxy has already served once comes back from local filesystem on the next pull.</strong> That&rsquo;s the whole point of running a pull-through cache instead of letting every host hit Docker Hub directly.</p>
+<p>So why was alpine taking 5 minutes?</p>
+<p>The first three suspicions were wrong:</p>
+<table>
+<thead>
+<tr>
+<th>Hypothesis</th>
+<th>How I checked</th>
+<th>Result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Container itself CPU/IO bound?</td>
+<td><code>docker stats registry-dockerhub</code></td>
+<td>❌ 0.3% CPU, 0 MB/s IO</td>
+</tr>
+<tr>
+<td>Port 8082 hijacked?</td>
+<td><code>ss -tlnp | grep 8082</code></td>
+<td>❌ Normal listener</td>
+</tr>
+<tr>
+<td>9.4 GB cache wiped?</td>
+<td><code>du -sh /docker/registry-cache/dockerhub</code></td>
+<td>❌ Still 9.4 GB, blobs intact</td>
+</tr>
+<tr>
+<td>Upstream <code>docker.1panel.live</code> slow?</td>
+<td>direct curl probe</td>
+<td>✅ <strong>Bingo. The slow path.</strong></td>
+</tr>
+</tbody>
+</table>
+<p><code>1panel.live</code> was <strong>not erroring</strong>, it was <strong>waiting</strong>. The full <code>5m14s</code> elapsed while the container was silently holding a connection to that upstream, and <code>tcpdump</code> showed almost zero bytes flowing back during the wait. Classic slow-upstream pattern, not a transient outage.</p>
+<p>So the root cause was upstream. But that alone wasn&rsquo;t enough — I needed to figure out <strong>why</strong> it was slow, <strong>what else was available</strong>, and <strong>how to make the host detect and recover when its primary mirror dies</strong>.</p>
+<p><img alt="The three pitfalls in chronological order: docker.io → dockerproxy → hub1.nat.tf" src="/post-images/docker-registry-mirror-rebuild-2026/02-timeline.svg"></p>
+<p><em>Figure 2: this whole post is really the story of three &ldquo;looks reasonable&rdquo; plans, each backed by real measurements on the same hardware. Solid lines = measured good, dashed lines = looked good but failed in practice.</em></p>
+<hr>
+<h2 id="2-the-real-root-cause-it-wasnt-just-1panellive-my-host-couldnt-even-reach-registry-1dockerio-directly">2. The Real Root Cause: It Wasn&rsquo;t Just <code>1panel.live</code>. My Host Couldn&rsquo;t Even Reach <code>registry-1.docker.io</code> Directly</h2>
+<p>The natural next step is to ask: can I just point at Docker Hub&rsquo;s official endpoint and stop using any third-party mirror? So I tried:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>$ nc -zv -w 5 registry-1.docker.io 443
+</span></span><span style="display:flex;"><span>nc: connect to registry-1.docker.io (199.59.148.7) port 443 (tcp) failed: Connection refused
+</span></span><span style="display:flex;"><span>nc: connect to registry-1.docker.io (2a03:2880:f134:183:face:b00c:0:25de) port 443 (tcp) timed out
+</span></span><span style="display:flex;"><span>nc: connect to registry-1.docker.io (2a03:2880:f12c:183:face:b00c:0:25de) port 443 (tcp) timed out
+</span></span><span style="display:flex;"><span>[... 6 more IPv6 addresses, all timed out ...]
+</span></span></code></pre></div><p><code>registry-1.docker.io</code>&rsquo;s IPv4 was outright <code>Connection refused</code>; every IPv6 (<code>2a03:2880::/32</code>, Meta&rsquo;s block) <strong>timed out</strong>. That <code>/32</code> is blackholed on most mainland-China transit links. My host <strong>physically cannot reach Docker Hub&rsquo;s official endpoint</strong>. Which means:</p>
+<ul>
+<li>Any plan involving <code>proxy.remoteurl: https://registry-1.docker.io</code> + a Docker Hub account <strong>is dead on arrival</strong> on this host, even if I have a perfectly good account.</li>
+<li>I <strong>must</strong> use some third-party source. The choice is between <strong>transparent proxies</strong> (just forward to Docker Hub, see <em>my</em> IP) and <strong>independent caches</strong> (they have their own backend, often fronted by Cloudflare Worker or self-hosted, can serve cold traffic from their own copy).</li>
+</ul>
+<p><img alt="Why 100/6h rate limits bite you even through a mirror" src="/post-images/docker-registry-mirror-rebuild-2026/06-rate-limit.svg"></p>
+<p><em>Figure 3: Docker Hub&rsquo;s rate limit is counted against your <strong>public IPv4</strong>, not the mirror&rsquo;s IP. A transparent proxy is no protection — the source still sees you.</em></p>
+<p>There was also a <strong>second, independent issue</strong>: Docker Hub&rsquo;s anonymous-pull rate limit of <strong>100 pulls / 6 hours per IPv4 address</strong>:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>$ curl https://dockerproxy.net/v2/library/busybox/manifests/1.36
+</span></span><span style="display:flex;"><span>{&#34;errors&#34;:[{&#34;code&#34;:&#34;UNKNOWN&#34;,&#34;message&#34;:&#34;unknown error&#34;,
+</span></span><span style="display:flex;"><span>&#34;detail&#34;:{&#34;errors&#34;:[{&#34;code&#34;:&#34;TOOMANYREQUESTS&#34;,
+</span></span><span style="display:flex;"><span>&#34;message&#34;:&#34;You have reached your unauthenticated pull rate limit. ...
+</span></span></code></pre></div><p>Note the key fact: even when going through a &ldquo;proxy,&rdquo; <strong>Docker Hub&rsquo;s server still sees my own public IP</strong>, because <code>dockerproxy.net</code> is a transparent passthrough. My NAT&rsquo;s public IP was already on Docker Hub&rsquo;s &ldquo;naughty list&rdquo; (probably due to past heavy CI use or shared NAT abuse), so <strong>any cold pull against Docker Hub — even via a transparent proxy — 429s</strong>.</p>
+<p>So I was facing a 2-D matrix:</p>
+<table>
+<thead>
+<tr>
+<th>Dimension</th>
+<th><code>registry-1.docker.io</code> (official)</th>
+<th>Transparent proxy (<code>dockerproxy.net</code>)</th>
+<th>Independent cache (<code>1panel.live</code> / <code>sparkcr</code> / <code>hub1.nat.tf</code> / &hellip;)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Reachable from my host?</td>
+<td>❌ IP blackholed</td>
+<td>✅</td>
+<td>✅</td>
+</tr>
+<tr>
+<td>Subject to 100/6h rate limit?</td>
+<td>—</td>
+<td>⚠️ Yes, on my IP</td>
+<td>✅ No (cached)</td>
+</tr>
+<tr>
+<td>Speed</td>
+<td>—</td>
+<td>Fast (1.5s)</td>
+<td>Varies by source</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="3-solution-measure-8-candidate-mirrors-on-the-same-host-at-the-same-time">3. Solution: Measure 8 Candidate Mirrors on the Same Host, at the Same Time</h2>
+<p>I realized <strong>a source&rsquo;s &ldquo;community reputation&rdquo; was worthless here</strong>. <code>1panel.live</code> was supposed to be reliable — the configuration of my mirror had been pointing at it for two years — and yet on my actual host, at the actual moment, it was the slowest option. Every mirror behaves differently on different egress IPs, different time windows, with or without their own CDN, with or without active rate-limiting. <strong>Only a measurement on my own hardware is real data.</strong></p>
+<p>I ran a deliberately simple benchmark: <code>time docker pull $src/library/alpine:3.19</code>. Alpine is ~3 MB, so it&rsquo;s basically pure network time, with no local cache pollution. (The <code>mirror.local</code> placeholder below is a redacted private-LAN hostname and is not load-bearing for the diagnosis.)</p>
+<table>
+<thead>
+<tr>
+<th>Source</th>
+<th>Time</th>
+<th>Status</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong><code>hub1.nat.tf</code></strong></td>
+<td><strong>~1.4s</strong></td>
+<td>✅ Healthy</td>
+<td><strong>The winner. Chose it.</strong></td>
+</tr>
+<tr>
+<td><code>hub.1panel.dev</code></td>
+<td>2.4s</td>
+<td>✅ Healthy</td>
+<td>1Panel community mirror</td>
+</tr>
+<tr>
+<td><code>docker.367231.xyz</code></td>
+<td>2.4s</td>
+<td>✅ Healthy</td>
+<td>1Panel community mirror</td>
+</tr>
+<tr>
+<td><code>dockerproxy.cool</code></td>
+<td>2.4s</td>
+<td>✅ Healthy</td>
+<td>EdgeOne CDN</td>
+</tr>
+<tr>
+<td><code>docker-registry.nmqu.com</code></td>
+<td>3.0s</td>
+<td>✅ Healthy</td>
+<td>Forum-maintained</td>
+</tr>
+<tr>
+<td><code>dockerproxy.net</code></td>
+<td>1.5s</td>
+<td>⚠️ <strong>Hits 100/6h on cold pull</strong></td>
+<td>Transparent, my IP is throttled</td>
+</tr>
+<tr>
+<td><code>docker.sparkcr.cn</code></td>
+<td>15.3s</td>
+<td>✅ Healthy but slow</td>
+<td>ESA + Guangdong BGP</td>
+</tr>
+<tr>
+<td><code>hub3.nat.tf</code></td>
+<td>4.3s</td>
+<td>⚠️ Flaky (occasional 500)</td>
+<td>Cloud-Tokyo node</td>
+</tr>
+<tr>
+<td><code>docker.hlmirror.com</code></td>
+<td>4.7s</td>
+<td>❌ Login wall</td>
+<td>Requires QR-code login</td>
+</tr>
+<tr>
+<td><code>docker.1panel.live</code></td>
+<td>4.7s</td>
+<td>❌ &ldquo;only support mainland China&rdquo;</td>
+<td>My egress IP rejected</td>
+</tr>
+<tr>
+<td><code>docker.1ms.run</code></td>
+<td>—</td>
+<td>❌ Fake source</td>
+<td>Returns wrong manifest content</td>
+</tr>
+<tr>
+<td><code>hub.rat.dev</code></td>
+<td>—</td>
+<td>❌ Redirects to 1ms.run</td>
+<td>Same fake chain</td>
+</tr>
+</tbody>
+</table>
+<p>Winner: <strong><code>hub1.nat.tf</code></strong>, at <strong>1.4 seconds</strong> for alpine, on a backend that is <strong>not on Docker Hub&rsquo;s IP rate-limit list</strong>.</p>
+<p><img alt="Real benchmark bars for 8 mirrors on the same host" src="/post-images/docker-registry-mirror-rebuild-2026/03-bench.svg"></p>
+<p><em>Figure 4: same alpine, same machine, same command — only the source changed. Green = winner, blue = OK, yellow = slow or throttled, red = unusable.</em></p>
+<p>The switch itself was trivial: one config line + container restart:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-yaml" data-lang="yaml"><span style="display:flex;"><span><span style="color:#f92672">proxy</span>:
+</span></span><span style="display:flex;"><span>  <span style="color:#f92672">remoteurl</span>: <span style="color:#ae81ff">https://hub1.nat.tf</span>
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>docker restart registry-dockerhub
+</span></span></code></pre></div><p>The crucial property: the 9.4 GB on-disk cache <strong>survived the switch intact</strong>, because blobs are content-addressed by sha256. After the switch, <code>alpine:3.19</code>, <code>nginx:1.27-alpine</code>, <code>redis:7-alpine</code>, <code>golang:1.22-alpine</code> all came back in <strong>under 1 second from local cache</strong>.</p>
+<p><strong>At this point I thought the problem was solved. It wasn&rsquo;t.</strong></p>
+<hr>
+<h2 id="4-the-problem-that-wasnt-solved-what-happens-when-hub1nattf-itself-dies">4. The Problem That Wasn&rsquo;t Solved: What Happens When <code>hub1.nat.tf</code> Itself Dies?</h2>
+<p>Switching to <code>hub1.nat.tf</code> made the day-to-day experience great. But a small voice kept nagging: this is a <strong>community-run mirror</strong>, hosted on someone else&rsquo;s Cloudflare Worker + self-built backend, with no SLA, no contract, no operational transparency. Looking at the operational history of community-run Docker mirrors, <strong>they always die eventually</strong> — the question is just when.</p>
+<p>If <code>hub1.nat.tf</code> died tomorrow, my 8082 would instantly go back to &ldquo;5 minutes 14 seconds for alpine,&rdquo; and I might not notice for weeks, because <strong>nobody has a dashboard watching this thing</strong>.</p>
+<p>So I needed:</p>
+<ol>
+<li><strong>A daily health check</strong> for the primary mirror.</li>
+<li><strong>Auto-failover</strong> to a fallback (slow is fine, just not down).</li>
+<li><strong>Auto-failback</strong> when the primary recovers.</li>
+</ol>
+<p>The natural architectural answer would be a &ldquo;two upstreams&rdquo; config, like <code>upstream { server a; server b; }</code> in nginx. <strong>But <code>registry:2</code>&rsquo;s <code>proxy.remoteurl</code> accepts only one upstream URL</strong> — the spec is explicit about this. To do real multi-source, I would have to run a sidecar that does v2 protocol multiplexing. I tried, and ran into the <strong>v2 auth challenge-response protocol</strong> (more on this in the Q&amp;A) within 20 minutes. That rabbit hole was deep.</p>
+<p>The pragmatic answer turned out to be much simpler: <strong>a daily cron that does <code>sed</code> on the config + <code>docker restart</code></strong>. Five lines of bash.</p>
+<p><img alt="Final architecture: 1 registry, 1 primary upstream, 1 fallback, 1 cron watchdog" src="/post-images/docker-registry-mirror-rebuild-2026/04-architecture.svg"></p>
+<p><em>Figure 5: the final production topology. One client, one <code>registry:2</code> container, one primary upstream, one fallback upstream (idle 99% of the time), one cron scheduler. Simple enough to keep in your head.</em></p>
+<hr>
+<h2 id="5-the-final-solution-5-line-cron--1-validation-script">5. The Final Solution: 5-Line Cron + 1 Validation Script</h2>
+<p>The whole script is at <code>/usr/local/bin/registry-fallback.sh</code>. It is <strong>80 lines including logging</strong>, but the <strong>business logic is 5 lines</strong>:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e">#!/bin/bash
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>set -u
+</span></span><span style="display:flex;"><span>PRIMARY<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;hub1.nat.tf&#34;</span>
+</span></span><span style="display:flex;"><span>FALLBACK<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;docker.sparkcr.cn&#34;</span>
+</span></span><span style="display:flex;"><span>CONFIG<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;/docker/registry-dockerhub/config.yml&#34;</span>
+</span></span><span style="display:flex;"><span>CONTAINER<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;registry-dockerhub&#34;</span>
+</span></span><span style="display:flex;"><span>LOG<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;/var/log/registry-fallback/cron.log&#34;</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>CURRENT<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>grep -oE <span style="color:#e6db74">&#39;https://[^ ]+&#39;</span> <span style="color:#e6db74">&#34;</span>$CONFIG<span style="color:#e6db74">&#34;</span> | head -1<span style="color:#66d9ef">)</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 5-line core: probe primary, keep if healthy, else sed + restart</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> timeout <span style="color:#ae81ff">60</span> docker pull --quiet <span style="color:#e6db74">&#34;</span>$PRIMARY<span style="color:#e6db74">/library/alpine:3.19&#34;</span> &gt;/dev/null 2&gt;&amp;1; <span style="color:#66d9ef">then</span>
+</span></span><span style="display:flex;"><span>  <span style="color:#f92672">[</span> <span style="color:#e6db74">&#34;</span>$CURRENT<span style="color:#e6db74">&#34;</span> <span style="color:#f92672">=</span> <span style="color:#e6db74">&#34;https://</span>$PRIMARY<span style="color:#e6db74">&#34;</span> <span style="color:#f92672">]</span> <span style="color:#f92672">||</span> <span style="color:#f92672">{</span> sed -i <span style="color:#e6db74">&#34;s|remoteurl: https://[^ ]*|remoteurl: https://</span>$PRIMARY<span style="color:#e6db74">|&#34;</span> <span style="color:#e6db74">&#34;</span>$CONFIG<span style="color:#e6db74">&#34;</span>; docker restart <span style="color:#e6db74">&#34;</span>$CONTAINER<span style="color:#e6db74">&#34;</span> &gt;/dev/null; <span style="color:#f92672">}</span>
+</span></span><span style="display:flex;"><span>  echo <span style="color:#e6db74">&#34;[</span><span style="color:#66d9ef">$(</span>date <span style="color:#e6db74">&#39;+%F %T&#39;</span><span style="color:#66d9ef">)</span><span style="color:#e6db74">] PRIMARY OK&#34;</span> &gt;&gt; <span style="color:#e6db74">&#34;</span>$LOG<span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">else</span>
+</span></span><span style="display:flex;"><span>  sed -i <span style="color:#e6db74">&#34;s|remoteurl: https://[^ ]*|remoteurl: https://</span>$FALLBACK<span style="color:#e6db74">|&#34;</span> <span style="color:#e6db74">&#34;</span>$CONFIG<span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>  docker restart <span style="color:#e6db74">&#34;</span>$CONTAINER<span style="color:#e6db74">&#34;</span> &gt;/dev/null
+</span></span><span style="display:flex;"><span>  echo <span style="color:#e6db74">&#34;[</span><span style="color:#66d9ef">$(</span>date <span style="color:#e6db74">&#39;+%F %T&#39;</span><span style="color:#66d9ef">)</span><span style="color:#e6db74">] PRIMARY DOWN, switched to FALLBACK (</span>$FALLBACK<span style="color:#e6db74">)&#34;</span> &gt;&gt; <span style="color:#e6db74">&#34;</span>$LOG<span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">fi</span>
+</span></span></code></pre></div><p>Crontab entry:</p>
+<pre tabindex="0"><code class="language-cron" data-lang="cron">0 8 * * * /usr/local/bin/registry-fallback.sh &gt;&gt; /var/log/registry-fallback/cron.log 2&gt;&amp;1
+</code></pre><p>Every day at 08:00: probe <code>hub1.nat.tf</code> for <code>alpine:3.19</code>; on success keep current state (or switch back if we were on fallback); on failure, sed-flip the config to <code>docker.sparkcr.cn</code> and restart the container.</p>
+<p><strong>Why <code>alpine:3.19</code>?</strong> It&rsquo;s tiny (3 MB), so the probe finishes in &lt; 2s under normal conditions. It&rsquo;s also a universally-cached image — there&rsquo;s no risk of &ldquo;this source doesn&rsquo;t carry that image&rdquo; giving a false negative.</p>
+<p><strong>Why 60s timeout?</strong> <code>sparkcr.cn</code> occasionally takes 15–40s. Anything beyond 60s is, in practice, &ldquo;this source is down.&rdquo; Better to fail the probe and switch than to block the cron queue.</p>
+<p><img alt="The 5-line core + crontab line + a real cron log line" src="/post-images/docker-registry-mirror-rebuild-2026/05-cron-script.svg"></p>
+<p><em>Figure 6: these 5 lines are the entire business logic. The other 75 lines are logging, state file, error handling. I deliberately keep the log format human-scannable so future-me doesn&rsquo;t have to grep a JSON blob.</em></p>
+<hr>
+<h2 id="6-validation-i-simulated-primary-down-and-watched-the-script-recover">6. Validation: I Simulated &ldquo;Primary Down&rdquo; and Watched the Script Recover</h2>
+<p>Writing the script isn&rsquo;t enough. I deliberately broke the config to simulate a primary outage:</p>
+<ol>
+<li>Edited <code>config.yml</code> to point at a non-existent domain <code>https://nonexistent.test.example</code></li>
+<li>Ran <code>/usr/local/bin/registry-fallback.sh</code> manually</li>
+<li>Watched the output and the config</li>
+</ol>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>[2026-06-13 06:56:01] === 启动 fallback 检查 ===
+</span></span><span style="display:flex;"><span>[2026-06-13 06:56:01] 当前 upstream: https://nonexistent.test.example
+</span></span><span style="display:flex;"><span>[2026-06-13 06:56:01] 测 primary hub1.nat.tf ...
+</span></span><span style="display:flex;"><span>[2026-06-13 06:56:02]   OK hub1.nat.tf 健康
+</span></span><span style="display:flex;"><span>[2026-06-13 06:56:02]   当前不是 primary, 切回 primary
+</span></span><span style="display:flex;"><span>[2026-06-13 06:56:02] 切换 upstream: -&gt; hub1.nat.tf (原因: primary 恢复, 从 fallback 切回)
+</span></span><span style="display:flex;"><span>[2026-06-13 06:56:06]   通过 8082 验证...
+</span></span><span style="display:flex;"><span>[2026-06-13 06:56:06]   8082 拉镜像用时: 0s (rc=0)
+</span></span><span style="display:flex;"><span>[2026-06-13 06:56:06] === 检查完成 ===
+</span></span></code></pre></div><p>The script <strong>really did rewrite the config back to <code>hub1.nat.tf</code></strong> and <strong>really did restart the registry</strong> (the restart only fires when the state actually changes; the script doesn&rsquo;t kick the container on every run).</p>
+<p>I also simulated the worst case — both primary and fallback down — and verified the script leaves the config alone and just writes a <code>BOTH DOWN</code> line to the log. This is <strong>intentional</strong>: a flapping config under dual-outage is strictly worse than &ldquo;leave the last-known-good state.&rdquo;</p>
+<p><strong>After the simulated failback, 8082&rsquo;s state:</strong></p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>$ curl -sS -m 5 -w &#34;HTTP=%{http_code} time=%{time_total}s\n&#34; http://127.0.0.1:8082/v2/
+</span></span><span style="display:flex;"><span>{}HTTP=200 time=0.003s
+</span></span><span style="display:flex;"><span>$ docker pull mirror.local:8082/library/alpine:3.19
+</span></span><span style="display:flex;"><span>Status: Image is up to date
+</span></span><span style="display:flex;"><span>real    0m0.6s
+</span></span></code></pre></div><p><strong>0.6 seconds.</strong></p>
+<hr>
+<h2 id="7-things-i-learned-ordered-by-importance">7. Things I Learned (Ordered by Importance)</h2>
+<ol>
+<li><strong>&ldquo;Measure before you switch upstreams.&rdquo;</strong> Public mirror lists (status pages, GitHub READMEs, community rankings) are useful as a starting point, but the only data that matters is <code>time docker pull $src/library/alpine:3.19</code> on your own host, at your own moment, on your own egress IP. <code>1panel.live</code> is a major-brand mirror with a great reputation and it was the <strong>slowest</strong> of all candidates on my host.</li>
+<li><strong>Docker Hub&rsquo;s 100/6h limit is per public IPv4, regardless of what proxy you use.</strong> It&rsquo;s a server-side decision. Even authenticated users hit it (with 200/6h) if their IP is dirty. Switching to an independent cache like <code>hub1.nat.tf</code> essentially <strong>sidesteps</strong> this, because Docker Hub only sees the cache operator&rsquo;s IP, not yours.</li>
+<li><strong><code>registry:2</code>&rsquo;s blob cache is content-addressed.</strong> Switching the upstream URL doesn&rsquo;t drop a single byte of cached content. This makes &ldquo;try-and-see&rdquo; switching a 30-second operation, with zero risk of losing already-cached images. Compare that to the alternatives (rebuilding the cache, mass-pulling, etc.) and you realize how much free safety you get.</li>
+<li><strong>In mainland-China home / small-office networks, <code>2a03:2880::/32</code> is permanently blackholed and even IPv4 to <code>registry-1.docker.io</code> is often <code>Connection refused</code>.</strong> This is the norm, not a bug. Plan accordingly: don&rsquo;t expect to use Docker Hub&rsquo;s official endpoint, period.</li>
+<li><strong>5 lines of bash beats 80 lines of Python sidecar.</strong> I spent 30 minutes trying an nginx-based dual-upstream reverse proxy and immediately got stuck on <code>WWW-Authenticate</code> header propagation (the v2 auth challenge-response protocol is the kind of thing you really do not want to reimplement). A <code>sed | docker restart</code> cron is <strong>simpler, more debuggable, and harder to break</strong>.</li>
+</ol>
+<hr>
+<h2 id="8-qa">8. Q&amp;A</h2>
+<p><strong>Q: Can I just trust <code>hub1.nat.tf</code> for all my company&rsquo;s Docker traffic? Is that compliant?</strong></p>
+<p>A: <strong>Absolutely not for production corporate use.</strong> For corporate environments, you should self-host a pull-through cache with a paid Docker Hub Business account behind it (unlimited pulls). My &ldquo;community mirror + cron fallback&rdquo; is appropriate for <strong>home labs, small personal clusters, and dev workstations</strong>. Accept that it has <strong>no SLA, no audit trail, and no compliance story</strong>.</p>
+<p><strong>Q: Why didn&rsquo;t I just use nginx / caddy / traefik in front of <code>registry:2</code> to do dual upstream? Isn&rsquo;t that more standard?</strong></p>
+<p>A: I tried. The v2 auth challenge-response protocol requires that the proxy <strong>pass through the upstream&rsquo;s <code>WWW-Authenticate</code> header verbatim</strong> (so the docker daemon can discover the token endpoint and complete the challenge). It&rsquo;s also very easy to accidentally break it — for example, a <code>location = /v2/ return 200</code> &ldquo;fake health check&rdquo; will swallow the daemon&rsquo;s initial probe, and every subsequent request then receives the wrong response. <strong>If you need a real dual-upstream solution, use a purpose-built tool like <code>caarlos0/docker-registry-proxy</code> rather than rolling your own with nginx.</strong></p>
+<p><strong>Q: Why only once per day on cron? Wouldn&rsquo;t a systemd timer every hour be better?</strong></p>
+<p>A: For a home-lab registry, <strong>once per day at 08:00 is enough</strong>. Community mirrors tend to fail for either &ldquo;a few minutes&rdquo; or &ldquo;a few weeks.&rdquo; A 1-hour cadence adds no signal that a 24-hour cadence would miss, and it increases the chance of cron itself becoming a failure mode. If you want a tighter cadence, change the cron to <code>0 */6 * * *</code>.</p>
+<p><strong>Q: How long will the 9.4 GB cache survive before filling the disk? Does <code>registry:2</code> clean up automatically?</strong></p>
+<p>A: It does, via the <code>ttl</code> setting (default <code>168h</code>, i.e. 7 days). The cache uses the <code>filesystem</code> driver; blobs live at <code>&lt;root&gt;/docker/registry/v2/blobs/sha256/&lt;aa&gt;/&lt;bb&gt;/...</code>, content-addressed, with automatic dedup. An internal scheduler evicts blobs that haven&rsquo;t been accessed in <code>ttl</code> time. After 2 years of running, my 9.4 GB cache is stable and has never threatened the disk. If you want a hard upper bound, you can add a <code>find</code> + <code>du</code> + <code>docker exec ... rm</code> external janitor script.</p>
+<p><strong>Q: My NAT&rsquo;s public IP is on Docker Hub&rsquo;s rate-limit list. Why does an &ldquo;independent cache&rdquo; like <code>hub1.nat.tf</code> escape it?</strong></p>
+<p>A: Because <code>hub1.nat.tf</code> has its own backend cache cluster. When you pull through it, the traffic is: <code>you → hub1.nat.tf(their backend) → their cache</code>. Only on the <strong>first ever</strong> request for a brand-new image does their backend actually contact Docker Hub. After that, every other user — including you — is served from their cache. <strong>Docker Hub only ever sees their backend&rsquo;s IP</strong>, not yours. Their IP gets a different (much more lenient) treatment, because they&rsquo;re behaving as a &ldquo;caching mirror operator,&rdquo; not as &ldquo;an individual user making 500 random pulls per hour.&rdquo;</p>
+<p><strong>Q: I noticed you said <code>docker.1ms.run</code> returns a fake manifest. That sounds wild. What was going on?</strong></p>
+<p>A: When I <code>curl</code>-ed <code>docker.1ms.run/v2/library/nginx/manifests/1.27-alpine</code>, the returned manifest had <code>mediaType</code> and <code>digest</code> values that were <strong>not consistent</strong> — the content embedded an attestation for some completely unrelated image. When docker CLI later tried to fetch the corresponding blob, the digest didn&rsquo;t match and it errored out. This means <code>1ms.run</code>&rsquo;s &ldquo;v2 endpoint&rdquo; is <strong>being fronted by something that isn&rsquo;t actually serving v2 properly</strong> — possibly a misconfigured CDN, possibly an intentionally fake mirror. I did not dig further because I had already moved on to <code>hub1.nat.tf</code>. <strong>But the lesson is: don&rsquo;t trust the source list. Measure.</strong></p>
+<p><strong>Q: I followed your steps and on my machine <code>hub1.nat.tf</code> is also slow. Now what?</strong></p>
+<p>A: Your egress IP, your ISP, your geographic region, your time of day — all different from mine. <strong>My 1.4s on Guangdong Telecom has no predictive power for your Shanghai Unicom or your Comcast link.</strong> Re-run the benchmark in Section 3 against the 8 candidates I listed, and pick the one that <strong>is fastest on your actual hardware</strong>. There is no universally-fast source; there is only &ldquo;the source that is fastest for me, right now, in this network.&rdquo;</p>
+<hr>
+<h2 id="references">References</h2>
+<ol>
+<li><a href="https://docs.docker.com/docker-hub/usage/pulls/">Docker Hub — Usage and rate limits</a> — official doc on the 100 pulls / 6h / IP limit and how <code>ratelimit-limit</code> response headers are formatted</li>
+<li><a href="https://distribution.github.io/distribution/about/configuration/">Distribution — Configuring a registry</a> — official reference for the <code>proxy</code> section (<code>remoteurl</code>, <code>username</code>, <code>password</code>, <code>ttl</code>)</li>
+<li><a href="https://distribution.github.io/distribution/recipes/mirror/">Distribution — Registry as a pull through cache</a> — the official mirror recipe, including the &ldquo;currently only one upstream&rdquo; gotcha</li>
+<li><a href="https://github.com/containerd/containerd/blob/main/docs/hosts.md">containerd — registry hosts / mirrors</a> — edge cases when configuring mirror behavior in containerd-based daemons</li>
+<li><a href="https://docs.docker.com/engine/reference/commandline/dockerd/#daemon-configuration-file">Docker daemon configuration file</a> — <code>daemon.json</code> and <code>registry-mirrors</code> key</li>
+</ol>
+<hr>
+<p><strong>Final thought</strong>: the lesson I keep relearning is that &ldquo;slow&rdquo; is never one problem. It can be slow upstream, cold cache, anonymous rate limit, blocked IP, or a misconfigured v2 handshake — and <strong>each layer has to be measured independently</strong> before you know what to fix. Once the root cause is clear, though, the fix is often a one-line config change plus a 5-line cron.</p>
+<p>— End —</p>
+        </div>
+    </article>
+
+    
+  
+
+
+  
+    
+  
+
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk/dist/gitalk.css">
+<script src="https://cdn.jsdelivr.net/npm/gitalk/dist/gitalk.min.js"></script>
+<div id="gitalk-container" style="margin-top:40px"></div>
+<script>
+  (function(){
+    var gitalk = new Gitalk({
+      clientID: '3181fd94e501cc5db0ad',
+      clientSecret: 'af1dab79dae02c69296e6615bfcecf47fc8615ee',
+      repo: 'margropcomment.margrop.io',
+      owner: 'margrop',
+      admin: ["margrop"],
+      
+      id: '\/post\/docker-registry-mirror-rebuild-2026\/',
+      
+      distractionFreeMode: false
+    });
+    gitalk.render('gitalk-container');
+  })();
+</script>
+  
+
+
+
+
+    
+    <script type="text/javascript" src="https://js.users.51.la/21044367.js"></script>
+    <script charset="UTF-8" id="LA_COLLECT" src="//sdk.51.la/js-sdk-pro.min.js"></script>
+    <script>LA.init({id: "1vVTUWl7zoRjnKXi",ck: "1vVTUWl7zoRjnKXi"})</script>
+    <script src="https://sdk.51.la/perf/js-sdk-perf.min.js" crossorigin="anonymous"></script>
+    <script>
+      new LingQue.Monitor().init({id:"202teQt8THXwqyve"});
+    </script>
+</body>
+</html>

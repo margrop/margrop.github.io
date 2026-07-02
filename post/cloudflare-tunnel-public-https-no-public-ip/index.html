@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>域名买完别只会解析：用 Cloudflare Tunnel 把内网服务变成公网 HTTPS - 魔都水滴</title>
+<meta name="description" content="先说结论 前两篇已经讲了两件事：先用低成本 .xyz 域名把个人实验室的入口成本压下来，再把域名交给 Cloudflare 做 NS、DNS、DDNS、邮箱转发和基础自动化。本文继续往下走，讲“域名玩法 5”：用 Cloudflare Tunnel 把家里、NAS、虚拟机、Docker 容器里的 Web …">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://blog.margrop.net/post/cloudflare-tunnel-public-https-no-public-ip/">
+
+<meta property="og:site_name" content="魔都水滴">
+<meta property="og:title" content="域名买完别只会解析：用 Cloudflare Tunnel 把内网服务变成公网 HTTPS - 魔都水滴">
+<meta property="og:description" content="先说结论 前两篇已经讲了两件事：先用低成本 .xyz 域名把个人实验室的入口成本压下来，再把域名交给 Cloudflare 做 NS、DNS、DDNS、邮箱转发和基础自动化。本文继续往下走，讲“域名玩法 5”：用 Cloudflare Tunnel 把家里、NAS、虚拟机、Docker 容器里的 Web …">
+<meta property="og:url" content="https://blog.margrop.net/post/cloudflare-tunnel-public-https-no-public-ip/">
+<meta property="og:locale" content="zh_CN"><meta property="og:type" content="article"><meta property="og:locale:alternate" content="en_US"><meta property="og:image" content="https://blog.margrop.net/images/avatar.png"><meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="域名买完别只会解析：用 Cloudflare Tunnel 把内网服务变成公网 HTTPS - 魔都水滴">
+<meta name="twitter:description" content="先说结论 前两篇已经讲了两件事：先用低成本 .xyz 域名把个人实验室的入口成本压下来，再把域名交给 Cloudflare 做 NS、DNS、DDNS、邮箱转发和基础自动化。本文继续往下走，讲“域名玩法 5”：用 Cloudflare Tunnel 把家里、NAS、虚拟机、Docker 容器里的 Web …"><meta name="twitter:image" content="https://blog.margrop.net/images/avatar.png"><link rel="alternate" hreflang="zh-CN" href="https://blog.margrop.net/post/cloudflare-tunnel-public-https-no-public-ip/"><link rel="alternate" hreflang="en-US" href="https://blog.margrop.net/en/post/cloudflare-tunnel-public-https-no-public-ip/"><link rel="alternate" hreflang="x-default" href="https://blog.margrop.net/"><meta property="article:published_time" content="2026-05-21T11:38:00&#43;08:00">
+<meta property="article:modified_time" content="2026-05-21T11:38:00&#43;08:00"><meta property="article:tag" content="Cloudflare"><meta property="article:tag" content="Tunnel"><meta property="article:tag" content="HTTPS"><meta property="article:tag" content="内网穿透"><meta property="article:tag" content="域名"><meta property="article:tag" content="家庭实验室"><meta property="article:tag" content="Zero Trust"><meta property="article:tag" content="speedtest"><script type="application/ld+json">{"@context":"https://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"魔都水滴"},"dateModified":"2026-05-21T11:38:00+08:00","datePublished":"2026-05-21T11:38:00+08:00","description":"先说结论 前两篇已经讲了两件事：先用低成本 .xyz 域名把个人实验室的入口成本压下来，再把域名交给 Cloudflare 做 NS、DNS、DDNS、邮箱转发和基础自动化。本文继续往下走，讲“域名玩法 5”：用 Cloudflare Tunnel 把家里、NAS、虚拟机、Docker 容器里的 Web …","headline":"域名买完别只会解析：用 Cloudflare Tunnel 把内网服务变成公网 HTTPS","mainEntityOfPage":"https://blog.margrop.net/post/cloudflare-tunnel-public-https-no-public-ip/","url":"https://blog.margrop.net/post/cloudflare-tunnel-public-https-no-public-ip/"}</script>
+    <meta name="baidu-site-verification" content="code-sVFZ8SER59" />
+
+    
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-3J2W592DHJ"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-3J2W592DHJ');
+    </script>
+
+    <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 860px; margin: 0 auto; padding: 20px; line-height: 1.7; color: #222; }
+    h1 { border-bottom: 2px solid #333; padding-bottom: 10px; }
+    .post-list { list-style: none; padding: 0; }
+    .post-list li { margin: 15px 0; }
+    .post-list a { text-decoration: none; color: #333; font-size: 18px; }
+    .post-list a:hover { color: #006CFF; }
+    .date { color: #666; font-size: 14px; margin-right: 10px; }
+    .tags { margin-top: 8px; }
+    .tag { background: #eee; padding: 2px 8px; border-radius: 3px; font-size: 12px; margin-right: 5px; display: inline-block; }
+    nav { margin-bottom: 18px; border-bottom: 1px solid #eee; padding-bottom: 15px; }
+    nav a { margin-right: 20px; text-decoration: none; color: #333; font-size: 16px; }
+    nav a:hover { color: #006CFF; }
+    .language-switcher { margin: -8px 0 26px; }
+    .language-switcher a { display: inline-block; margin-right: 10px; padding: 4px 10px; border: 1px solid #ddd; border-radius: 999px; color: #555; text-decoration: none; font-size: 14px; }
+    .language-switcher a.active { background: #006CFF; border-color: #006CFF; color: #fff; }
+    .content { line-height: 1.8; }
+    .content code { background: #f4f4f4; padding: 2px 5px; border-radius: 3px; }
+    .content pre { background: #f4f4f4; padding: 15px; overflow-x: auto; border-radius: 5px; }
+    .content img { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+    .content .code-snippet__fix {
+        margin: 0 0 1.5em;
+    }
+    .content .code-snippet__fix .code-snippet__line-index {
+        display: none !important;
+    }
+    .meta { color: #666; font-size: 14px; margin-bottom: 14px; }
+    a { color: #006CFF; }
+    @media (max-width: 680px) {
+        body { padding: 16px; }
+        nav a { display: inline-block; margin-right: 12px; margin-bottom: 8px; }
+    }
+</style>
+
+</head>
+<body>
+    <nav>
+  
+  <a href="/">首页</a>
+  <a href="/post/">归档</a>
+  <a href="/tags/">标签</a>
+  <a href="/post/about/">关于</a>
+  <a href="https://download.margrop.net" target="_blank" rel="noopener">下载</a>
+  <a href="/post/favorites/">Link</a>
+  <a href="/post/github-project-stars/">Github</a>
+  
+  <a href="https://github-mirrors.margrop.net" target="_blank" rel="noopener">Github加速</a>
+  <a href="https://status.anye.xyz/" target="_blank" rel="noopener">Docker加速</a>
+  
+</nav>
+
+    
+<div class="language-switcher">
+  
+    <a href="/post/cloudflare-tunnel-public-https-no-public-ip/" class="active">中文</a>
+  
+    <a href="/en/post/cloudflare-tunnel-public-https-no-public-ip/" class="">English</a>
+  
+</div>
+
+
+    
+    <article>
+        <h1>域名买完别只会解析：用 Cloudflare Tunnel 把内网服务变成公网 HTTPS</h1>
+        <div class="meta">
+            发布时间: 2026-05-21
+        </div>
+        
+<div class="tags">
+    
+    <a href="/tag/cloudflare/"><span class="tag">Cloudflare</span></a>
+    
+    <a href="/tag/tunnel/"><span class="tag">Tunnel</span></a>
+    
+    <a href="/tag/https/"><span class="tag">HTTPS</span></a>
+    
+    <a href="/tag/%E5%86%85%E7%BD%91%E7%A9%BF%E9%80%8F/"><span class="tag">内网穿透</span></a>
+    
+    <a href="/tag/%E5%9F%9F%E5%90%8D/"><span class="tag">域名</span></a>
+    
+    <a href="/tag/%E5%AE%B6%E5%BA%AD%E5%AE%9E%E9%AA%8C%E5%AE%A4/"><span class="tag">家庭实验室</span></a>
+    
+    <a href="/tag/zero-trust/"><span class="tag">Zero Trust</span></a>
+    
+    <a href="/tag/speedtest/"><span class="tag">speedtest</span></a>
+    
+</div>
+
+
+        <div class="content">
+            <blockquote>
+<p><strong>先说结论</strong></p>
+<p>前两篇已经讲了两件事：先用低成本 <code>.xyz</code> 域名把个人实验室的入口成本压下来，再把域名交给 Cloudflare 做 NS、DNS、DDNS、邮箱转发和基础自动化。本文继续往下走，讲“域名玩法 5”：用 Cloudflare Tunnel 把家里、NAS、虚拟机、Docker 容器里的 Web 服务发布成公网 <code>https://</code> 地址。重点是：<strong>外部访问走 443 HTTPS，家里路由器不需要开 80/443 端口，也不需要把源站公网 IP 暴露出去</strong>。</p>
+<p>如果你前面已经买好了便宜域名，并且域名 NS 已经切到 Cloudflare，那么 Tunnel 就是非常值得继续折腾的一步。它能把 <code>http://localhost:8080</code>、<code>http://192.0.2.10:5000</code> 这类内网服务，变成 <code>https://nas.speedtest.example.xyz</code> 这样的公网入口。</p>
+</blockquote>
+<p>本文是这两篇文章的后续：</p>
+<ol>
+<li>《80 块买十年：个人建站域名，为什么我会优先看 6 位数字 .xyz》<br>
+原文地址：<a href="https://mp.weixin.qq.com/s/tbefnWGFI0QBFlRVcYjVEw">https://mp.weixin.qq.com/s/tbefnWGFI0QBFlRVcYjVEw</a></li>
+<li>《80元十年域名别浪费：交给 Cloudflare 才算真正用起来》<br>
+原文地址：<a href="https://mp.weixin.qq.com/s/h0o-vtGB_zj1aptaumBztQ">https://mp.weixin.qq.com/s/h0o-vtGB_zj1aptaumBztQ</a></li>
+</ol>
+<p>前文已经讲了便宜 <code>.xyz</code> 域名、Cloudflare NS、DNS、DDNS、企业邮箱这些基础配置。本文不再重复“怎么把域名接入 Cloudflare”，而是假设你已经有一个在 Cloudflare 托管的域名，然后继续讲：如何用 Cloudflare Tunnel 给内网服务开一个公网 HTTPS 入口。</p>
+<p>本文所有示例都使用 <code>example.xyz</code>、<code>nas.speedtest.example.xyz</code>、<code>192.0.2.10</code>、<code>localhost</code>、<code>&lt;TUNNEL_TOKEN&gt;</code> 这类文档占位符，不包含真实域名、真实账号、真实 Token、真实 Zone ID、真实内网地址或任何私有信息。你照着做时，把占位符替换成自己的域名和服务地址即可。</p>
+<p><img alt="Cloudflare 官方 How it works 架构图" src="/post-images/cloudflare-tunnel-public-https-no-public-ip/cloudflare-how-it-works.webp"></p>
+<p><em>图 1：Cloudflare 官方文档中的 “How it works” 架构图。公网请求先到 Cloudflare，再通过 <code>cloudflared</code> 建立的出站隧道回到你的 origin。图片来源：Cloudflare Docs。</em></p>
+<p><img alt="Cloudflare Tunnel 总览" src="/post-images/cloudflare-tunnel-public-https-no-public-ip/00-tunnel-overview.svg"></p>
+<p><em>图 2：Cloudflare Tunnel 的核心思路：公网用户访问 Cloudflare 的 443 HTTPS，内网 <code>cloudflared</code> 主动向 Cloudflare 建立连接，再把请求转给本地服务。</em></p>
+<h2 id="1-cloudflare-tunnel-的关键价值无需公网-ip">1. Cloudflare Tunnel 的关键价值：无需公网 IP</h2>
+<p>Cloudflare Tunnel 的关键价值，是让你在没有公网 IP、不能端口转发，或者不想暴露源站 IP 的情况下，仍然可以把内网 Web 服务发布成公网 HTTPS 地址。它仍然需要一个已经接入 Cloudflare 的域名，但不要求你的家庭宽带、NAS 或内网服务器拥有固定公网 IP。</p>
+<p>这类场景可以理解成：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>需要：一个已经接入 Cloudflare 的域名
+</span></span><span style="display:flex;"><span>不需要：家里有固定公网 IPv4
+</span></span><span style="display:flex;"><span>不需要：在路由器上转发 80 / 443 端口
+</span></span><span style="display:flex;"><span>不需要：把 NAS / 面板 / 虚拟机源站 IP 暴露给所有人
+</span></span></code></pre></div><p>这点非常关键。传统做法通常是这样：域名 A 记录指向公网 IP，路由器把 443 转发到内网反代，反代再转到 NAS 或应用。这个方案能用，但前提很多：你要有公网 IP；运营商不能封入站端口；路由器转发规则要正确；证书续期要处理；源站 IP 可能被扫；家宽 IP 变化时还要 DDNS。</p>
+<p>Tunnel 的路线不同。它让内网机器主动跑一个 <code>cloudflared</code> 连接器。这个连接器从内网主动连到 Cloudflare，不要求公网主动连进你家。用户访问 <code>https://nas.speedtest.example.xyz</code> 时，请求先到 Cloudflare 边缘网络，再通过这条隧道送到内网服务。对外看，用户访问的是 Cloudflare 提供的标准 HTTPS 入口；对内看，本地服务仍然可以只监听 <code>localhost</code> 或内网地址。</p>
+<p>这就是为什么它特别适合个人实验室、NAS、Home Assistant、Uptime Kuma、内测 Web 面板、临时 Demo、Webhook 回调、开发环境预览等场景。你不需要为了一个小服务折腾公网 IP，也不需要在路由器上打开一堆入站端口。</p>
+<h2 id="2-cloudflare-tunnel-到底是什么">2. Cloudflare Tunnel 到底是什么</h2>
+<p>Cloudflare 官方文档的定义很直接：Cloudflare Tunnel 通过一个轻量级 daemon，也就是 <code>cloudflared</code>，把你的基础设施连接到 Cloudflare。你创建一个 tunnel，安装并运行 <code>cloudflared</code>，然后把一个公网 hostname 映射到本地 service URL，例如把 <code>app.example.com</code> 映射到 <code>http://localhost:8080</code>。</p>
+<p>它的工作链路可以简单理解成四段。第一段，用户访问你的公网域名，例如 <code>https://nas.speedtest.example.xyz</code>，DNS 和 HTTPS 入口都在 Cloudflare 侧处理。第二段，Cloudflare 根据 Public Hostname 规则找到对应的 Tunnel。第三段，内网里的 <code>cloudflared</code> 已经提前主动连出到 Cloudflare，并维持多条长期连接，所以 Cloudflare 不需要从公网反向打进你家路由器。第四段，<code>cloudflared</code> 收到请求后，再把它转发给本机或内网里的真实服务，例如 <code>http://localhost:8080</code> 或 <code>http://192.0.2.10:5000</code>。</p>
+<p>所以 Tunnel 的关键不是“Cloudflare 直接访问你的内网 IP”，而是“内网 connector 先主动连到 Cloudflare，公网请求再沿着这条已建立的连接回到 origin”。这也是它不需要路由器端口转发、不需要固定公网 IP 的根本原因。</p>
+<p>翻译成更接地气的话：</p>
+<ol>
+<li><code>cloudflared</code> 是装在你内网机器上的小客户端。</li>
+<li>它主动连到 Cloudflare，不需要别人从公网直连你家。</li>
+<li>Cloudflare 负责接收公网 HTTPS 请求和证书。</li>
+<li>你在 Cloudflare 上配置“哪个子域名转到哪个本地服务”。</li>
+<li>一个 Tunnel 可以挂多个 Public Hostname，不必一个服务建一个 Tunnel。</li>
+</ol>
+<p>它像反向代理，但反代入口不在你家路由器上，而在 Cloudflare 网络上；它像内网穿透，但它和 DNS、HTTPS、Cloudflare 账号、Zero Trust 控制面深度集成。对于个人用户，最舒服的地方在于配置路径比较统一：域名、DNS、证书、Public Hostname、Tunnel 状态都在 Cloudflare Dashboard 里能看到。</p>
+<p>当然，Tunnel 不是银弹。它主要适合 HTTP/HTTPS Web 服务。Cloudflare 文档也说明，非 HTTP 服务例如 SSH、TCP、RDP 等需要客户端侧也运行 <code>cloudflared</code> 或使用对应的 Access 方式。本文只讲最常见、最容易落地的公网 HTTPS Web 访问。</p>
+<h2 id="3-什么时候应该用-tunnel什么时候不该用">3. 什么时候应该用 Tunnel，什么时候不该用</h2>
+<p>我建议先按场景判断，不要因为它免费就什么都往上挂。</p>
+<p>适合用 Tunnel 的场景：</p>
+<ol>
+<li>家里没有公网 IPv4，或者公网 IPv4 经常变化。</li>
+<li>路由器不能或不想做 80/443 端口转发。</li>
+<li>只想发布 Web 服务，例如 NAS Web、相册、监控、内部工具、临时 Demo。</li>
+<li>想让外部地址天然是 <code>https://</code>，并由 Cloudflare 负责边缘证书。</li>
+<li>想隐藏源站 IP，减少直接扫描和爆破。</li>
+<li>想把多个内网 Web 服务放到同一个域名体系下管理。</li>
+</ol>
+<p>不建议直接用 Tunnel 裸发布的场景：</p>
+<ol>
+<li>数据库、Redis、管理 SSH、路由器后台这类高风险服务。</li>
+<li>没有登录、没有权限、没有审计的内部系统。</li>
+<li>上传下载量巨大、对延迟和吞吐非常敏感的服务。</li>
+<li>违反 Cloudflare 服务条款或明显不适合走 HTTP 代理的用途。</li>
+<li>你完全不理解被发布服务的安全边界，只是想“先暴露出去试试”。</li>
+</ol>
+<p>要记住一句话：Tunnel 解决的是入口，不解决应用安全。它能让一个服务更容易被公网访问，也意味着这个服务更容易被公网所有人访问。如果是 NAS、面板、监控、相册、文件管理器，建议至少加上强密码、二次验证、访问控制，进一步可以配 Cloudflare Access，让登录 Cloudflare / Google / GitHub / 邮箱 OTP 后才能进入。</p>
+<p><img alt="安全边界示意" src="/post-images/cloudflare-tunnel-public-https-no-public-ip/07-security-boundary.svg"></p>
+<p><em>图 3：Tunnel 让公网 HTTPS 入口变简单，但不替代认证、授权、审计和备份。</em></p>
+<h2 id="4-准备工作先把基础条件检查完">4. 准备工作：先把基础条件检查完</h2>
+<p>开始之前，建议先确认五件事。</p>
+<p>第一，你的域名已经接入 Cloudflare，并且状态是 Active。也就是说，域名的 NS 已经从注册商切到 Cloudflare。前一篇已经讲过这个过程，这里不重复。你可以用：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>dig NS example.xyz +short
+</span></span></code></pre></div><p>看到 Cloudflare 分配的 nameserver，基本就说明权威 DNS 已经交给 Cloudflare。</p>
+<p>第二，你要发布的服务在内网机器上本来就能访问。例如：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>curl -I http://localhost:8080
+</span></span><span style="display:flex;"><span>curl -I http://192.0.2.10:5000
+</span></span></code></pre></div><p>如果本地都打不开，不要先怪 Tunnel。先把应用本身跑起来。</p>
+<p>第三，运行 <code>cloudflared</code> 的机器能访问外网。Cloudflare 官方文档提示，如果服务器在限制严格的防火墙后面，要确认它能连接 Cloudflare Tunnel 需要的端口。普通家宽、普通 VPS、普通 NAS Docker 环境一般没问题，但公司网络、校园网、受限机房可能需要额外放行。</p>
+<p>第四，想好子域名命名。本文推荐延续前文的 <code>speedtest</code> 子域名思路，例如：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>nas.speedtest.example.xyz
+</span></span><span style="display:flex;"><span>photo.speedtest.example.xyz
+</span></span><span style="display:flex;"><span>status.speedtest.example.xyz
+</span></span><span style="display:flex;"><span>ha.speedtest.example.xyz
+</span></span></code></pre></div><p>其中真正想借用的标签是 <code>speedtest</code>，不是 URL path。也就是说，推荐 <code>nas.speedtest.example.xyz</code>，不推荐只写成 <code>example.xyz/speedtest/nas</code>。前文已经解释过原因：hostname / SNI 更早暴露给链路策略，而 path 往往在 HTTPS 之后才出现。</p>
+<p>第五，准备好密钥管理方式。Cloudflare Dashboard 创建 Tunnel 时会给你一个 connector token。这个 token 等价于“允许某台机器接入这个 Tunnel”。不要截图发群，不要写进文章，不要提交到 Git，不要硬编码在公开脚本里。Docker Compose 可以放 <code>.env</code> 或 secret；systemd 可以使用 Cloudflare 生成的 service install 命令；长期维护时建议把 token 当密码对待。</p>
+<h2 id="5-推荐路线用-cloudflare-dashboard-创建远程管理-tunnel">5. 推荐路线：用 Cloudflare Dashboard 创建远程管理 Tunnel</h2>
+<p>Cloudflare Tunnel 有两种常见管理方式：Dashboard 远程管理和 CLI 本地管理。CLI 本地管理适合喜欢配置文件、希望把 ingress 规则放到 GitOps 流程里的人；Dashboard 远程管理更适合大多数个人用户，因为它少一步本地配置文件维护，创建 Public Hostname 也更直观。</p>
+<p>本文推荐先用 Dashboard 路线。步骤大概是：</p>
+<ol>
+<li>登录 Cloudflare Dashboard。</li>
+<li>进入 Zero Trust。</li>
+<li>进入 Networks / Tunnels。</li>
+<li>创建 Tunnel。</li>
+<li>选择运行环境，复制安装命令。</li>
+<li>在内网机器运行 <code>cloudflared</code>。</li>
+<li>Dashboard 看到 Tunnel 变 Healthy。</li>
+<li>添加 Public Hostname，把子域名映射到本地服务。</li>
+<li>浏览器访问 <code>https://子域名</code> 验证。</li>
+</ol>
+<p>这条路线的好处是，每一步都有状态反馈。哪里没通，基本也能分层判断：是 connector 没连上，还是 Public Hostname 没建，还是 DNS 没生效，还是本地 service URL 写错。</p>
+<p><img alt="创建 Tunnel 示意" src="/post-images/cloudflare-tunnel-public-https-no-public-ip/01-dashboard-create-tunnel.svg"></p>
+<p><em>图 4：在 Zero Trust 的 Tunnels 页面创建 Tunnel，命名可以用 <code>home-lab-web</code> 这类不包含隐私的名字。</em></p>
+<h2 id="6-第一步创建-tunnel">6. 第一步：创建 Tunnel</h2>
+<p>打开 Cloudflare Dashboard 后，进入 Zero Trust 控制台。现在 Cloudflare 的菜单可能会随时间调整，但大体路径是：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>Zero Trust -&gt; Networks -&gt; Tunnels -&gt; Create Tunnel
+</span></span></code></pre></div><p>创建时建议名字简单一点，例如：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>home-lab-web
+</span></span><span style="display:flex;"><span>nas-tunnel
+</span></span><span style="display:flex;"><span>personal-services
+</span></span></code></pre></div><p>不要把真实家庭地址、真实设备名、真实内网结构写进 Tunnel 名称。这个名字主要给自己看，能识别用途即可。</p>
+<p>创建完成后，Cloudflare 会让你选择 connector 运行环境，比如 Linux、Docker、macOS、Windows。你选中对应环境后，页面会展示安装和运行命令，其中包含一个很长的 token。这个 token 只显示给你用于安装 connector，文章里必须写成 <code>&lt;TUNNEL_TOKEN&gt;</code>。</p>
+<p>如果你只是想最快跑通，可以用页面给出的命令；如果你已经有 Docker 环境，我更推荐 Docker Compose，因为后续更新、重启、迁移都清楚。</p>
+<h2 id="7-第二步安装并启动-cloudflared">7. 第二步：安装并启动 cloudflared</h2>
+<p>Cloudflare 官方下载页提供了多种安装方式：Linux 可以用 Cloudflare 包仓库或直接下载二进制 / deb / rpm；macOS 可以用 Homebrew；Windows 可以用 winget；Docker 则有官方镜像。你不用背命令，Dashboard 里也会根据你选择的系统给出一条可复制命令。</p>
+<h3 id="71-linux-systemd-方式">7.1 Linux systemd 方式</h3>
+<p>如果你的服务跑在一台 Linux 机器上，最直接的方式是让 <code>cloudflared</code> 作为 systemd 服务运行。Dashboard 远程管理 Tunnel 时，常见命令类似：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>sudo cloudflared service install &lt;TUNNEL_TOKEN&gt;
+</span></span><span style="display:flex;"><span>sudo systemctl status cloudflared
+</span></span></code></pre></div><p>如果服务正常，你应该能看到 <code>cloudflared.service</code> 处于 running 状态。还可以看日志：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>journalctl -u cloudflared -f
+</span></span></code></pre></div><p>看到 connector 注册、连接建立、没有持续报错，说明这一层基本没问题。</p>
+<h3 id="72-docker-方式">7.2 Docker 方式</h3>
+<p>如果你本来就用 Docker 管理家庭服务，可以写成 <code>docker-compose.yml</code>：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-yaml" data-lang="yaml"><span style="display:flex;"><span><span style="color:#f92672">services</span>:
+</span></span><span style="display:flex;"><span>  <span style="color:#f92672">cloudflared</span>:
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">image</span>: <span style="color:#ae81ff">cloudflare/cloudflared:latest</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">container_name</span>: <span style="color:#ae81ff">cloudflared</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">restart</span>: <span style="color:#ae81ff">unless-stopped</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">command</span>: <span style="color:#ae81ff">tunnel --no-autoupdate run --token ${TUNNEL_TOKEN}</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">environment</span>:
+</span></span><span style="display:flex;"><span>      - <span style="color:#ae81ff">TZ=Asia/Shanghai</span>
+</span></span></code></pre></div><p>再配一个 <code>.env</code>：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>TUNNEL_TOKEN<span style="color:#f92672">=</span>&lt;TUNNEL_TOKEN&gt;
+</span></span></code></pre></div><p>启动：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>docker compose up -d
+</span></span><span style="display:flex;"><span>docker logs -f cloudflared
+</span></span></code></pre></div><p>这里有两个细节。第一，<code>.env</code> 不要提交到公开 Git 仓库。第二，<code>cloudflared</code> 容器要能访问你要转发的服务。如果目标服务和 <code>cloudflared</code> 在同一个 compose 网络里，可以直接用服务名；如果目标服务在宿主机上，可能要用宿主机地址或 Docker 的 host gateway 配置。新手先用 <code>http://host.docker.internal:8080</code> 或宿主机局域网地址测试，确认通了再整理成更干净的网络结构。</p>
+<p><img alt="安装 cloudflared 示意" src="/post-images/cloudflare-tunnel-public-https-no-public-ip/02-install-connector.svg"></p>
+<p><em>图 5：Linux systemd 和 Docker 都能长期运行 <code>cloudflared</code>。核心是 token 不要泄露，服务要能自动重启。</em></p>
+<h2 id="8-第三步看到-tunnel-变-healthy">8. 第三步：看到 Tunnel 变 Healthy</h2>
+<p>启动 <code>cloudflared</code> 后，回到 Cloudflare Dashboard 的 Tunnel 页面。正常情况下，Tunnel 状态会从未连接变成 Healthy。这个状态非常重要，因为它说明内网 connector 已经成功连到 Cloudflare。</p>
+<p>如果这里不 Healthy，不要急着配置子域名，先排查 connector：</p>
+<ol>
+<li>token 是否复制完整；</li>
+<li>系统时间是否正常；</li>
+<li>机器是否能访问外网；</li>
+<li>Docker 容器是否反复重启；</li>
+<li>systemd 日志里是否出现认证或网络错误；</li>
+<li>防火墙是否阻止了 <code>cloudflared</code> 出站连接。</li>
+</ol>
+<p>只有 Tunnel Healthy 以后，Public Hostname 才有意义。否则你即使把 DNS 配好了，用户访问时也会遇到 1016、1033、502 之类错误。</p>
+<h2 id="9-第四步添加-public-hostname">9. 第四步：添加 Public Hostname</h2>
+<p>进入刚创建的 Tunnel，选择添加 route 或 Public Hostname。这里是整篇文章最关键的配置。</p>
+<p>以 NAS Web 面板为例，假设内网服务运行在同一台机器的 <code>8080</code> 端口：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>Subdomain: nas.speedtest
+</span></span><span style="display:flex;"><span>Domain: example.xyz
+</span></span><span style="display:flex;"><span>Path: 留空
+</span></span><span style="display:flex;"><span>Service Type: HTTP
+</span></span><span style="display:flex;"><span>Service URL: http://localhost:8080
+</span></span></code></pre></div><p>最终公网访问地址就是：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>https://nas.speedtest.example.xyz
+</span></span></code></pre></div><p>如果服务在另一台内网机器上，例如 <code>192.0.2.10:5000</code>，可以写：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>Service URL: http://192.0.2.10:5000
+</span></span></code></pre></div><p>如果内网服务本身是 HTTPS，例如 <code>https://192.0.2.10:8443</code>，也可以选择 HTTPS，但要注意证书校验。自签证书、证书域名不匹配、内网 IP 证书不受信任，都可能导致 Cloudflare 到 origin 这一段失败。新手为了先跑通，建议优先用内网 HTTP：外部用户到 Cloudflare 这一段仍然是 HTTPS，Cloudflare 到你内网服务这一段走 Tunnel 内部连接。等你理解清楚后，再考虑 origin HTTPS 和证书校验。</p>
+<p><img alt="Public Hostname 配置示意" src="/post-images/cloudflare-tunnel-public-https-no-public-ip/03-public-hostname.svg"></p>
+<p><em>图 6：Public Hostname 的关键是把公网子域名映射到本地 Service URL。Cloudflare 会处理公网 443 HTTPS 入口。</em></p>
+<p>Cloudflare 文档里也提到，当你通过 Dashboard 添加 route 时，Cloudflare 会自动创建 DNS 记录，把 hostname 指向 tunnel 的 <code>&lt;UUID&gt;.cfargotunnel.com</code>。如果你用 CLI 本地管理，也可以用 <code>cloudflared tunnel route dns</code> 来创建 CNAME。普通个人用户用 Dashboard 添加 route 最省心，因为 DNS 和 route 通常会一起处理。</p>
+<h2 id="10-为什么我推荐-speedtest-子域名">10. 为什么我推荐 <code>*.speedtest</code> 子域名</h2>
+<p>前文讲 NAS 外网访问时，提到过一个经验技巧：把 <code>speedtest</code> 放到子域名里，有时能改善部分家庭宽带外网访问体验。这个技巧不是保证，不是协议标准，也不是加速魔法，但它验证成本低，命名也不难看，所以适合和 Tunnel 一起用。</p>
+<p>我推荐的形式是：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>nas.speedtest.example.xyz
+</span></span><span style="display:flex;"><span>photo.speedtest.example.xyz
+</span></span><span style="display:flex;"><span>status.speedtest.example.xyz
+</span></span><span style="display:flex;"><span>ha.speedtest.example.xyz
+</span></span></code></pre></div><p>而不是：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>example.xyz/speedtest/nas
+</span></span><span style="display:flex;"><span>example.xyz/speedtest/photo
+</span></span></code></pre></div><p>原因仍然是 hostname / SNI 比 path 更早被链路看到。如果某些网络策略真的会参考域名标签，那么 <code>speedtest</code> 应该出现在主机名里，而不是藏在 HTTPS 请求路径里。</p>
+<p><img alt="speedtest 子域名示意" src="/post-images/cloudflare-tunnel-public-https-no-public-ip/04-speedtest-subdomain.svg"></p>
+<p><em>图 7：推荐把 <code>speedtest</code> 放在 hostname 中。路径里的 <code>speedtest</code> 不能替代子域名标签。</em></p>
+<p>如果你担心名字太长，可以只给外网访问量大的服务使用 <code>speedtest</code>：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>nas.speedtest.example.xyz      NAS / 文件 / 相册
+</span></span><span style="display:flex;"><span>video.speedtest.example.xyz    视频或媒体入口
+</span></span><span style="display:flex;"><span>status.example.xyz             轻量状态页，不一定需要 speedtest
+</span></span><span style="display:flex;"><span>admin.example.xyz              管理后台，最好不要公开裸访问
+</span></span></code></pre></div><p>注意，这里说的是“推荐命名”，不是说加上 <code>speedtest</code> 就一定更快。最可靠的方法仍然是对照测试：同一个服务同时配置 <code>nas.example.xyz</code> 和 <code>nas.speedtest.example.xyz</code>，从同一网络、同一时间段访问同一资源，比较首屏、下载、视频预览、断流情况。如果没有差异，就不要神化它；如果差异明显，就把它作为优先入口保留。</p>
+<h2 id="11-一个完整例子把本地-web-服务发布成-https">11. 一个完整例子：把本地 Web 服务发布成 HTTPS</h2>
+<p>假设你家里有一个 Web 服务，内网可以这样访问：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>curl -I http://localhost:8080
+</span></span></code></pre></div><p>目标是让它公网可访问：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>https://demo.speedtest.example.xyz
+</span></span></code></pre></div><p>最小步骤如下：</p>
+<ol>
+<li>在 Cloudflare Zero Trust 创建 Tunnel，命名 <code>home-lab-web</code>。</li>
+<li>选择 Linux 或 Docker，复制安装命令。</li>
+<li>在运行服务的机器上启动 <code>cloudflared</code>。</li>
+<li>Dashboard 确认 Tunnel 状态 Healthy。</li>
+<li>添加 Public Hostname：</li>
+</ol>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>Subdomain: demo.speedtest
+</span></span><span style="display:flex;"><span>Domain: example.xyz
+</span></span><span style="display:flex;"><span>Service Type: HTTP
+</span></span><span style="display:flex;"><span>Service URL: http://localhost:8080
+</span></span></code></pre></div><ol start="6">
+<li>保存后访问：</li>
+</ol>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>curl -I https://demo.speedtest.example.xyz
+</span></span></code></pre></div><p>如果返回 <code>HTTP/2 200</code>、<code>301</code>、<code>302</code> 或应用本身预期的状态码，说明公网 HTTPS 到本地服务的主链路已经通了。浏览器打开页面，再检查登录、静态资源、上传、WebSocket、反代路径等细节。</p>
+<h2 id="12-如果你更喜欢本地配置文件cli-管理-tunnel">12. 如果你更喜欢本地配置文件：CLI 管理 Tunnel</h2>
+<p>Dashboard 路线适合上手，但也有人喜欢把配置文件留在本地，方便备份和版本管理。Cloudflare 的本地管理大致流程是：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>cloudflared tunnel login
+</span></span><span style="display:flex;"><span>cloudflared tunnel create home-lab-web
+</span></span><span style="display:flex;"><span>cloudflared tunnel list
+</span></span></code></pre></div><p>然后创建 <code>~/.cloudflared/config.yml</code>：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-yaml" data-lang="yaml"><span style="display:flex;"><span><span style="color:#f92672">tunnel</span>: <span style="color:#ae81ff">&lt;Tunnel-UUID&gt;</span>
+</span></span><span style="display:flex;"><span><span style="color:#f92672">credentials-file</span>: <span style="color:#ae81ff">/root/.cloudflared/&lt;Tunnel-UUID&gt;.json</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#f92672">ingress</span>:
+</span></span><span style="display:flex;"><span>  - <span style="color:#f92672">hostname</span>: <span style="color:#ae81ff">demo.speedtest.example.xyz</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">service</span>: <span style="color:#ae81ff">http://localhost:8080</span>
+</span></span><span style="display:flex;"><span>  - <span style="color:#f92672">hostname</span>: <span style="color:#ae81ff">nas.speedtest.example.xyz</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">service</span>: <span style="color:#ae81ff">http://192.0.2.10:5000</span>
+</span></span><span style="display:flex;"><span>  - <span style="color:#f92672">service</span>: <span style="color:#ae81ff">http_status:404</span>
+</span></span></code></pre></div><p>创建 DNS 路由：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>cloudflared tunnel route dns home-lab-web demo.speedtest.example.xyz
+</span></span><span style="display:flex;"><span>cloudflared tunnel route dns home-lab-web nas.speedtest.example.xyz
+</span></span></code></pre></div><p>运行：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>cloudflared tunnel run home-lab-web
+</span></span></code></pre></div><p>长期运行可以安装成服务：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>cloudflared service install
+</span></span><span style="display:flex;"><span>systemctl start cloudflared
+</span></span><span style="display:flex;"><span>systemctl status cloudflared
+</span></span></code></pre></div><p>CLI 方式的优点是配置清楚、可复制、适合多 hostname；缺点是对新手来说更容易在 <code>cert.pem</code>、credentials file、config path、systemd 用户目录这些细节上踩坑。比如官方文档特别提醒，使用 <code>sudo</code> 安装服务时 <code>$HOME</code> 可能变成 <code>/root</code>，导致它找不到你在普通用户目录里创建的配置文件。这种情况下要显式指定 config 路径。</p>
+<h2 id="13-tunnel-tokentunnel-id-和-dns-cname-不要混淆">13. Tunnel Token、Tunnel ID 和 DNS CNAME 不要混淆</h2>
+<p>这里非常容易混。</p>
+<p><code>Tunnel Token</code> 是给 connector 用的，通常是一长串敏感字符串。它让 <code>cloudflared</code> 能接入你的 Tunnel。泄露后别人可能伪装成你的 connector，所以必须保护。</p>
+<p><code>Tunnel ID</code> 是 Tunnel 的 UUID。Cloudflare 会生成 <code>&lt;UUID&gt;.cfargotunnel.com</code> 这样的目标。DNS CNAME 会指向它。UUID 本身没有 token 那么敏感，但也没必要公开到处贴。</p>
+<p><code>DNS CNAME</code> 是把你的公网 hostname 指向 tunnel 子域名，例如：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>CNAME demo.speedtest.example.xyz -&gt; &lt;UUID&gt;.cfargotunnel.com
+</span></span></code></pre></div><p>Cloudflare 文档说明，<code>cfargotunnel.com</code> 子域名只会代理同一个 Cloudflare 账号里的 DNS 记录。也就是说，别人即使知道你的 Tunnel UUID，也不能在另一个账号里随便建一条 CNAME 来蹭你的 Tunnel。但这不代表 token 可以泄露；token 和 connector 权限仍然要按密钥处理。</p>
+<p><img alt="Tunnel Token 与 DNS CNAME 关系" src="/post-images/cloudflare-tunnel-public-https-no-public-ip/05-token-and-dns.svg"></p>
+<p><em>图 8：Token 给 connector，Tunnel ID 用于 CNAME，Public Hostname 负责把公网域名映射到本地服务。</em></p>
+<h2 id="14-验证方法从服务tunneldnshttps-四层看">14. 验证方法：从服务、Tunnel、DNS、HTTPS 四层看</h2>
+<p>不要只看浏览器能不能打开。排障时建议按层检查。</p>
+<p>第一层，本地服务是否正常：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>curl -I http://localhost:8080
+</span></span></code></pre></div><p>第二层，<code>cloudflared</code> 是否正常：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>systemctl status cloudflared
+</span></span><span style="display:flex;"><span>journalctl -u cloudflared -n <span style="color:#ae81ff">100</span> --no-pager
+</span></span></code></pre></div><p>或者 Docker：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>docker ps
+</span></span><span style="display:flex;"><span>docker logs --tail<span style="color:#f92672">=</span><span style="color:#ae81ff">100</span> cloudflared
+</span></span></code></pre></div><p>第三层，Cloudflare Dashboard 里 Tunnel 是否 Healthy，Public Hostname 是否存在，Service URL 是否写对。</p>
+<p>第四层，DNS 是否正确：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>dig CNAME demo.speedtest.example.xyz +short
+</span></span></code></pre></div><p>应该能看到类似：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>&lt;TUNNEL-UUID&gt;.cfargotunnel.com.
+</span></span></code></pre></div><p>第五层，公网 HTTPS 是否正常：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>curl -I https://demo.speedtest.example.xyz
+</span></span></code></pre></div><p>如果浏览器打不开但 <code>curl -I</code> 有响应，要继续看应用层跳转、Cookie、反代路径、WebSocket、上传大小限制等问题。</p>
+<p><img alt="验证清单" src="/post-images/cloudflare-tunnel-public-https-no-public-ip/06-verify-checklist.svg"></p>
+<p><em>图 9：上线前后按层验证，不要只凭浏览器感觉。</em></p>
+<p>常见错误可以这样理解：</p>
+<ol>
+<li><strong>1016</strong>：DNS 指到了 Tunnel，但 Cloudflare 找不到可用 origin。常见原因是 Tunnel 没运行或 DNS / route 不匹配。</li>
+<li><strong>502 / 1033</strong>：connector 可能通了，但本地 Service URL 不可达、协议写错、端口错、应用崩了。</li>
+<li><strong>证书错误</strong>：通常发生在你把 origin service 写成 HTTPS，但内网证书不被信任或域名不匹配。</li>
+<li><strong>页面能开但资源 404</strong>：应用自己生成的外部 URL、base path、反代前缀有问题。</li>
+<li><strong>登录循环</strong>：Cookie domain、SameSite、HTTPS detection、反代 header 可能没处理好。</li>
+</ol>
+<h2 id="15-是否还需要-nginxcaddylucky-这类反向代理">15. 是否还需要 Nginx、Caddy、Lucky 这类反向代理</h2>
+<p>不一定。</p>
+<p>如果你的内网只有一个服务，Tunnel 可以直接指向它：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>demo.speedtest.example.xyz -&gt; http://localhost:8080
+</span></span></code></pre></div><p>但如果你已经有 Nginx、Caddy、Lucky、Traefik 这类内网反代，仍然可以保留：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>Cloudflare Tunnel -&gt; Caddy / Nginx -&gt; NAS / App / Dashboard
+</span></span></code></pre></div><p>这样做的好处是，本地路由和证书策略仍然集中管理；坏处是链路多一层，排障时要多看一层日志。新手可以先让 Tunnel 直接指向目标服务，等跑通后再接入内网反代。</p>
+<p>如果你用 Caddy 或 Nginx，注意保留 Host header。很多应用需要知道外部访问域名，尤其是生成回调 URL、OAuth 登录、WebSocket、反向代理路径时。如果 Host 被改成内网 IP，应用可能会跳回错误地址。</p>
+<h2 id="16-安全建议公网-https-不等于可以公开裸奔">16. 安全建议：公网 HTTPS 不等于可以公开裸奔</h2>
+<p>Tunnel 很容易让人产生错觉：既然不用开端口、源站 IP 也藏起来了，那是不是就安全了？不是。</p>
+<p>它只是让入口更好管，不代表应用没有漏洞。公网能访问的东西就会被扫。哪怕源站 IP 没暴露，域名本身也可以被发现，路径也可能被猜，弱密码也会被撞。</p>
+<p>建议至少做到：</p>
+<ol>
+<li>所有后台类服务都设置强密码和二次验证。</li>
+<li>不要把路由器、PVE、ESXi、数据库、Redis 这类高风险入口直接做 Public Hostname。</li>
+<li>NAS 文件管理、相册、监控面板最好加 Cloudflare Access。</li>
+<li>对外只发布必要路径，不要把整个内网反代树一把梭公开。</li>
+<li>定期更新应用、NAS、Docker 镜像和 <code>cloudflared</code>。</li>
+<li>Token 泄露时立即删除 connector 或 rotate token。</li>
+<li>重要数据仍然要备份，Tunnel 不承担备份职责。</li>
+</ol>
+<p>如果你只是给自己用，Cloudflare Access 很值得加。它可以要求访问者先通过邮箱 OTP、Google、GitHub、OIDC 等方式认证。这样即使应用本身登录页比较弱，也能在前面再加一道门。</p>
+<h2 id="17-和-ddns端口转发frp-相比它解决了什么">17. 和 DDNS、端口转发、FRP 相比，它解决了什么</h2>
+<p>DDNS 解决的是“公网 IP 会变”的问题。你仍然需要公网 IP，仍然要开端口，仍然要处理源站暴露。</p>
+<p>路由器端口转发解决的是“公网请求怎么进内网”的问题。它简单直接，但暴露面大，遇到没有公网 IP 或运营商限制就没办法。</p>
+<p>FRP、NPS、ZeroTier、Tailscale 这类方案各有用途。FRP 更像自建穿透，需要一台有公网入口的服务器；Tailscale 更适合组网和私有访问，不一定适合直接给普通公网用户访问一个标准 HTTPS 域名。</p>
+<p>Cloudflare Tunnel 的优势在于，它把“域名、证书、公网 443、穿透、边缘防护、访问控制”放在同一套体系里。对已经把域名接到 Cloudflare 的个人用户来说，学习成本很低，成本也低。</p>
+<p>它的代价是你依赖 Cloudflare 网络；访问体验受 Cloudflare 路径影响；某些大流量或特殊协议并不适合；对国内网络来说，不同地区体验可能差异明显。所以最务实的做法是：把它作为个人实验室的一个标准入口方案，但保留备用路径，不要把所有服务都无脑绑死在一个外部平台上。</p>
+<h2 id="18-我自己的推荐落地顺序">18. 我自己的推荐落地顺序</h2>
+<p>如果你是第一次做，我建议按这个顺序来：</p>
+<ol>
+<li>先选一个无关紧要的 Web 服务，例如 Uptime Kuma、静态页面、测试容器。</li>
+<li>用 Dashboard 创建一个 Tunnel。</li>
+<li>用 Docker 或 systemd 跑起 <code>cloudflared</code>。</li>
+<li>添加 <code>demo.speedtest.example.xyz</code> 这样的 Public Hostname。</li>
+<li>用 <code>curl -I</code> 和浏览器确认能访问。</li>
+<li>再接入 NAS、相册、Home Assistant 这类更有价值的服务。</li>
+<li>对后台类服务加 Cloudflare Access。</li>
+<li>保留一个普通子域名和一个 <code>speedtest</code> 子域名做对照测试。</li>
+<li>整理命名规范和备份 token 管理方式。</li>
+<li>定期检查 Tunnel 状态、访问日志和应用更新。</li>
+</ol>
+<p>不要一上来就把所有家庭服务都发布出去。Tunnel 很方便，方便也意味着误操作成本低。越容易发布，越要克制。</p>
+<h2 id="19-一个可以直接照抄的命名模板">19. 一个可以直接照抄的命名模板</h2>
+<p>假设你的域名是 <code>example.xyz</code>，可以这样规划：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>status.example.xyz              公开状态页
+</span></span><span style="display:flex;"><span>blog.example.xyz                静态博客或公开页面
+</span></span><span style="display:flex;"><span>demo.speedtest.example.xyz      临时 Demo
+</span></span><span style="display:flex;"><span>nas.speedtest.example.xyz       NAS Web 入口，建议加 Access
+</span></span><span style="display:flex;"><span>photo.speedtest.example.xyz     相册入口，建议加 Access
+</span></span><span style="display:flex;"><span>ha.speedtest.example.xyz        Home Assistant，建议加 Access
+</span></span><span style="display:flex;"><span>admin.example.xyz               不建议裸公开，最好只走私有网络或 Access
+</span></span></code></pre></div><p>如果你要做对照测试，可以同时保留：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>nas.example.xyz
+</span></span><span style="display:flex;"><span>nas.speedtest.example.xyz
+</span></span></code></pre></div><p>两个 hostname 都指向同一个 Tunnel 和同一个 Service URL，然后在同一网络下测试。这样你能知道 <code>speedtest</code> 命名到底有没有实际帮助，而不是靠玄学判断。</p>
+<h2 id="20-总结80-元十年域名真正开始好玩是从-tunnel-开始的">20. 总结：80 元十年域名真正开始好玩，是从 Tunnel 开始的</h2>
+<p>前两篇讲的是“买一个够便宜、够稳定、够长期的个人实验室域名”，以及“把这个域名交给 Cloudflare 管起来”。那两步完成后，域名已经不是一个空壳：它有 DNS，有 DDNS，有邮箱入口，有 API 自动化能力。</p>
+<p>而 Cloudflare Tunnel 让这个域名继续往前走了一步：它不只是解析到某个 IP，而是可以把你家里的 Web 服务安全地接到公网 HTTPS 入口上。你不用申请固定公网 IP，不用在路由器上开 443，不用把源站直接暴露给扫描器，也不用为了一个小服务单独买云服务器。</p>
+<p>最小可用方案其实很简单：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>Cloudflare 托管域名
+</span></span><span style="display:flex;"><span>+ 一个 Tunnel
+</span></span><span style="display:flex;"><span>+ 一个 cloudflared connector
+</span></span><span style="display:flex;"><span>+ 一个 Public Hostname
+</span></span><span style="display:flex;"><span>+ 一个本地 Web 服务
+</span></span><span style="display:flex;"><span>= 一个可公网访问的 HTTPS 地址
+</span></span></code></pre></div><p>如果再结合 <code>nas.speedtest.example.xyz</code> 这类命名，你还可以顺手做网络路径对照测试，看看前文提到的 <code>speedtest</code> 子域名经验是否对你的线路有帮助。</p>
+<p>最后再强调一次：Tunnel 让入口变简单，不代表安全可以省略。把服务发布出去之前，先想清楚它是否应该被公网访问；如果应该访问，就加认证、加 Access、加日志、加备份。这样，一个 80 元十年的 <code>.xyz</code> 域名，才算真的被你用出了价值。</p>
+<h2 id="来源与参考">来源与参考</h2>
+<ol>
+<li>Cloudflare Tunnel 官方文档：<a href="https://developers.cloudflare.com/tunnel/">https://developers.cloudflare.com/tunnel/</a></li>
+<li>Cloudflare Tunnel Setup：<a href="https://developers.cloudflare.com/tunnel/setup/">https://developers.cloudflare.com/tunnel/setup/</a></li>
+<li>Cloudflare Tunnel Routing：<a href="https://developers.cloudflare.com/tunnel/routing/">https://developers.cloudflare.com/tunnel/routing/</a></li>
+<li>cloudflared Downloads：<a href="https://developers.cloudflare.com/tunnel/downloads/">https://developers.cloudflare.com/tunnel/downloads/</a></li>
+<li>Cloudflare Tunnel 本地管理与 Linux service：<a href="https://developers.cloudflare.com/tunnel/advanced/local-management/create-local-tunnel/">https://developers.cloudflare.com/tunnel/advanced/local-management/create-local-tunnel/</a>、<a href="https://developers.cloudflare.com/tunnel/advanced/local-management/as-a-service/linux/">https://developers.cloudflare.com/tunnel/advanced/local-management/as-a-service/linux/</a></li>
+<li>前文《80 块买十年：个人建站域名，为什么我会优先看 6 位数字 .xyz》：<a href="https://mp.weixin.qq.com/s/tbefnWGFI0QBFlRVcYjVEw">https://mp.weixin.qq.com/s/tbefnWGFI0QBFlRVcYjVEw</a></li>
+<li>前文《80元十年域名别浪费：交给 Cloudflare 才算真正用起来》：<a href="https://mp.weixin.qq.com/s/h0o-vtGB_zj1aptaumBztQ">https://mp.weixin.qq.com/s/h0o-vtGB_zj1aptaumBztQ</a></li>
+<li>前文 speedtest 子域名讨论：<a href="https://mp.weixin.qq.com/s/7Jz6us_o2TafY9TovlwOPA">https://mp.weixin.qq.com/s/7Jz6us_o2TafY9TovlwOPA</a></li>
+</ol>
+        </div>
+    </article>
+
+    
+  
+
+
+  
+    
+  
+
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk/dist/gitalk.css">
+<script src="https://cdn.jsdelivr.net/npm/gitalk/dist/gitalk.min.js"></script>
+<div id="gitalk-container" style="margin-top:40px"></div>
+<script>
+  (function(){
+    var gitalk = new Gitalk({
+      clientID: '3181fd94e501cc5db0ad',
+      clientSecret: 'af1dab79dae02c69296e6615bfcecf47fc8615ee',
+      repo: 'margropcomment.margrop.io',
+      owner: 'margrop',
+      admin: ["margrop"],
+      
+      id: '\/post\/cloudflare-tunnel-public-https-no-public-ip',
+      
+      distractionFreeMode: false
+    });
+    gitalk.render('gitalk-container');
+  })();
+</script>
+  
+
+
+
+
+    
+    <script type="text/javascript" src="https://js.users.51.la/21044367.js"></script>
+    <script charset="UTF-8" id="LA_COLLECT" src="//sdk.51.la/js-sdk-pro.min.js"></script>
+    <script>LA.init({id: "1vVTUWl7zoRjnKXi",ck: "1vVTUWl7zoRjnKXi"})</script>
+    <script src="https://sdk.51.la/perf/js-sdk-perf.min.js" crossorigin="anonymous"></script>
+    <script>
+      new LingQue.Monitor().init({id:"202teQt8THXwqyve"});
+    </script>
+</body>
+</html>

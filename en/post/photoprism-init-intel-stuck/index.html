@@ -1,0 +1,556 @@
+<!DOCTYPE html>
+<html lang="en-US">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>PhotoPrism Stuck for 5 Minutes on First Boot? A Postmortem on PHOTOPRISM_INIT=intel - Margrop Blog</title>
+<meta name="description" content="TL;DR (The Short Version) The PHOTOPRISM_INIT: &#34;intel&#34; line in PhotoPrism’s Plus Docker image is not just a flag to enable Intel hardware acceleration at …">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://blog.margrop.net/en/post/photoprism-init-intel-stuck/">
+
+<meta property="og:site_name" content="Margrop Blog">
+<meta property="og:title" content="PhotoPrism Stuck for 5 Minutes on First Boot? A Postmortem on PHOTOPRISM_INIT=intel - Margrop Blog">
+<meta property="og:description" content="TL;DR (The Short Version) The PHOTOPRISM_INIT: &#34;intel&#34; line in PhotoPrism’s Plus Docker image is not just a flag to enable Intel hardware acceleration at …">
+<meta property="og:url" content="https://blog.margrop.net/en/post/photoprism-init-intel-stuck/">
+<meta property="og:locale" content="en_US"><meta property="og:type" content="article"><meta property="og:locale:alternate" content="zh_CN"><meta property="og:image" content="https://blog.margrop.net/images/avatar.png"><meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="PhotoPrism Stuck for 5 Minutes on First Boot? A Postmortem on PHOTOPRISM_INIT=intel - Margrop Blog">
+<meta name="twitter:description" content="TL;DR (The Short Version) The PHOTOPRISM_INIT: &#34;intel&#34; line in PhotoPrism’s Plus Docker image is not just a flag to enable Intel hardware acceleration at …"><meta name="twitter:image" content="https://blog.margrop.net/images/avatar.png"><link rel="alternate" hreflang="zh-CN" href="https://blog.margrop.net/post/photoprism-init-intel-stuck/"><link rel="alternate" hreflang="en-US" href="https://blog.margrop.net/en/post/photoprism-init-intel-stuck/"><link rel="alternate" hreflang="x-default" href="https://blog.margrop.net/"><meta property="article:published_time" content="2026-06-13T08:30:00&#43;08:00">
+<meta property="article:modified_time" content="2026-06-13T08:30:00&#43;08:00"><meta property="article:tag" content="PhotoPrism"><meta property="article:tag" content="Docker"><meta property="article:tag" content="NAS"><meta property="article:tag" content="Synology"><meta property="article:tag" content="s6-overlay"><meta property="article:tag" content="Intel"><meta property="article:tag" content="VAAPI"><meta property="article:tag" content="QSV"><meta property="article:tag" content="HomeLab"><meta property="article:tag" content="Troubleshooting"><meta property="article:tag" content="Debugging"><meta property="article:tag" content="ContainerInit"><script type="application/ld+json">{"@context":"https://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"Margrop"},"dateModified":"2026-06-13T08:30:00+08:00","datePublished":"2026-06-13T08:30:00+08:00","description":"TL;DR (The Short Version) The PHOTOPRISM_INIT: \u0026#34;intel\u0026#34; line in PhotoPrism’s Plus Docker image is not just a flag to enable Intel hardware acceleration at …","headline":"PhotoPrism Stuck for 5 Minutes on First Boot? A Postmortem on PHOTOPRISM_INIT=intel","mainEntityOfPage":"https://blog.margrop.net/en/post/photoprism-init-intel-stuck/","url":"https://blog.margrop.net/en/post/photoprism-init-intel-stuck/"}</script>
+    <meta name="baidu-site-verification" content="code-sVFZ8SER59" />
+
+    
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-3J2W592DHJ"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-3J2W592DHJ');
+    </script>
+
+    <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 860px; margin: 0 auto; padding: 20px; line-height: 1.7; color: #222; }
+    h1 { border-bottom: 2px solid #333; padding-bottom: 10px; }
+    .post-list { list-style: none; padding: 0; }
+    .post-list li { margin: 15px 0; }
+    .post-list a { text-decoration: none; color: #333; font-size: 18px; }
+    .post-list a:hover { color: #006CFF; }
+    .date { color: #666; font-size: 14px; margin-right: 10px; }
+    .tags { margin-top: 8px; }
+    .tag { background: #eee; padding: 2px 8px; border-radius: 3px; font-size: 12px; margin-right: 5px; display: inline-block; }
+    nav { margin-bottom: 18px; border-bottom: 1px solid #eee; padding-bottom: 15px; }
+    nav a { margin-right: 20px; text-decoration: none; color: #333; font-size: 16px; }
+    nav a:hover { color: #006CFF; }
+    .language-switcher { margin: -8px 0 26px; }
+    .language-switcher a { display: inline-block; margin-right: 10px; padding: 4px 10px; border: 1px solid #ddd; border-radius: 999px; color: #555; text-decoration: none; font-size: 14px; }
+    .language-switcher a.active { background: #006CFF; border-color: #006CFF; color: #fff; }
+    .content { line-height: 1.8; }
+    .content code { background: #f4f4f4; padding: 2px 5px; border-radius: 3px; }
+    .content pre { background: #f4f4f4; padding: 15px; overflow-x: auto; border-radius: 5px; }
+    .content img { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+    .content .code-snippet__fix {
+        margin: 0 0 1.5em;
+    }
+    .content .code-snippet__fix .code-snippet__line-index {
+        display: none !important;
+    }
+    .meta { color: #666; font-size: 14px; margin-bottom: 14px; }
+    a { color: #006CFF; }
+    @media (max-width: 680px) {
+        body { padding: 16px; }
+        nav a { display: inline-block; margin-right: 12px; margin-bottom: 8px; }
+    }
+</style>
+
+</head>
+<body>
+    <nav>
+  
+  <a href="/en/">Home</a>
+  <a href="/en/post/">Archive</a>
+  <a href="/en/tags/">Tags</a>
+  <a href="/en/post/about/">About</a>
+  <a href="https://download.margrop.net" target="_blank" rel="noopener">Download</a>
+  <a href="/en/post/favorites/">Links</a>
+  <a href="/en/post/github-project-stars/">Github</a>
+  
+</nav>
+
+    
+<div class="language-switcher">
+  
+    <a href="/post/photoprism-init-intel-stuck/" class="">中文</a>
+  
+    <a href="/en/post/photoprism-init-intel-stuck/" class="active">English</a>
+  
+</div>
+
+
+    
+    <article>
+        <h1>PhotoPrism Stuck for 5 Minutes on First Boot? A Postmortem on PHOTOPRISM_INIT=intel</h1>
+        <div class="meta">
+            Published: 2026-06-13
+        </div>
+        
+<div class="tags">
+    
+    <a href="/en/tag/photoprism/"><span class="tag">PhotoPrism</span></a>
+    
+    <a href="/en/tag/docker/"><span class="tag">Docker</span></a>
+    
+    <a href="/en/tag/nas/"><span class="tag">NAS</span></a>
+    
+    <a href="/en/tag/synology/"><span class="tag">Synology</span></a>
+    
+    <a href="/en/tag/s6-overlay/"><span class="tag">s6-overlay</span></a>
+    
+    <a href="/en/tag/intel/"><span class="tag">Intel</span></a>
+    
+    <a href="/en/tag/vaapi/"><span class="tag">VAAPI</span></a>
+    
+    <a href="/en/tag/qsv/"><span class="tag">QSV</span></a>
+    
+    <a href="/en/tag/homelab/"><span class="tag">HomeLab</span></a>
+    
+    <a href="/en/tag/troubleshooting/"><span class="tag">Troubleshooting</span></a>
+    
+    <a href="/en/tag/debugging/"><span class="tag">Debugging</span></a>
+    
+    <a href="/en/tag/containerinit/"><span class="tag">ContainerInit</span></a>
+    
+</div>
+
+
+        <div class="content">
+            <blockquote>
+<p><strong>TL;DR (The Short Version)</strong></p>
+<p>The <code>PHOTOPRISM_INIT: &quot;intel&quot;</code> line in PhotoPrism&rsquo;s Plus Docker image is <strong>not</strong> just a flag to enable Intel hardware acceleration at runtime — it&rsquo;s a one-shot <strong>system-level installer</strong> that runs <code>apt-get dist-upgrade</code> against <code>archive.ubuntu.com</code> and then installs 8 Intel/VA-API packages before the main process is allowed to start. On a fresh container this takes <strong>5–10 minutes</strong> (sometimes more), during which nothing inside the container listens on port <code>2342</code>.</p>
+<p>Meanwhile: <code>docker ps</code> says <code>Up</code>, Portainer is green, <code>ss -ltn</code> on the host shows <code>:2342</code> LISTEN — but your browser gets <code>ERR_CONNECTION_RESET</code> / <code>Connection reset by peer</code>. Because host-side <code>docker-proxy</code> accepts the connection and then tries to forward to a port inside the container that has no listener, the kernel sends back an RST.</p>
+<p><strong>Fix:</strong> just remove or empty that one line. If you already pass <code>/dev/dri/renderD128</code> via <code>devices:</code>, the host&rsquo;s drivers and userland libraries are perfectly usable from the container — there&rsquo;s nothing to &ldquo;install&rdquo; in there.</p>
+</blockquote>
+<p><img alt="PhotoPrism running properly (official screenshot)" src="/post-images/photoprism-init-intel-stuck/official-iphone-people.png"></p>
+<p><em>Cover: this is what PhotoPrism looks like when it actually works. If you see this — you&rsquo;re fine. If you see <code>Connection reset by peer</code> — keep reading.</em></p>
+<hr>
+<h2 id="background-how-a-self-hosted-photoprism-usually-gets-deployed">Background: How a Self-Hosted PhotoPrism Usually Gets Deployed</h2>
+<p>I run a small Synology DSM-based home server. Dozens of containers live there: Portainer, Syncthing, qBittorrent, Jellyfin, <strong>PhotoPrism</strong> and a <strong>photo library read-only view</strong> — all deployed as Portainer stacks.</p>
+<p>Two PhotoPrism instances run side by side:</p>
+<ul>
+<li>The main <code>photoprism</code> instance with admin / write access</li>
+<li>A <code>photoprism-ro</code> instance with a read-only library view that other people on the network can browse</li>
+</ul>
+<p>Both <code>docker-compose.yml</code> files look almost identical. The differentiating line — the one that triggered this whole investigation — was:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-yaml" data-lang="yaml"><span style="display:flex;"><span><span style="color:#f92672">environment</span>:
+</span></span><span style="display:flex;"><span>  <span style="color:#f92672">PHOTOPRISM_INIT</span>: <span style="color:#e6db74">&#34;intel&#34;</span>
+</span></span></code></pre></div><p>The intent was reasonable: I want PhotoPrism to use Intel Quick Sync (QSV) for hardware-accelerated video transcoding, so that watching / indexing large videos doesn&rsquo;t peg the CPU.</p>
+<p>Everything looked fine on paper.</p>
+<hr>
+<h2 id="symptom-container-is-up-but-the-browser-refuses-to-connect">Symptom: Container is &ldquo;Up&rdquo;, but the Browser Refuses to Connect</h2>
+<p>After deploying the stack I checked Portainer:</p>
+<ul>
+<li><code>Status: Up 3 minutes</code> (green / healthy)</li>
+<li>Port mapping: <code>0.0.0.0:2342-&gt;2342/tcp</code></li>
+</ul>
+<p>On the host, <code>ss -ltn</code>:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>LISTEN  0  128  0.0.0.0:2342  0.0.0.0:*  users:((&#34;docker-proxy&#34;,pid=5867,fd=4))
+</span></span><span style="display:flex;"><span>LISTEN  0  128  [::]:2342     [::]:*     users:((&#34;docker-proxy&#34;,pid=5873,fd=4))
+</span></span></code></pre></div><p>Looks great. The port is LISTEN, <code>docker-proxy</code> is happily waiting for connections.</p>
+<p>But when I open <code>http://&lt;NAS&gt;:2342/</code> in a browser, Chrome says <strong>ERR_CONNECTION_RESET</strong>. Safari too. And <code>curl</code>:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>$ curl -v http://&lt;NAS&gt;:2342/
+</span></span><span style="display:flex;"><span>&gt; GET / HTTP/1.1
+</span></span><span style="display:flex;"><span>&gt; Host: &lt;NAS&gt;:2342
+</span></span><span style="display:flex;"><span>&gt; User-Agent: curl/8.7.1
+</span></span><span style="display:flex;"><span>&gt; 
+</span></span><span style="display:flex;"><span>* Request completely sent off
+</span></span><span style="display:flex;"><span>* Recv failure: Connection reset by peer
+</span></span><span style="display:flex;"><span>* Closing connection
+</span></span></code></pre></div><p><code>Connection reset by peer</code>. That&rsquo;s an RST at the TCP layer.</p>
+<p>But Portainer still says the stack is green and healthy.</p>
+<p><strong>So… did the container start, or not?</strong></p>
+<hr>
+<h2 id="analysis-three-different-meanings-of-up">Analysis: Three Different Meanings of &ldquo;Up&rdquo;</h2>
+<p>My first instinct was &ldquo;the container didn&rsquo;t start&rdquo; — so I <code>docker inspect</code>ed it, saw <code>Status=running</code>, and moved on. But that was the wrong conclusion. <strong><code>Up</code> and &ldquo;service available&rdquo; are not the same thing</strong> when the entrypoint uses s6-overlay.</p>
+<p>I went inside the container and ran <code>ps -ef</code>:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>$ docker exec photoprism ps -ef
+</span></span><span style="display:flex;"><span>UID   PID  PPID  C STIME  CMD
+</span></span><span style="display:flex;"><span>root    <span style="color:#ae81ff">1</span>     <span style="color:#ae81ff">0</span>  <span style="color:#ae81ff">0</span> 23:28  /package/admin/s6/command/s6-svscan -d4 -- /run/service
+</span></span><span style="display:flex;"><span>root   <span style="color:#ae81ff">17</span>     <span style="color:#ae81ff">1</span>  <span style="color:#ae81ff">0</span> 23:30  s6-supervise s6-linux-init-shutdownd
+</span></span><span style="display:flex;"><span>root   <span style="color:#ae81ff">18</span>    <span style="color:#ae81ff">17</span>  <span style="color:#ae81ff">0</span> 23:30  /package/admin/s6-linux-init/...shutdownd
+</span></span><span style="display:flex;"><span>root   <span style="color:#ae81ff">28</span>     <span style="color:#ae81ff">1</span>  <span style="color:#ae81ff">0</span> 23:30  s6-supervise s6rc-oneshot-runner
+</span></span><span style="display:flex;"><span>root   <span style="color:#ae81ff">29</span>     <span style="color:#ae81ff">1</span>  <span style="color:#ae81ff">0</span> 23:30  s6-supervise s6rc-fdholder
+</span></span><span style="display:flex;"><span>root   <span style="color:#ae81ff">30</span>     <span style="color:#ae81ff">1</span>  <span style="color:#ae81ff">0</span> 23:30  s6-supervise photoprism
+</span></span><span style="display:flex;"><span>root   <span style="color:#ae81ff">36</span>    <span style="color:#ae81ff">28</span>  <span style="color:#ae81ff">0</span> 23:30  s6-rc-oneshot-run
+</span></span><span style="display:flex;"><span>root   <span style="color:#ae81ff">60</span>    <span style="color:#ae81ff">30</span>  <span style="color:#ae81ff">0</span> 23:30  bash /scripts/cmd.sh /opt/photoprism/bin/photoprism start
+</span></span><span style="display:flex;"><span>root   <span style="color:#ae81ff">63</span>    <span style="color:#ae81ff">60</span>  <span style="color:#ae81ff">0</span> 23:30  bash /scripts/entrypoint-init.sh
+</span></span><span style="display:flex;"><span>root   <span style="color:#ae81ff">65</span>    <span style="color:#ae81ff">63</span>  <span style="color:#ae81ff">0</span> 23:30  make --no-print-directory -C /scripts intel
+</span></span><span style="display:flex;"><span>root  <span style="color:#ae81ff">106</span>    <span style="color:#ae81ff">65</span>  <span style="color:#ae81ff">0</span> 23:31  apt-get -qq dist-upgrade
+</span></span></code></pre></div><p>Notice: <strong>PID 1 is <code>s6-svscan</code> — that is the process docker calls &ldquo;Up&rdquo;</strong>. But the real &ldquo;work&rdquo; is happening deeper down: <code>entrypoint-init.sh</code> → <code>make -C /scripts intel</code> → <code>apt-get -qq dist-upgrade</code>.</p>
+<p>And critically: <strong>the PhotoPrism main process is not running</strong>. It&rsquo;s stuck in <code>s6-supervise photoprism</code>&rsquo;s &ldquo;not yet&rdquo; state — <code>/scripts/cmd.sh</code> is blocked waiting for <code>entrypoint-init.sh</code> to finish before it spawns the real <code>photoprism start</code>.</p>
+<p>Let&rsquo;s also check the listener side:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>$ docker exec photoprism ss -ltn
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># (empty — nothing is listening)</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>$ docker exec photoprism bash -c <span style="color:#e6db74">&#39;for p in 2342 3000; do
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    timeout 1 bash -c &#34;&lt;/dev/tcp/127.0.0.1/$p&#34; &amp;&amp; echo $p OPEN || echo $p CLOSED
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  done&#39;</span>
+</span></span><span style="display:flex;"><span><span style="color:#ae81ff">2342</span> OPEN    <span style="color:#75715e"># this is the in-namespace docker-proxy, not the app</span>
+</span></span><span style="display:flex;"><span><span style="color:#ae81ff">3000</span> CLOSED  <span style="color:#75715e"># the real application port</span>
+</span></span></code></pre></div><p>Truth table:</p>
+<table>
+<thead>
+<tr>
+<th>Where I look</th>
+<th>What I see</th>
+<th>What it really means</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>docker ps</code> (host)</td>
+<td><code>Up 3 minutes</code></td>
+<td>The s6 supervision tree is alive ✅</td>
+</tr>
+<tr>
+<td><code>ss -ltn</code> (host)</td>
+<td><code>0.0.0.0:2342 LISTEN</code></td>
+<td><code>docker-proxy</code> is waiting ✅</td>
+</tr>
+<tr>
+<td><code>curl http://&lt;NAS&gt;:2342/</code></td>
+<td><code>Connection reset by peer</code></td>
+<td>The app isn&rsquo;t running yet, proxy has nothing to forward to ❌</td>
+</tr>
+<tr>
+<td><code>docker exec ... ps -ef</code></td>
+<td>Stuck on <code>apt-get dist-upgrade</code></td>
+<td>The init stage is not done ❌</td>
+</tr>
+<tr>
+<td><code>docker exec ... ss -ltn</code></td>
+<td>Empty</td>
+<td>The app process inside the container hasn&rsquo;t started listening ❌</td>
+</tr>
+</tbody>
+</table>
+<p>Three &ldquo;Up&rdquo; layers, only one of them is the real signal. <strong>Only &ldquo;the app process inside the container is listening&rdquo; actually means the service is up.</strong></p>
+<hr>
+<p><img alt="The exact path s6-overlay gets stuck on with PHOTOPRISM_INIT=intel" src="/post-images/photoprism-init-intel-stuck/01-flow.svg"></p>
+<p><em>Figure 1: PhotoPrism&rsquo;s s6-overlay startup path. <code>s6-svscan</code> is PID 1, but it only <strong>supervises</strong>. The real &ldquo;init&rdquo; is stage 2&rsquo;s <code>s6rc-oneshot-runner</code>, which runs <code>entrypoint-init.sh</code>. <code>PHOTOPRISM_INIT=intel</code> makes that script call <code>make -C /scripts intel</code>, which runs <code>apt-get dist-upgrade</code> + installs 7 GPU packages. The <code>photoprism start</code> main process is blocked behind this — the entire time, nothing on 2342 is listening.</em></p>
+<hr>
+<h2 id="root-cause-photoprism_initintel-is-a-disguised-reinstall-the-os-switch">Root Cause: PHOTOPRISM_INIT=intel Is a Disguised &ldquo;Reinstall the OS&rdquo; Switch</h2>
+<p>To understand why <code>PHOTOPRISM_INIT=intel</code> blocks for so long, we need to look at what the variable really does.</p>
+<p>The <a href="https://docs.photoprism.app/getting-started/config-options/">PhotoPrism official docs</a> describe it in one line:</p>
+<blockquote>
+<p>Run/install on first startup. Common options: <code>update tensorflow https intel gpu davfs yt-dlp</code>.</p>
+</blockquote>
+<p>That&rsquo;s it. One line. It doesn&rsquo;t tell you what <code>intel</code> installs, where it goes, or how long it takes. The truth lives in the <a href="https://github.com/photoprism/photoprism">PhotoPrism Makefile</a> — the <code>intel</code> target expands to:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-makefile" data-lang="makefile"><span style="display:flex;"><span><span style="color:#a6e22e">intel</span><span style="color:#f92672">:</span> update install-intel
+</span></span><span style="display:flex;"><span><span style="color:#a6e22e">update</span><span style="color:#f92672">:</span>
+</span></span><span style="display:flex;"><span>	apt-get update
+</span></span><span style="display:flex;"><span>	apt-get -qq dist-upgrade      <span style="color:#75715e"># ← full system upgrade</span>
+</span></span><span style="display:flex;"><span><span style="color:#a6e22e">install-intel</span><span style="color:#f92672">:</span>
+</span></span><span style="display:flex;"><span>	@echo <span style="color:#e6db74">&#34;Installing Intel GPU Drivers...&#34;</span>
+</span></span><span style="display:flex;"><span>	apt-get -qq install <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>	  intel-opencl-icd <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>	  intel-media-va-driver-non-free <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>	  i965-va-driver-shaders <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>	  mesa-va-drivers <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>	  libmfx-gen1.2 <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>	  va-driver-all <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>	  vainfo <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>	  libva2                       <span style="color:#75715e"># ← 8 packages</span>
+</span></span></code></pre></div><p>And the image&rsquo;s <code>entrypoint-init.sh</code> invokes it like so:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>make --no-print-directory -C /scripts intel
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># expands to:</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># apt-get update</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># apt-get -qq dist-upgrade   (pulls 25MB+ of package indexes, full dist-upgrade)</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># apt-get install 8 intel/va-api packages</span>
+</span></span></code></pre></div><p>And <strong>all of this happens before the photoprism main process is allowed to start</strong>.</p>
+<p>I captured the live log (sanitized):</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>apt-get -qq dist-upgrade
+</span></span><span style="display:flex;"><span>Get:1 http://archive.ubuntu.com/ubuntu plucky InRelease [265 kB]
+</span></span><span style="display:flex;"><span>...
+</span></span><span style="display:flex;"><span>Fetched 25.2 MB in 16s (1571 kB/s)
+</span></span><span style="display:flex;"><span>...
+</span></span><span style="display:flex;"><span>Preparing to unpack .../systemd_257.4-1ubuntu3.2_amd64.deb ...
+</span></span><span style="display:flex;"><span>Preparing to unpack .../util-linux_2.40.2-14ubuntu1.2_amd64.deb ...
+</span></span><span style="display:flex;"><span>Setting up libc6:amd64 (2.41-6ubuntu1.2) ...
+</span></span></code></pre></div><p><code>apt</code> is unpacking <code>systemd</code>, <code>libc6</code>, <code>util-linux</code>, <code>linux-libc-dev</code> — this isn&rsquo;t &ldquo;install an Intel driver&rdquo;, this is <strong>a full OS upgrade of the container</strong>.</p>
+<p>The process state I observed:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>PID   ELAPSED  CMD
+</span></span><span style="display:flex;"><span>106   02:45    apt-get -qq dist-upgrade
+</span></span></code></pre></div><p><strong>2 minutes 45 seconds in, and dpkg is still unpacking.</strong></p>
+<hr>
+<p><img alt="A side-by-side of the three &ldquo;state&rdquo; layers" src="/post-images/photoprism-init-intel-stuck/02-state.svg"></p>
+<p><em>Figure 2: at the same instant, three layers of &ldquo;Up&rdquo; semantics. Portainer&rsquo;s green dot only reflects the outermost — <code>s6-svscan</code> is still alive. To know if the service is actually up, you have to go inside the container and look at <code>ss -ltn</code> and <code>ps -ef</code>.</em></p>
+<hr>
+<h2 id="why-does-curl-get-an-rst">Why Does curl Get an RST?</h2>
+<p>Now an even subtler question: the host&rsquo;s <code>ss -ltn</code> clearly says <code>:2342</code> is LISTEN, so why does curl get RST?</p>
+<p>This is standard <a href="https://docs.docker.com/engine/network/">Docker <code>docker-proxy</code></a> (aka <code>dockerd-proxy</code>) behavior.</p>
+<p>When you <code>docker run -p 2342:2342</code>, docker spawns a <code>docker-proxy</code> process on the host that does this:</p>
+<ol>
+<li>Listens on <code>0.0.0.0:2342</code> (that&rsquo;s the LISTEN you see in <code>ss -ltn</code>)</li>
+<li>Accepts TCP connections</li>
+<li>Forwards each connection to the container&rsquo;s network namespace at <code>127.0.0.1:2342</code></li>
+</ol>
+<p>The key is: <strong>forwarding is per-connection</strong>. Every new connection, <code>docker-proxy</code> does a <code>connect(127.0.0.1:2342)</code> inside the container&rsquo;s NS. If something is listening — the handshake completes, traffic flows. If <strong>nothing is listening</strong> — the kernel returns an RST, <code>docker-proxy</code> receives it, and propagates the RST back to the client.</p>
+<p>And on the host you <strong>cannot distinguish &ldquo;proxy has nothing to forward to&rdquo; from &ldquo;the app is just thinking&rdquo;</strong> — the proxy is always LISTEN. That&rsquo;s exactly what makes this failure so confusing.</p>
+<p>Pseudo-code:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>client        →  SYN   →  docker-proxy
+</span></span><span style="display:flex;"><span>docker-proxy  →  SYN   →  container_NS:2342   # nothing LISTEN here
+</span></span><span style="display:flex;"><span>container_NS  →  RST   →  docker-proxy        # kernel returns RST
+</span></span><span style="display:flex;"><span>docker-proxy  →  RST   →  client              # propagated
+</span></span><span style="display:flex;"><span>client: Connection reset by peer
+</span></span></code></pre></div><p>After the init eventually finishes (8–10 minutes later), the same curl works fine:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>$ curl http://&lt;NAS&gt;:2342/
+</span></span><span style="display:flex;"><span>&lt; HTTP/1.1 307 Temporary Redirect
+</span></span><span style="display:flex;"><span>&lt; Location: /library/login
+</span></span></code></pre></div><p>A normal 307 redirect to the login page. <strong>The PhotoPrism process wasn&rsquo;t broken — it just hadn&rsquo;t started yet, and the host&rsquo;s &ldquo;everything is fine&rdquo; indicators misled me.</strong></p>
+<hr>
+<p><img alt="Same curl, two viewpoints: outside RST, inside stuck on apt" src="/post-images/photoprism-init-intel-stuck/03-curl.svg"></p>
+<p><em>Figure 3: Left: browser/curl from the host gets RST. Right: <code>docker exec photoprism ps -ef</code> shows the truth — the main process is stuck inside <code>apt-get dist-upgrade</code>, the app process hasn&rsquo;t even been spawned yet.</em></p>
+<hr>
+<p><img alt="The 5-minute &ldquo;init stage&rdquo; map: what&rsquo;s happening inside vs. what the outside sees" src="/post-images/photoprism-init-intel-stuck/04-timeline.svg"></p>
+<p><em>Figure 4: typical timing. <code>s6-svscan</code> is up at t=0, <code>docker-proxy :2342</code> is LISTEN immediately — but that&rsquo;s just an empty room with a doorbell. The real <code>apt-get dist-upgrade</code> runs for 60–300 seconds, and the subsequent <code>apt install 8 packages</code> adds another 60–180. On the Plus tag&rsquo;s 250426 image, expect 5 minutes with decent network and 10–15 minutes when the link is slow.</em></p>
+<hr>
+<h2 id="why-does-photoprism_init-exist-at-all">Why Does PHOTOPRISM_INIT Exist At All?</h2>
+<p>Now that we know the behavior, let&rsquo;s look at why this switch is even there.</p>
+<p>When PhotoPrism designed <code>PHOTOPRISM_INIT</code>, the assumed deployment was <strong>&ldquo;the container is a complete little machine&rdquo;</strong> — first boot should pull TensorFlow models, install Intel drivers, install Caddy for HTTPS, install ytdlp, etc. In that world:</p>
+<ul>
+<li>The container has no host device passthrough</li>
+<li>The container has no pre-installed GPU userland tools</li>
+<li>Installing system-level packages makes sense</li>
+</ul>
+<p>But my deployment is the opposite:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-yaml" data-lang="yaml"><span style="display:flex;"><span><span style="color:#f92672">devices</span>:
+</span></span><span style="display:flex;"><span>  - <span style="color:#ae81ff">/dev/dri/renderD128:/dev/dri/renderD128   </span> <span style="color:#75715e"># ← the host&#39;s iGPU is passed through</span>
+</span></span></code></pre></div><p>Which means:</p>
+<ul>
+<li>The container doesn&rsquo;t need <code>intel-opencl-icd</code>, <code>libmfx-gen1.2</code>, <code>va-driver-all</code> — these exist on the host and are exposed via the device</li>
+<li>All the Go code needs is to call QSV through <code>/dev/dri/renderD128</code></li>
+<li>The whole <code>apt dist-upgrade</code> + 8 GPU packages is <strong>pure waste</strong></li>
+</ul>
+<p><strong>The right mental model: install the driver on the layer that knows how to install it.</strong> The host already has the driver; the container just needs to <strong>use</strong> it via the device.</p>
+<hr>
+<h2 id="solutions-three-layers-three-tradeoffs">Solutions: Three Layers, Three Tradeoffs</h2>
+<p>Ordered by least invasive to most:</p>
+<h3 id="-option-1-strongly-recommended-remove-or-empty-photoprism_init">✅ Option 1 (Strongly Recommended): Remove or Empty <code>PHOTOPRISM_INIT</code></h3>
+<p><strong>Edit the stack</strong>:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-yaml" data-lang="yaml"><span style="display:flex;"><span><span style="color:#f92672">services</span>:
+</span></span><span style="display:flex;"><span>  <span style="color:#f92672">photoprism</span>:
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">image</span>: <span style="color:#ae81ff">192.168.103.8</span>:<span style="color:#ae81ff">8082</span><span style="color:#ae81ff">/photoprism/photoprism:250426</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">container_name</span>: <span style="color:#ae81ff">photoprism</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#75715e"># ... everything else stays ...</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">environment</span>:
+</span></span><span style="display:flex;"><span>      <span style="color:#75715e"># PHOTOPRISM_INIT: &#34;intel&#34;     ← delete this line, or set it to &#34;&#34;</span>
+</span></span><span style="display:flex;"><span>      <span style="color:#f92672">PHOTOPRISM_FFMPEG_ENCODER</span>: <span style="color:#e6db74">&#34;intel&#34;</span>
+</span></span><span style="display:flex;"><span>      <span style="color:#75715e"># ... other env vars unchanged ...</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">devices</span>:
+</span></span><span style="display:flex;"><span>      - <span style="color:#ae81ff">/dev/dri/renderD128:/dev/dri/renderD128</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">restart</span>: <span style="color:#ae81ff">always</span>
+</span></span></code></pre></div><p>In Portainer:</p>
+<ol>
+<li>Open the stack&rsquo;s editor view</li>
+<li>Delete the <code>PHOTOPRISM_INIT</code> line (or set it to <code>&quot;&quot;</code>)</li>
+<li>Click <strong>Update the stack</strong>, <strong>do NOT check &ldquo;Re-pull image and redeploy&rdquo;</strong> (we only want to restart the app layer, not re-pull the image)</li>
+<li>Within 30 seconds, <code>2342</code> should return 307</li>
+</ol>
+<p><strong>Why this is the cleanest fix:</strong></p>
+<ul>
+<li>The driver is on the host, the device is passed through, <strong>using it doesn&rsquo;t require installing packages inside the container</strong> — that&rsquo;s the whole point of Linux device passthrough</li>
+<li><code>PHOTOPRISM_FFMPEG_ENCODER: &quot;intel&quot;</code> should <strong>stay</strong> — that line actually tells PhotoPrism which encoder backend to use at runtime, which is a totally different concern from <code>PHOTOPRISM_INIT</code></li>
+<li>Your <code>volumes</code>, the external MySQL database, the <code>/dev/dri/renderD128</code> device — everything stays; users, libraries, indexes are all preserved</li>
+</ul>
+<p>Verified locally on DSM:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>Before: apt still installing, curl gets RST
+</span></span><span style="display:flex;"><span>After:  307 → /library/login within 30 seconds
+</span></span></code></pre></div><h3 id="-option-2-pre-bake-the-init-into-your-own-image">🟡 Option 2: &ldquo;Pre-bake&rdquo; the Init into Your Own Image</h3>
+<p>If you have a hard requirement to keep <code>PHOTOPRISM_INIT=intel</code> (or some other init), you can pre-run the init once and commit a new image:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># 1. Run a one-shot container to let init finish</span>
+</span></span><span style="display:flex;"><span>docker run -d --name pp-init-tmp <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  -e PHOTOPRISM_INIT<span style="color:#f92672">=</span>intel <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  192.168.103.8:8082/photoprism/photoprism:250426
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 2. Wait ~10 minutes, follow logs until init finishes</span>
+</span></span><span style="display:flex;"><span>docker logs -f pp-init-tmp
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># When you see &#34;photoprism: started&#34; or similar, init is done</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 3. Commit a baked image</span>
+</span></span><span style="display:flex;"><span>docker commit pp-init-tmp 192.168.103.8:8082/photoprism/pp-baked:latest
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 4. Clean up</span>
+</span></span><span style="display:flex;"><span>docker rm -f pp-init-tmp
+</span></span></code></pre></div><p>Then point your stack at the baked image and <strong>don&rsquo;t set <code>PHOTOPRISM_INIT</code></strong>. Startup is also ~30 seconds.</p>
+<p>The cost: the image grows by ~200–300 MB (Intel packages + dist-upgraded system). But in the long run, it&rsquo;s cheaper than re-installing on every container start.</p>
+<h3 id="-option-3-skip-dist-upgrade-nope-not-possible">🟢 Option 3: Skip dist-upgrade? Nope, Not Possible</h3>
+<p>You might be tempted to think &ldquo;I just want the intel packages, no dist-upgrade&rdquo;. This <strong>doesn&rsquo;t work</strong> — the Makefile&rsquo;s <code>intel: update install-intel</code> always runs <code>apt-get dist-upgrade</code> first. Unless you fork the image and rewrite the Makefile, there&rsquo;s no clean &ldquo;intel only&rdquo; path.</p>
+<p>I list it here so you know that line of thinking is a dead end.</p>
+<hr>
+<p><img alt="The three fixes, side by side" src="/post-images/photoprism-init-intel-stuck/05-fix.svg"></p>
+<p><em>Figure 5: Option 1 is what 99% of you should use. Option 2 is for the case &ldquo;I really need the Intel codec libs inside the container&rdquo;. Option 3 is a non-starter shown for completeness.</em></p>
+<hr>
+<h2 id="how-do-i-verify-the-fix-actually-worked">How Do I Verify the Fix Actually Worked?</h2>
+<p>Don&rsquo;t judge by &ldquo;how long you waited&rdquo;. The only reliable way to confirm a service is up is:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># 1. Process tree inside the container</span>
+</span></span><span style="display:flex;"><span>docker exec photoprism ps -ef | grep -E <span style="color:#e6db74">&#39;photoprism|entrypoint|apt|make&#39;</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># /opt/photoprism/bin/photoprism start = really up</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># /scripts/entrypoint-init.sh still alive = still stuck</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 2. Listener inside the container</span>
+</span></span><span style="display:flex;"><span>docker exec photoprism ss -ltn | grep <span style="color:#ae81ff">2342</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># or</span>
+</span></span><span style="display:flex;"><span>docker exec photoprism bash -c <span style="color:#e6db74">&#39;&lt;/dev/tcp/127.0.0.1/2342 &amp;&amp; echo OPEN&#39;</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># OPEN = up; empty = stuck</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 3. External curl</span>
+</span></span><span style="display:flex;"><span>curl -I http://&lt;NAS&gt;:2342/
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># expected: HTTP/1.1 307 Temporary Redirect</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e">#           Location: /library/login</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># not expected: Connection reset by peer</span>
+</span></span></code></pre></div><p>The service is truly available only when <strong>all three</strong> say &ldquo;yes&rdquo;.</p>
+<hr>
+<p><img alt="Real PhotoPrism UI after the fix (official screenshot)" src="/post-images/photoprism-init-intel-stuck/official-aperture.jpg"></p>
+<p><em>Figure 6: what the UI actually looks like when PhotoPrism is up. If you can reach this screen, your fix worked.</em></p>
+<hr>
+<h2 id="bonus-other-up-but-not-available-containers">Bonus: Other &ldquo;Up but Not Available&rdquo; Containers</h2>
+<p>This same pattern — &ldquo;s6-overlay init stage hasn&rsquo;t finished, main process never starts&rdquo; — shows up across many other images. Symptoms are similar:</p>
+<table>
+<thead>
+<tr>
+<th>Image</th>
+<th>What init does on first start</th>
+<th>Typical duration</th>
+<th>How to detect</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>PhotoPrism</td>
+<td><code>apt dist-upgrade</code> + GPU packages / TF models</td>
+<td>5–15 min</td>
+<td><code>docker exec ... ps -ef | grep apt</code></td>
+</tr>
+<tr>
+<td>Nextcloud</td>
+<td>install cron, init SQLite</td>
+<td>30s–2 min</td>
+<td>check <code>docker logs</code></td>
+</tr>
+<tr>
+<td>GitLab</td>
+<td>pull / reconfigure Omnibus</td>
+<td>5–10 min</td>
+<td>check <code>gitlab-ctl reconfigure</code> logs</td>
+</tr>
+<tr>
+<td>Home Assistant</td>
+<td><code>pip install</code> integrations</td>
+<td>1–5 min</td>
+<td><code>docker exec ... ps -ef | grep pip</code></td>
+</tr>
+<tr>
+<td>Vaultwarden</td>
+<td>usually 5s</td>
+<td>&lt; 30s</td>
+<td>check 80/3012</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Universal check</strong>:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>docker exec &lt;ctr&gt; ps -ef | grep -E <span style="color:#e6db74">&#39;apt|pip|curl|make|init&#39;</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># If any of those are still running, init isn&#39;t done.</span>
+</span></span></code></pre></div><hr>
+<h2 id="qa">Q&amp;A</h2>
+<h3 id="q1-isnt-photoprism_initintel-supposed-to-be-use-intel-acceleration-why-cant-i-just-keep-it">Q1: Isn&rsquo;t <code>PHOTOPRISM_INIT=intel</code> supposed to be &ldquo;use Intel acceleration&rdquo;? Why can&rsquo;t I just keep it?</h3>
+<p>Yes, <code>PHOTOPRISM_INIT=intel</code> does enable Intel acceleration — but its <strong>implementation</strong> is &ldquo;reinstall the driver + userland libraries inside the container&rdquo;. If you&rsquo;ve already passed <code>/dev/dri/renderD128</code> through <code>devices:</code>, the driver and userland libs are on the <strong>host</strong>, and the container doesn&rsquo;t need them — that&rsquo;s the entire point of Linux device passthrough.</p>
+<p>Worse, the <code>intel</code> target <strong>always</strong> runs <code>apt-get update &amp;&amp; apt-get dist-upgrade</code> first — which is what makes it block for 5–10 minutes, even if you don&rsquo;t care about the Intel packages.</p>
+<h3 id="q2-do-i-keep-photoprism_ffmpeg_encoder-intel">Q2: Do I keep <code>PHOTOPRISM_FFMPEG_ENCODER: &quot;intel&quot;</code>?</h3>
+<p><strong>Yes, keep it.</strong> That line is <strong>runtime configuration</strong> — it tells PhotoPrism &ldquo;use Intel QSV for ffmpeg encoding&rdquo; — which is a completely different concern from <code>PHOTOPRISM_INIT</code>. The former is &ldquo;what to install&rdquo;, the latter is &ldquo;what to use&rdquo;.</p>
+<h3 id="q3-i-use-the-plain-photoprismphotoprismlatest-and-dont-set-photoprism_init--why-is-first-start-still-slow">Q3: I use the plain <code>photoprism/photoprism:latest</code> and don&rsquo;t set <code>PHOTOPRISM_INIT</code> — why is first start still slow?</h3>
+<p>Because PhotoPrism&rsquo;s <a href="https://docs.photoprism.app/getting-started/config-options/">default init</a> is <code>https tensorflow</code>, which pulls TensorFlow models (<strong>hundreds of MB</strong>) and installs Caddy. Expect 2–5 minutes. If you don&rsquo;t want the models, set <code>PHOTOPRISM_DISABLE_TENSORFLOW: &quot;true&quot;</code> (it&rsquo;ll also disable face recognition and image classification).</p>
+<h3 id="q4-does-docker-ps-showing-up-5-minutes-mean-the-service-is-up">Q4: Does <code>docker ps</code> showing <code>Up 5 minutes</code> mean the service is up?</h3>
+<p><strong>No.</strong> <code>Up</code> only means &ldquo;PID 1 inside the container is alive&rdquo;. For PhotoPrism (s6-overlay), PID 1 is <code>s6-svscan</code> — and that <strong>stays alive</strong> even if the main process never starts. <strong>The only reliable signal is &ldquo;the port is listening inside the container&rsquo;s network namespace&rdquo;</strong> — <code>docker exec &lt;ctr&gt; ss -ltn</code>.</p>
+<h3 id="q5-portainer-shows-my-stack-as-green--is-that-normal">Q5: Portainer shows my stack as green — is that normal?</h3>
+<p><strong>Not necessarily.</strong> Portainer&rsquo;s &ldquo;healthy&rdquo; indicator is &ldquo;the container is Running&rdquo; plus (if configured) Docker&rsquo;s own healthcheck. The PhotoPrism image has <strong>no</strong> built-in healthcheck (and you didn&rsquo;t add one), so Portainer&rsquo;s green is the same as <code>Up</code> — the s6 supervision tree is still alive. <strong>Common misconception</strong>.</p>
+<h3 id="q6-can-i-just-docker-exec--kill-the-apt-process">Q6: Can I just <code>docker exec ... kill</code> the apt process?</h3>
+<p><strong>Not recommended.</strong> s6-overlay&rsquo;s stage 2 oneshot runs once; only after it exits does the next service get started. If you manually kill <code>apt</code> or <code>entrypoint-init.sh</code>, s6 might:</p>
+<ul>
+<li>Mark the whole oneshot as failed → photoprism service never starts</li>
+<li>Or just let the next stage proceed → missing packages, photoprism then fails to start</li>
+<li>Behavior is undocumented and depends on the version</li>
+</ul>
+<p>If you really don&rsquo;t want to wait, the safest path is:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>docker compose -f /path/to/your/stack.yml pull
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># after editing</span>
+</span></span><span style="display:flex;"><span>docker compose up -d
+</span></span></code></pre></div><p>But this is <strong>more work</strong> than just deleting the one line in the stack. So: <strong>edit the one line; it&rsquo;s the highest-value-per-keystroke fix</strong>.</p>
+<h3 id="q7-why-does-the-official-docker-compose-template-still-include-photoprism_init-intel">Q7: Why does the official docker-compose template still include <code>PHOTOPRISM_INIT: &quot;intel&quot;</code>?</h3>
+<p>The <a href="https://docs.photoprism.app/getting-started/docker-compose/">PhotoPrism official compose template</a> targets the <strong>broadest</strong> deployment — users on bare Docker Desktop, Synology, unRAID, who <strong>may not</strong> have device passthrough. For them, that line is a helpful safety net: &ldquo;I&rsquo;ll install the drivers for you&rdquo;.</p>
+<p><strong>But</strong> for advanced users who already have device passthrough, it&rsquo;s redundant or actively harmful. <strong>No silver bullet — understanding what each layer of your stack does is more important than copy-pasting a template.</strong></p>
+<hr>
+<h2 id="takeaways">Takeaways</h2>
+<p>The lessons from this debug session:</p>
+<ul>
+<li><strong><code>Up</code> is a weak status word.</strong> It only guarantees PID 1 is alive. Always confirm with <code>ss -ltn</code> <strong>inside the container</strong> to know if a service is truly listening.</li>
+<li><strong>Host-side <code>docker-proxy</code> LISTEN ≠ app is up.</strong> The host LISTEN is just docker-proxy holding the doorbell; if no one inside the container answers, the kernel sends an RST, and you get <code>Connection reset by peer</code>.</li>
+<li><strong>Official templates are not gospel.</strong> <code>PHOTOPRISM_INIT=intel</code> is &ldquo;a friendly safety net&rdquo; in the official context, but it&rsquo;s &ldquo;a system installer&rdquo; in a device-passthrough context. The same line can mean opposite things in different deployments.</li>
+</ul>
+<p>Next time you see &ldquo;Portainer is green, but my browser can&rsquo;t connect&rdquo; — don&rsquo;t restart the container. First <code>docker exec ... ps -ef</code> and see where the main process actually is.</p>
+<hr>
+<p><strong>References</strong>:</p>
+<ul>
+<li><a href="https://docs.photoprism.app/getting-started/config-options/">PhotoPrism docs — environment variables</a></li>
+<li><a href="https://docs.photoprism.app/getting-started/docker-compose/">PhotoPrism docs — Docker Compose deployment</a></li>
+<li><a href="https://github.com/photoprism/photoprism">PhotoPrism GitHub repository</a></li>
+<li><a href="https://github.com/just-containers/s6-overlay">s6-overlay project</a></li>
+<li><a href="https://github.com/moby/moby/tree/master/cmd/proxy">Docker userland-proxy implementation</a></li>
+<li><a href="https://docs.docker.com/engine/network/">Docker networking — published ports</a></li>
+</ul>
+<hr>
+<blockquote>
+<p>All configuration, commands, IPs, and domains in this post have been sanitized before publication; the exact network topology depends on your own environment.</p>
+</blockquote>
+        </div>
+    </article>
+
+    
+  
+
+
+  
+    
+  
+
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk/dist/gitalk.css">
+<script src="https://cdn.jsdelivr.net/npm/gitalk/dist/gitalk.min.js"></script>
+<div id="gitalk-container" style="margin-top:40px"></div>
+<script>
+  (function(){
+    var gitalk = new Gitalk({
+      clientID: '3181fd94e501cc5db0ad',
+      clientSecret: 'af1dab79dae02c69296e6615bfcecf47fc8615ee',
+      repo: 'margropcomment.margrop.io',
+      owner: 'margrop',
+      admin: ["margrop"],
+      
+      id: '\/post\/photoprism-init-intel-stuck\/',
+      
+      distractionFreeMode: false
+    });
+    gitalk.render('gitalk-container');
+  })();
+</script>
+  
+
+
+
+
+    
+    <script type="text/javascript" src="https://js.users.51.la/21044367.js"></script>
+    <script charset="UTF-8" id="LA_COLLECT" src="//sdk.51.la/js-sdk-pro.min.js"></script>
+    <script>LA.init({id: "1vVTUWl7zoRjnKXi",ck: "1vVTUWl7zoRjnKXi"})</script>
+    <script src="https://sdk.51.la/perf/js-sdk-perf.min.js" crossorigin="anonymous"></script>
+    <script>
+      new LingQue.Monitor().init({id:"202teQt8THXwqyve"});
+    </script>
+</body>
+</html>
