@@ -1,0 +1,659 @@
+<!doctype html>
+<html lang="cn"><head>
+<title>NeMo Automodel 接入 Diffusers：不转换权重，如何把图像与视频微调从单卡扩展到多机多卡 - 魔都水滴</title>
+<meta charset="UTF-8">
+<meta name="keywords" content="">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5">
+
+<link rel="shortcut icon" href="/favicon.ico" type="image/x-icon" />
+<meta name="description" content="笔名：小六 &#x2F; 上海 &#x2F; 1995 女 &#x2F; 某互联网公司工程师   一句话结论NVIDIA 与 Hugging Face 在 7 月 17 日发布了一套新的开源集成：NeMo Automodel 可以直接读取 Hugging Face Hub 上符合 Diffusers 格式的图像和视频模型，在不转换 checkpoint、不重写模型的前提下，使用 FSDP2、张量">
+<meta property="og:type" content="article">
+<meta property="og:title" content="NeMo Automodel 接入 Diffusers：不转换权重，如何把图像与视频微调从单卡扩展到多机多卡">
+<meta property="og:url" content="http://blog.margrop.com/post/2026-07-19-nemo-automodel-diffusers-distributed-finetuning/index.html">
+<meta property="og:site_name" content="魔都水滴">
+<meta property="og:description" content="笔名：小六 &#x2F; 上海 &#x2F; 1995 女 &#x2F; 某互联网公司工程师   一句话结论NVIDIA 与 Hugging Face 在 7 月 17 日发布了一套新的开源集成：NeMo Automodel 可以直接读取 Hugging Face Hub 上符合 Diffusers 格式的图像和视频模型，在不转换 checkpoint、不重写模型的前提下，使用 FSDP2、张量">
+<meta property="og:locale">
+<meta property="og:image" content="https://picsum.photos/seed/2026-07-19-nemo-diffusers-scale/1600/900">
+<meta property="article:published_time" content="2026-07-19T13:45:00.000Z">
+<meta property="article:modified_time" content="2026-07-19T13:27:24.900Z">
+<meta property="article:author" content="Margrop">
+<meta property="article:tag" content="AI Tech">
+<meta property="article:tag" content="NeMo Automodel">
+<meta property="article:tag" content="Diffusers">
+<meta property="article:tag" content="扩散模型">
+<meta property="article:tag" content="LoRA">
+<meta property="article:tag" content="FSDP2">
+<meta property="article:tag" content="分布式训练">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:image" content="https://picsum.photos/seed/2026-07-19-nemo-diffusers-scale/1600/900">
+
+<link rel="stylesheet" href="../../lib/fancybox/fancybox.css">
+<link rel="stylesheet" href="../../lib/mdui_043tiny/mdui.css">
+
+
+<link rel="stylesheet" href="../../lib/iconfont/iconfont.css?v=1784467688576">
+
+<link rel="stylesheet" href="../../css/style.css?v=1784467688576">
+
+
+
+
+    
+        <link rel="stylesheet" href="../../custom.css?v=1784467688576">
+    
+
+
+
+<script src="../../lib/mdui_043tiny/mdui.js" async></script>
+<script src="../../lib/fancybox/fancybox.umd.js" async></script>
+<script src="../../lib/lax.min.js" async></script>
+
+
+<script async src="../../js/app.js?v=1784467688577"></script>
+
+ 
+
+<script charset="UTF-8" id="LA_COLLECT" src="//sdk.51.la/js-sdk-pro.min.js"></script>
+<script>LA.init({id:"23bDEwNOu1L8NhV1",ck:"23bDEwNOu1L8NhV1"})</script>
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-4NGHEP8LEV"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+
+  gtag('config', 'G-4NGHEP8LEV');
+</script>
+
+
+<link rel="stylesheet"  href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/atom-one-dark.min.css">
+<meta name="generator" content="Hexo 7.3.0"><link rel="alternate" href="atom.xml" title="魔都水滴" type="application/atom+xml">
+</head><body class="nexmoe mdui-drawer-body-left"><div id="nexmoe-background"><div class="nexmoe-bg" style="background-image: url(/images/background.webp)"></div><div class="mdui-appbar mdui-shadow-0"><div class="mdui-toolbar"><a class="mdui-btn mdui-btn-icon mdui-ripple" mdui-drawer="{target: &#039;#drawer&#039;, swipe: true}" title="menu"><i class="mdui-icon nexmoefont icon-menu"></i></a><div class="mdui-toolbar-spacer"></div><a class="mdui-btn mdui-btn-icon" href="../../index.html" title="Margrop"><img src="/images/avatar.webp" alt="Margrop"></a></div></div></div><div id="nexmoe-header"><div class="nexmoe-drawer mdui-drawer" id="drawer">
+    <div class="nexmoe-avatar mdui-ripple">
+        <a href="../../index.html" title="Margrop">
+            <img src="/images/avatar.webp" alt="Margrop" alt="Margrop">
+        </a>
+    </div>
+    <div class="nexmoe-count">
+        <div><span>Articles</span>350</div>
+        <div><span>Tags</span>552</div>
+        <div><span>Categories</span>7</div>
+    </div>
+    <div class="nexmoe-list mdui-list" mdui-collapse="{accordion: true}">
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" href="../../index.html" title="回到首页">
+            <i class="mdui-list-item-icon nexmoefont icon-home"></i>
+            <div class="mdui-list-item-content">
+                回到首页
+            </div>
+        </a>
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" href="../../post/archives/" title="文章归档">
+            <i class="mdui-list-item-icon nexmoefont icon-container"></i>
+            <div class="mdui-list-item-content">
+                文章归档
+            </div>
+        </a>
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" target="_blank" rel="noopener" href="https://example.com/" title="下载">
+            <i class="mdui-list-item-icon nexmoefont icon-container"></i>
+            <div class="mdui-list-item-content">
+                下载
+            </div>
+        </a>
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" href="../../post/favorites/" title="常用链接">
+            <i class="mdui-list-item-icon nexmoefont icon-unorderedlist"></i>
+            <div class="mdui-list-item-content">
+                常用链接
+            </div>
+        </a>
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" href="../../post/github-project-stars/" title="GithubStars">
+            <i class="mdui-list-item-icon nexmoefont icon-github"></i>
+            <div class="mdui-list-item-content">
+                GithubStars
+            </div>
+        </a>
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" href="../../post/donate/" title="给我赞助">
+            <i class="mdui-list-item-icon nexmoefont icon-coffee"></i>
+            <div class="mdui-list-item-content">
+                给我赞助
+            </div>
+        </a>
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" href="../../post/about/" title="关于博主">
+            <i class="mdui-list-item-icon nexmoefont icon-info-circle"></i>
+            <div class="mdui-list-item-content">
+                关于博主
+            </div>
+        </a>
+        
+    </div>
+    
+    
+        
+        <div class="nexmoe-widget-wrap">
+    <div class="nexmoe-widget nexmoe-search">
+         
+            <form id="search_form" action_e="https://cn.bing.com/search?q=site:example.com" onsubmit="return search();">
+                <label><input id="search_value" name="q" type="search" placeholder="Search"></label>
+            </form>
+         
+    </div>
+</div>
+
+
+
+
+    
+        
+        <div class="nexmoe-widget-wrap">
+	<div class="nexmoe-widget nexmoe-social">
+		<a
+			class="mdui-ripple"
+			href="http://qm.qq.com/cgi-bin/qm/qr?_wv=1027&k=weD8TANNWdCOveAMcdmoAxOKt5owKkDS"
+			target="_blank"
+			mdui-tooltip="{content: 'QQ群'}"
+			style="
+				color: rgb(249, 174, 8);
+				background-color: rgba(249, 174, 8, .1);
+			"
+		>
+			<i
+				class="nexmoefont icon-QQ"
+			></i> </a
+		><a
+			class="mdui-ripple"
+			href="https://github.com/margrop/"
+			target="_blank"
+			mdui-tooltip="{content: 'GitHub'}"
+			style="
+				color: rgb(25, 23, 23);
+				background-color: rgba(25, 23, 23, .1);
+			"
+		>
+			<i
+				class="nexmoefont icon-github"
+			></i> </a
+		><a
+			class="mdui-ripple"
+			href="../../atom.xml"
+			target="_blank"
+			mdui-tooltip="{content: 'RSS'}"
+			style="
+				color: rgb(247, 132, 34);
+				background-color: rgba(247, 132, 34, .1);
+			"
+		>
+			<i
+				class="nexmoefont icon-rss"
+			></i> </a
+		>
+	</div>
+</div>
+
+    
+        
+        
+  <div class="nexmoe-widget-wrap">
+    <h3 class="nexmoe-widget-title">Categories</h3>
+    <div class="nexmoe-widget">
+
+      <ul class="category-list">
+
+        
+
+
+        
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/ai-diary/">ai_diary</a>
+          <span class="category-list-count">100</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/ai-tech/">ai_tech</a>
+          <span class="category-list-count">92</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/develop/">develop</a>
+          <span class="category-list-count">28</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/">network</a>
+          <span class="category-list-count">112</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/notes/">notes</a>
+          <span class="category-list-count">10</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/others/">others</a>
+          <span class="category-list-count">3</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/sport/">sport</a>
+          <span class="category-list-count">4</span>
+        </li>
+
+        
+      </ul>
+
+    </div>
+  </div>
+
+
+    
+        
+        
+  <div class="nexmoe-widget-wrap">
+    <div id="randomtagcloud" class="nexmoe-widget tagcloud nexmoe-rainbow">
+      <a href="../../tags/1password/" style="font-size: 10px;">1password</a> <a href="../../tags/AC/" style="font-size: 10.48px;">AC</a> <a href="../../tags/ACP/" style="font-size: 10px;">ACP</a> <a href="../../tags/AI/" style="font-size: 12.38px;">AI</a> <a href="../../tags/AI-Agent/" style="font-size: 10.95px;">AI Agent</a> <a href="../../tags/AI-Coding-Assistant/" style="font-size: 10px;">AI Coding Assistant</a> <a href="../../tags/AI-Tech/" style="font-size: 13.81px;">AI Tech</a> <a href="../../tags/AI-%E5%AE%89%E5%85%A8/" style="font-size: 10px;">AI 安全</a> <a href="../../tags/AI-%E6%97%A5%E8%AE%B0/" style="font-size: 12.86px;">AI 日记</a> <a href="../../tags/AI%E7%BC%96%E7%A8%8B%E5%8A%A9%E6%89%8B/" style="font-size: 10px;">AI编程助手</a> <a href="../../tags/AI%E8%BE%85%E5%8A%A9/" style="font-size: 10.48px;">AI辅助</a> <a href="../../tags/AI%E8%BE%85%E5%8A%A9%E7%BC%96%E7%A8%8B/" style="font-size: 10.48px;">AI辅助编程</a> <a href="../../tags/AP/" style="font-size: 10.95px;">AP</a> <a href="../../tags/API/" style="font-size: 11.43px;">API</a> <a href="../../tags/ASR/" style="font-size: 10px;">ASR</a> <a href="../../tags/Agent/" style="font-size: 10px;">Agent</a> <a href="../../tags/Agent-%E6%A3%80%E7%B4%A2/" style="font-size: 10px;">Agent 检索</a> <a href="../../tags/AgentPlan/" style="font-size: 10px;">AgentPlan</a> <a href="../../tags/Alertmanager/" style="font-size: 10px;">Alertmanager</a> <a href="../../tags/AppDaemon/" style="font-size: 10px;">AppDaemon</a> <a href="../../tags/Aqara/" style="font-size: 10px;">Aqara</a> <a href="../../tags/Attention/" style="font-size: 10px;">Attention</a> <a href="../../tags/CC-Switch/" style="font-size: 10.48px;">CC-Switch</a> <a href="../../tags/CI-CD/" style="font-size: 10.48px;">CI/CD</a> <a href="../../tags/CLI-Tools/" style="font-size: 10px;">CLI Tools</a> <a href="../../tags/CLI-%E5%B7%A5%E5%85%B7/" style="font-size: 10px;">CLI 工具</a> <a href="../../tags/CLI%E5%B7%A5%E5%85%B7/" style="font-size: 10px;">CLI工具</a> <a href="../../tags/Caddy/" style="font-size: 10px;">Caddy</a> <a href="../../tags/Claude-Code/" style="font-size: 10.48px;">Claude Code</a> <a href="../../tags/Cloudflare/" style="font-size: 10px;">Cloudflare</a> <a href="../../tags/Codex/" style="font-size: 11.9px;">Codex</a> <a href="../../tags/Coding-Plan/" style="font-size: 10.48px;">Coding Plan</a> <a href="../../tags/Cookie-%E8%AE%A4%E8%AF%81/" style="font-size: 10px;">Cookie 认证</a> <a href="../../tags/Cron/" style="font-size: 11.43px;">Cron</a> <a href="../../tags/D1/" style="font-size: 10px;">D1</a> <a href="../../tags/DFIR/" style="font-size: 10px;">DFIR</a> <a href="../../tags/Date/" style="font-size: 10px;">Date</a> <a href="../../tags/Diagrams-net/" style="font-size: 10px;">Diagrams.net</a> <a href="../../tags/Diary/" style="font-size: 10px;">Diary</a> <a href="../../tags/Diffusers/" style="font-size: 10px;">Diffusers</a> <a href="../../tags/Docker/" style="font-size: 15.24px;">Docker</a> <a href="../../tags/Docker-Compose/" style="font-size: 10px;">Docker Compose</a> <a href="../../tags/Efficiency-Tools/" style="font-size: 10px;">Efficiency Tools</a> <a href="../../tags/Electerm/" style="font-size: 10px;">Electerm</a> <a href="../../tags/Embedding/" style="font-size: 10px;">Embedding</a> <a href="../../tags/English/" style="font-size: 10.48px;">English</a> <a href="../../tags/FSDP2/" style="font-size: 10px;">FSDP2</a> <a href="../../tags/FlashAttention/" style="font-size: 10px;">FlashAttention</a> <a href="../../tags/GLM-5-2/" style="font-size: 10px;">GLM 5.2</a> <a href="../../tags/GPT-5-6/" style="font-size: 10px;">GPT-5.6</a> <a href="../../tags/GPT-Red/" style="font-size: 10px;">GPT-Red</a> <a href="../../tags/GPU-%E6%80%A7%E8%83%BD%E5%88%86%E6%9E%90/" style="font-size: 10px;">GPU 性能分析</a> <a href="../../tags/Gateway/" style="font-size: 12.86px;">Gateway</a> <a href="../../tags/Gemini/" style="font-size: 10px;">Gemini</a> <a href="../../tags/Gemini-API/" style="font-size: 10px;">Gemini API</a> <a href="../../tags/Gemini-CLI/" style="font-size: 10.48px;">Gemini CLI</a> <a href="../../tags/GitHub-Actions/" style="font-size: 10.48px;">GitHub Actions</a> <a href="../../tags/Google-AI/" style="font-size: 10px;">Google AI</a> <a href="../../tags/HA/" style="font-size: 10px;">HA</a> <a href="../../tags/HADashboard/" style="font-size: 10px;">HADashboard</a> <a href="../../tags/Hermes/" style="font-size: 10px;">Hermes</a> <a href="../../tags/Hexo/" style="font-size: 10.95px;">Hexo</a> <a href="../../tags/HomeAssistant/" style="font-size: 10px;">HomeAssistant</a> <a href="../../tags/Hugging-Face/" style="font-size: 11.43px;">Hugging Face</a> <a href="../../tags/IP/" style="font-size: 10px;">IP</a> <a href="../../tags/IPv4/" style="font-size: 10px;">IPv4</a> <a href="../../tags/Java/" style="font-size: 11.9px;">Java</a> <a href="../../tags/Kimi-Code/" style="font-size: 10px;">Kimi Code</a> <a href="../../tags/LVM%E2%80%91Thin/" style="font-size: 10.48px;">LVM‑Thin</a> <a href="../../tags/Linux/" style="font-size: 12.38px;">Linux</a> <a href="../../tags/LoRA/" style="font-size: 10px;">LoRA</a> <a href="../../tags/MCP/" style="font-size: 10.95px;">MCP</a> <a href="../../tags/MacOS/" style="font-size: 10.95px;">MacOS</a> <a href="../../tags/Managed-Agents/" style="font-size: 10px;">Managed Agents</a> <a href="../../tags/Markdown/" style="font-size: 10px;">Markdown</a> <a href="../../tags/Microsoft-365-Copilot/" style="font-size: 10px;">Microsoft 365 Copilot</a> <a href="../../tags/MiniMax/" style="font-size: 10px;">MiniMax</a> <a href="../../tags/Multi-Agent/" style="font-size: 10px;">Multi-Agent</a> <a href="../../tags/MySQL/" style="font-size: 10.95px;">MySQL</a> <a href="../../tags/NAS/" style="font-size: 10.95px;">NAS</a> <a href="../../tags/NVIDIA/" style="font-size: 10px;">NVIDIA</a> <a href="../../tags/NeMo-Automodel/" style="font-size: 10px;">NeMo Automodel</a> <a href="../../tags/Nemotron-3-Embed/" style="font-size: 10px;">Nemotron 3 Embed</a> <a href="../../tags/NewAPI/" style="font-size: 10px;">NewAPI</a> <a href="../../tags/Nginx/" style="font-size: 10px;">Nginx</a> <a href="../../tags/Node-RED/" style="font-size: 10.48px;">Node-RED</a> <a href="../../tags/Node-js/" style="font-size: 10.48px;">Node.js</a> <a href="../../tags/OOM/" style="font-size: 10px;">OOM</a> <a href="../../tags/Open-Viking/" style="font-size: 10px;">Open Viking</a> <a href="../../tags/OpenAI/" style="font-size: 10.95px;">OpenAI</a> <a href="../../tags/OpenClaw/" style="font-size: 18.57px;">OpenClaw</a> <a href="../../tags/OpenCode/" style="font-size: 10.48px;">OpenCode</a> <a href="../../tags/OpenResty/" style="font-size: 10px;">OpenResty</a> <a href="../../tags/OpenWrt/" style="font-size: 10.48px;">OpenWrt</a> <a href="../../tags/PPPoE/" style="font-size: 10px;">PPPoE</a> <a href="../../tags/Portainer/" style="font-size: 10px;">Portainer</a> <a href="../../tags/PostgreSQL/" style="font-size: 10px;">PostgreSQL</a> <a href="../../tags/ProcessOn/" style="font-size: 10px;">ProcessOn</a> <a href="../../tags/Prometheus/" style="font-size: 13.33px;">Prometheus</a> <a href="../../tags/Prompt-Injection/" style="font-size: 10px;">Prompt Injection</a> <a href="../../tags/Proxmox-VE/" style="font-size: 15.71px;">Proxmox VE</a> <a href="../../tags/PyTorch/" style="font-size: 10px;">PyTorch</a> <a href="../../tags/RPC/" style="font-size: 10px;">RPC</a> <a href="../../tags/RTEB/" style="font-size: 10px;">RTEB</a> <a href="../../tags/Red-Teaming/" style="font-size: 10px;">Red Teaming</a> <a href="../../tags/SOCKS5/" style="font-size: 10px;">SOCKS5</a> <a href="../../tags/SSL/" style="font-size: 10px;">SSL</a> <a href="../../tags/Session/" style="font-size: 10px;">Session</a> <a href="../../tags/Shell/" style="font-size: 10.48px;">Shell</a> <a href="../../tags/Subagent/" style="font-size: 10px;">Subagent</a> <a href="../../tags/TTS/" style="font-size: 10.48px;">TTS</a> <a href="../../tags/TimeMachine/" style="font-size: 10px;">TimeMachine</a> <a href="../../tags/UML/" style="font-size: 10px;">UML</a> <a href="../../tags/Uptime-Kuma/" style="font-size: 10.48px;">Uptime Kuma</a> <a href="../../tags/VPN/" style="font-size: 10px;">VPN</a> <a href="../../tags/VPS/" style="font-size: 10.95px;">VPS</a> <a href="../../tags/VoiceEQ/" style="font-size: 10px;">VoiceEQ</a> <a href="../../tags/Web/" style="font-size: 10px;">Web</a> <a href="../../tags/WebSocket/" style="font-size: 10.48px;">WebSocket</a> <a href="../../tags/Windows/" style="font-size: 10px;">Windows</a> <a href="../../tags/Workers/" style="font-size: 10px;">Workers</a> <a href="../../tags/activate/" style="font-size: 10.48px;">activate</a> <a href="../../tags/ad/" style="font-size: 10px;">ad</a> <a href="../../tags/adb/" style="font-size: 10px;">adb</a> <a href="../../tags/adblock/" style="font-size: 10.48px;">adblock</a> <a href="../../tags/agent/" style="font-size: 10px;">agent</a> <a href="../../tags/aligenie/" style="font-size: 10px;">aligenie</a> <a href="../../tags/aliyun/" style="font-size: 10.95px;">aliyun</a> <a href="../../tags/alpine/" style="font-size: 10px;">alpine</a> <a href="../../tags/annotation/" style="font-size: 10px;">annotation</a> <a href="../../tags/aop/" style="font-size: 10px;">aop</a> <a href="../../tags/authy/" style="font-size: 10px;">authy</a> <a href="../../tags/autofs/" style="font-size: 10px;">autofs</a> <a href="../../tags/backup/" style="font-size: 10px;">backup</a> <a href="../../tags/baidupan/" style="font-size: 10px;">baidupan</a> <a href="../../tags/bash/" style="font-size: 10.95px;">bash</a> <a href="../../tags/bitwarden/" style="font-size: 10px;">bitwarden</a> <a href="../../tags/boot/" style="font-size: 10.48px;">boot</a> <a href="../../tags/brew/" style="font-size: 10.48px;">brew</a> <a href="../../tags/browser/" style="font-size: 10px;">browser</a> <a href="../../tags/caddy2/" style="font-size: 10.48px;">caddy2</a> <a href="../../tags/cdn/" style="font-size: 10px;">cdn</a> <a href="../../tags/centos/" style="font-size: 14.76px;">centos</a> <a href="../../tags/cert/" style="font-size: 10.48px;">cert</a> <a href="../../tags/certbot/" style="font-size: 10px;">certbot</a> <a href="../../tags/charles/" style="font-size: 10px;">charles</a> <a href="../../tags/chat/" style="font-size: 10px;">chat</a> <a href="../../tags/chrome/" style="font-size: 10.95px;">chrome</a> <a href="../../tags/classloader/" style="font-size: 10px;">classloader</a> <a href="../../tags/client/" style="font-size: 10.95px;">client</a> <a href="../../tags/clone/" style="font-size: 10.48px;">clone</a> <a href="../../tags/closures/" style="font-size: 10px;">closures</a> <a href="../../tags/cloudflare/" style="font-size: 10.48px;">cloudflare</a> <a href="../../tags/cmd/" style="font-size: 10px;">cmd</a> <a href="../../tags/command/" style="font-size: 10px;">command</a> <a href="../../tags/commit/" style="font-size: 10px;">commit</a> <a href="../../tags/container/" style="font-size: 10px;">container</a> <a href="../../tags/crontab/" style="font-size: 10px;">crontab</a> <a href="../../tags/ctyun/" style="font-size: 10.48px;">ctyun</a> <a href="../../tags/ddsm/" style="font-size: 10px;">ddsm</a> <a href="../../tags/demo/" style="font-size: 10px;">demo</a> <a href="../../tags/dependency/" style="font-size: 10px;">dependency</a> <a href="../../tags/deploy/" style="font-size: 10px;">deploy</a> <a href="../../tags/developer/" style="font-size: 10px;">developer</a> <a href="../../tags/devtools/" style="font-size: 10px;">devtools</a> <a href="../../tags/dll/" style="font-size: 10px;">dll</a> <a href="../../tags/dns/" style="font-size: 10.95px;">dns</a> <a href="../../tags/docker/" style="font-size: 13.81px;">docker</a> <a href="../../tags/domain/" style="font-size: 10px;">domain</a> <a href="../../tags/download/" style="font-size: 10px;">download</a> <a href="../../tags/draw/" style="font-size: 10.48px;">draw</a> <a href="../../tags/drawio/" style="font-size: 10px;">drawio</a> <a href="../../tags/dsm/" style="font-size: 13.33px;">dsm</a> <a href="../../tags/dump/" style="font-size: 10px;">dump</a> <a href="../../tags/dylib/" style="font-size: 10px;">dylib</a> <a href="../../tags/edge/" style="font-size: 10.95px;">edge</a> <a href="../../tags/exception/" style="font-size: 10.48px;">exception</a> <a href="../../tags/export/" style="font-size: 10px;">export</a> <a href="../../tags/fail2ban/" style="font-size: 10px;">fail2ban</a> <a href="../../tags/feign/" style="font-size: 10px;">feign</a> <a href="../../tags/firewall-cmd/" style="font-size: 10.48px;">firewall-cmd</a> <a href="../../tags/flow/" style="font-size: 10px;">flow</a> <a href="../../tags/frp/" style="font-size: 10.48px;">frp</a> <a href="../../tags/frpc/" style="font-size: 11.43px;">frpc</a> <a href="../../tags/frps/" style="font-size: 10.48px;">frps</a> <a href="../../tags/fuckgfw/" style="font-size: 11.43px;">fuckgfw</a> <a href="../../tags/function/" style="font-size: 10px;">function</a> <a href="../../tags/gcc/" style="font-size: 10px;">gcc</a> <a href="../../tags/gfw/" style="font-size: 10.48px;">gfw</a> <a href="../../tags/git/" style="font-size: 12.38px;">git</a> <a href="../../tags/github/" style="font-size: 12.86px;">github</a> <a href="../../tags/golang/" style="font-size: 10px;">golang</a> <a href="../../tags/gperftools/" style="font-size: 10px;">gperftools</a> <a href="../../tags/gridea/" style="font-size: 10.48px;">gridea</a> <a href="../../tags/grub/" style="font-size: 10.48px;">grub</a> <a href="../../tags/gvt-g/" style="font-size: 10px;">gvt-g</a> <a href="../../tags/hacs/" style="font-size: 10px;">hacs</a> <a href="../../tags/havcs/" style="font-size: 10.48px;">havcs</a> <a href="../../tags/heap/" style="font-size: 10px;">heap</a> <a href="../../tags/hello/" style="font-size: 10.48px;">hello</a> <a href="../../tags/hexo/" style="font-size: 10.95px;">hexo</a> <a href="../../tags/hibernate/" style="font-size: 10.48px;">hibernate</a> <a href="../../tags/hidpi/" style="font-size: 10px;">hidpi</a> <a href="../../tags/hoisting/" style="font-size: 10px;">hoisting</a> <a href="../../tags/homeassistant/" style="font-size: 11.9px;">homeassistant</a> <a href="../../tags/hosts/" style="font-size: 10px;">hosts</a> <a href="../../tags/html/" style="font-size: 10.48px;">html</a> <a href="../../tags/htmlparser/" style="font-size: 10px;">htmlparser</a> <a href="../../tags/https/" style="font-size: 10.95px;">https</a> <a href="../../tags/iKuai/" style="font-size: 10.48px;">iKuai</a> <a href="../../tags/idea/" style="font-size: 10px;">idea</a> <a href="../../tags/image/" style="font-size: 10px;">image</a> <a href="../../tags/img/" style="font-size: 10.48px;">img</a> <a href="../../tags/img2kvm/" style="font-size: 10px;">img2kvm</a> <a href="../../tags/immortalwrt/" style="font-size: 10px;">immortalwrt</a> <a href="../../tags/import/" style="font-size: 10px;">import</a> <a href="../../tags/index/" style="font-size: 10px;">index</a> <a href="../../tags/install/" style="font-size: 12.38px;">install</a> <a href="../../tags/intel/" style="font-size: 10.48px;">intel</a> <a href="../../tags/io/" style="font-size: 10px;">io</a> <a href="../../tags/ios/" style="font-size: 10px;">ios</a> <a href="../../tags/ip/" style="font-size: 10px;">ip</a> <a href="../../tags/iptables/" style="font-size: 10px;">iptables</a> <a href="../../tags/iptv/" style="font-size: 10.48px;">iptv</a> <a href="../../tags/ipv6/" style="font-size: 10px;">ipv6</a> <a href="../../tags/iso/" style="font-size: 10px;">iso</a> <a href="../../tags/java/" style="font-size: 11.9px;">java</a> <a href="../../tags/javascript/" style="font-size: 10.48px;">javascript</a> <a href="../../tags/jetbrains/" style="font-size: 10px;">jetbrains</a> <a href="../../tags/jni/" style="font-size: 10px;">jni</a> <a href="../../tags/jnilib/" style="font-size: 10px;">jnilib</a> <a href="../../tags/jpa/" style="font-size: 10px;">jpa</a> <a href="../../tags/js/" style="font-size: 10.95px;">js</a> <a href="../../tags/json/" style="font-size: 10.48px;">json</a> <a href="../../tags/jsonb/" style="font-size: 10px;">jsonb</a> <a href="../../tags/jupter/" style="font-size: 10px;">jupter</a> <a href="../../tags/jupyterlab/" style="font-size: 10px;">jupyterlab</a> <a href="../../tags/jvm/" style="font-size: 10.48px;">jvm</a> <a href="../../tags/k8s/" style="font-size: 10.48px;">k8s</a> <a href="../../tags/kernel/" style="font-size: 10px;">kernel</a> <a href="../../tags/key/" style="font-size: 10px;">key</a> <a href="../../tags/kid/" style="font-size: 10px;">kid</a> <a href="../../tags/kms/" style="font-size: 10px;">kms</a> <a href="../../tags/kodi/" style="font-size: 10px;">kodi</a> <a href="../../tags/koolproxy/" style="font-size: 10.48px;">koolproxy</a> <a href="../../tags/koolproxyr/" style="font-size: 10.48px;">koolproxyr</a> <a href="../../tags/kvm/" style="font-size: 10.48px;">kvm</a> <a href="../../tags/lan/" style="font-size: 10px;">lan</a> <a href="../../tags/lastpass/" style="font-size: 10px;">lastpass</a> <a href="../../tags/launchctl/" style="font-size: 10px;">launchctl</a> <a href="../../tags/learning/" style="font-size: 10px;">learning</a> <a href="../../tags/lede/" style="font-size: 10px;">lede</a> <a href="../../tags/letsencrypt/" style="font-size: 10.95px;">letsencrypt</a> <a href="../../tags/linux/" style="font-size: 11.43px;">linux</a> <a href="../../tags/live/" style="font-size: 10px;">live</a> <a href="../../tags/low-code/" style="font-size: 10px;">low-code</a> <a href="../../tags/lvm/" style="font-size: 10px;">lvm</a> <a href="../../tags/lxc/" style="font-size: 10px;">lxc</a> <a href="../../tags/m3u8/" style="font-size: 10px;">m3u8</a> <a href="../../tags/mac/" style="font-size: 10.48px;">mac</a> <a href="../../tags/macos/" style="font-size: 10px;">macos</a> <a href="../../tags/mariadb/" style="font-size: 10px;">mariadb</a> <a href="../../tags/markdown/" style="font-size: 10px;">markdown</a> <a href="../../tags/maven/" style="font-size: 10.48px;">maven</a> <a href="../../tags/md5/" style="font-size: 10.48px;">md5</a> <a href="../../tags/mdadm/" style="font-size: 10px;">mdadm</a> <a href="../../tags/microcode/" style="font-size: 10px;">microcode</a> <a href="../../tags/mirror/" style="font-size: 10.48px;">mirror</a> <a href="../../tags/modem/" style="font-size: 10px;">modem</a> <a href="../../tags/modules/" style="font-size: 10px;">modules</a> <a href="../../tags/monitor/" style="font-size: 10px;">monitor</a> <a href="../../tags/mount/" style="font-size: 10px;">mount</a> <a href="../../tags/mstsc/" style="font-size: 10px;">mstsc</a> <a href="../../tags/mysql/" style="font-size: 10px;">mysql</a> <a href="../../tags/n2n/" style="font-size: 13.33px;">n2n</a> <a href="../../tags/n5105/" style="font-size: 10px;">n5105</a> <a href="../../tags/nas/" style="font-size: 10px;">nas</a> <a href="../../tags/network/" style="font-size: 13.81px;">network</a> <a href="../../tags/nfs/" style="font-size: 10px;">nfs</a> <a href="../../tags/node/" style="font-size: 10.48px;">node</a> <a href="../../tags/node-red/" style="font-size: 10.48px;">node-red</a> <a href="../../tags/nodejs/" style="font-size: 11.43px;">nodejs</a> <a href="../../tags/nohup/" style="font-size: 10.48px;">nohup</a> <a href="../../tags/notepad/" style="font-size: 10px;">notepad++</a> <a href="../../tags/npm/" style="font-size: 12.38px;">npm</a> <a href="../../tags/nssm/" style="font-size: 10.48px;">nssm</a> <a href="../../tags/ntp/" style="font-size: 10px;">ntp</a> <a href="../../tags/oop/" style="font-size: 10px;">oop</a> <a href="../../tags/openfeign/" style="font-size: 10px;">openfeign</a> <a href="../../tags/openssl/" style="font-size: 10.48px;">openssl</a> <a href="../../tags/os/" style="font-size: 10px;">os</a> <a href="../../tags/otp/" style="font-size: 10px;">otp</a> <a href="../../tags/ovz/" style="font-size: 10px;">ovz</a> <a href="../../tags/p14/" style="font-size: 10px;">p14</a> <a href="../../tags/packet-capture/" style="font-size: 10px;">packet capture</a> <a href="../../tags/pat/" style="font-size: 10px;">pat</a> <a href="../../tags/pdf/" style="font-size: 10px;">pdf</a> <a href="../../tags/pem/" style="font-size: 10.48px;">pem</a> <a href="../../tags/perf/" style="font-size: 10px;">perf</a> <a href="../../tags/ping/" style="font-size: 10px;">ping</a> <a href="../../tags/pip/" style="font-size: 10px;">pip</a> <a href="../../tags/plugin/" style="font-size: 10px;">plugin</a> <a href="../../tags/png/" style="font-size: 10px;">png</a> <a href="../../tags/powerbutton/" style="font-size: 10px;">powerbutton</a> <a href="../../tags/print/" style="font-size: 10px;">print</a> <a href="../../tags/pro/" style="font-size: 10px;">pro</a> <a href="../../tags/proxy/" style="font-size: 10.48px;">proxy</a> <a href="../../tags/pve/" style="font-size: 15.71px;">pve</a> <a href="../../tags/pvekclean/" style="font-size: 11.43px;">pvekclean</a> <a href="../../tags/python/" style="font-size: 14.29px;">python</a> <a href="../../tags/qcow2/" style="font-size: 10px;">qcow2</a> <a href="../../tags/qemu/" style="font-size: 10.48px;">qemu</a> <a href="../../tags/qemu-guest-agent/" style="font-size: 10px;">qemu-guest-agent</a> <a href="../../tags/rar/" style="font-size: 10px;">rar</a> <a href="../../tags/reboot/" style="font-size: 10px;">reboot</a> <a href="../../tags/reflog/" style="font-size: 10px;">reflog</a> <a href="../../tags/remote/" style="font-size: 10px;">remote</a> <a href="../../tags/remote-desktop/" style="font-size: 10.48px;">remote desktop</a> <a href="../../tags/renew/" style="font-size: 10px;">renew</a> <a href="../../tags/repo/" style="font-size: 10px;">repo</a> <a href="../../tags/resize/" style="font-size: 10px;">resize</a> <a href="../../tags/retina/" style="font-size: 10px;">retina</a> <a href="../../tags/root/" style="font-size: 10px;">root</a> <a href="../../tags/route/" style="font-size: 10px;">route</a> <a href="../../tags/router/" style="font-size: 10.48px;">router</a> <a href="../../tags/rule/" style="font-size: 10px;">rule</a> <a href="../../tags/rules/" style="font-size: 10px;">rules</a> <a href="../../tags/runtime/" style="font-size: 10px;">runtime</a> <a href="../../tags/safari/" style="font-size: 10px;">safari</a> <a href="../../tags/sata/" style="font-size: 10px;">sata</a> <a href="../../tags/scipy-notebook/" style="font-size: 10px;">scipy-notebook</a> <a href="../../tags/scoping/" style="font-size: 10px;">scoping</a> <a href="../../tags/scp/" style="font-size: 10px;">scp</a> <a href="../../tags/self-play/" style="font-size: 10px;">self-play</a> <a href="../../tags/server/" style="font-size: 10.48px;">server</a> <a href="../../tags/slmgr/" style="font-size: 10px;">slmgr</a> <a href="../../tags/so/" style="font-size: 10px;">so</a> <a href="../../tags/socks/" style="font-size: 10px;">socks</a> <a href="../../tags/source/" style="font-size: 10px;">source</a> <a href="../../tags/spk/" style="font-size: 10px;">spk</a> <a href="../../tags/spring/" style="font-size: 11.43px;">spring</a> <a href="../../tags/springboot/" style="font-size: 12.38px;">springboot</a> <a href="../../tags/springfox/" style="font-size: 10.95px;">springfox</a> <a href="../../tags/ssh/" style="font-size: 11.9px;">ssh</a> <a href="../../tags/ssl/" style="font-size: 10.48px;">ssl</a> <a href="../../tags/stash/" style="font-size: 10px;">stash</a> <a href="../../tags/string/" style="font-size: 10px;">string</a> <a href="../../tags/supernode/" style="font-size: 10.48px;">supernode</a> <a href="../../tags/svg/" style="font-size: 10px;">svg</a> <a href="../../tags/svn/" style="font-size: 10px;">svn</a> <a href="../../tags/swagger/" style="font-size: 11.43px;">swagger</a> <a href="../../tags/sync/" style="font-size: 10px;">sync</a> <a href="../../tags/synology/" style="font-size: 10.48px;">synology</a> <a href="../../tags/systemctl/" style="font-size: 10.95px;">systemctl</a> <a href="../../tags/systemd/" style="font-size: 13.81px;">systemd</a> <a href="../../tags/tap/" style="font-size: 10px;">tap</a> <a href="../../tags/tap-windows/" style="font-size: 10px;">tap-windows</a> <a href="../../tags/tapwindows/" style="font-size: 10px;">tapwindows</a> <a href="../../tags/telecom/" style="font-size: 10.48px;">telecom</a> <a href="../../tags/template/" style="font-size: 10px;">template</a> <a href="../../tags/terminal/" style="font-size: 10px;">terminal</a> <a href="../../tags/tls/" style="font-size: 10px;">tls</a> <a href="../../tags/tmux/" style="font-size: 10.48px;">tmux</a> <a href="../../tags/token/" style="font-size: 10px;">token</a> <a href="../../tags/totp/" style="font-size: 10px;">totp</a> <a href="../../tags/tvbox/" style="font-size: 10.95px;">tvbox</a> <a href="../../tags/txt/" style="font-size: 10px;">txt</a> <a href="../../tags/ubuntu/" style="font-size: 11.9px;">ubuntu</a> <a href="../../tags/udisk/" style="font-size: 10px;">udisk</a> <a href="../../tags/ui/" style="font-size: 10px;">ui</a> <a href="../../tags/undertow/" style="font-size: 10px;">undertow</a> <a href="../../tags/uninstall/" style="font-size: 10px;">uninstall</a> <a href="../../tags/unlocker/" style="font-size: 10px;">unlocker</a> <a href="../../tags/upgrade/" style="font-size: 10.48px;">upgrade</a> <a href="../../tags/url/" style="font-size: 10px;">url</a> <a href="../../tags/v2ray/" style="font-size: 10.48px;">v2ray</a> <a href="../../tags/vLLM/" style="font-size: 10px;">vLLM</a> <a href="../../tags/vhd/" style="font-size: 10px;">vhd</a> <a href="../../tags/vim/" style="font-size: 10px;">vim</a> <a href="../../tags/vlmcsd/" style="font-size: 10px;">vlmcsd</a> <a href="../../tags/vm/" style="font-size: 10.48px;">vm</a> <a href="../../tags/vmdk/" style="font-size: 10px;">vmdk</a> <a href="../../tags/web/" style="font-size: 11.9px;">web</a> <a href="../../tags/websocket/" style="font-size: 10.48px;">websocket</a> <a href="../../tags/wechat/" style="font-size: 10px;">wechat</a> <a href="../../tags/windows/" style="font-size: 11.9px;">windows</a> <a href="../../tags/with/" style="font-size: 10px;">with</a> <a href="../../tags/worker/" style="font-size: 10.48px;">worker</a> <a href="../../tags/wow/" style="font-size: 10px;">wow</a> <a href="../../tags/xiaoya/" style="font-size: 10px;">xiaoya</a> <a href="../../tags/xml/" style="font-size: 10px;">xml</a> <a href="../../tags/yum/" style="font-size: 10px;">yum</a> <a href="../../tags/zip/" style="font-size: 10px;">zip</a> <a href="../../tags/%E4%B8%AD%E5%9B%BD%E7%94%B5%E4%BF%A1/" style="font-size: 10px;">中国电信</a> <a href="../../tags/%E4%BA%91%E7%94%B5%E8%84%91/" style="font-size: 10.48px;">云电脑</a> <a href="../../tags/%E4%BA%A4%E6%8D%A2%E6%9C%BA/" style="font-size: 10px;">交换机</a> <a href="../../tags/%E4%BA%BA%E6%9C%BA%E5%8D%8F%E4%BD%9C/" style="font-size: 10px;">人机协作</a> <a href="../../tags/%E4%BB%A3%E7%90%86/" style="font-size: 10px;">代理</a> <a href="../../tags/%E4%BC%81%E4%B8%9A-AI/" style="font-size: 10px;">企业 AI</a> <a href="../../tags/%E4%BC%98%E5%8C%96/" style="font-size: 10px;">优化</a> <a href="../../tags/%E4%BD%93%E6%A3%80/" style="font-size: 10px;">体检</a> <a href="../../tags/%E5%80%BC%E7%8F%AD/" style="font-size: 10px;">值班</a> <a href="../../tags/%E5%81%A5%E5%BA%B7%E6%A3%80%E6%9F%A5/" style="font-size: 17.14px;">健康检查</a> <a href="../../tags/%E5%85%89%E7%8C%AB/" style="font-size: 10.48px;">光猫</a> <a href="../../tags/%E5%85%AC%E4%BC%97%E5%8F%B7/" style="font-size: 10px;">公众号</a> <a href="../../tags/%E5%85%AC%E7%BD%91IP/" style="font-size: 10px;">公网IP</a> <a href="../../tags/%E5%86%85%E5%AD%98/" style="font-size: 10px;">内存</a> <a href="../../tags/%E5%86%85%E5%AD%98%E4%BC%98%E5%8C%96/" style="font-size: 10px;">内存优化</a> <a href="../../tags/%E5%86%85%E5%AE%B9%E5%8F%91%E5%B8%83/" style="font-size: 10px;">内容发布</a> <a href="../../tags/%E5%86%85%E7%BD%91/" style="font-size: 10.48px;">内网</a> <a href="../../tags/%E5%86%85%E7%BD%91IP/" style="font-size: 10px;">内网IP</a> <a href="../../tags/%E5%86%85%E7%BD%91%E6%B8%97%E9%80%8F/" style="font-size: 10px;">内网渗透</a> <a href="../../tags/%E5%86%99%E4%BD%9C/" style="font-size: 11.43px;">写作</a> <a href="../../tags/%E5%88%86%E5%B8%83%E5%BC%8F%E8%AE%AD%E7%BB%83/" style="font-size: 10px;">分布式训练</a> <a href="../../tags/%E5%8D%87%E7%BA%A7/" style="font-size: 11.43px;">升级</a> <a href="../../tags/%E5%8D%8F%E4%BD%9C/" style="font-size: 10px;">协作</a> <a href="../../tags/%E5%8D%9A%E5%AE%A2/" style="font-size: 10.95px;">博客</a> <a href="../../tags/%E5%8F%8D%E5%90%91%E4%BB%A3%E7%90%86/" style="font-size: 10px;">反向代理</a> <a href="../../tags/%E5%8F%98%E6%9B%B4%E5%AE%A1%E8%AE%A1/" style="font-size: 10px;">变更审计</a> <a href="../../tags/%E5%90%AF%E5%8A%A8/" style="font-size: 10px;">启动</a> <a href="../../tags/%E5%91%8A%E8%AD%A6/" style="font-size: 12.86px;">告警</a> <a href="../../tags/%E5%91%8A%E8%AD%A6%E4%BC%98%E5%8C%96/" style="font-size: 10px;">告警优化</a> <a href="../../tags/%E5%91%A8%E4%B8%80/" style="font-size: 10px;">周一</a> <a href="../../tags/%E5%91%A8%E4%B8%80%E7%84%A6%E8%99%91/" style="font-size: 10px;">周一焦虑</a> <a href="../../tags/%E5%91%A8%E4%BA%94/" style="font-size: 10px;">周五</a> <a href="../../tags/%E5%91%A8%E5%85%AD/" style="font-size: 10px;">周六</a> <a href="../../tags/%E5%91%A8%E6%8A%A5/" style="font-size: 10px;">周报</a> <a href="../../tags/%E5%91%A8%E6%9C%AB/" style="font-size: 10.48px;">周末</a> <a href="../../tags/%E5%A4%8F%E4%BB%A4%E6%97%B6/" style="font-size: 10px;">夏令时</a> <a href="../../tags/%E5%A4%9A%E6%99%BA%E8%83%BD%E4%BD%93/" style="font-size: 10.95px;">多智能体</a> <a href="../../tags/%E5%A4%9A%E8%8A%82%E7%82%B9/" style="font-size: 10px;">多节点</a> <a href="../../tags/%E5%A4%9A%E8%8A%82%E7%82%B9%E7%AE%A1%E7%90%86/" style="font-size: 10px;">多节点管理</a> <a href="../../tags/%E5%A4%A9%E7%8C%AB%E7%B2%BE%E7%81%B5/" style="font-size: 10px;">天猫精灵</a> <a href="../../tags/%E5%A4%A9%E7%BF%BC%E4%BA%91/" style="font-size: 10.48px;">天翼云</a> <a href="../../tags/%E5%AE%89%E5%85%A8/" style="font-size: 16.19px;">安全</a> <a href="../../tags/%E5%AE%89%E5%85%A8%E4%BA%8B%E4%BB%B6/" style="font-size: 10px;">安全事件</a> <a href="../../tags/%E5%AE%89%E8%A3%85/" style="font-size: 10.48px;">安装</a> <a href="../../tags/%E5%AE%9A%E6%97%B6%E4%BB%BB%E5%8A%A1/" style="font-size: 10.95px;">定时任务</a> <a href="../../tags/%E5%AE%B9%E5%99%A8/" style="font-size: 12.86px;">容器</a> <a href="../../tags/%E5%AE%B9%E5%99%A8%E7%BD%91%E7%BB%9C/" style="font-size: 10px;">容器网络</a> <a href="../../tags/%E5%AF%BC%E5%85%A5/" style="font-size: 10px;">导入</a> <a href="../../tags/%E5%B0%8F%E7%B1%B3/" style="font-size: 10px;">小米</a> <a href="../../tags/%E5%B7%A5%E4%BD%9C%E6%84%9F%E6%82%9F/" style="font-size: 10.95px;">工作感悟</a> <a href="../../tags/%E5%B7%A5%E7%A8%8B%E5%AE%9E%E8%B7%B5/" style="font-size: 10px;">工程实践</a> <a href="../../tags/%E5%B8%B8%E7%94%A8%E8%BD%AF%E4%BB%B6/" style="font-size: 10px;">常用软件</a> <a href="../../tags/%E5%B9%BF%E5%91%8A%E5%B1%8F%E8%94%BD/" style="font-size: 10px;">广告屏蔽</a> <a href="../../tags/%E5%BA%8F%E5%88%97%E5%8F%B7/" style="font-size: 10px;">序列号</a> <a href="../../tags/%E5%BA%94%E7%94%A8%E5%B8%82%E5%9C%BA/" style="font-size: 10px;">应用市场</a> <a href="../../tags/%E5%BC%80%E6%94%BE-API/" style="font-size: 10px;">开放 API</a> <a href="../../tags/%E5%BC%80%E6%BA%90%E6%A8%A1%E5%9E%8B/" style="font-size: 10px;">开源模型</a> <a href="../../tags/%E5%BC%82%E5%B8%B8/" style="font-size: 10px;">异常</a> <a href="../../tags/%E5%BC%82%E6%AD%A5%E4%BB%BB%E5%8A%A1/" style="font-size: 10px;">异步任务</a> <a href="../../tags/%E5%BF%83%E6%99%BA%E6%88%90%E9%95%BF/" style="font-size: 10px;">心智成长</a> <a href="../../tags/%E5%BF%83%E8%B7%B3/" style="font-size: 10px;">心跳</a> <a href="../../tags/%E5%BF%83%E8%B7%B3%E6%A3%80%E6%9F%A5/" style="font-size: 10.48px;">心跳检查</a> <a href="../../tags/%E6%80%A7%E8%83%BD%E4%BC%98%E5%8C%96/" style="font-size: 10.48px;">性能优化</a> <a href="../../tags/%E6%84%9F%E6%82%9F/" style="font-size: 10px;">感悟</a> <a href="../../tags/%E6%89%93%E5%B7%A5/" style="font-size: 19.05px;">打工</a> <a href="../../tags/%E6%89%93%E5%B7%A5%E4%BA%BA/" style="font-size: 10.48px;">打工人</a> <a href="../../tags/%E6%89%93%E5%B7%A5%E4%BA%BA%E6%97%A5%E8%AE%B0/" style="font-size: 10px;">打工人日记</a> <a href="../../tags/%E6%89%A9%E6%95%A3%E6%A8%A1%E5%9E%8B/" style="font-size: 10px;">扩散模型</a> <a href="../../tags/%E6%8A%80%E6%9C%AF/" style="font-size: 19.05px;">技术</a> <a href="../../tags/%E6%8A%93%E5%8C%85/" style="font-size: 10px;">抓包</a> <a href="../../tags/%E6%8E%92%E6%9F%A5/" style="font-size: 10px;">排查</a> <a href="../../tags/%E6%8F%8F%E8%BF%B0%E6%96%87%E4%BB%B6/" style="font-size: 10px;">描述文件</a> <a href="../../tags/%E6%95%85%E9%9A%9C/" style="font-size: 10.48px;">故障</a> <a href="../../tags/%E6%95%85%E9%9A%9C%E6%8E%92%E6%9F%A5/" style="font-size: 11.9px;">故障排查</a> <a href="../../tags/%E6%95%88%E7%8E%87/" style="font-size: 10.48px;">效率</a> <a href="../../tags/%E6%95%88%E7%8E%87%E5%B7%A5%E5%85%B7/" style="font-size: 11.43px;">效率工具</a> <a href="../../tags/%E6%95%B0%E6%8D%AE/" style="font-size: 10px;">数据</a> <a href="../../tags/%E6%97%81%E8%B7%AF%E7%94%B1/" style="font-size: 10px;">旁路由</a> <a href="../../tags/%E6%97%A0%E6%9C%8D%E5%8A%A1%E5%99%A8/" style="font-size: 10px;">无服务器</a> <a href="../../tags/%E6%97%A5%E8%AE%B0/" style="font-size: 19.52px;">日记</a> <a href="../../tags/%E6%97%B6%E5%8C%BA/" style="font-size: 10px;">时区</a> <a href="../../tags/%E6%98%BE%E5%8D%A1%E8%99%9A%E6%8B%9F%E5%8C%96/" style="font-size: 10px;">显卡虚拟化</a> <a href="../../tags/%E6%99%BA%E8%83%BD%E4%BD%93%E9%9B%86%E6%88%90/" style="font-size: 10px;">智能体集成</a> <a href="../../tags/%E6%99%BA%E8%83%BD%E5%AE%B6%E5%B1%85/" style="font-size: 10px;">智能家居</a> <a href="../../tags/%E6%99%BA%E8%83%BD%E9%9F%B3%E7%AE%B1/" style="font-size: 10px;">智能音箱</a> <a href="../../tags/%E6%9C%8D%E5%8A%A1%E5%99%A8/" style="font-size: 10px;">服务器</a> <a href="../../tags/%E6%9C%8D%E5%8A%A1%E7%AE%A1%E7%90%86/" style="font-size: 10px;">服务管理</a> <a href="../../tags/%E6%9C%AC%E5%9C%B0%E5%AE%89%E8%A3%85/" style="font-size: 10px;">本地安装</a> <a href="../../tags/%E6%9D%83%E9%99%90%E7%AE%A1%E7%90%86/" style="font-size: 10px;">权限管理</a> <a href="../../tags/%E6%9E%B6%E6%9E%84/" style="font-size: 10px;">架构</a> <a href="../../tags/%E6%A2%AF%E5%AD%90/" style="font-size: 10px;">梯子</a> <a href="../../tags/%E6%A8%A1%E5%9D%97/" style="font-size: 10px;">模块</a> <a href="../../tags/%E6%A8%A1%E5%9E%8B%E6%8E%A8%E7%90%86/" style="font-size: 10px;">模型推理</a> <a href="../../tags/%E6%B5%81%E7%A8%8B/" style="font-size: 10px;">流程</a> <a href="../../tags/%E6%B5%81%E7%A8%8B%E5%9B%BE/" style="font-size: 10px;">流程图</a> <a href="../../tags/%E6%B5%8F%E8%A7%88%E5%99%A8/" style="font-size: 10.48px;">浏览器</a> <a href="../../tags/%E6%BC%AB%E6%B8%B8/" style="font-size: 10px;">漫游</a> <a href="../../tags/%E6%BF%80%E6%B4%BB/" style="font-size: 10px;">激活</a> <a href="../../tags/%E7%81%AB%E5%B1%B1%E5%BC%95%E6%93%8E/" style="font-size: 10px;">火山引擎</a> <a href="../../tags/%E7%81%AB%E7%BB%92/" style="font-size: 10px;">火绒</a> <a href="../../tags/%E7%84%A6%E8%99%91/" style="font-size: 10px;">焦虑</a> <a href="../../tags/%E7%8E%84%E5%AD%A6/" style="font-size: 10px;">玄学</a> <a href="../../tags/%E7%94%9F%E6%B4%BB/" style="font-size: 10px;">生活</a> <a href="../../tags/%E7%94%B5%E4%BF%A1/" style="font-size: 10.48px;">电信</a> <a href="../../tags/%E7%94%BB%E5%9B%BE/" style="font-size: 10px;">画图</a> <a href="../../tags/%E7%9B%91%E6%8E%A7/" style="font-size: 16.67px;">监控</a> <a href="../../tags/%E7%9B%91%E6%8E%A7%E7%B3%BB%E7%BB%9F/" style="font-size: 10px;">监控系统</a> <a href="../../tags/%E7%9B%B4%E6%92%AD%E6%BA%90/" style="font-size: 10px;">直播源</a> <a href="../../tags/%E7%9B%B4%E8%A7%89/" style="font-size: 10px;">直觉</a> <a href="../../tags/%E7%A3%81%E7%9B%98/" style="font-size: 10px;">磁盘</a> <a href="../../tags/%E7%A3%81%E7%9B%98%E6%95%85%E9%9A%9C/" style="font-size: 10px;">磁盘故障</a> <a href="../../tags/%E7%AB%AF%E5%8F%A3/" style="font-size: 10px;">端口</a> <a href="../../tags/%E7%AB%AF%E5%8F%A3%E5%86%B2%E7%AA%81/" style="font-size: 10px;">端口冲突</a> <a href="../../tags/%E7%AB%AF%E5%8F%A3%E6%89%AB%E6%8F%8F/" style="font-size: 10px;">端口扫描</a> <a href="../../tags/%E7%AE%A1%E7%90%86/" style="font-size: 10px;">管理</a> <a href="../../tags/%E7%BB%AD%E6%9C%9F/" style="font-size: 10px;">续期</a> <a href="../../tags/%E7%BD%91%E5%85%B3/" style="font-size: 10px;">网关</a> <a href="../../tags/%E7%BD%91%E7%BB%9C/" style="font-size: 15.24px;">网络</a> <a href="../../tags/%E7%BD%91%E7%BB%9C%E9%A3%8E%E6%9A%B4/" style="font-size: 10px;">网络风暴</a> <a href="../../tags/%E7%BE%A4%E6%99%96/" style="font-size: 10.48px;">群晖</a> <a href="../../tags/%E8%84%9A%E6%9C%AC/" style="font-size: 10px;">脚本</a> <a href="../../tags/%E8%84%9A%E6%9C%AC%E4%BC%98%E5%8C%96/" style="font-size: 10px;">脚本优化</a> <a href="../../tags/%E8%85%BE%E8%AE%AF/" style="font-size: 10px;">腾讯</a> <a href="../../tags/%E8%87%AA%E5%8A%A8%E5%8C%96/" style="font-size: 17.62px;">自动化</a> <a href="../../tags/%E8%87%AA%E5%8A%A8%E5%8C%96%E8%BF%90%E7%BB%B4/" style="font-size: 10px;">自动化运维</a> <a href="../../tags/%E8%87%AA%E5%8A%A8%E6%81%A2%E5%A4%8D/" style="font-size: 10.48px;">自动恢复</a> <a href="../../tags/%E8%87%AA%E5%8A%A8%E6%94%BB%E5%87%BB/" style="font-size: 10px;">自动攻击</a> <a href="../../tags/%E8%99%9A%E6%8B%9F%E6%9C%BA/" style="font-size: 11.9px;">虚拟机</a> <a href="../../tags/%E8%AE%A4%E8%AF%81/" style="font-size: 10.48px;">认证</a> <a href="../../tags/%E8%AF%81%E4%B9%A6/" style="font-size: 10px;">证书</a> <a href="../../tags/%E8%AF%84%E6%B5%8B%E5%9F%BA%E5%87%86/" style="font-size: 10px;">评测基准</a> <a href="../../tags/%E8%AF%AD%E9%9B%80/" style="font-size: 10px;">语雀</a> <a href="../../tags/%E8%AF%AD%E9%9F%B3-AI/" style="font-size: 10px;">语音 AI</a> <a href="../../tags/%E8%B4%A8%E9%87%8F%E6%A3%80%E6%9F%A5/" style="font-size: 10px;">质量检查</a> <a href="../../tags/%E8%B6%85%E6%97%B6/" style="font-size: 10.48px;">超时</a> <a href="../../tags/%E8%B7%AF%E7%94%B1/" style="font-size: 10px;">路由</a> <a href="../../tags/%E8%B7%AF%E7%94%B1%E5%99%A8/" style="font-size: 11.43px;">路由器</a> <a href="../../tags/%E8%BD%AF%E4%BB%B6%E7%AE%A1%E5%AE%B6/" style="font-size: 10px;">软件管家</a> <a href="../../tags/%E8%BD%AF%E8%B7%AF%E7%94%B1/" style="font-size: 10.48px;">软路由</a> <a href="../../tags/%E8%BF%90%E7%BB%B4/" style="font-size: 20px;">运维</a> <a href="../../tags/%E8%BF%90%E7%BB%B4%E6%97%A5%E5%B8%B8/" style="font-size: 10px;">运维日常</a> <a href="../../tags/%E8%BF%90%E7%BB%B4%E7%9B%91%E6%8E%A7/" style="font-size: 10.48px;">运维监控</a> <a href="../../tags/%E8%BF%9E%E6%8E%A5%E4%BF%9D%E6%B4%BB/" style="font-size: 10px;">连接保活</a> <a href="../../tags/%E8%BF%9E%E6%8E%A5%E9%97%AE%E9%A2%98/" style="font-size: 10px;">连接问题</a> <a href="../../tags/%E9%80%9A%E4%BF%A1%E6%9C%BA%E5%88%B6/" style="font-size: 10px;">通信机制</a> <a href="../../tags/%E9%80%9A%E7%9F%A5/" style="font-size: 10px;">通知</a> <a href="../../tags/%E9%83%A8%E7%BD%B2/" style="font-size: 12.38px;">部署</a> <a href="../../tags/%E9%85%8D%E7%BD%AE/" style="font-size: 10.95px;">配置</a> <a href="../../tags/%E9%92%89%E9%92%89/" style="font-size: 10.48px;">钉钉</a> <a href="../../tags/%E9%95%9C%E5%83%8F/" style="font-size: 10.95px;">镜像</a> <a href="../../tags/%E9%95%9C%E5%83%8F%E6%BA%90/" style="font-size: 10px;">镜像源</a> <a href="../../tags/%E9%97%A8%E7%AA%97%E4%BC%A0%E6%84%9F%E5%99%A8/" style="font-size: 10px;">门窗传感器</a> <a href="../../tags/%E9%97%AE%E9%A2%98%E6%8E%92%E6%9F%A5/" style="font-size: 18.1px;">问题排查</a> <a href="../../tags/%E9%98%B2%E7%81%AB%E5%A2%99/" style="font-size: 11.43px;">防火墙</a> <a href="../../tags/%E9%98%BF%E9%87%8C%E4%BA%91/" style="font-size: 11.43px;">阿里云</a> <a href="../../tags/%E9%98%BF%E9%87%8C%E6%BA%90/" style="font-size: 10.48px;">阿里源</a> <a href="../../tags/%E9%9B%86%E5%AE%A2/" style="font-size: 10.48px;">集客</a> <a href="../../tags/%E9%9C%80%E6%B1%82%E5%8F%98%E6%9B%B4/" style="font-size: 10.48px;">需求变更</a> <a href="../../tags/%E9%A3%9E%E4%B9%A6/" style="font-size: 10.48px;">飞书</a>
+    </div>
+    
+      <script>
+        var maxTagcloud = parseInt(17);
+        var tags_length = parseInt(552);
+        var tags_arr = [];
+        for(var i = 0; i < tags_length; i++){
+          tags_arr.push(i);
+        }
+        tags_arr.sort(function (l, r) {
+          return Math.random() > 0.5 ? -1 : 1;
+        });
+        tags_arr = tags_arr.slice(0, maxTagcloud < tags_length ? tags_length - maxTagcloud : 0);
+        for(var tag_i = 0; tag_i < tags_arr.length; tag_i++){
+          document.getElementById("randomtagcloud").children[tags_arr[tag_i]].style.display = 'none';
+        }
+      </script>
+    
+  </div>
+
+    
+        
+        <!-- 一言 -->
+<div class="nexmoe-widget-wrap">
+  <h3 class="nexmoe-widget-title">
+    Hitokoto
+  </h3>
+  <div class="nexmoe-widget">
+    <ul class="hitokoto-box">
+      <li id="hitokoto_text_parent" class="hitokoto-text" hitokotoCategory="">
+        <a href="#" id="hitokoto_text">
+          
+        </a>
+        <a href="#" id="hitokoto_error_text" style="display: none;">
+          
+        </a>
+      </li>
+    </ul>
+  </div>
+</div>
+
+<script>
+  let hitokotoText = document.getElementById('hitokoto_text')
+  let hitokotoErroText = document.getElementById('hitokoto_error_text')
+  let hitokotoCategory = document.getElementById('hitokoto_text_parent').getAttribute('hitokotoCategory')
+  window.addEventListener('load', function () {
+    let url = 'https://v1.hitokoto.cn'
+    if (hitokotoCategory) {
+      url += '?c=' + hitokotoCategory
+    }
+    fetch(url)
+      .then(response => response.json())
+      .then(data => {
+        hitokotoText.innerText = "「 " + data.hitokoto + " 」 from " + data.from
+        hitokotoText.href = 'https://hitokoto.cn/?uuid=' + data.uuid
+      })
+      .catch((reason) => {
+        console.error(11, reason)
+        hitokotoText.style.display = 'none'
+        hitokotoErroText.style.display = 'block'
+      })
+  })
+</script>
+    
+        
+        
+  <div class="nexmoe-widget-wrap">
+    <h3 class="nexmoe-widget-title">Archive</h3>
+    <div class="nexmoe-widget">
+      <ul class="archive-list"><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2026/">2026</a><span class="archive-list-count">194</span></li><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2024/">2024</a><span class="archive-list-count">19</span></li><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2023/">2023</a><span class="archive-list-count">18</span></li><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2022/">2022</a><span class="archive-list-count">4</span></li><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2021/">2021</a><span class="archive-list-count">114</span></li><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2018/">2018</a><span class="archive-list-count">1</span></li></ul>
+    </div>
+  </div>
+
+
+
+    
+        
+        
+  <div class="nexmoe-widget-wrap">
+    <h3 class="nexmoe-widget-title">Recent Posts</h3>
+    <div class="nexmoe-widget">
+      <ul>
+        
+          <li>
+            <a href="../../post/2026-07-19-nemo-automodel-diffusers-distributed-finetuning/">NeMo Automodel 接入 Diffusers：不转换权重，如何把图像与视频微调从单卡扩展到多机多卡</a>
+          </li>
+        
+          <li>
+            <a href="../../post/2026-07-19-five-minute-acl-schedule-audit/">周日傍晚改个“提前5分钟”：9条定时权限规则，让我把小需求做成了一次完整审计</a>
+          </li>
+        
+          <li>
+            <a href="../../post/2026-07-18-wechat-publish-volcengine-restapi-migration/">周六上午给公众号排版、下午把火山方舟用量接口迁到 REST 接口：前后端两个完全不同的活，今天一起收工</a>
+          </li>
+        
+          <li>
+            <a href="../../post/2026-07-18-hf-ai-driven-intrusion-glm52-forensic/">Hugging Face 7 月被 AI Agent 入侵：他们用什么模型把 17000 条攻击日志&#34;几小时&#34;还原完？打工人第一次看到&#34;用 AI 防 AI&#34;全流程</a>
+          </li>
+        
+          <li>
+            <a href="../../post/2026-07-17-nemotron-3-embed-rteb-first/">NVIDIA Nemotron 3 Embed 拿下 RTEB 总榜第一：Agent 检索场景的 Embedding 模型到底卷出了什么</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+
+    
+        
+        <div class="nexmoe-widget-wrap">
+    <div class="nexmoe-widget nexmoe-link">
+		<ul>
+        
+            <li>
+                <a href="https://blog.example.com/" target="_blank" >
+                    <img src="/images/avatar.webp" alt="魔都水滴Blog"></img>
+                    <p>魔都水滴Blog</p>
+                </a>
+            </li>
+        
+		</ul>
+    </div>
+</div>
+<style>
+.nexmoe-widget-wrap .nexmoe-link ul li a {
+    text-align : center;
+}
+.nexmoe-widget-wrap .nexmoe-link ul li a img {
+    max-width : 100%;
+}
+.nexmoe-widget-wrap .nexmoe-link ul li a p {
+    margin: 10px 0;
+}
+</style>
+
+    
+   
+    <div class="nexmoe-copyright">
+        &copy; 2026 Margrop
+        Powered by <a href="http://hexo.io/" target="_blank">Hexo</a>
+        & <a href="https://github.com/theme-nexmoe/hexo-theme-nexmoe" target="_blank">Nexmoe</a>
+        
+    </div>
+</div><!-- .nexmoe-drawer --></div><div id="nexmoe-content"><div class="nexmoe-primary"><div class="nexmoe-post">
+  <article>
+    
+        <div class="nexmoe-post-cover absolute" style="padding-top: 56.25%;"> 
+            <img src="https://picsum.photos/seed/2026-07-19-nemo-diffusers-scale/1600/900" alt="NeMo Automodel 接入 Diffusers：不转换权重，如何把图像与视频微调从单卡扩展到多机多卡" loading="lazy">
+            <h1>NeMo Automodel 接入 Diffusers：不转换权重，如何把图像与视频微调从单卡扩展到多机多卡</h1>
+        </div>
+    
+    
+    <div class="nexmoe-post-meta">
+    <div class="nexmoe-rainbow">
+        <a class="nexmoefont icon-calendar-fill">2026年07月19日</a>
+        
+            <a class="nexmoefont icon-appstore-fill -link" href="../../categories/ai-tech/">ai_tech</a>
+        
+        
+    <a><i class="nexmoefont icon-areachart"></i>约16k字</a>
+    <a><i class="nexmoefont icon-time-circle-fill"></i>预计需要23 分钟</a>
+
+    </div>
+    
+    
+    
+    
+    
+</div>
+
+    <blockquote>
+<p>笔名：小六 &#x2F; 上海 &#x2F; 1995 女 &#x2F; 某互联网公司工程师</p>
+</blockquote>
+<p><img onerror="imgOnError(this);" data-fancybox="gallery" src="https://picsum.photos/seed/2026-07-19-nemo-diffusers-scale/1600/900" alt="NeMo Automodel 与 Diffusers 的分布式微调工作流" data-caption="NeMo Automodel 与 Diffusers 的分布式微调工作流" loading="lazy"></p>
+<h2 id="一句话结论"><a href="#一句话结论" class="headerlink" title="一句话结论"></a>一句话结论</h2><p>NVIDIA 与 Hugging Face 在 7 月 17 日发布了一套新的开源集成：<strong>NeMo Automodel 可以直接读取 Hugging Face Hub 上符合 Diffusers 格式的图像和视频模型，在不转换 checkpoint、不重写模型的前提下，使用 FSDP2、张量并行、上下文并行和流水线并行做分布式微调。</strong></p>
+<p>官方来源：<a target="_blank" rel="noopener" href="https://huggingface.co/blog/nvidia/scale-diffusers-finetuning-nemo-automodel">https://huggingface.co/blog/nvidia/scale-diffusers-finetuning-nemo-automodel</a></p>
+<p>这件事对工程团队的价值，不是“又多了一个训练框架”，而是把过去彼此割裂的两端接起来了：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><code class="hljs text">Diffusers：模型多、接口统一、生态成熟<br>  ↓<br>NeMo Automodel：训练分片、并行策略、多机编排、检查点管理<br>  ↓<br>同一份 Diffusers 权重直接训练<br>  ↓<br>训练结果仍可回到 Diffusers 推理与分享<br></code></pre></td></tr></table></figure>
+
+<p>工程师最值得记住三点：</p>
+<ol>
+<li><strong>模型格式不再成为训练和推理之间的墙</strong>：Hub 上的预训练权重可以直接进入训练，微调后的 checkpoint 也能直接给 <code>DiffusionPipeline</code> 使用；</li>
+<li><strong>扩容主要变成配置选择，而不是模型代码重写</strong>：从单卡 LoRA 到多机全量微调，核心差异集中在 YAML 和启动参数；</li>
+<li><strong>预编码数据是吞吐量的关键</strong>：先缓存 VAE latent 与文本 embedding，避免每个训练 step 重复做相同编码。</li>
+</ol>
+<h2 id="问题现象：Diffusers-推理很顺，训练一扩容就开始“换框架”"><a href="#问题现象：Diffusers-推理很顺，训练一扩容就开始“换框架”" class="headerlink" title="问题现象：Diffusers 推理很顺，训练一扩容就开始“换框架”"></a>问题现象：Diffusers 推理很顺，训练一扩容就开始“换框架”</h2><p>Diffusers 已经是开源扩散模型事实上的统一入口。图像模型、视频模型、LoRA、量化、采样器和 pipeline 基本都能用一套相近的 API 组织起来。</p>
+<p>但到了微调阶段，团队经常遇到这种场面：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br></pre></td><td class="code"><pre><code class="hljs text">阶段 1：单卡实验<br>  ↓ Diffusers 自带训练脚本可以跑<br>  ↓<br>阶段 2：模型变大、数据变多<br>  ↓ 显存不够，开始加梯度累积和 checkpointing<br>  ↓<br>阶段 3：需要 8 卡或多机<br>  ↓ 原脚本没有完整的分片、并行和容错能力<br>  ↓<br>阶段 4：切到另一个训练框架<br>  ↓ checkpoint 格式不一致<br>  ↓ 模型类要重写，推理端还要再转换回来<br></code></pre></td></tr></table></figure>
+
+<p>最终训练代码和推理代码像两套互不认识的亲戚：都说自己用的是同一个模型，见面却要先交换一轮证件。</p>
+<p>官方文章给出的解决思路是：<strong>保留 Diffusers 作为模型和 pipeline 的公共语言，把 NeMo Automodel 放在训练执行层。</strong> Automodel 本身是一个基于 PyTorch DTensor 的开源训练库，当前集成支持 flow-matching 类模型，能够直接调用 Diffusers 模型类加载权重，并使用 Diffusers pipeline 生成结果。</p>
+<p>它目前给出的现成 recipe 覆盖多种图像与视频模型，包括 12B 级图像模型、32B 级图像模型、1.3B 与 14B 视频模型，以及 27B 总参数的 MoE 视频模型。官方明确给出：某款 1.3B 视频模型可以放进单张 40GB A100，而更大模型则可以通过分片和并行策略扩展。</p>
+<h2 id="排查过程一：为什么“不转换-checkpoint”比看起来重要"><a href="#排查过程一：为什么“不转换-checkpoint”比看起来重要" class="headerlink" title="排查过程一：为什么“不转换 checkpoint”比看起来重要"></a>排查过程一：为什么“不转换 checkpoint”比看起来重要</h2><p>传统跨框架训练经常多出一条转换链：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><code class="hljs text">Hub 权重<br>  ↓ 转成训练框架私有格式<br>  ↓ 分布式训练<br>  ↓ 再转成推理框架格式<br>  ↓ 才能给 pipeline、LoRA 工具或量化工具使用<br></code></pre></td></tr></table></figure>
+
+<p>转换不仅浪费时间，还会引入三个风险：</p>
+<ul>
+<li>参数命名映射错误，某些层没有被正确加载；</li>
+<li>精度、分片或权重绑定方式变化，转换前后结果不完全一致；</li>
+<li>新模型上线后，团队必须先维护一套新的转换脚本，才能开始训练。</li>
+</ul>
+<p>NeMo Automodel 这次集成的核心承诺是：预训练权重按 Diffusers 模型 ID 直接加载，训练结果可以直接回到 Diffusers 生态。下游已有的量化、编译、LoRA adapter 和自定义 sampler 仍能继续工作。</p>
+<p>对新模型支持也更轻：通常只需要补一个数据预处理 handler 和模型 adapter，其余 FSDP2、分桶数据加载、checkpoint 和生成流程都复用现有栈。<strong>新模型的接入成本从“重写训练脚本”缩小为“补齐薄适配层”。</strong></p>
+<h2 id="排查过程二：扩容为何能从改代码变成改配置"><a href="#排查过程二：扩容为何能从改代码变成改配置" class="headerlink" title="排查过程二：扩容为何能从改代码变成改配置"></a>排查过程二：扩容为何能从改代码变成改配置</h2><p>Automodel 提供的并行选项包括：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><code class="hljs text">FSDP2              → 参数、梯度与优化器状态分片<br>Tensor Parallel    → 单层计算拆到多张卡<br>Context Parallel   → 长序列 / 大时空 token 的上下文拆分<br>Pipeline Parallel  → 不同层分配到不同设备阶段<br>Expert Parallel    → MoE 专家分布到不同设备<br></code></pre></td></tr></table></figure>
+
+<p>单个项目不需要一次把它们全开。选择策略的原则仍然是先找瓶颈：</p>
+<ul>
+<li>权重和优化器状态放不下，优先 FSDP2；</li>
+<li>单层矩阵计算已经超过单卡能力，再考虑张量并行；</li>
+<li>视频序列或高分辨率图像让上下文过长，考虑上下文并行；</li>
+<li>层数很多且多机通信可控，才考虑流水线并行。</li>
+</ul>
+<p>官方示例里，FLUX.1-dev 的全量微调使用八路 FSDP2，有效 batch size 为 32；同一套 recipe 可以通过命令行覆盖数据路径、分辨率、学习率计划、最大步数和 checkpoint 周期。模型结构不用因为“从一张卡变八张卡”重新写一遍。</p>
+<p>这并不意味着分布式训练从此没有复杂度，而是复杂度被移动到了更适合管理的位置：<strong>配置、拓扑和数据路径。</strong> 这些内容可审计、可版本化，也更容易在不同环境里复现。</p>
+<h2 id="排查过程三：为什么训练前要先做-VAE-latent-与文本向量缓存"><a href="#排查过程三：为什么训练前要先做-VAE-latent-与文本向量缓存" class="headerlink" title="排查过程三：为什么训练前要先做 VAE latent 与文本向量缓存"></a>排查过程三：为什么训练前要先做 VAE latent 与文本向量缓存</h2><p>扩散模型微调的一大隐形浪费，是每个 epoch 都重复做同样的编码：原图通过 VAE 得到 latent，caption 通过文本编码器得到 embedding，然后主模型才开始计算训练目标。</p>
+<p>如果数据集不变，这些结果其实可以先算一次：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><code class="hljs text">原始图片 / 视频 + caption<br>  ↓ 多 GPU 并行预处理<br>VAE latent + 文本 embedding<br>  ↓ 写入缓存并生成分片元数据<br>训练阶段只读取缓存<br>  ↓ 不再每个 step 重复编码<br></code></pre></td></tr></table></figure>
+
+<p>官方用一个 78 张公共领域塔罗牌图像的数据集演示完整流程。预处理后，样本进入匹配纵横比的分辨率 bucket；训练直接读取缓存，并在 200 个 optimizer step 中每 50 步保存一次 checkpoint。生成时只需把现有 generation YAML 指向训练产物。</p>
+<p>这套设计有两个直接收益：</p>
+<ol>
+<li><strong>吞吐更稳定</strong>：训练 step 不再被 VAE 或文本编码器的波动拖慢；</li>
+<li><strong>多分辨率更可控</strong>：通过 bucket 把尺寸接近的样本放在一起，减少 padding 和无效计算。</li>
+</ol>
+<p>但要注意：缓存不是免费的。数据增强如果依赖每轮随机裁剪、随机 caption 或在线变换，预编码会把随机性提前固定。工程上需要在“训练吞吐”和“数据增强多样性”之间做选择。</p>
+<h2 id="性能数据怎么看：不要只盯每秒样本数"><a href="#性能数据怎么看：不要只盯每秒样本数" class="headerlink" title="性能数据怎么看：不要只盯每秒样本数"></a>性能数据怎么看：不要只盯每秒样本数</h2><p>官方性能测试使用一台配备 8 张 H100 80GB、通过 NVLink 互联的服务器，数据来自三个稳定的 10-step 窗口，给出了 step time、吞吐量和每卡峰值显存。</p>
+<p>几个有代表性的数字：</p>
+<table>
+<thead>
+<tr>
+<th>任务</th>
+<th>训练方式</th>
+<th align="right">Step time</th>
+<th align="right">吞吐</th>
+<th align="right">每卡峰值显存</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>FLUX.1-dev 图像全量微调</td>
+<td>FSDP2</td>
+<td align="right">约 0.902 秒</td>
+<td align="right">35.51 images&#x2F;s</td>
+<td align="right">63.88 GiB</td>
+</tr>
+<tr>
+<td>FLUX.1-dev LoRA r64</td>
+<td>DDP</td>
+<td align="right">约 0.894 秒</td>
+<td align="right">53.73 images&#x2F;s</td>
+<td align="right">67.43 GiB</td>
+</tr>
+<tr>
+<td>Wan 2.1 1.3B 视频全量微调</td>
+<td>单步 49 帧样本</td>
+<td align="right">约 0.942 秒</td>
+<td align="right">8.50 clips&#x2F;s</td>
+<td align="right">6.09 GiB</td>
+</tr>
+<tr>
+<td>Wan 2.1 14B 视频全量微调</td>
+<td>激活检查点开启</td>
+<td align="right">约 3.798 秒</td>
+<td align="right">2.107 clips&#x2F;s</td>
+<td align="right">33.35 GiB</td>
+</tr>
+</tbody></table>
+<p>这些数字不能直接当作采购结论，因为它们来自高端互联硬件和特定缓存数据集。但它们说明了两件事：</p>
+<ul>
+<li>统一框架并没有把分布式能力换成明显的执行开销；</li>
+<li>LoRA 的优势不能只看显存，吞吐、全局 batch、通信方式和可训练参数量要一起看。</li>
+</ul>
+<p>尤其是官方表中，某些 LoRA 配置的峰值显存未必低于全量 FSDP2，因为 DDP 会复制更多状态，而 FSDP2 会做分片。<strong>“LoRA 一定最省显存”只在并行策略相同或单卡比较时才成立。</strong></p>
+<h2 id="一键方案：最小化跑通“预编码-→-微调-→-生成”"><a href="#一键方案：最小化跑通“预编码-→-微调-→-生成”" class="headerlink" title="一键方案：最小化跑通“预编码 → 微调 → 生成”"></a>一键方案：最小化跑通“预编码 → 微调 → 生成”</h2><p>下面给出一个脱敏后的执行骨架。它不是通吃所有模型的一键魔法，但能把官方流程压缩为三个清晰阶段：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br></pre></td><td class="code"><pre><code class="hljs bash"><span class="hljs-meta">#!/usr/bin/env bash</span><br><span class="hljs-built_in">set</span> -euo pipefail<br><br>MODEL_ID=<span class="hljs-string">&quot;black-forest-labs/FLUX.1-dev&quot;</span><br>DATASET_ID=<span class="hljs-string">&quot;multimodalart/1920-raider-waite-tarot-public-domain&quot;</span><br>CACHE_DIR=<span class="hljs-string">&quot;/cache/flux_demo&quot;</span><br>OUT_DIR=<span class="hljs-string">&quot;/tmp/flux_demo&quot;</span><br><br><span class="hljs-comment"># 1. 预编码：缓存 VAE latent 与文本 embedding</span><br>uv run --locked --no-default-groups \<br>  --extra diffusion --extra diffusion-media \<br>  python -m tools.diffusion.preprocessing_multiprocess image \<br>  --dataset_name <span class="hljs-string">&quot;<span class="hljs-variable">$DATASET_ID</span>&quot;</span> \<br>  --dataset_media_column image \<br>  --dataset_caption_column caption \<br>  --dataset_streaming \<br>  --max_images 78 \<br>  --output_dir <span class="hljs-string">&quot;<span class="hljs-variable">$CACHE_DIR</span>&quot;</span> \<br>  --processor flux \<br>  --model_name <span class="hljs-string">&quot;<span class="hljs-variable">$MODEL_ID</span>&quot;</span> \<br>  --max_pixels 245760<br><br><span class="hljs-comment"># 2. 八卡微调：直接复用已有 YAML，只覆盖本次运行参数</span><br>torchrun --nproc-per-node=8 \<br>  examples/diffusion/finetune/finetune.py \<br>  -c examples/diffusion/finetune/flux_t2i_flow.yaml \<br>  --data.dataloader.cache_dir <span class="hljs-string">&quot;<span class="hljs-variable">$CACHE_DIR</span>&quot;</span> \<br>  --data.dataloader.base_resolution <span class="hljs-string">&#x27;[384,640]&#x27;</span> \<br>  --step_scheduler.max_steps 200 \<br>  --step_scheduler.ckpt_every_steps 50 \<br>  --checkpoint.checkpoint_dir <span class="hljs-string">&quot;<span class="hljs-variable">$OUT_DIR</span>/checkpoints&quot;</span><br><br><span class="hljs-comment"># 3. 生成：checkpoint 直接交给 Diffusers 风格生成 recipe</span><br>python examples/diffusion/generate/generate.py \<br>  -c examples/diffusion/generate/configs/generate_flux.yaml \<br>  --model.checkpoint <span class="hljs-string">&quot;<span class="hljs-variable">$OUT_DIR</span>/checkpoints/full/epoch_66_step_199&quot;</span> \<br>  --inference.height 640 \<br>  --inference.width 384 \<br>  --inference.prompts <span class="hljs-string">&#x27;[&quot;a vintage card of an astronaut tending a rose garden on Mars&quot;]&#x27;</span> \<br>  --output.output_dir <span class="hljs-string">&quot;<span class="hljs-variable">$OUT_DIR</span>/generations&quot;</span> \<br>  --seed 2026<br></code></pre></td></tr></table></figure>
+
+<p>正式使用前需要确认对应模型 license、显存预算、容器或 CUDA 依赖，以及数据集字段名。对于算力较小的团队，先把全量微调 recipe 换成 LoRA，再从单机开始验证，是更实际的路径。</p>
+<h2 id="Q-A"><a href="#Q-A" class="headerlink" title="Q&amp;A"></a>Q&amp;A</h2><h3 id="Q1：这是否意味着-Diffusers-自带训练脚本没用了？"><a href="#Q1：这是否意味着-Diffusers-自带训练脚本没用了？" class="headerlink" title="Q1：这是否意味着 Diffusers 自带训练脚本没用了？"></a>Q1：这是否意味着 Diffusers 自带训练脚本没用了？</h3><p>不是。单卡实验、小模型 LoRA、快速验证仍然适合直接使用 Diffusers 脚本。NeMo Automodel 的优势主要在大模型、多机多卡、并行策略和生产级 checkpoint 管理。没有扩容需求时，不必为了“框架更高级”增加复杂度。</p>
+<h3 id="Q2：所有-Diffusers-模型都能直接训练吗？"><a href="#Q2：所有-Diffusers-模型都能直接训练吗？" class="headerlink" title="Q2：所有 Diffusers 模型都能直接训练吗？"></a>Q2：所有 Diffusers 模型都能直接训练吗？</h3><p>目前不能。官方明确说明当前主要支持 flow-matching 模型，并为一批图像、视频模型提供现成 recipe。新的 Diffusers 模型通常还需要数据预处理 handler 和模型 adapter。正确说法是“不需要转换权重与重写整套训练”，不是“任何模型零适配”。</p>
+<h3 id="Q3：全量微调和-LoRA-怎么选？"><a href="#Q3：全量微调和-LoRA-怎么选？" class="headerlink" title="Q3：全量微调和 LoRA 怎么选？"></a>Q3：全量微调和 LoRA 怎么选？</h3><p>先看目标。少量风格学习、角色一致性或快速迭代，LoRA 成本低、部署方便；需要更深的领域适配，且有足够数据和算力，再考虑全量微调。还要结合并行策略看显存，不能只凭“LoRA 参数少”判断整体占用。</p>
+<h3 id="Q4：预编码会不会影响训练效果？"><a href="#Q4：预编码会不会影响训练效果？" class="headerlink" title="Q4：预编码会不会影响训练效果？"></a>Q4：预编码会不会影响训练效果？</h3><p>固定 VAE 和文本编码器时，预编码通常不会改变主模型训练目标；但它会限制依赖在线随机变换的数据增强。若训练需要随机裁剪、动态 caption 或多种编码器状态，就要重新设计缓存粒度，或者接受部分在线编码成本。</p>
+<h3 id="Q5：单张-24GB-显卡能不能用？"><a href="#Q5：单张-24GB-显卡能不能用？" class="headerlink" title="Q5：单张 24GB 显卡能不能用？"></a>Q5：单张 24GB 显卡能不能用？</h3><p>能否运行取决于模型规模。1B 级模型配合 LoRA、低分辨率、梯度检查点和较小 batch 有机会；12B 以上模型通常需要更大显存、CPU offload 或多卡。Automodel 提供扩展能力，但不能消除模型本身的内存需求。</p>
+<h3 id="Q6：为什么官方更推荐容器？"><a href="#Q6：为什么官方更推荐容器？" class="headerlink" title="Q6：为什么官方更推荐容器？"></a>Q6：为什么官方更推荐容器？</h3><p>分布式扩散训练依赖 PyTorch、CUDA、通信库和已编译扩展的版本组合。官方容器把这些依赖预先对齐，可减少“代码没错，环境先炸”的时间。需要自定义环境时再用 pip 或源码安装，并把完整版本锁进镜像或 lockfile。</p>
+<h2 id="总结"><a href="#总结" class="headerlink" title="总结"></a>总结</h2><p>NeMo Automodel 接入 Diffusers 的真正意义，是把开源扩散模型的“模型生态”和分布式训练的“工程能力”接成同一条链。</p>
+<p>过去的流程是：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><code class="hljs text">Diffusers 找模型<br>  ↓ 转格式<br>另一个框架做训练<br>  ↓ 再转格式<br>Diffusers 做推理<br></code></pre></td></tr></table></figure>
+
+<p>现在可以变成：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><code class="hljs text">Diffusers 模型 ID<br>  ↓ NeMo Automodel 直接加载<br>配置 FSDP2 / 张量并行 / 上下文并行<br>  ↓ 训练与保存<br>Diffusers pipeline 直接使用<br></code></pre></td></tr></table></figure>
+
+<p>对工程团队来说，最有价值的变化不是少写一次转换命令，而是<strong>训练产物不再脱离原有生态，新模型接入也不必重建整套基础设施。</strong></p>
+<p>但这套方案仍然有边界：当前以 flow-matching 模型为主，分布式拓扑仍需工程经验，预编码会影响动态数据增强，官方性能数字也不能直接照搬到普通 PCIe 服务器。</p>
+<p>我的建议是：先选一个小数据集做 50 到 200 步的闭环测试，核对三件事——checkpoint 能否直接生成、单卡到多卡的 loss 是否一致、缓存与在线编码的样本是否等价。三件都过，再谈多机扩容。</p>
+<p><strong>框架集成最怕“能启动”，训练系统真正要证明的是“能复现、能扩容、能回到推理端”。</strong> 这次 NeMo Automodel 与 Diffusers 的合作，至少把这三件事放进了同一条公开、可检查的工作流里。</p>
+<hr>
+<p><em>参考资料：</em></p>
+<ul>
+<li><em>Hugging Face Blog《Fine-tune video and image models at scale with NVIDIA NeMo Automodel and Diffusers》(2026-07-17) — <a target="_blank" rel="noopener" href="https://huggingface.co/blog/nvidia/scale-diffusers-finetuning-nemo-automodel">https://huggingface.co/blog/nvidia/scale-diffusers-finetuning-nemo-automodel</a></em></li>
+<li><em>NVIDIA NeMo Automodel 开源仓库 — <a target="_blank" rel="noopener" href="https://github.com/NVIDIA-NeMo/Automodel">https://github.com/NVIDIA-NeMo/Automodel</a></em></li>
+<li><em>Hugging Face Diffusers 文档 — <a target="_blank" rel="noopener" href="https://huggingface.co/docs/diffusers/">https://huggingface.co/docs/diffusers/</a></em></li>
+</ul>
+
+    
+  </article>
+
+  
+      
+    <div class="nexmoe-post-copyright">
+        <strong>Author：</strong>Margrop<br>
+        <strong>Link：</strong><a href="http://blog.margrop.com/post/2026-07-19-nemo-automodel-diffusers-distributed-finetuning/" title="http:&#x2F;&#x2F;blog.margrop.com&#x2F;post&#x2F;2026-07-19-nemo-automodel-diffusers-distributed-finetuning&#x2F;" target="_blank" rel="noopener">http:&#x2F;&#x2F;blog.margrop.com&#x2F;post&#x2F;2026-07-19-nemo-automodel-diffusers-distributed-finetuning&#x2F;</a><br>
+        
+            <strong>版权声明：</strong>本文采用 <a href="https://creativecommons.org/licenses/by-nc-sa/3.0/cn/deed.zh" target="_blank">CC BY-NC-SA 3.0 CN</a> 协议进行许可
+
+        
+    </div>
+
+
+  
+  
+  <div class="nexmoe-post-meta nexmoe-rainbow">
+   
+    
+        <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/AI-Tech/" rel="tag">AI Tech</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/Diffusers/" rel="tag">Diffusers</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/FSDP2/" rel="tag">FSDP2</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/LoRA/" rel="tag">LoRA</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/NeMo-Automodel/" rel="tag">NeMo Automodel</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/%E5%88%86%E5%B8%83%E5%BC%8F%E8%AE%AD%E7%BB%83/" rel="tag">分布式训练</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/%E6%89%A9%E6%95%A3%E6%A8%A1%E5%9E%8B/" rel="tag">扩散模型</a>
+    
+</div>
+  
+  
+    <script async src="../../js/copy-codeblock.js?v=1784467684730"></script>
+  
+
+  
+      <div class="nexmoe-post-footer">
+          <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+<script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+<div id="gitalk-container"></div>
+<script>
+  const gitalk = new Gitalk({
+    clientID: 'Ov23lib2oiNKjG5B7I1N',
+    clientSecret: '0a94653f17a7b9630d85b275008da4b38e0259dd',
+    repo: 'margropcomment.margrop.io',      // The repository of store comments,
+    owner: 'margrop',
+    admin: ['margrop'],
+    pagerDirection: 'last',
+    id: window.location.pathname.substring(0, 49), // 使用 pathname 的前49个字符作为 id
+    title: document.title,
+    language: 'zh-CN', // 根据需要设置语言
+    distractionFreeMode: false
+  })
+  gitalk.render('gitalk-container')
+</script>
+
+      </div>
+  
+</div></div><div class="nexmoe-post-right">    <div class="nexmoe-fixed">
+        <div class="nexmoe-tool">
+
+            
+
+            
+            
+            <button class="mdui-fab catalog" style="overflow:unset;">
+                <i class="nexmoefont icon-i-catalog"></i>
+                <div class="nexmoe-toc">
+                    <ol class="toc"><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%B8%80%E5%8F%A5%E8%AF%9D%E7%BB%93%E8%AE%BA"><span class="toc-number">1.</span> <span class="toc-text">一句话结论</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E9%97%AE%E9%A2%98%E7%8E%B0%E8%B1%A1%EF%BC%9ADiffusers-%E6%8E%A8%E7%90%86%E5%BE%88%E9%A1%BA%EF%BC%8C%E8%AE%AD%E7%BB%83%E4%B8%80%E6%89%A9%E5%AE%B9%E5%B0%B1%E5%BC%80%E5%A7%8B%E2%80%9C%E6%8D%A2%E6%A1%86%E6%9E%B6%E2%80%9D"><span class="toc-number">2.</span> <span class="toc-text">问题现象：Diffusers 推理很顺，训练一扩容就开始“换框架”</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E6%8E%92%E6%9F%A5%E8%BF%87%E7%A8%8B%E4%B8%80%EF%BC%9A%E4%B8%BA%E4%BB%80%E4%B9%88%E2%80%9C%E4%B8%8D%E8%BD%AC%E6%8D%A2-checkpoint%E2%80%9D%E6%AF%94%E7%9C%8B%E8%B5%B7%E6%9D%A5%E9%87%8D%E8%A6%81"><span class="toc-number">3.</span> <span class="toc-text">排查过程一：为什么“不转换 checkpoint”比看起来重要</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E6%8E%92%E6%9F%A5%E8%BF%87%E7%A8%8B%E4%BA%8C%EF%BC%9A%E6%89%A9%E5%AE%B9%E4%B8%BA%E4%BD%95%E8%83%BD%E4%BB%8E%E6%94%B9%E4%BB%A3%E7%A0%81%E5%8F%98%E6%88%90%E6%94%B9%E9%85%8D%E7%BD%AE"><span class="toc-number">4.</span> <span class="toc-text">排查过程二：扩容为何能从改代码变成改配置</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E6%8E%92%E6%9F%A5%E8%BF%87%E7%A8%8B%E4%B8%89%EF%BC%9A%E4%B8%BA%E4%BB%80%E4%B9%88%E8%AE%AD%E7%BB%83%E5%89%8D%E8%A6%81%E5%85%88%E5%81%9A-VAE-latent-%E4%B8%8E%E6%96%87%E6%9C%AC%E5%90%91%E9%87%8F%E7%BC%93%E5%AD%98"><span class="toc-number">5.</span> <span class="toc-text">排查过程三：为什么训练前要先做 VAE latent 与文本向量缓存</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E6%80%A7%E8%83%BD%E6%95%B0%E6%8D%AE%E6%80%8E%E4%B9%88%E7%9C%8B%EF%BC%9A%E4%B8%8D%E8%A6%81%E5%8F%AA%E7%9B%AF%E6%AF%8F%E7%A7%92%E6%A0%B7%E6%9C%AC%E6%95%B0"><span class="toc-number">6.</span> <span class="toc-text">性能数据怎么看：不要只盯每秒样本数</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%B8%80%E9%94%AE%E6%96%B9%E6%A1%88%EF%BC%9A%E6%9C%80%E5%B0%8F%E5%8C%96%E8%B7%91%E9%80%9A%E2%80%9C%E9%A2%84%E7%BC%96%E7%A0%81-%E2%86%92-%E5%BE%AE%E8%B0%83-%E2%86%92-%E7%94%9F%E6%88%90%E2%80%9D"><span class="toc-number">7.</span> <span class="toc-text">一键方案：最小化跑通“预编码 → 微调 → 生成”</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#Q-A"><span class="toc-number">8.</span> <span class="toc-text">Q&amp;A</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#Q1%EF%BC%9A%E8%BF%99%E6%98%AF%E5%90%A6%E6%84%8F%E5%91%B3%E7%9D%80-Diffusers-%E8%87%AA%E5%B8%A6%E8%AE%AD%E7%BB%83%E8%84%9A%E6%9C%AC%E6%B2%A1%E7%94%A8%E4%BA%86%EF%BC%9F"><span class="toc-number">8.1.</span> <span class="toc-text">Q1：这是否意味着 Diffusers 自带训练脚本没用了？</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#Q2%EF%BC%9A%E6%89%80%E6%9C%89-Diffusers-%E6%A8%A1%E5%9E%8B%E9%83%BD%E8%83%BD%E7%9B%B4%E6%8E%A5%E8%AE%AD%E7%BB%83%E5%90%97%EF%BC%9F"><span class="toc-number">8.2.</span> <span class="toc-text">Q2：所有 Diffusers 模型都能直接训练吗？</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#Q3%EF%BC%9A%E5%85%A8%E9%87%8F%E5%BE%AE%E8%B0%83%E5%92%8C-LoRA-%E6%80%8E%E4%B9%88%E9%80%89%EF%BC%9F"><span class="toc-number">8.3.</span> <span class="toc-text">Q3：全量微调和 LoRA 怎么选？</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#Q4%EF%BC%9A%E9%A2%84%E7%BC%96%E7%A0%81%E4%BC%9A%E4%B8%8D%E4%BC%9A%E5%BD%B1%E5%93%8D%E8%AE%AD%E7%BB%83%E6%95%88%E6%9E%9C%EF%BC%9F"><span class="toc-number">8.4.</span> <span class="toc-text">Q4：预编码会不会影响训练效果？</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#Q5%EF%BC%9A%E5%8D%95%E5%BC%A0-24GB-%E6%98%BE%E5%8D%A1%E8%83%BD%E4%B8%8D%E8%83%BD%E7%94%A8%EF%BC%9F"><span class="toc-number">8.5.</span> <span class="toc-text">Q5：单张 24GB 显卡能不能用？</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#Q6%EF%BC%9A%E4%B8%BA%E4%BB%80%E4%B9%88%E5%AE%98%E6%96%B9%E6%9B%B4%E6%8E%A8%E8%8D%90%E5%AE%B9%E5%99%A8%EF%BC%9F"><span class="toc-number">8.6.</span> <span class="toc-text">Q6：为什么官方更推荐容器？</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E6%80%BB%E7%BB%93"><span class="toc-number">9.</span> <span class="toc-text">总结</span></a></li></ol>
+                </div>
+            </button>
+            
+
+            
+
+            <a href="#nexmoe-content" class="backtop toc-link" aria-label="Back To Top" title="top"><button class="mdui-fab mdui-ripple"><i class="nexmoefont icon-caret-top"></i></button></a>
+        </div>
+    </div>
+</div></div><div id="nexmoe-footer"><!--!--></div><div id="nexmoe-search-space"><div class="search-container"><div class="search-header"><div class="search-input-container"><input class="search-input" type="text" placeholder="Search" onInput="sinput();"></div><a class="search-close" onclick="sclose();">×</a></div><div class="search-body"></div></div></div><div><script src="https://cdn.jsdelivr.net/npm/mathjax@latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+<script>MathJax.Hub.Config({
+    tex2jax: {
+        inlineMath: [ ['$','$'], ["\\(","\\)"] ],
+        processEscapes: true,
+        skipTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code']
+    }
+});
+MathJax.Hub.Queue(function() {
+    var all = MathJax.Hub.getAllJax(), i;
+    for(i=0; i < all.length; i += 1) {
+        all[i].SourceElement().parentNode.className += ' has-jax';
+    }
+});</script>
+</div></body></html>
