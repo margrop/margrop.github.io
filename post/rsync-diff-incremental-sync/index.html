@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>别再盲目执行 rsync！我用 Dry Run 揪出差异文件，再安全完成增量同步 - 魔都水滴</title>
+<meta name="description" content="先说结论 rsync 最值得养成的习惯，不是背更多参数，而是把同步拆成两步：先用 --dry-run 生成差异计划，确认无误后再执行正式同步。如果还会删除目标端文件，则必须把删除能力单独授权，不能让 --delete 悄悄成为默认动作。 文首那段 rsync -n -avz --delete …">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://blog.margrop.net/post/rsync-diff-incremental-sync/">
+
+<meta property="og:site_name" content="魔都水滴">
+<meta property="og:title" content="别再盲目执行 rsync！我用 Dry Run 揪出差异文件，再安全完成增量同步 - 魔都水滴">
+<meta property="og:description" content="先说结论 rsync 最值得养成的习惯，不是背更多参数，而是把同步拆成两步：先用 --dry-run 生成差异计划，确认无误后再执行正式同步。如果还会删除目标端文件，则必须把删除能力单独授权，不能让 --delete 悄悄成为默认动作。 文首那段 rsync -n -avz --delete …">
+<meta property="og:url" content="https://blog.margrop.net/post/rsync-diff-incremental-sync/">
+<meta property="og:locale" content="zh_CN"><meta property="og:type" content="article"><meta property="og:locale:alternate" content="en_US"><meta property="og:image" content="https://blog.margrop.net/images/avatar.png"><meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="别再盲目执行 rsync！我用 Dry Run 揪出差异文件，再安全完成增量同步 - 魔都水滴">
+<meta name="twitter:description" content="先说结论 rsync 最值得养成的习惯，不是背更多参数，而是把同步拆成两步：先用 --dry-run 生成差异计划，确认无误后再执行正式同步。如果还会删除目标端文件，则必须把删除能力单独授权，不能让 --delete 悄悄成为默认动作。 文首那段 rsync -n -avz --delete …"><meta name="twitter:image" content="https://blog.margrop.net/images/avatar.png"><link rel="alternate" hreflang="zh-CN" href="https://blog.margrop.net/post/rsync-diff-incremental-sync/"><link rel="alternate" hreflang="en-US" href="https://blog.margrop.net/en/post/rsync-diff-incremental-sync/"><link rel="alternate" hreflang="x-default" href="https://blog.margrop.net/"><meta property="article:published_time" content="2026-07-11T13:30:00&#43;08:00">
+<meta property="article:modified_time" content="2026-07-11T13:30:00&#43;08:00"><meta property="article:tag" content="rsync"><meta property="article:tag" content="Linux"><meta property="article:tag" content="macOS"><meta property="article:tag" content="Windows 11"><meta property="article:tag" content="WSL"><meta property="article:tag" content="增量同步"><meta property="article:tag" content="文件备份"><meta property="article:tag" content="自动化"><meta property="article:tag" content="Agent"><script type="application/ld+json">{"@context":"https://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"魔都水滴"},"dateModified":"2026-07-11T13:30:00+08:00","datePublished":"2026-07-11T13:30:00+08:00","description":"先说结论 rsync 最值得养成的习惯，不是背更多参数，而是把同步拆成两步：先用 --dry-run 生成差异计划，确认无误后再执行正式同步。如果还会删除目标端文件，则必须把删除能力单独授权，不能让 --delete 悄悄成为默认动作。 文首那段 rsync -n -avz --delete …","headline":"别再盲目执行 rsync！我用 Dry Run 揪出差异文件，再安全完成增量同步","mainEntityOfPage":"https://blog.margrop.net/post/rsync-diff-incremental-sync/","url":"https://blog.margrop.net/post/rsync-diff-incremental-sync/"}</script>
+    <meta name="baidu-site-verification" content="code-sVFZ8SER59" />
+
+    
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-3J2W592DHJ"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-3J2W592DHJ');
+    </script>
+
+    <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 860px; margin: 0 auto; padding: 20px; line-height: 1.7; color: #222; }
+    h1 { border-bottom: 2px solid #333; padding-bottom: 10px; }
+    .post-list { list-style: none; padding: 0; }
+    .post-list li { margin: 15px 0; }
+    .post-list a { text-decoration: none; color: #333; font-size: 18px; }
+    .post-list a:hover { color: #006CFF; }
+    .date { color: #666; font-size: 14px; margin-right: 10px; }
+    .tags { margin-top: 8px; }
+    .tag { background: #eee; padding: 2px 8px; border-radius: 3px; font-size: 12px; margin-right: 5px; display: inline-block; }
+    nav { margin-bottom: 18px; border-bottom: 1px solid #eee; padding-bottom: 15px; }
+    nav a { margin-right: 20px; text-decoration: none; color: #333; font-size: 16px; }
+    nav a:hover { color: #006CFF; }
+    .language-switcher { margin: -8px 0 26px; }
+    .language-switcher a { display: inline-block; margin-right: 10px; padding: 4px 10px; border: 1px solid #ddd; border-radius: 999px; color: #555; text-decoration: none; font-size: 14px; }
+    .language-switcher a.active { background: #006CFF; border-color: #006CFF; color: #fff; }
+    .content { line-height: 1.8; }
+    .content code { background: #f4f4f4; padding: 2px 5px; border-radius: 3px; }
+    .content pre { background: #f4f4f4; padding: 15px; overflow-x: auto; border-radius: 5px; }
+    .content img { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+    .content .code-snippet__fix {
+        margin: 0 0 1.5em;
+    }
+    .content .code-snippet__fix .code-snippet__line-index {
+        display: none !important;
+    }
+    .meta { color: #666; font-size: 14px; margin-bottom: 14px; }
+    a { color: #006CFF; }
+    @media (max-width: 680px) {
+        body { padding: 16px; }
+        nav a { display: inline-block; margin-right: 12px; margin-bottom: 8px; }
+    }
+</style>
+
+</head>
+<body>
+    <nav>
+  
+  <a href="/">首页</a>
+  <a href="/post/">归档</a>
+  <a href="/tags/">标签</a>
+  <a href="/post/about/">关于</a>
+  <a href="https://download.margrop.net" target="_blank" rel="noopener">下载</a>
+  <a href="/post/favorites/">Link</a>
+  <a href="/post/github-project-stars/">Github</a>
+  
+  <a href="https://github-mirrors.margrop.net" target="_blank" rel="noopener">Github加速</a>
+  <a href="https://status.anye.xyz/" target="_blank" rel="noopener">Docker加速</a>
+  
+</nav>
+
+    
+<div class="language-switcher">
+  
+    <a href="/post/rsync-diff-incremental-sync/" class="active">中文</a>
+  
+    <a href="/en/post/rsync-diff-incremental-sync/" class="">English</a>
+  
+</div>
+
+
+    
+    <article>
+        <h1>别再盲目执行 rsync！我用 Dry Run 揪出差异文件，再安全完成增量同步</h1>
+        <div class="meta">
+            发布时间: 2026-07-11
+        </div>
+        
+<div class="tags">
+    
+    <a href="/tag/rsync/"><span class="tag">rsync</span></a>
+    
+    <a href="/tag/linux/"><span class="tag">Linux</span></a>
+    
+    <a href="/tag/macos/"><span class="tag">macOS</span></a>
+    
+    <a href="/tag/windows-11/"><span class="tag">Windows 11</span></a>
+    
+    <a href="/tag/wsl/"><span class="tag">WSL</span></a>
+    
+    <a href="/tag/%E5%A2%9E%E9%87%8F%E5%90%8C%E6%AD%A5/"><span class="tag">增量同步</span></a>
+    
+    <a href="/tag/%E6%96%87%E4%BB%B6%E5%A4%87%E4%BB%BD/"><span class="tag">文件备份</span></a>
+    
+    <a href="/tag/%E8%87%AA%E5%8A%A8%E5%8C%96/"><span class="tag">自动化</span></a>
+    
+    <a href="/tag/agent/"><span class="tag">Agent</span></a>
+    
+</div>
+
+
+        <div class="content">
+            <blockquote>
+<p><strong>先说结论</strong></p>
+<p><code>rsync</code> 最值得养成的习惯，不是背更多参数，而是把同步拆成两步：<strong>先用 <code>--dry-run</code> 生成差异计划，确认无误后再执行正式同步</strong>。如果还会删除目标端文件，则必须把删除能力单独授权，不能让 <code>--delete</code> 悄悄成为默认动作。</p>
+<p>文首那段 <code>rsync -n -avz --delete --out-format=&quot;%n&quot;</code> 确实能看到一部分将变化的路径，但它只输出文件名，后续再靠 <code>grep</code> 猜“哪些是文件、哪些是删除”并不稳。更可靠的做法是使用 <code>--itemize-changes</code>，并把 <code>%i</code> 与 <code>%n</code> 一起输出，让每一行自己说明是新增、更新、删除还是目录属性变化。</p>
+</blockquote>
+<p><img alt="原创题图：先看差异，再执行 rsync 增量同步" src="/post-images/rsync-diff-incremental-sync/00-cover.png"></p>
+<h2 id="为什么先比较再同步比想象中重要">为什么“先比较再同步”比想象中重要</h2>
+<p>很多同步任务最初都很简单：把本地目录传到服务器、把照片复制到 NAS、把构建产物发布到另一台机器。第一次执行时，目录里只有几十个文件，直接敲一条 <code>rsync -av</code> 看起来没有风险。</p>
+<p>但目录会慢慢长大，脚本也会慢慢变成定时任务。几个月后，源目录里可能有几万个文件，目标端还可能保存了一些只存在于目标端的历史资料。这时再随手加上 <code>--delete</code>，含义就不再是“帮我同步”，而是“让目标端严格变成源端的镜像，多出来的东西全部删除”。</p>
+<p>这像搬家：正常搬家是把旧房子的箱子搬到新房子；<code>--delete</code> 则相当于搬家公司发现新房子里有旧房子清单之外的东西，就顺手扔掉。它不是错误参数，但必须在你清楚后果时使用。</p>
+<p><img alt="生活化理解：dry-run 就是搬家前先列清单" src="/post-images/rsync-diff-incremental-sync/01-moving-list-analogy.png"></p>
+<h2 id="从一段常见脚本说起">从一段常见脚本说起</h2>
+<p>原始思路大致如下：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e">#!/bin/bash
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>
+</span></span><span style="display:flex;"><span>DIFF_FILE<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;/tmp/rsync_diff.txt&#34;</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>echo <span style="color:#e6db74">&#34;正在比较本地和远程目录...&#34;</span>
+</span></span><span style="display:flex;"><span>rsync -n -avz --delete --out-format<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;%n&#34;</span> $LOCAL_DIR $REMOTE_DIR &gt; $DIFF_FILE
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>grep -v <span style="color:#e6db74">&#39;/$&#39;</span> $DIFF_FILE | grep -v <span style="color:#e6db74">&#39;deleting&#39;</span> &gt; <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>DIFF_FILE<span style="color:#e6db74">}</span><span style="color:#e6db74">_filtered&#34;</span>
+</span></span></code></pre></div><p>它的方向没有错：<code>-n</code> 代表 dry-run，只预演、不修改；输出先写入临时文件，再过滤目录与删除记录。但在真实自动化中，它有几个容易被忽略的问题。</p>
+<h3 id="变量没有加引号">变量没有加引号</h3>
+<p><code>$LOCAL_DIR</code> 和 <code>$REMOTE_DIR</code> 如果包含空格、通配符或某些特殊字符，Shell 会重新拆分它们。更稳妥的写法是：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>rsync ... <span style="color:#e6db74">&#34;</span>$LOCAL_DIR<span style="color:#e6db74">&#34;</span> <span style="color:#e6db74">&#34;</span>$REMOTE_DIR<span style="color:#e6db74">&#34;</span>
+</span></span></code></pre></div><h3 id="只输出-n丢失了变化类型">只输出 <code>%n</code>，丢失了变化类型</h3>
+<p><code>%n</code> 只告诉你路径名，不告诉你为什么传输。后续脚本只能继续通过字符串过滤猜测。新增文件、内容变化、时间变化和权限变化都可能只剩下一个名字。</p>
+<h3 id="grep--v-deleting-会隐藏最危险的信息"><code>grep -v 'deleting'</code> 会隐藏最危险的信息</h3>
+<p>如果命令启用了 <code>--delete</code>，删除项恰恰应该重点审查。把它们过滤掉，就像审核付款清单时把所有负数金额隐藏了：画面更干净，但风险更大。</p>
+<h3 id="源目录末尾的--会改变语义">源目录末尾的 <code>/</code> 会改变语义</h3>
+<p>下面两条命令看起来只差一个斜杠：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>rsync -av source destination/
+</span></span><span style="display:flex;"><span>rsync -av source/ destination/
+</span></span></code></pre></div><p>前者通常把 <code>source</code> 目录本身放进目标目录；后者同步的是 <code>source</code> 里面的内容。这个区别很小，却经常造成目标端多套一层目录。</p>
+<h3 id="本地复制通常不需要--z">本地复制通常不需要 <code>-z</code></h3>
+<p><code>-z</code> 会压缩传输数据，跨较慢网络时可能节省带宽；本机磁盘、局域网高速链路或已经压缩过的图片、视频、压缩包未必受益，反而会消耗 CPU。它不是必须删除的坏参数，而是应该按链路和数据类型决定。</p>
+<h2 id="我做了一个真实隔离的实验">我做了一个真实、隔离的实验</h2>
+<p>为了避免拿真实文件冒险，我在临时目录中创建了源端和目标端，并故意制造以下差异：</p>
+<ul>
+<li><code>added.txt</code>：只在源端存在，应该新增。</li>
+<li><code>modified.txt</code>：两端都有，但版本和时间不同，应该更新。</li>
+<li><code>deleted.txt</code>：只在目标端存在，启用 <code>--delete</code> 后应该删除。</li>
+<li><code>old-name.txt</code> 与 <code>new-name.txt</code>：内容相同但路径不同，在普通 rsync 看来通常表现为删除旧文件并新增新文件。</li>
+<li><code>unchanged.txt</code>：两端相同，不应该传输。</li>
+</ul>
+<p><img alt="真实截图：同步前源目录与目标目录的文件状态" src="/post-images/rsync-diff-incremental-sync/03-real-initial-state.png"></p>
+<p>先运行接近原脚本的命令：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>rsync -n -av --delete --out-format<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;%n&#34;</span> <span style="color:#e6db74">&#34;source/&#34;</span> <span style="color:#e6db74">&#34;destination/&#34;</span>
+</span></span></code></pre></div><p>它确实列出了要删除和要传输的路径，但普通文件行没有明确告诉我们“新增”还是“更新”。当输出要交给下一段脚本、监控系统或 Agent 判断时，这种信息就不够结构化。</p>
+<h2 id="更可靠的差异清单--itemize-changes">更可靠的差异清单：<code>--itemize-changes</code></h2>
+<p>我把命令改成：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>rsync -ani --delete <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  --out-format<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;%i|%n%L&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  <span style="color:#e6db74">&#34;source/&#34;</span> <span style="color:#e6db74">&#34;destination/&#34;</span>
+</span></span></code></pre></div><p>这里的关键不是参数变多，而是输出从“名字列表”升级成了“带动作标签的计划表”：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>*deleting photos/old-name.txt
+</span></span><span style="display:flex;"><span>*deleting docs/deleted.txt
+</span></span><span style="display:flex;"><span>&gt;f+++++++|docs/added.txt
+</span></span><span style="display:flex;"><span>&gt;f..t....|docs/modified.txt
+</span></span><span style="display:flex;"><span>&gt;f+++++++|photos/new-name.txt
+</span></span></code></pre></div><p><img alt="真实截图：dry-run 输出明确标记新增、更新和删除" src="/post-images/rsync-diff-incremental-sync/04-real-itemized-dry-run.png"></p>
+<p>常见标记可以先这样理解：</p>
+<ul>
+<li><code>&gt;f+++++++</code>：向目标端发送一个新文件。</li>
+<li><code>&gt;f..t....</code>：文件需要更新，本次至少检测到时间属性不同；是否传输内容还与 quick check、校验和等条件有关。</li>
+<li><code>*deleting</code>：目标端文件将被删除，只有启用删除选项时才会出现。</li>
+<li><code>.d..t....</code>：目录属性发生变化，不等于正在传输一个普通文件。</li>
+</ul>
+<p>不需要第一天就背下每一位。就像看快递单，先看“寄出、退回、签收”这些大状态，遇到特殊情况再查细节即可。</p>
+<p><img alt="手机端可读的 rsync itemize 差异标记说明" src="/post-images/rsync-diff-incremental-sync/02-itemize-changes-guide.png"></p>
+<h2 id="为什么-rsync-能做到增量同步">为什么 rsync 能做到增量同步</h2>
+<p><code>rsync</code> 并不是每次都把全部文件重新复制一遍。它先比较文件的基本信息，常见判断包括大小和修改时间；满足条件时才进一步传输。远程同步时，它还能通过 rsync 算法减少需要跨网络发送的数据。</p>
+<p>可以把它想成老师检查作业：如果作业本页数和最后修改时间都没变化，老师不会重新抄一份；如果只改了其中一部分，就重点处理变化内容。实际行为还会受到 <code>--checksum</code>、文件系统时间精度、rsync 版本和传输方式影响，因此关键任务不能只凭想象判断，仍应看 dry-run 输出并做同步后验证。</p>
+<h3 id="要不要使用---checksum">要不要使用 <code>--checksum</code></h3>
+<p><code>--checksum</code> 会读取两端文件内容并计算校验值，能发现“大小和时间碰巧一样、内容却不同”的情况，但代价是两端都要完整读取文件。文件很多、磁盘较慢时，它可能比真正传输还耗时。</p>
+<p>日常镜像同步通常先使用默认 quick check；高价值归档、迁移验收或怀疑时间戳不可靠时，再增加 <code>--checksum</code>。安全不是把所有最重参数一次性打开，而是根据风险选择验证强度。</p>
+<h2 id="正式同步删除能力必须单独授权">正式同步：删除能力必须单独授权</h2>
+<p>推荐把默认模式设为“不删除”。只有明确需要镜像语义时，才设置环境变量启用删除：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>ALLOW_DELETE<span style="color:#f92672">=</span><span style="color:#ae81ff">1</span> ./rsync-safe-sync-ubuntu.sh <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  <span style="color:#e6db74">&#34;/data/source/&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  <span style="color:#e6db74">&#34;backup-user@&lt;目标地址&gt;:/data/archive/&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  --plan
+</span></span></code></pre></div><p>确认计划后再执行：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>ALLOW_DELETE<span style="color:#f92672">=</span><span style="color:#ae81ff">1</span> ./rsync-safe-sync-ubuntu.sh <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  <span style="color:#e6db74">&#34;/data/source/&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  <span style="color:#e6db74">&#34;backup-user@&lt;目标地址&gt;:/data/archive/&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  --apply
+</span></span></code></pre></div><p>脚本会再次 dry-run，要求输入 <code>APPLY</code>，然后才正式同步；完成后再跑一次 dry-run。第二次结果为空，才说明目标端已经与计划一致。</p>
+<p><img alt="真实截图：正式增量同步后，二次 dry-run 与 diff 均为空" src="/post-images/rsync-diff-incremental-sync/05-real-sync-verify.png"></p>
+<h2 id="三个平台的一键脚本">三个平台的一键脚本</h2>
+<p>三套脚本都遵守同一套安全原则：默认只计划、默认不删除、正式执行前再次展示计划、同步后再次验证。区别只是操作系统外壳不同。</p>
+<p><img alt="Windows、Ubuntu、macOS 使用同一套安全同步流程" src="/post-images/rsync-diff-incremental-sync/06-cross-platform-workflow.png"></p>
+<h3 id="windows-11">Windows 11</h3>
+<p>Windows 11 脚本使用系统提供的 WSL 承载 rsync，不接入第三方同步服务。首次使用时，在管理员 PowerShell 中安装 WSL：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-powershell" data-lang="powershell"><span style="display:flex;"><span>wsl --install
+</span></span></code></pre></div><p>重启并完成 Ubuntu 初始化后，下载脚本：</p>
+<ul>
+<li><a href="/downloads/rsync-safe-sync/rsync-safe-sync-windows11.ps1">下载 Windows 11 PowerShell 脚本</a></li>
+</ul>
+<p>生成计划：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-powershell" data-lang="powershell"><span style="display:flex;"><span>powershell -ExecutionPolicy Bypass <span style="color:#f92672">-File</span> .\rsync-safe-sync-windows11.ps1 `
+</span></span><span style="display:flex;"><span>  -Source <span style="color:#e6db74">&#34;/mnt/c/Data/source/&#34;</span> `
+</span></span><span style="display:flex;"><span>  -Destination <span style="color:#e6db74">&#34;backup-user@&lt;目标地址&gt;:/data/archive/&#34;</span> `
+</span></span><span style="display:flex;"><span>  -Mode Plan
+</span></span></code></pre></div><p>确认后执行，并在确实需要镜像删除时显式增加 <code>-AllowDelete</code>：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-powershell" data-lang="powershell"><span style="display:flex;"><span>powershell -ExecutionPolicy Bypass <span style="color:#f92672">-File</span> .\rsync-safe-sync-windows11.ps1 `
+</span></span><span style="display:flex;"><span>  -Source <span style="color:#e6db74">&#34;/mnt/c/Data/source/&#34;</span> `
+</span></span><span style="display:flex;"><span>  -Destination <span style="color:#e6db74">&#34;backup-user@&lt;目标地址&gt;:/data/archive/&#34;</span> `
+</span></span><span style="display:flex;"><span>  -Mode Apply -AllowDelete
+</span></span></code></pre></div><h3 id="ubuntu-2604">Ubuntu 26.04</h3>
+<ul>
+<li><a href="/downloads/rsync-safe-sync/rsync-safe-sync-ubuntu.sh">下载 Ubuntu 26.04 Bash 脚本</a></li>
+</ul>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>chmod +x rsync-safe-sync-ubuntu.sh
+</span></span><span style="display:flex;"><span>./rsync-safe-sync-ubuntu.sh <span style="color:#e6db74">&#34;/data/source/&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  <span style="color:#e6db74">&#34;backup-user@&lt;目标地址&gt;:/data/archive/&#34;</span> --plan
+</span></span></code></pre></div><p>脚本检测不到 rsync 时，只通过 Ubuntu 官方软件仓库安装 <code>rsync</code> 和 <code>openssh-client</code>。正式执行：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>./rsync-safe-sync-ubuntu.sh <span style="color:#e6db74">&#34;/data/source/&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  <span style="color:#e6db74">&#34;backup-user@&lt;目标地址&gt;:/data/archive/&#34;</span> --apply
+</span></span></code></pre></div><h3 id="macos-26">macOS 26</h3>
+<ul>
+<li><a href="/downloads/rsync-safe-sync/rsync-safe-sync-macos.sh">下载 macOS 26 Bash 脚本</a></li>
+</ul>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>chmod +x rsync-safe-sync-macos.sh
+</span></span><span style="display:flex;"><span>./rsync-safe-sync-macos.sh <span style="color:#e6db74">&#34;</span>$HOME<span style="color:#e6db74">/Documents/source/&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  <span style="color:#e6db74">&#34;backup-user@&lt;目标地址&gt;:/data/archive/&#34;</span> --plan
+</span></span></code></pre></div><p>macOS 系统自带的 rsync 版本可能较旧，但本文使用的基本 dry-run、itemize 和归档同步方式可先通过脚本实际测试。若你的任务需要新版本特性，再从可信包管理渠道升级，不要只因“版本号旧”就盲目替换系统工具。</p>
+<h2 id="人工自动执行方法">人工自动执行方法</h2>
+<p>所谓“人工自动执行”，不是手工逐个复制文件，而是由脚本完成计算与同步，人只负责风险确认。</p>
+<p>推荐顺序如下：</p>
+<ol>
+<li>明确源端和目标端，尤其确认源路径末尾斜杠的语义。</li>
+<li>先运行 <code>--plan</code>，把输出保存为带时间戳的计划文件。</li>
+<li>单独检查所有 <code>*deleting</code> 行，确认没有目标端独有资料。</li>
+<li>检查新增和修改数量是否符合预期；突然出现几万条变化时应停止。</li>
+<li>运行 <code>--apply</code>，输入明确确认词。</li>
+<li>查看同步后的第二次 dry-run；关键数据再抽样执行哈希或 <code>diff</code> 验证。</li>
+</ol>
+<p>这种方式像飞机自动驾驶：大部分重复操作交给程序，但起飞、降落和异常处置仍需要人看仪表并作决定。</p>
+<h2 id="agent-自动配置方法">Agent 自动配置方法</h2>
+<p>Agent 可以帮助生成配置、运行 dry-run、归类差异并给出风险摘要，但不应该在没有授权时自行启用删除。可以把下面的约束直接交给本地 Agent：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>目标：配置 rsync 增量同步。
+</span></span><span style="display:flex;"><span>要求：
+</span></span><span style="display:flex;"><span>- 只使用本机工具、SSH 和目标操作系统官方软件仓库；
+</span></span><span style="display:flex;"><span>- 首次只能执行 dry-run，不得修改文件；
+</span></span><span style="display:flex;"><span>- 使用 --itemize-changes 和结构化输出；
+</span></span><span style="display:flex;"><span>- 默认禁止 --delete；
+</span></span><span style="display:flex;"><span>- 汇总新增、修改、删除数量，并单独列出全部删除项；
+</span></span><span style="display:flex;"><span>- 等待我回复 APPLY 后才能正式同步；
+</span></span><span style="display:flex;"><span>- 正式同步后再次 dry-run，并报告是否为空；
+</span></span><span style="display:flex;"><span>- 日志中隐藏完整地址、账号、密钥和机器名。
+</span></span></code></pre></div><p>Agent 自动化的价值是减少重复劳动，不是替人承担数据删除责任。一个合格的 Agent 流程必须允许中断、允许复核，并留下可读的计划文件。</p>
+<h2 id="如何改进原始差异文件列表脚本">如何改进原始“差异文件列表”脚本</h2>
+<p>如果只需要一个简洁的比较版本，可以这样写：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e">#!/usr/bin/env bash
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>set -euo pipefail
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>: <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>LOCAL_DIR:?请设置 LOCAL_DIR<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>: <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>REMOTE_DIR:?请设置 REMOTE_DIR<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>DIFF_FILE<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>DIFF_FILE<span style="color:#66d9ef">:-</span>/tmp/rsync-diff-<span style="color:#66d9ef">$(</span>date +%Y%m%d-%H%M%S<span style="color:#66d9ef">)</span>.txt<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>LOCAL_DIR<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>LOCAL_DIR%/<span style="color:#e6db74">}</span><span style="color:#e6db74">/&#34;</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>rsync --dry-run --archive --itemize-changes <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  --out-format<span style="color:#f92672">=</span><span style="color:#e6db74">&#39;%i|%n%L&#39;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  <span style="color:#e6db74">&#34;</span>$LOCAL_DIR<span style="color:#e6db74">&#34;</span> <span style="color:#e6db74">&#34;</span>$REMOTE_DIR<span style="color:#e6db74">&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  | tee <span style="color:#e6db74">&#34;</span>$DIFF_FILE<span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>echo <span style="color:#e6db74">&#34;差异计划已保存：</span>$DIFF_FILE<span style="color:#e6db74">&#34;</span>
+</span></span></code></pre></div><p>如果确实需要检查镜像删除，在审核阶段额外加 <code>--delete</code>，但不要再把 <code>deleting</code> 行过滤掉。相反，可以单独提取：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>grep <span style="color:#e6db74">&#39;^\*deleting &#39;</span> <span style="color:#e6db74">&#34;</span>$DIFF_FILE<span style="color:#e6db74">&#34;</span> <span style="color:#f92672">||</span> true
+</span></span></code></pre></div><p>这时输出的目的不是“得到一份看起来干净的文件清单”，而是“得到一份能支持正确决策的风险清单”。</p>
+<h2 id="常见问题-qa">常见问题 Q&amp;A</h2>
+<h3 id="dry-run-会不会百分之百保证正式执行结果相同">dry-run 会不会百分之百保证正式执行结果相同</h3>
+<p>不能。如果 dry-run 与正式执行之间有人修改了文件、网络挂载变化、权限变化或目标端空间不足，结果就可能不同。因此安全脚本会在正式执行前再次生成计划，并在执行后再验证。</p>
+<h3 id="--delete-会删除源端文件吗"><code>--delete</code> 会删除源端文件吗</h3>
+<p>通常是删除目标端中源端不存在的文件，而不是反过来删除源端。但源和目标写反后，后果同样严重。执行前必须把两端路径完整显示出来，并确认方向。</p>
+<h3 id="为什么重命名看起来像删除加新增">为什么“重命名”看起来像删除加新增</h3>
+<p>rsync 主要根据路径和文件状态工作，并不总能把两个不同路径自动理解为一次重命名。普通同步中，旧路径消失、新路径出现，往往就表现为删除旧文件和传输新文件。</p>
+<h3 id="为什么第二次-dry-run-仍有目录变化">为什么第二次 dry-run 仍有目录变化</h3>
+<p>可能是目录时间、权限、所有者、扩展属性或两端 rsync/文件系统能力不同。先看 <code>%i</code> 的具体属性位，再决定是否需要保留对应元数据；不要为了追求“绝对空白”随意增加高权限参数。</p>
+<h3 id="可以把脚本直接放进-cron-或计划任务吗">可以把脚本直接放进 cron 或计划任务吗</h3>
+<p>可以，但建议先连续观察多次计划输出。无人值守任务应默认禁用删除、设置日志保留、超时、锁和失败告警。涉及删除的无人值守同步最好配合目标端快照或版本化备份。</p>
+<h3 id="rsync-是不是备份工具">rsync 是不是备份工具</h3>
+<p>rsync 是强大的同步工具，但“镜像”不等于“备份”。如果误删或勒索软件加密已经发生，镜像同步可能把错误也同步过去。重要数据还需要历史版本、快照、离线副本或不可变备份。</p>
+<h2 id="最后的安全清单">最后的安全清单</h2>
+<ul>
+<li>先确认同步方向，再确认源目录末尾斜杠。</li>
+<li>所有路径变量都加双引号。</li>
+<li>使用 <code>--itemize-changes</code>，不要只看文件名。</li>
+<li>默认不启用删除；删除项必须单独审核。</li>
+<li>dry-run 与正式执行之间不要间隔太久。</li>
+<li>正式同步后再次 dry-run，重要文件再做内容校验。</li>
+<li>自动化日志必须脱敏，不能记录密钥和完整内部地址。</li>
+<li>镜像之外还要保留历史版本，避免把误操作同步成“正确状态”。</li>
+</ul>
+<p>真正安全的增量同步，不是一条参数很多的命令，而是一套可以解释、可以暂停、可以验证的流程。<code>rsync</code> 负责高效搬运文件，dry-run 负责提前亮出清单，而最终的风险判断，应该始终掌握在你手里。</p>
+        </div>
+    </article>
+
+    
+  
+
+
+  
+    
+  
+
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk/dist/gitalk.css">
+<script src="https://cdn.jsdelivr.net/npm/gitalk/dist/gitalk.min.js"></script>
+<div id="gitalk-container" style="margin-top:40px"></div>
+<script>
+  (function(){
+    var gitalk = new Gitalk({
+      clientID: '3181fd94e501cc5db0ad',
+      clientSecret: 'af1dab79dae02c69296e6615bfcecf47fc8615ee',
+      repo: 'margropcomment.margrop.io',
+      owner: 'margrop',
+      admin: ["margrop"],
+      
+      id: '\/post\/rsync-diff-incremental-sync\/',
+      
+      distractionFreeMode: false
+    });
+    gitalk.render('gitalk-container');
+  })();
+</script>
+  
+
+
+
+
+    
+    <script type="text/javascript" src="https://js.users.51.la/21044367.js"></script>
+    <script charset="UTF-8" id="LA_COLLECT" src="//sdk.51.la/js-sdk-pro.min.js"></script>
+    <script>LA.init({id: "1vVTUWl7zoRjnKXi",ck: "1vVTUWl7zoRjnKXi"})</script>
+    <script src="https://sdk.51.la/perf/js-sdk-perf.min.js" crossorigin="anonymous"></script>
+    <script>
+      new LingQue.Monitor().init({id:"202teQt8THXwqyve"});
+    </script>
+</body>
+</html>
