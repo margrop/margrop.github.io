@@ -1,339 +1,59 @@
-<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>密码没写错，群晖却不让登录？我拆开 DSM 的 RSA &#43; AES 双层信封，完整复刻 WebAPI 登录 - 魔都水滴</title>
-<meta name="description" content="先说结论 群晖某些 WebAPI 登录请求并不是简单地把 account 和 passwd 直接提交给 auth.cgi。OpenStack Cinder 的 Synology 驱动展示了一套完整兼容流程：先调用 SYNO.API.Encryption.getinfo，取得 RSA 公钥、服务器时间和两个动态字段名；客 …">
-<meta name="robots" content="index, follow">
-<link rel="canonical" href="https://blog.margrop.net/post/synology-webapi-login-encryption-deep-dive/">
-
-<meta property="og:site_name" content="魔都水滴">
-<meta property="og:title" content="密码没写错，群晖却不让登录？我拆开 DSM 的 RSA &#43; AES 双层信封，完整复刻 WebAPI 登录 - 魔都水滴">
-<meta property="og:description" content="先说结论 群晖某些 WebAPI 登录请求并不是简单地把 account 和 passwd 直接提交给 auth.cgi。OpenStack Cinder 的 Synology 驱动展示了一套完整兼容流程：先调用 SYNO.API.Encryption.getinfo，取得 RSA 公钥、服务器时间和两个动态字段名；客 …">
-<meta property="og:url" content="https://blog.margrop.net/post/synology-webapi-login-encryption-deep-dive/">
-<meta property="og:locale" content="zh_CN"><meta property="og:type" content="article"><meta property="og:locale:alternate" content="en_US"><meta property="og:image" content="https://blog.margrop.net/images/avatar.png"><meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="密码没写错，群晖却不让登录？我拆开 DSM 的 RSA &#43; AES 双层信封，完整复刻 WebAPI 登录 - 魔都水滴">
-<meta name="twitter:description" content="先说结论 群晖某些 WebAPI 登录请求并不是简单地把 account 和 passwd 直接提交给 auth.cgi。OpenStack Cinder 的 Synology 驱动展示了一套完整兼容流程：先调用 SYNO.API.Encryption.getinfo，取得 RSA 公钥、服务器时间和两个动态字段名；客 …"><meta name="twitter:image" content="https://blog.margrop.net/images/avatar.png"><link rel="alternate" hreflang="zh-CN" href="https://blog.margrop.net/post/synology-webapi-login-encryption-deep-dive/"><link rel="alternate" hreflang="en-US" href="https://blog.margrop.net/en/post/synology-webapi-login-encryption-deep-dive/"><link rel="alternate" hreflang="x-default" href="https://blog.margrop.net/"><meta property="article:published_time" content="2026-07-11T08:30:00&#43;08:00">
-<meta property="article:modified_time" content="2026-07-11T08:30:00&#43;08:00"><meta property="article:tag" content="Synology"><meta property="article:tag" content="DSM"><meta property="article:tag" content="NAS"><meta property="article:tag" content="WebAPI"><meta property="article:tag" content="RSA"><meta property="article:tag" content="AES"><meta property="article:tag" content="Python"><meta property="article:tag" content="密码学"><meta property="article:tag" content="自动化"><meta property="article:tag" content="群晖"><script type="application/ld+json">{"@context":"https://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"魔都水滴"},"dateModified":"2026-07-11T08:30:00+08:00","datePublished":"2026-07-11T08:30:00+08:00","description":"先说结论 群晖某些 WebAPI 登录请求并不是简单地把 account 和 passwd 直接提交给 auth.cgi。OpenStack Cinder 的 Synology 驱动展示了一套完整兼容流程：先调用 SYNO.API.Encryption.getinfo，取得 RSA 公钥、服务器时间和两个动态字段名；客 …","headline":"密码没写错，群晖却不让登录？我拆开 DSM 的 RSA + AES 双层信封，完整复刻 WebAPI 登录","mainEntityOfPage":"https://blog.margrop.net/post/synology-webapi-login-encryption-deep-dive/","url":"https://blog.margrop.net/post/synology-webapi-login-encryption-deep-dive/"}</script>
-    <meta name="baidu-site-verification" content="code-sVFZ8SER59" />
-
-    
-    <script async src="https://www.googletagmanager.com/gtag/js?id=G-3J2W592DHJ"></script>
-    <script>
-      window.dataLayer = window.dataLayer || [];
-      function gtag(){dataLayer.push(arguments);}
-      gtag('js', new Date());
-      gtag('config', 'G-3J2W592DHJ');
-    </script>
-
-    <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 860px; margin: 0 auto; padding: 20px; line-height: 1.7; color: #222; }
-    h1 { border-bottom: 2px solid #333; padding-bottom: 10px; }
-    .post-list { list-style: none; padding: 0; }
-    .post-list li { margin: 15px 0; }
-    .post-list a { text-decoration: none; color: #333; font-size: 18px; }
-    .post-list a:hover { color: #006CFF; }
-    .date { color: #666; font-size: 14px; margin-right: 10px; }
-    .tags { margin-top: 8px; }
-    .tag { background: #eee; padding: 2px 8px; border-radius: 3px; font-size: 12px; margin-right: 5px; display: inline-block; }
-    nav { margin-bottom: 18px; border-bottom: 1px solid #eee; padding-bottom: 15px; }
-    nav a { margin-right: 20px; text-decoration: none; color: #333; font-size: 16px; }
-    nav a:hover { color: #006CFF; }
-    .language-switcher { margin: -8px 0 26px; }
-    .language-switcher a { display: inline-block; margin-right: 10px; padding: 4px 10px; border: 1px solid #ddd; border-radius: 999px; color: #555; text-decoration: none; font-size: 14px; }
-    .language-switcher a.active { background: #006CFF; border-color: #006CFF; color: #fff; }
-    .content { line-height: 1.8; }
-    .content code { background: #f4f4f4; padding: 2px 5px; border-radius: 3px; }
-    .content pre { background: #f4f4f4; padding: 15px; overflow-x: auto; border-radius: 5px; }
-    .content img { display: block; max-width: 100%; height: auto; margin: 0 auto; }
-    .content .code-snippet__fix {
-        margin: 0 0 1.5em;
-    }
-    .content .code-snippet__fix .code-snippet__line-index {
-        display: none !important;
-    }
-    .meta { color: #666; font-size: 14px; margin-bottom: 14px; }
-    a { color: #006CFF; }
-    @media (max-width: 680px) {
-        body { padding: 16px; }
-        nav a { display: inline-block; margin-right: 12px; margin-bottom: 8px; }
-    }
-</style>
-
-</head>
-<body>
-    <nav>
-  
-  <a href="/">首页</a>
-  <a href="/post/">归档</a>
-  <a href="/tags/">标签</a>
-  <a href="/post/about/">关于</a>
-  <a href="https://download.margrop.net" target="_blank" rel="noopener">下载</a>
-  <a href="/post/favorites/">Link</a>
-  <a href="/post/github-project-stars/">Github</a>
-  
-  <a href="https://github-mirrors.margrop.net" target="_blank" rel="noopener">Github加速</a>
-  <a href="https://status.anye.xyz/" target="_blank" rel="noopener">Docker加速</a>
-  
-</nav>
-
-    
-<div class="language-switcher">
-  
-    <a href="/post/synology-webapi-login-encryption-deep-dive/" class="active">中文</a>
-  
-    <a href="/en/post/synology-webapi-login-encryption-deep-dive/" class="">English</a>
-  
-</div>
-
-
-    
-    <article>
-        <h1>密码没写错，群晖却不让登录？我拆开 DSM 的 RSA &#43; AES 双层信封，完整复刻 WebAPI 登录</h1>
-        <div class="meta">
-            发布时间: 2026-07-11
-        </div>
-        
-<div class="tags">
-    
-    <a href="/tag/synology/"><span class="tag">Synology</span></a>
-    
-    <a href="/tag/dsm/"><span class="tag">DSM</span></a>
-    
-    <a href="/tag/nas/"><span class="tag">NAS</span></a>
-    
-    <a href="/tag/webapi/"><span class="tag">WebAPI</span></a>
-    
-    <a href="/tag/rsa/"><span class="tag">RSA</span></a>
-    
-    <a href="/tag/aes/"><span class="tag">AES</span></a>
-    
-    <a href="/tag/python/"><span class="tag">Python</span></a>
-    
-    <a href="/tag/%E5%AF%86%E7%A0%81%E5%AD%A6/"><span class="tag">密码学</span></a>
-    
-    <a href="/tag/%E8%87%AA%E5%8A%A8%E5%8C%96/"><span class="tag">自动化</span></a>
-    
-    <a href="/tag/%E7%BE%A4%E6%99%96/"><span class="tag">群晖</span></a>
-    
-</div>
-
-
-        <div class="content">
-            <blockquote>
-<p><strong>先说结论</strong></p>
-<p>群晖某些 WebAPI 登录请求并不是简单地把 <code>account</code> 和 <code>passwd</code> 直接提交给 <code>auth.cgi</code>。OpenStack Cinder 的 Synology 驱动展示了一套完整兼容流程：先调用 <code>SYNO.API.Encryption.getinfo</code>，取得 RSA 公钥、服务器时间和两个动态字段名；客户端生成一次性随机 passphrase，用 RSA 加密它，再用它派生 AES-256-CBC 的密钥和 IV，对 URL 编码后的登录参数加密，最后把两段 Base64 密文放入服务器指定的 <code>cipherkey</code> 字段。</p>
-<p>但必须先划清边界：这是一种 <strong>WebAPI 身份认证兼容方式</strong>，不是破解密码，也不是绕过权限；拿到 <code>session=DSM</code> 的 API SID，也不等于凭空获得浏览器 DSM 管理页面的完整 Cookie 登录状态。HTTP 参数加密同样不能代替 HTTPS，因为 TLS 还负责服务器身份校验、完整性保护和抵抗中间人攻击。</p>
-</blockquote>
-<p><img alt="原创题图：RSA 与 AES 双层信封保护 NAS 登录" src="/post-images/synology-webapi-login-encryption-deep-dive/00-cover-original.png"></p>
-<h2 id="为什么密码正确普通-post-仍然可能失败">为什么密码正确，普通 POST 仍然可能失败</h2>
-<p>很多人第一次自动化 DSM 登录，会自然地写出下面这种请求：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-python" data-lang="python"><span style="display:flex;"><span>requests<span style="color:#f92672">.</span>post(
-</span></span><span style="display:flex;"><span>    <span style="color:#e6db74">&#34;https://nas.example.test:5001/webapi/auth.cgi&#34;</span>,
-</span></span><span style="display:flex;"><span>    data<span style="color:#f92672">=</span>{
-</span></span><span style="display:flex;"><span>        <span style="color:#e6db74">&#34;api&#34;</span>: <span style="color:#e6db74">&#34;SYNO.API.Auth&#34;</span>,
-</span></span><span style="display:flex;"><span>        <span style="color:#e6db74">&#34;version&#34;</span>: <span style="color:#ae81ff">6</span>,
-</span></span><span style="display:flex;"><span>        <span style="color:#e6db74">&#34;method&#34;</span>: <span style="color:#e6db74">&#34;login&#34;</span>,
-</span></span><span style="display:flex;"><span>        <span style="color:#e6db74">&#34;account&#34;</span>: account,
-</span></span><span style="display:flex;"><span>        <span style="color:#e6db74">&#34;passwd&#34;</span>: password,
-</span></span><span style="display:flex;"><span>        <span style="color:#e6db74">&#34;session&#34;</span>: <span style="color:#e6db74">&#34;DSM&#34;</span>,
-</span></span><span style="display:flex;"><span>        <span style="color:#e6db74">&#34;format&#34;</span>: <span style="color:#e6db74">&#34;sid&#34;</span>,
-</span></span><span style="display:flex;"><span>    },
-</span></span><span style="display:flex;"><span>)
-</span></span></code></pre></div><p>在部分版本、接入方式或客户端兼容场景中，这种写法并没有复刻目标实现要求的参数保护流程。于是表现很像“密码错了”：返回登录失败、字段缺失、请求格式不匹配，或者代理层只看到一次普通的 <code>auth.cgi</code> 请求。</p>
-<p>最容易走偏的方向有三个：反复重置密码、把 <code>cipherkey</code> 硬编码成 <code>__cIpHeRtExT</code>、复制一次旧的 <code>server_time</code> 长期使用。真正需要复刻的不是某个固定字符串，而是 <strong>每次登录前先向服务器领取当次规则</strong>。</p>
-<p><img alt="完整请求时序" src="/post-images/synology-webapi-login-encryption-deep-dive/06-request-timeline.png"></p>
-<h2 id="一手证据来自哪里">一手证据来自哪里</h2>
-<p>本文的算法依据不是猜测，而是 OpenStack Cinder 固定提交中的 Synology 驱动实现。驱动的 <code>AESCipher</code> 明确写出：</p>
-<ul>
-<li>输出以 <code>Salted__</code> 开头；</li>
-<li>随机盐长度为 8 字节；</li>
-<li>密钥长度为 32 字节，也就是 AES-256；</li>
-<li>模式为 CBC，IV 为 16 字节；</li>
-<li>密钥和 IV 通过连续 MD5 摘要拼接派生；</li>
-<li>明文按 16 字节块做 PKCS#7 风格填充。</li>
-</ul>
-<p><img alt="真实源码截图：AES-256-CBC 与 OpenSSL 兼容信封" src="/post-images/synology-webapi-login-encryption-deep-dive/01-source-aes.png"></p>
-<p>另一段 <code>_encrypt_params</code> 则给出了完整拼装顺序：调用 <code>getinfo</code>，读取 <code>public_key</code>、<code>cipherkey</code>、<code>ciphertoken</code>、<code>server_time</code>，生成 501 字节随机 passphrase，将时间写入动态 token 字段，然后分别执行 RSA 与 AES 加密。</p>
-<p><img alt="真实源码截图：RSA 与 AES 密文装入动态字段" src="/post-images/synology-webapi-login-encryption-deep-dive/02-source-hybrid-payload.png"></p>
-<p>这里有一个很重要的细节：Cinder 驱动只在非 HTTPS 分支调用这套参数加密。这说明它主要是对特定协议兼容行为的实现，而不是对 TLS 的替代。今天重新实现时，仍然应优先使用 HTTPS，并开启证书校验。</p>
-<h2 id="用双层快递理解混合加密">用“双层快递”理解混合加密</h2>
-<p>假设你要寄一张写着账号和密码的纸条。</p>
-<p>AES 像一把速度很快的小钥匙。它可以迅速锁住整只大盒子，但问题是：怎样把这把钥匙安全地交给 NAS？如果把钥匙明文贴在盒子外面，锁盒子就失去意义。</p>
-<p>RSA 像 NAS 提前公开的一只特殊保险信封。任何人都能把东西塞进去并锁上，但只有持有私钥的 NAS 能打开。于是客户端把随机 AES passphrase 放进 RSA 信封；账号、密码、Session 和服务器时间则放进 AES 盒子。最后两个包裹一起送到 NAS。</p>
-<p><img alt="双层快递类比" src="/post-images/synology-webapi-login-encryption-deep-dive/05-double-envelope.png"></p>
-<p>这种做法叫混合加密：RSA 擅长安全交换小块秘密，AES 擅长高速加密大量数据。两者分工，比“所有内容都用 RSA 加密”更高效，也比“直接发送 AES 密钥”更安全。</p>
-<h2 id="每一步究竟发生了什么">每一步究竟发生了什么</h2>
-<p>客户端先向 <code>/webapi/encryption.cgi</code> 提交：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>api=SYNO.API.Encryption
-</span></span><span style="display:flex;"><span>version=1
-</span></span><span style="display:flex;"><span>method=getinfo
-</span></span><span style="display:flex;"><span>format=module
-</span></span></code></pre></div><p>成功响应中的四个字段各有职责：</p>
-<table>
-<thead>
-<tr>
-<th>字段</th>
-<th>作用</th>
-<th>能否硬编码</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>public_key</code></td>
-<td>RSA 模数，指数固定为 65537</td>
-<td>不应该</td>
-</tr>
-<tr>
-<td><code>cipherkey</code></td>
-<td>最终密文参数的字段名</td>
-<td>不应该</td>
-</tr>
-<tr>
-<td><code>ciphertoken</code></td>
-<td>放置服务器时间的内部字段名</td>
-<td>不应该</td>
-</tr>
-<tr>
-<td><code>server_time</code></td>
-<td>本次加密参数中的时间值</td>
-<td>不应该复用</td>
-</tr>
-</tbody>
-</table>
-<p>然后生成 501 字节随机 passphrase。之所以是 501，与 4096 位 RSA 和 PKCS#1 v1.5 的最大明文长度有关：512 字节模数减去至少 11 字节填充，正好是 501 字节。</p>
-<p>登录参数加入动态时间字段后进行 URL 编码，例如逻辑上类似：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>account=reader%40example&amp;passwd=&lt;redacted&gt;&amp;session=DSM&amp;format=sid&amp;synotoken=...
-</span></span></code></pre></div><p>接下来用兼容 OpenSSL <code>EVP_BytesToKey</code> 思路的 MD5 链派生 32 字节 AES 密钥和 16 字节 IV，再用 AES-256-CBC 加密。输出结构是：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>Salted__ + 8-byte salt + ciphertext
-</span></span></code></pre></div><p>最后形成动态字段：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-json" data-lang="json"><span style="display:flex;"><span>{
-</span></span><span style="display:flex;"><span>  <span style="color:#f92672">&#34;&lt;cipherkey from server&gt;&#34;</span>: <span style="color:#e6db74">&#34;{\&#34;rsa\&#34;:\&#34;...\&#34;,\&#34;aes\&#34;:\&#34;...\&#34;}&#34;</span>
-</span></span><span style="display:flex;"><span>}
-</span></span></code></pre></div><p><img alt="cipherkey 载荷结构" src="/post-images/synology-webapi-login-encryption-deep-dive/07-payload-anatomy.png"></p>
-<h2 id="我对原始示例做了哪些修正">我对原始示例做了哪些修正</h2>
-<p>资料中的思路基本正确，但直接用于长期自动化还需要几处加固。</p>
-<p>第一，随机 passphrase 不再使用 <code>random.choice</code>，而使用适合安全随机数的 <code>secrets.choice</code>。第二，HTTPS 默认开启证书验证，只有显式传入 <code>--insecure</code> 才关闭，并打印警告。第三，密码默认通过隐藏输入或临时环境变量读取，不写进源码。第四，程序默认只报告“服务器返回了 SID”，不会把 SID 打进日志；只有明确使用 <code>--show-sid</code> 才显示。第五，对 <code>getinfo</code> 缺字段、JSON 异常、HTTP 错误、登录失败和“成功但没有 SID”分别报错。</p>
-<p>我还修复了原资料末尾示例中函数调用括号未闭合的问题，并将 <code>host + port + scheme</code> 合并为明确的 <code>--url</code>，减少 HTTP/HTTPS 与端口组合错误。</p>
-<p>完整程序可直接下载：</p>
-<ul>
-<li><a href="/downloads/synology-webapi-login/synology_login.py">synology_login.py</a></li>
-<li><a href="/downloads/synology-webapi-login/requirements.txt">requirements.txt</a></li>
-<li><a href="/downloads/synology-webapi-login/test_synology_login.py">离线测试</a></li>
-</ul>
-<h2 id="真实离线验证">真实离线验证</h2>
-<p>为了避免在文章里伪造“成功截图”，我使用临时生成的 4096 位 RSA 密钥完成了可逆验证：公钥加密 501 字节 passphrase，私钥解密后逐字节相等；AES 密文以 <code>Salted__</code> 开头；解密后能够恢复 URL 参数和动态时间字段；最终登录请求中不存在明文 <code>passwd</code> 字段。</p>
-<p><img alt="真实测试运行截图" src="/post-images/synology-webapi-login-encryption-deep-dive/03-tests-real.png"></p>
-<p>下面这张图也是实际运行程序生成的请求结构，而不是手画的示意 JSON。公钥、密码和密文正文均已截断或替换，保留的只有能够证明算法结构的长度和前缀。</p>
-<p><img alt="真实生成的加密交换截图" src="/post-images/synology-webapi-login-encryption-deep-dive/04-encrypted-exchange-real.png"></p>
-<p>测试不能证明每个 DSM 版本都接受同样的私有兼容流程，但可以证明本文代码确实完成了预期的密码学封装，而不是只拼出一个“看起来像”的 JSON。</p>
-<h2 id="三个平台的一键脚本">三个平台的一键脚本</h2>
-<p>三个脚本都会在当前目录创建独立 <code>.venv</code>，安装固定依赖，然后交互式读取地址、账号和 Session；密码由 Python 的隐藏输入读取，不会出现在命令历史中。</p>
-<h3 id="windows-11">Windows 11</h3>
-<p>下载同一目录中的全部文件，然后在 PowerShell 执行：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-powershell" data-lang="powershell"><span style="display:flex;"><span>Set-ExecutionPolicy -Scope <span style="color:#66d9ef">Process</span> Bypass
-</span></span><span style="display:flex;"><span>.\install-windows.ps1
-</span></span></code></pre></div><p><a href="/downloads/synology-webapi-login/install-windows.ps1">下载 Windows 11 脚本</a></p>
-<h3 id="ubuntu-2604">Ubuntu 26.04</h3>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>chmod +x install-ubuntu.sh
-</span></span><span style="display:flex;"><span>./install-ubuntu.sh
-</span></span></code></pre></div><p><a href="/downloads/synology-webapi-login/install-ubuntu.sh">下载 Ubuntu 26.04 脚本</a></p>
-<h3 id="macos-26">macOS 26</h3>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>chmod +x install-macos.sh
-</span></span><span style="display:flex;"><span>./install-macos.sh
-</span></span></code></pre></div><p><a href="/downloads/synology-webapi-login/install-macos.sh">下载 macOS 26 脚本</a></p>
-<p>如果使用自签名证书，正确做法是把自己的 CA 导入系统或 Python 信任链，而不是长期添加 <code>--insecure</code>。</p>
-<h2 id="人工执行方法">人工执行方法</h2>
-<p>已经有 Python 3 时，也可以手工运行：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>python3 -m venv .venv
-</span></span><span style="display:flex;"><span>source .venv/bin/activate
-</span></span><span style="display:flex;"><span>python -m pip install -r requirements.txt
-</span></span><span style="display:flex;"><span>python synology_login.py <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  --url <span style="color:#e6db74">&#34;https://nas.example.test:5001&#34;</span> <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  --account <span style="color:#e6db74">&#34;reader&#34;</span> <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  --session <span style="color:#e6db74">&#34;DSM&#34;</span>
-</span></span></code></pre></div><p>程序随后会隐藏输入密码。若自动任务必须使用环境变量，可临时设置 <code>SYNOLOGY_PASSWORD</code>，运行后立即清理，且不要在共享终端、CI 日志或截图中输出环境内容。</p>
-<h2 id="agent-自动配置方法">Agent 自动配置方法</h2>
-<p>可以把下面的任务说明交给本机 Agent。不要把真实密码粘进对话：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>在本机为 Synology WebAPI 登录工具创建隔离 Python 虚拟环境。
-</span></span><span style="display:flex;"><span>只使用当前目录中的 synology_login.py 和 requirements.txt。
-</span></span><span style="display:flex;"><span>从操作系统环境变量 SYNOLOGY_PASSWORD 读取密码，不打印变量值、SID、Cookie 或完整响应。
-</span></span><span style="display:flex;"><span>使用我确认过的 HTTPS URL 和账号执行一次 session=DSM 登录。
-</span></span><span style="display:flex;"><span>保持 TLS 校验开启；如果证书失败，停止并报告证书链问题，不得自动添加 --insecure。
-</span></span><span style="display:flex;"><span>最后只报告 HTTP 阶段、是否返回 SID、耗时和脱敏错误码。
-</span></span></code></pre></div><p>Agent 的价值是减少重复安装和参数输入，不是替你降低安全标准。任何“为了方便”把密码写进脚本、关闭 TLS、把 SID 贴回聊天的行为，都应该拒绝。</p>
-<h2 id="失败时如何排查">失败时如何排查</h2>
-<p><img alt="登录失败排障图" src="/post-images/synology-webapi-login-encryption-deep-dive/08-troubleshooting.png"></p>
-<p>先检查网络和 TLS：URL、端口、反向代理路径、证书主机名和 CA 链是否正确。再检查动态字段：是否每次登录前重新调用 <code>getinfo</code>，是否把 <code>ciphertoken=server_time</code> 放入 AES 明文，是否错误地缓存了 <code>cipherkey</code>。然后检查账号策略：账号是否锁定、是否启用 2FA、Session 名是否匹配、调用方是否具备对应 API 权限。最后检查版本：<code>SYNO.API.Auth</code> 的可用版本应以设备的 <code>SYNO.API.Info</code> 查询结果为准。</p>
-<p>不要只看到“登录失败”就断定密码错误。它更像快递被退回：可能是地址错了、包装方式不对、标签过期，也可能才是收件人信息错误。</p>
-<h2 id="安全边界与容易误解的地方">安全边界与容易误解的地方</h2>
-<p>AES-CBC 本身不提供认证标签，这套格式也不是现代协议设计的推荐模板。它的意义是兼容既有实现，而不是建议新系统照抄。MD5 在这里用于历史兼容的密钥派生，不代表 MD5 重新变得适合密码哈希或数字签名。</p>
-<p>即使 HTTP 请求参数经过 RSA + AES 封装，中间人仍可能替换 <code>getinfo</code> 返回的公钥，从而让客户端把秘密加密给攻击者。HTTPS 的服务器身份校验正是用来解决这个问题。因此，“参数已经加密，可以放心关闭证书校验”是危险结论。</p>
-<p>此外，WebAPI SID 是临时会话凭据，拿到后应像密码一样保护并在不需要时注销。本文只适用于你拥有或明确获授权管理的设备。</p>
-<h2 id="qa">Q&amp;A</h2>
-<h3 id="cipherkey-一定是-__ciphertext-吗"><code>cipherkey</code> 一定是 <code>__cIpHeRtExT</code> 吗</h3>
-<p>不要假设。服务端通过 <code>getinfo</code> 返回字段名，客户端应动态读取。把观察到的一次值写死，会让代码对版本变化非常脆弱。</p>
-<h3 id="把-session-改成-dsm-就能直接登录浏览器管理界面吗">把 Session 改成 <code>DSM</code> 就能直接登录浏览器管理界面吗</h3>
-<p>不能这样等同。它决定的是 WebAPI 会话命名空间。浏览器 UI 还可能涉及 Cookie、CSRF、设备令牌、2FA 和前端自己的初始化流程。</p>
-<h3 id="为什么-rsa-还使用-pkcs1-v15而不是-oaep">为什么 RSA 还使用 PKCS#1 v1.5，而不是 OAEP</h3>
-<p>因为目标是兼容上游实现。新协议一般更倾向 OAEP，但客户端不能单方面更换填充方式，否则服务器无法解密。</p>
-<h3 id="为什么-passphrase-恰好是-501-字节">为什么 passphrase 恰好是 501 字节</h3>
-<p>固定实现使用 4096 位 RSA。PKCS#1 v1.5 加密允许的最大明文是模数长度减 11 字节，即 512 - 11 = 501。</p>
-<h3 id="dsm-开了-2fa-怎么办">DSM 开了 2FA 怎么办</h3>
-<p>需要按照设备和 API 版本支持处理 OTP 或设备令牌。本文基础工具没有假装绕过 2FA；遇到相关错误应停止并扩展合法的二次验证流程。</p>
-<h2 id="最后的结论">最后的结论</h2>
-<p>这次分析最有价值的不是“写出了一个登录脚本”，而是建立了正确的阅读顺序：先看服务器发回的动态规则，再看上游客户端怎样消费这些字段，最后用可逆测试证明每层封装都正确。</p>
-<p>群晖的这套流程可以浓缩成一句话：<strong>RSA 保护一次性 AES 钥匙，AES 保护 URL 参数，动态 <code>cipherkey</code> 负责把两只包裹交给服务器。</strong></p>
-<p>真正安全的落地还要再加一句：<strong>始终优先使用经过正确校验的 HTTPS，不记录密码和 SID，不把兼容加密误解成权限绕过。</strong></p>
-<h2 id="参考资料">参考资料</h2>
-<ul>
-<li>OpenStack Cinder Synology driver 固定提交：<a href="https://opendev.org/openstack/cinder/src/commit/efc3217d8b3ce8f4f1a66c7d5b7c940d73a36753/cinder/volume/drivers/synology/synology_common.py">https://opendev.org/openstack/cinder/src/commit/efc3217d8b3ce8f4f1a66c7d5b7c940d73a36753/cinder/volume/drivers/synology/synology_common.py</a></li>
-<li>Python <code>secrets</code> 文档：<a href="https://docs.python.org/3/library/secrets.html">https://docs.python.org/3/library/secrets.html</a></li>
-<li>cryptography 对称加密 primitives：<a href="https://cryptography.io/en/latest/hazmat/primitives/symmetric-encryption/">https://cryptography.io/en/latest/hazmat/primitives/symmetric-encryption/</a></li>
-</ul>
-        </div>
-    </article>
-
-    
-  
-
-
-  
-    
-  
-
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk/dist/gitalk.css">
-<script src="https://cdn.jsdelivr.net/npm/gitalk/dist/gitalk.min.js"></script>
-<div id="gitalk-container" style="margin-top:40px"></div>
-<script>
-  (function(){
-    var gitalk = new Gitalk({
-      clientID: '3181fd94e501cc5db0ad',
-      clientSecret: 'af1dab79dae02c69296e6615bfcecf47fc8615ee',
-      repo: 'margropcomment.margrop.io',
-      owner: 'margrop',
-      admin: ["margrop"],
-      
-      id: '\/post\/synology-webapi-login-encryption-deep-dive\/',
-      
-      distractionFreeMode: false
-    });
-    gitalk.render('gitalk-container');
-  })();
-</script>
-  
-
-
-
-
-    
-    <script type="text/javascript" src="https://js.users.51.la/21044367.js"></script>
-    <script charset="UTF-8" id="LA_COLLECT" src="//sdk.51.la/js-sdk-pro.min.js"></script>
-    <script>LA.init({id: "1vVTUWl7zoRjnKXi",ck: "1vVTUWl7zoRjnKXi"})</script>
-    <script src="https://sdk.51.la/perf/js-sdk-perf.min.js" crossorigin="anonymous"></script>
-    <script>
-      new LingQue.Monitor().init({id:"202teQt8THXwqyve"});
-    </script>
-</body>
-</html>
+<!doctype html><html lang=zh-CN><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>密码没写错，群晖却不让登录？我拆开 DSM 的 RSA + AES 双层信封，完整复刻 WebAPI 登录 - 魔都水滴</title><meta name=description content="先说结论 群晖某些 WebAPI 登录请求并不是简单地把 account 和 passwd 直接提交给 auth.cgi。OpenStack Cinder 的 Synology 驱动展示了一套完整兼容流程：先调用 SYNO.API.Encryption.getinfo，取得 RSA 公钥、服务器时间和两个动态字段名；客 …"><meta name=robots content="index, follow"><link rel=canonical href=https://blog.margrop.net/post/synology-webapi-login-encryption-deep-dive/><meta property="og:site_name" content="魔都水滴"><meta property="og:title" content="密码没写错，群晖却不让登录？我拆开 DSM 的 RSA + AES 双层信封，完整复刻 WebAPI 登录 - 魔都水滴"><meta property="og:description" content="先说结论 群晖某些 WebAPI 登录请求并不是简单地把 account 和 passwd 直接提交给 auth.cgi。OpenStack Cinder 的 Synology 驱动展示了一套完整兼容流程：先调用 SYNO.API.Encryption.getinfo，取得 RSA 公钥、服务器时间和两个动态字段名；客 …"><meta property="og:url" content="https://blog.margrop.net/post/synology-webapi-login-encryption-deep-dive/"><meta property="og:locale" content="zh_CN"><meta property="og:type" content="article"><meta property="og:locale:alternate" content="en_US"><meta property="og:image" content="https://blog.margrop.net/images/avatar.png"><meta name=twitter:card content="summary_large_image"><meta name=twitter:title content="密码没写错，群晖却不让登录？我拆开 DSM 的 RSA + AES 双层信封，完整复刻 WebAPI 登录 - 魔都水滴"><meta name=twitter:description content="先说结论 群晖某些 WebAPI 登录请求并不是简单地把 account 和 passwd 直接提交给 auth.cgi。OpenStack Cinder 的 Synology 驱动展示了一套完整兼容流程：先调用 SYNO.API.Encryption.getinfo，取得 RSA 公钥、服务器时间和两个动态字段名；客 …"><meta name=twitter:image content="https://blog.margrop.net/images/avatar.png"><link rel=alternate hreflang=zh-CN href=https://blog.margrop.net/post/synology-webapi-login-encryption-deep-dive/><link rel=alternate hreflang=en-US href=https://blog.margrop.net/en/post/synology-webapi-login-encryption-deep-dive/><link rel=alternate hreflang=x-default href=https://blog.margrop.net/><meta property="article:published_time" content="2026-07-11T08:30:00+08:00"><meta property="article:modified_time" content="2026-07-11T08:30:00+08:00"><meta property="article:tag" content="Synology"><meta property="article:tag" content="DSM"><meta property="article:tag" content="NAS"><meta property="article:tag" content="WebAPI"><meta property="article:tag" content="RSA"><meta property="article:tag" content="AES"><meta property="article:tag" content="Python"><meta property="article:tag" content="密码学"><meta property="article:tag" content="自动化"><meta property="article:tag" content="群晖"><script type=application/ld+json>{"@context":"https://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"魔都水滴"},"dateModified":"2026-07-11T08:30:00+08:00","datePublished":"2026-07-11T08:30:00+08:00","description":"先说结论 群晖某些 WebAPI 登录请求并不是简单地把 account 和 passwd 直接提交给 auth.cgi。OpenStack Cinder 的 Synology 驱动展示了一套完整兼容流程：先调用 SYNO.API.Encryption.getinfo，取得 RSA 公钥、服务器时间和两个动态字段名；客 …","headline":"密码没写错，群晖却不让登录？我拆开 DSM 的 RSA + AES 双层信封，完整复刻 WebAPI 登录","mainEntityOfPage":"https://blog.margrop.net/post/synology-webapi-login-encryption-deep-dive/","url":"https://blog.margrop.net/post/synology-webapi-login-encryption-deep-dive/"}</script><meta name=baidu-site-verification content="code-sVFZ8SER59"><script async src="https://www.googletagmanager.com/gtag/js?id=G-3J2W592DHJ"></script><script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments)}gtag("js",new Date),gtag("config","G-3J2W592DHJ")</script><style>body{font-family:-apple-system,BlinkMacSystemFont,segoe ui,Roboto,sans-serif;max-width:860px;margin:0 auto;padding:20px;line-height:1.7;color:#222}h1{border-bottom:2px solid #333;padding-bottom:10px}.post-list{list-style:none;padding:0}.post-list li{margin:15px 0}.post-list a{text-decoration:none;color:#333;font-size:18px}.post-list a:hover{color:#006cff}.date{color:#666;font-size:14px;margin-right:10px}.tags{margin-top:8px}.tag{background:#eee;padding:2px 8px;border-radius:3px;font-size:12px;margin-right:5px;display:inline-block}nav{margin-bottom:18px;border-bottom:1px solid #eee;padding-bottom:15px}nav a{margin-right:20px;text-decoration:none;color:#333;font-size:16px}nav a:hover{color:#006cff}.language-switcher{margin:-8px 0 26px}.language-switcher a{display:inline-block;margin-right:10px;padding:4px 10px;border:1px solid #ddd;border-radius:999px;color:#555;text-decoration:none;font-size:14px}.language-switcher a.active{background:#006cff;border-color:#006cff;color:#fff}.content{line-height:1.8}.content code{background:#f4f4f4;padding:2px 5px;border-radius:3px}.content pre{background:#f4f4f4;padding:15px;overflow-x:auto;border-radius:5px}.content img{display:block;max-width:100%;height:auto;margin:0 auto}.content .code-snippet__fix{margin:0 0 1.5em}.content .code-snippet__fix .code-snippet__line-index{display:none!important}.meta{color:#666;font-size:14px;margin-bottom:14px}a{color:#006cff}@media(max-width:680px){body{padding:16px}nav a{display:inline-block;margin-right:12px;margin-bottom:8px}}</style></head><body><nav><a href=/>首页</a>
+<a href=/post/>归档</a>
+<a href=/tags/>标签</a>
+<a href=/post/about/>关于</a>
+<a href=https://download.margrop.net target=_blank rel=noopener>下载</a>
+<a href=/post/favorites/>Link</a>
+<a href=/post/github-project-stars/>Github</a>
+<a href=https://github-mirrors.margrop.net target=_blank rel=noopener>Github加速</a>
+<a href=https://status.anye.xyz/ target=_blank rel=noopener>Docker加速</a></nav><div class=language-switcher><a href=/post/synology-webapi-login-encryption-deep-dive/ class=active>中文</a>
+<a href=/en/post/synology-webapi-login-encryption-deep-dive/>English</a></div><article><h1>密码没写错，群晖却不让登录？我拆开 DSM 的 RSA + AES 双层信封，完整复刻 WebAPI 登录</h1><div class=meta>发布时间: 2026-07-11</div><div class=tags><a href=/tag/synology/><span class=tag>Synology</span></a>
+<a href=/tag/dsm/><span class=tag>DSM</span></a>
+<a href=/tag/nas/><span class=tag>NAS</span></a>
+<a href=/tag/webapi/><span class=tag>WebAPI</span></a>
+<a href=/tag/rsa/><span class=tag>RSA</span></a>
+<a href=/tag/aes/><span class=tag>AES</span></a>
+<a href=/tag/python/><span class=tag>Python</span></a>
+<a href=/tag/%E5%AF%86%E7%A0%81%E5%AD%A6/><span class=tag>密码学</span></a>
+<a href=/tag/%E8%87%AA%E5%8A%A8%E5%8C%96/><span class=tag>自动化</span></a>
+<a href=/tag/%E7%BE%A4%E6%99%96/><span class=tag>群晖</span></a></div><div class=content><blockquote><p><strong>先说结论</strong></p><p>群晖某些 WebAPI 登录请求并不是简单地把 <code>account</code> 和 <code>passwd</code> 直接提交给 <code>auth.cgi</code>。OpenStack Cinder 的 Synology 驱动展示了一套完整兼容流程：先调用 <code>SYNO.API.Encryption.getinfo</code>，取得 RSA 公钥、服务器时间和两个动态字段名；客户端生成一次性随机 passphrase，用 RSA 加密它，再用它派生 AES-256-CBC 的密钥和 IV，对 URL 编码后的登录参数加密，最后把两段 Base64 密文放入服务器指定的 <code>cipherkey</code> 字段。</p><p>但必须先划清边界：这是一种 <strong>WebAPI 身份认证兼容方式</strong>，不是破解密码，也不是绕过权限；拿到 <code>session=DSM</code> 的 API SID，也不等于凭空获得浏览器 DSM 管理页面的完整 Cookie 登录状态。HTTP 参数加密同样不能代替 HTTPS，因为 TLS 还负责服务器身份校验、完整性保护和抵抗中间人攻击。</p></blockquote><p><img src=/post-images/synology-webapi-login-encryption-deep-dive/00-cover-original.png alt="原创题图：RSA 与 AES 双层信封保护 NAS 登录"></p><h2 id=为什么密码正确普通-post-仍然可能失败>为什么密码正确，普通 POST 仍然可能失败</h2><p>很多人第一次自动化 DSM 登录，会自然地写出下面这种请求：</p><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-python data-lang=python><span style=display:flex><span>requests<span style=color:#f92672>.</span>post(
+</span></span><span style=display:flex><span>    <span style=color:#e6db74>&#34;https://nas.example.test:5001/webapi/auth.cgi&#34;</span>,
+</span></span><span style=display:flex><span>    data<span style=color:#f92672>=</span>{
+</span></span><span style=display:flex><span>        <span style=color:#e6db74>&#34;api&#34;</span>: <span style=color:#e6db74>&#34;SYNO.API.Auth&#34;</span>,
+</span></span><span style=display:flex><span>        <span style=color:#e6db74>&#34;version&#34;</span>: <span style=color:#ae81ff>6</span>,
+</span></span><span style=display:flex><span>        <span style=color:#e6db74>&#34;method&#34;</span>: <span style=color:#e6db74>&#34;login&#34;</span>,
+</span></span><span style=display:flex><span>        <span style=color:#e6db74>&#34;account&#34;</span>: account,
+</span></span><span style=display:flex><span>        <span style=color:#e6db74>&#34;passwd&#34;</span>: password,
+</span></span><span style=display:flex><span>        <span style=color:#e6db74>&#34;session&#34;</span>: <span style=color:#e6db74>&#34;DSM&#34;</span>,
+</span></span><span style=display:flex><span>        <span style=color:#e6db74>&#34;format&#34;</span>: <span style=color:#e6db74>&#34;sid&#34;</span>,
+</span></span><span style=display:flex><span>    },
+</span></span><span style=display:flex><span>)
+</span></span></code></pre></div><p>在部分版本、接入方式或客户端兼容场景中，这种写法并没有复刻目标实现要求的参数保护流程。于是表现很像“密码错了”：返回登录失败、字段缺失、请求格式不匹配，或者代理层只看到一次普通的 <code>auth.cgi</code> 请求。</p><p>最容易走偏的方向有三个：反复重置密码、把 <code>cipherkey</code> 硬编码成 <code>__cIpHeRtExT</code>、复制一次旧的 <code>server_time</code> 长期使用。真正需要复刻的不是某个固定字符串，而是 <strong>每次登录前先向服务器领取当次规则</strong>。</p><p><img src=/post-images/synology-webapi-login-encryption-deep-dive/06-request-timeline.png alt=完整请求时序></p><h2 id=一手证据来自哪里>一手证据来自哪里</h2><p>本文的算法依据不是猜测，而是 OpenStack Cinder 固定提交中的 Synology 驱动实现。驱动的 <code>AESCipher</code> 明确写出：</p><ul><li>输出以 <code>Salted__</code> 开头；</li><li>随机盐长度为 8 字节；</li><li>密钥长度为 32 字节，也就是 AES-256；</li><li>模式为 CBC，IV 为 16 字节；</li><li>密钥和 IV 通过连续 MD5 摘要拼接派生；</li><li>明文按 16 字节块做 PKCS#7 风格填充。</li></ul><p><img src=/post-images/synology-webapi-login-encryption-deep-dive/01-source-aes.png alt="真实源码截图：AES-256-CBC 与 OpenSSL 兼容信封"></p><p>另一段 <code>_encrypt_params</code> 则给出了完整拼装顺序：调用 <code>getinfo</code>，读取 <code>public_key</code>、<code>cipherkey</code>、<code>ciphertoken</code>、<code>server_time</code>，生成 501 字节随机 passphrase，将时间写入动态 token 字段，然后分别执行 RSA 与 AES 加密。</p><p><img src=/post-images/synology-webapi-login-encryption-deep-dive/02-source-hybrid-payload.png alt="真实源码截图：RSA 与 AES 密文装入动态字段"></p><p>这里有一个很重要的细节：Cinder 驱动只在非 HTTPS 分支调用这套参数加密。这说明它主要是对特定协议兼容行为的实现，而不是对 TLS 的替代。今天重新实现时，仍然应优先使用 HTTPS，并开启证书校验。</p><h2 id=用双层快递理解混合加密>用“双层快递”理解混合加密</h2><p>假设你要寄一张写着账号和密码的纸条。</p><p>AES 像一把速度很快的小钥匙。它可以迅速锁住整只大盒子，但问题是：怎样把这把钥匙安全地交给 NAS？如果把钥匙明文贴在盒子外面，锁盒子就失去意义。</p><p>RSA 像 NAS 提前公开的一只特殊保险信封。任何人都能把东西塞进去并锁上，但只有持有私钥的 NAS 能打开。于是客户端把随机 AES passphrase 放进 RSA 信封；账号、密码、Session 和服务器时间则放进 AES 盒子。最后两个包裹一起送到 NAS。</p><p><img src=/post-images/synology-webapi-login-encryption-deep-dive/05-double-envelope.png alt=双层快递类比></p><p>这种做法叫混合加密：RSA 擅长安全交换小块秘密，AES 擅长高速加密大量数据。两者分工，比“所有内容都用 RSA 加密”更高效，也比“直接发送 AES 密钥”更安全。</p><h2 id=每一步究竟发生了什么>每一步究竟发生了什么</h2><p>客户端先向 <code>/webapi/encryption.cgi</code> 提交：</p><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-text data-lang=text><span style=display:flex><span>api=SYNO.API.Encryption
+</span></span><span style=display:flex><span>version=1
+</span></span><span style=display:flex><span>method=getinfo
+</span></span><span style=display:flex><span>format=module
+</span></span></code></pre></div><p>成功响应中的四个字段各有职责：</p><table><thead><tr><th>字段</th><th>作用</th><th>能否硬编码</th></tr></thead><tbody><tr><td><code>public_key</code></td><td>RSA 模数，指数固定为 65537</td><td>不应该</td></tr><tr><td><code>cipherkey</code></td><td>最终密文参数的字段名</td><td>不应该</td></tr><tr><td><code>ciphertoken</code></td><td>放置服务器时间的内部字段名</td><td>不应该</td></tr><tr><td><code>server_time</code></td><td>本次加密参数中的时间值</td><td>不应该复用</td></tr></tbody></table><p>然后生成 501 字节随机 passphrase。之所以是 501，与 4096 位 RSA 和 PKCS#1 v1.5 的最大明文长度有关：512 字节模数减去至少 11 字节填充，正好是 501 字节。</p><p>登录参数加入动态时间字段后进行 URL 编码，例如逻辑上类似：</p><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-text data-lang=text><span style=display:flex><span>account=reader%40example&amp;passwd=&lt;redacted&gt;&amp;session=DSM&amp;format=sid&amp;synotoken=...
+</span></span></code></pre></div><p>接下来用兼容 OpenSSL <code>EVP_BytesToKey</code> 思路的 MD5 链派生 32 字节 AES 密钥和 16 字节 IV，再用 AES-256-CBC 加密。输出结构是：</p><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-text data-lang=text><span style=display:flex><span>Salted__ + 8-byte salt + ciphertext
+</span></span></code></pre></div><p>最后形成动态字段：</p><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-json data-lang=json><span style=display:flex><span>{
+</span></span><span style=display:flex><span>  <span style=color:#f92672>&#34;&lt;cipherkey from server&gt;&#34;</span>: <span style=color:#e6db74>&#34;{\&#34;rsa\&#34;:\&#34;...\&#34;,\&#34;aes\&#34;:\&#34;...\&#34;}&#34;</span>
+</span></span><span style=display:flex><span>}
+</span></span></code></pre></div><p><img src=/post-images/synology-webapi-login-encryption-deep-dive/07-payload-anatomy.png alt="cipherkey 载荷结构"></p><h2 id=我对原始示例做了哪些修正>我对原始示例做了哪些修正</h2><p>资料中的思路基本正确，但直接用于长期自动化还需要几处加固。</p><p>第一，随机 passphrase 不再使用 <code>random.choice</code>，而使用适合安全随机数的 <code>secrets.choice</code>。第二，HTTPS 默认开启证书验证，只有显式传入 <code>--insecure</code> 才关闭，并打印警告。第三，密码默认通过隐藏输入或临时环境变量读取，不写进源码。第四，程序默认只报告“服务器返回了 SID”，不会把 SID 打进日志；只有明确使用 <code>--show-sid</code> 才显示。第五，对 <code>getinfo</code> 缺字段、JSON 异常、HTTP 错误、登录失败和“成功但没有 SID”分别报错。</p><p>我还修复了原资料末尾示例中函数调用括号未闭合的问题，并将 <code>host + port + scheme</code> 合并为明确的 <code>--url</code>，减少 HTTP/HTTPS 与端口组合错误。</p><p>完整程序可直接下载：</p><ul><li><a href=/downloads/synology-webapi-login/synology_login.py>synology_login.py</a></li><li><a href=/downloads/synology-webapi-login/requirements.txt>requirements.txt</a></li><li><a href=/downloads/synology-webapi-login/test_synology_login.py>离线测试</a></li></ul><h2 id=真实离线验证>真实离线验证</h2><p>为了避免在文章里伪造“成功截图”，我使用临时生成的 4096 位 RSA 密钥完成了可逆验证：公钥加密 501 字节 passphrase，私钥解密后逐字节相等；AES 密文以 <code>Salted__</code> 开头；解密后能够恢复 URL 参数和动态时间字段；最终登录请求中不存在明文 <code>passwd</code> 字段。</p><p><img src=/post-images/synology-webapi-login-encryption-deep-dive/03-tests-real.png alt=真实测试运行截图></p><p>下面这张图也是实际运行程序生成的请求结构，而不是手画的示意 JSON。公钥、密码和密文正文均已截断或替换，保留的只有能够证明算法结构的长度和前缀。</p><p><img src=/post-images/synology-webapi-login-encryption-deep-dive/04-encrypted-exchange-real.png alt=真实生成的加密交换截图></p><p>测试不能证明每个 DSM 版本都接受同样的私有兼容流程，但可以证明本文代码确实完成了预期的密码学封装，而不是只拼出一个“看起来像”的 JSON。</p><h2 id=三个平台的一键脚本>三个平台的一键脚本</h2><p>三个脚本都会在当前目录创建独立 <code>.venv</code>，安装固定依赖，然后交互式读取地址、账号和 Session；密码由 Python 的隐藏输入读取，不会出现在命令历史中。</p><h3 id=windows-11>Windows 11</h3><p>下载同一目录中的全部文件，然后在 PowerShell 执行：</p><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-powershell data-lang=powershell><span style=display:flex><span>Set-ExecutionPolicy -Scope <span style=color:#66d9ef>Process</span> Bypass
+</span></span><span style=display:flex><span>.\install-windows.ps1
+</span></span></code></pre></div><p><a href=/downloads/synology-webapi-login/install-windows.ps1>下载 Windows 11 脚本</a></p><h3 id=ubuntu-2604>Ubuntu 26.04</h3><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-bash data-lang=bash><span style=display:flex><span>chmod +x install-ubuntu.sh
+</span></span><span style=display:flex><span>./install-ubuntu.sh
+</span></span></code></pre></div><p><a href=/downloads/synology-webapi-login/install-ubuntu.sh>下载 Ubuntu 26.04 脚本</a></p><h3 id=macos-26>macOS 26</h3><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-bash data-lang=bash><span style=display:flex><span>chmod +x install-macos.sh
+</span></span><span style=display:flex><span>./install-macos.sh
+</span></span></code></pre></div><p><a href=/downloads/synology-webapi-login/install-macos.sh>下载 macOS 26 脚本</a></p><p>如果使用自签名证书，正确做法是把自己的 CA 导入系统或 Python 信任链，而不是长期添加 <code>--insecure</code>。</p><h2 id=人工执行方法>人工执行方法</h2><p>已经有 Python 3 时，也可以手工运行：</p><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-bash data-lang=bash><span style=display:flex><span>python3 -m venv .venv
+</span></span><span style=display:flex><span>source .venv/bin/activate
+</span></span><span style=display:flex><span>python -m pip install -r requirements.txt
+</span></span><span style=display:flex><span>python synology_login.py <span style=color:#ae81ff>\
+</span></span></span><span style=display:flex><span>  --url <span style=color:#e6db74>&#34;https://nas.example.test:5001&#34;</span> <span style=color:#ae81ff>\
+</span></span></span><span style=display:flex><span>  --account <span style=color:#e6db74>&#34;reader&#34;</span> <span style=color:#ae81ff>\
+</span></span></span><span style=display:flex><span>  --session <span style=color:#e6db74>&#34;DSM&#34;</span>
+</span></span></code></pre></div><p>程序随后会隐藏输入密码。若自动任务必须使用环境变量，可临时设置 <code>SYNOLOGY_PASSWORD</code>，运行后立即清理，且不要在共享终端、CI 日志或截图中输出环境内容。</p><h2 id=agent-自动配置方法>Agent 自动配置方法</h2><p>可以把下面的任务说明交给本机 Agent。不要把真实密码粘进对话：</p><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-text data-lang=text><span style=display:flex><span>在本机为 Synology WebAPI 登录工具创建隔离 Python 虚拟环境。
+</span></span><span style=display:flex><span>只使用当前目录中的 synology_login.py 和 requirements.txt。
+</span></span><span style=display:flex><span>从操作系统环境变量 SYNOLOGY_PASSWORD 读取密码，不打印变量值、SID、Cookie 或完整响应。
+</span></span><span style=display:flex><span>使用我确认过的 HTTPS URL 和账号执行一次 session=DSM 登录。
+</span></span><span style=display:flex><span>保持 TLS 校验开启；如果证书失败，停止并报告证书链问题，不得自动添加 --insecure。
+</span></span><span style=display:flex><span>最后只报告 HTTP 阶段、是否返回 SID、耗时和脱敏错误码。
+</span></span></code></pre></div><p>Agent 的价值是减少重复安装和参数输入，不是替你降低安全标准。任何“为了方便”把密码写进脚本、关闭 TLS、把 SID 贴回聊天的行为，都应该拒绝。</p><h2 id=失败时如何排查>失败时如何排查</h2><p><img src=/post-images/synology-webapi-login-encryption-deep-dive/08-troubleshooting.png alt=登录失败排障图></p><p>先检查网络和 TLS：URL、端口、反向代理路径、证书主机名和 CA 链是否正确。再检查动态字段：是否每次登录前重新调用 <code>getinfo</code>，是否把 <code>ciphertoken=server_time</code> 放入 AES 明文，是否错误地缓存了 <code>cipherkey</code>。然后检查账号策略：账号是否锁定、是否启用 2FA、Session 名是否匹配、调用方是否具备对应 API 权限。最后检查版本：<code>SYNO.API.Auth</code> 的可用版本应以设备的 <code>SYNO.API.Info</code> 查询结果为准。</p><p>不要只看到“登录失败”就断定密码错误。它更像快递被退回：可能是地址错了、包装方式不对、标签过期，也可能才是收件人信息错误。</p><h2 id=安全边界与容易误解的地方>安全边界与容易误解的地方</h2><p>AES-CBC 本身不提供认证标签，这套格式也不是现代协议设计的推荐模板。它的意义是兼容既有实现，而不是建议新系统照抄。MD5 在这里用于历史兼容的密钥派生，不代表 MD5 重新变得适合密码哈希或数字签名。</p><p>即使 HTTP 请求参数经过 RSA + AES 封装，中间人仍可能替换 <code>getinfo</code> 返回的公钥，从而让客户端把秘密加密给攻击者。HTTPS 的服务器身份校验正是用来解决这个问题。因此，“参数已经加密，可以放心关闭证书校验”是危险结论。</p><p>此外，WebAPI SID 是临时会话凭据，拿到后应像密码一样保护并在不需要时注销。本文只适用于你拥有或明确获授权管理的设备。</p><h2 id=qa>Q&amp;A</h2><h3 id=cipherkey-一定是-__ciphertext-吗><code>cipherkey</code> 一定是 <code>__cIpHeRtExT</code> 吗</h3><p>不要假设。服务端通过 <code>getinfo</code> 返回字段名，客户端应动态读取。把观察到的一次值写死，会让代码对版本变化非常脆弱。</p><h3 id=把-session-改成-dsm-就能直接登录浏览器管理界面吗>把 Session 改成 <code>DSM</code> 就能直接登录浏览器管理界面吗</h3><p>不能这样等同。它决定的是 WebAPI 会话命名空间。浏览器 UI 还可能涉及 Cookie、CSRF、设备令牌、2FA 和前端自己的初始化流程。</p><h3 id=为什么-rsa-还使用-pkcs1-v15而不是-oaep>为什么 RSA 还使用 PKCS#1 v1.5，而不是 OAEP</h3><p>因为目标是兼容上游实现。新协议一般更倾向 OAEP，但客户端不能单方面更换填充方式，否则服务器无法解密。</p><h3 id=为什么-passphrase-恰好是-501-字节>为什么 passphrase 恰好是 501 字节</h3><p>固定实现使用 4096 位 RSA。PKCS#1 v1.5 加密允许的最大明文是模数长度减 11 字节，即 512 - 11 = 501。</p><h3 id=dsm-开了-2fa-怎么办>DSM 开了 2FA 怎么办</h3><p>需要按照设备和 API 版本支持处理 OTP 或设备令牌。本文基础工具没有假装绕过 2FA；遇到相关错误应停止并扩展合法的二次验证流程。</p><h2 id=最后的结论>最后的结论</h2><p>这次分析最有价值的不是“写出了一个登录脚本”，而是建立了正确的阅读顺序：先看服务器发回的动态规则，再看上游客户端怎样消费这些字段，最后用可逆测试证明每层封装都正确。</p><p>群晖的这套流程可以浓缩成一句话：<strong>RSA 保护一次性 AES 钥匙，AES 保护 URL 参数，动态 <code>cipherkey</code> 负责把两只包裹交给服务器。</strong></p><p>真正安全的落地还要再加一句：<strong>始终优先使用经过正确校验的 HTTPS，不记录密码和 SID，不把兼容加密误解成权限绕过。</strong></p><h2 id=参考资料>参考资料</h2><ul><li>OpenStack Cinder Synology driver 固定提交：<a href=https://opendev.org/openstack/cinder/src/commit/efc3217d8b3ce8f4f1a66c7d5b7c940d73a36753/cinder/volume/drivers/synology/synology_common.py>https://opendev.org/openstack/cinder/src/commit/efc3217d8b3ce8f4f1a66c7d5b7c940d73a36753/cinder/volume/drivers/synology/synology_common.py</a></li><li>Python <code>secrets</code> 文档：<a href=https://docs.python.org/3/library/secrets.html>https://docs.python.org/3/library/secrets.html</a></li><li>cryptography 对称加密 primitives：<a href=https://cryptography.io/en/latest/hazmat/primitives/symmetric-encryption/>https://cryptography.io/en/latest/hazmat/primitives/symmetric-encryption/</a></li></ul></div></article><link rel=stylesheet href=https://cdn.jsdelivr.net/npm/gitalk/dist/gitalk.css><script src=https://cdn.jsdelivr.net/npm/gitalk/dist/gitalk.min.js></script><div id=gitalk-container style=margin-top:40px></div><script>(function(){var e=new Gitalk({clientID:"3181fd94e501cc5db0ad",clientSecret:"af1dab79dae02c69296e6615bfcecf47fc8615ee",repo:"margropcomment.margrop.io",owner:"margrop",admin:["margrop"],id:"/post/synology-webapi-login-encryption-deep-dive/",distractionFreeMode:!1});e.render("gitalk-container")})()</script><script type=text/javascript src=https://js.users.51.la/21044367.js></script><script id=LA_COLLECT src=//sdk.51.la/js-sdk-pro.min.js></script><script>LA.init({id:"1vVTUWl7zoRjnKXi",ck:"1vVTUWl7zoRjnKXi"})</script><script src=https://sdk.51.la/perf/js-sdk-perf.min.js crossorigin=anonymous></script><script>(new LingQue.Monitor).init({id:"202teQt8THXwqyve"})</script></body></html>

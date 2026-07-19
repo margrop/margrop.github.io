@@ -1,420 +1,106 @@
-<!DOCTYPE html>
-<html lang="en-US">
-<head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>The Docker Container Is Running, the Port Is Dead: A Complete Walkthrough of a Silent Host-Bind Failure - Margrop Blog</title>
-<meta name="description" content="TL;DR: docker ps says everything is fine. docker inspect’s HostConfig.PortBindings clearly says 203.0.113.14:3001:3000. But on the host, no docker-proxy is …">
-<meta name="robots" content="index, follow">
-<link rel="canonical" href="https://blog.margrop.net/en/post/docker-port-bind-half-silent/">
-
-<meta property="og:site_name" content="Margrop Blog">
-<meta property="og:title" content="The Docker Container Is Running, the Port Is Dead: A Complete Walkthrough of a Silent Host-Bind Failure - Margrop Blog">
-<meta property="og:description" content="TL;DR: docker ps says everything is fine. docker inspect’s HostConfig.PortBindings clearly says 203.0.113.14:3001:3000. But on the host, no docker-proxy is …">
-<meta property="og:url" content="https://blog.margrop.net/en/post/docker-port-bind-half-silent/">
-<meta property="og:locale" content="en_US"><meta property="og:type" content="article"><meta property="og:locale:alternate" content="zh_CN"><meta property="og:image" content="https://blog.margrop.net/images/avatar.png"><meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="The Docker Container Is Running, the Port Is Dead: A Complete Walkthrough of a Silent Host-Bind Failure - Margrop Blog">
-<meta name="twitter:description" content="TL;DR: docker ps says everything is fine. docker inspect’s HostConfig.PortBindings clearly says 203.0.113.14:3001:3000. But on the host, no docker-proxy is …"><meta name="twitter:image" content="https://blog.margrop.net/images/avatar.png"><link rel="alternate" hreflang="zh-CN" href="https://blog.margrop.net/post/docker-port-bind-half-silent/"><link rel="alternate" hreflang="en-US" href="https://blog.margrop.net/en/post/docker-port-bind-half-silent/"><link rel="alternate" hreflang="x-default" href="https://blog.margrop.net/"><meta property="article:published_time" content="2026-06-13T07:30:00&#43;08:00">
-<meta property="article:modified_time" content="2026-06-13T07:30:00&#43;08:00"><meta property="article:tag" content="Docker"><meta property="article:tag" content="Container"><meta property="article:tag" content="Networking"><meta property="article:tag" content="Port Mapping"><meta property="article:tag" content="iptables"><meta property="article:tag" content="docker-proxy"><meta property="article:tag" content="libnetwork"><meta property="article:tag" content="Troubleshooting"><meta property="article:tag" content="Postmortem"><script type="application/ld+json">{"@context":"https://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"Margrop"},"dateModified":"2026-06-13T07:30:00+08:00","datePublished":"2026-06-13T07:30:00+08:00","description":"TL;DR: docker ps says everything is fine. docker inspect’s HostConfig.PortBindings clearly says 203.0.113.14:3001:3000. But on the host, no docker-proxy is …","headline":"The Docker Container Is Running, the Port Is Dead: A Complete Walkthrough of a Silent Host-Bind Failure","mainEntityOfPage":"https://blog.margrop.net/en/post/docker-port-bind-half-silent/","url":"https://blog.margrop.net/en/post/docker-port-bind-half-silent/"}</script>
-    <meta name="baidu-site-verification" content="code-sVFZ8SER59" />
-
-    
-    <script async src="https://www.googletagmanager.com/gtag/js?id=G-3J2W592DHJ"></script>
-    <script>
-      window.dataLayer = window.dataLayer || [];
-      function gtag(){dataLayer.push(arguments);}
-      gtag('js', new Date());
-      gtag('config', 'G-3J2W592DHJ');
-    </script>
-
-    <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 860px; margin: 0 auto; padding: 20px; line-height: 1.7; color: #222; }
-    h1 { border-bottom: 2px solid #333; padding-bottom: 10px; }
-    .post-list { list-style: none; padding: 0; }
-    .post-list li { margin: 15px 0; }
-    .post-list a { text-decoration: none; color: #333; font-size: 18px; }
-    .post-list a:hover { color: #006CFF; }
-    .date { color: #666; font-size: 14px; margin-right: 10px; }
-    .tags { margin-top: 8px; }
-    .tag { background: #eee; padding: 2px 8px; border-radius: 3px; font-size: 12px; margin-right: 5px; display: inline-block; }
-    nav { margin-bottom: 18px; border-bottom: 1px solid #eee; padding-bottom: 15px; }
-    nav a { margin-right: 20px; text-decoration: none; color: #333; font-size: 16px; }
-    nav a:hover { color: #006CFF; }
-    .language-switcher { margin: -8px 0 26px; }
-    .language-switcher a { display: inline-block; margin-right: 10px; padding: 4px 10px; border: 1px solid #ddd; border-radius: 999px; color: #555; text-decoration: none; font-size: 14px; }
-    .language-switcher a.active { background: #006CFF; border-color: #006CFF; color: #fff; }
-    .content { line-height: 1.8; }
-    .content code { background: #f4f4f4; padding: 2px 5px; border-radius: 3px; }
-    .content pre { background: #f4f4f4; padding: 15px; overflow-x: auto; border-radius: 5px; }
-    .content img { display: block; max-width: 100%; height: auto; margin: 0 auto; }
-    .content .code-snippet__fix {
-        margin: 0 0 1.5em;
-    }
-    .content .code-snippet__fix .code-snippet__line-index {
-        display: none !important;
-    }
-    .meta { color: #666; font-size: 14px; margin-bottom: 14px; }
-    a { color: #006CFF; }
-    @media (max-width: 680px) {
-        body { padding: 16px; }
-        nav a { display: inline-block; margin-right: 12px; margin-bottom: 8px; }
-    }
-</style>
-
-</head>
-<body>
-    <nav>
-  
-  <a href="/en/">Home</a>
-  <a href="/en/post/">Archive</a>
-  <a href="/en/tags/">Tags</a>
-  <a href="/en/post/about/">About</a>
-  <a href="https://download.margrop.net" target="_blank" rel="noopener">Download</a>
-  <a href="/en/post/favorites/">Links</a>
-  <a href="/en/post/github-project-stars/">Github</a>
-  
-</nav>
-
-    
-<div class="language-switcher">
-  
-    <a href="/post/docker-port-bind-half-silent/" class="">中文</a>
-  
-    <a href="/en/post/docker-port-bind-half-silent/" class="active">English</a>
-  
-</div>
-
-
-    
-    <article>
-        <h1>The Docker Container Is Running, the Port Is Dead: A Complete Walkthrough of a Silent Host-Bind Failure</h1>
-        <div class="meta">
-            Published: 2026-06-13
-        </div>
-        
-<div class="tags">
-    
-    <a href="/en/tag/docker/"><span class="tag">Docker</span></a>
-    
-    <a href="/en/tag/container/"><span class="tag">Container</span></a>
-    
-    <a href="/en/tag/networking/"><span class="tag">Networking</span></a>
-    
-    <a href="/en/tag/port-mapping/"><span class="tag">Port Mapping</span></a>
-    
-    <a href="/en/tag/iptables/"><span class="tag">iptables</span></a>
-    
-    <a href="/en/tag/docker-proxy/"><span class="tag">docker-proxy</span></a>
-    
-    <a href="/en/tag/libnetwork/"><span class="tag">libnetwork</span></a>
-    
-    <a href="/en/tag/troubleshooting/"><span class="tag">Troubleshooting</span></a>
-    
-    <a href="/en/tag/postmortem/"><span class="tag">Postmortem</span></a>
-    
-</div>
-
-
-        <div class="content">
-            <blockquote>
-<p><strong>TL;DR:</strong></p>
-<p><code>docker ps</code> says everything is fine. <code>docker inspect</code>&rsquo;s <code>HostConfig.PortBindings</code> clearly says <code>203.0.113.14:3001:3000</code>. But on the host, <strong>no <code>docker-proxy</code> is listening</strong>, the iptables <code>nat/DOCKER</code> chain has <strong>no DNAT rule</strong>, and <code>NetworkSettings.Networks</code> and <code>Ports</code> are both <strong>empty <code>{}</code></strong>. This &ldquo;container alive, port dead&rdquo; state is what happens when libnetwork silently rolls back the endpoint creation because the target interface wasn&rsquo;t up at attach time — and Docker doesn&rsquo;t bother to tell you that the port publish never actually happened. <strong>The fix is a single 30-second command</strong>: <code>docker network connect &lt;net&gt; &lt;ctr&gt;</code>.</p>
-</blockquote>
-<p><img alt="The Failure Scene: docker ps looks fine, but the port is unreachable" src="/post-images/docker-port-bind-half-silent/01-symptom-topology.svg"></p>
-<p><em>Figure 1: A textbook &ldquo;half-alive&rdquo; state — the container process is running, HostConfig still has the port binding, but no process on the host is listening on 3001.</em></p>
-<hr>
-<h2 id="1-background-a-seemingly-impossible-outage">1. Background: A Seemingly Impossible Outage</h2>
-<p>I run a small AI gateway on a public-facing server, with a stack of services managed by Docker Compose: new-api, dockhand, headroom, and a few others. Their <code>compose.yaml</code> looks like this:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-yaml" data-lang="yaml"><span style="display:flex;"><span><span style="color:#f92672">ports</span>:
-</span></span><span style="display:flex;"><span>  - <span style="color:#e6db74">&#34;203.0.113.14:3001:3000&#34;</span>   <span style="color:#75715e"># new-api</span>
-</span></span><span style="display:flex;"><span>  - <span style="color:#e6db74">&#34;203.0.113.14:3003:3000&#34;</span>   <span style="color:#75715e"># dockhand</span>
-</span></span><span style="display:flex;"><span>  - <span style="color:#e6db74">&#34;203.0.113.14:3005:3000&#34;</span>   <span style="color:#75715e"># headroom</span>
-</span></span></code></pre></div><p>That is, <strong>every container&rsquo;s host port is bound to a fixed secondary IP on a side NIC</strong> — <code>203.0.113.14</code> is a secondary address configured on top of an auxiliary interface, and every external path (firewall whitelist, DNS, peer routing) keys off this IP.</p>
-<p>On an unremarkable afternoon, I tried to reach <code>http://203.0.113.14:3001/</code> from another node on the same network. I expected the new-api login page. I got:</p>
-<pre tabindex="0"><code>curl: (7) Failed to connect to 203.0.113.14 port 3001
+<!doctype html><html lang=en-US><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>The Docker Container Is Running, the Port Is Dead: A Complete Walkthrough of a Silent Host-Bind Failure - Margrop Blog</title><meta name=description content="TL;DR: docker ps says everything is fine. docker inspect’s HostConfig.PortBindings clearly says 203.0.113.14:3001:3000. But on the host, no docker-proxy is …"><meta name=robots content="index, follow"><link rel=canonical href=https://blog.margrop.net/en/post/docker-port-bind-half-silent/><meta property="og:site_name" content="Margrop Blog"><meta property="og:title" content="The Docker Container Is Running, the Port Is Dead: A Complete Walkthrough of a Silent Host-Bind Failure - Margrop Blog"><meta property="og:description" content="TL;DR: docker ps says everything is fine. docker inspect’s HostConfig.PortBindings clearly says 203.0.113.14:3001:3000. But on the host, no docker-proxy is …"><meta property="og:url" content="https://blog.margrop.net/en/post/docker-port-bind-half-silent/"><meta property="og:locale" content="en_US"><meta property="og:type" content="article"><meta property="og:locale:alternate" content="zh_CN"><meta property="og:image" content="https://blog.margrop.net/images/avatar.png"><meta name=twitter:card content="summary_large_image"><meta name=twitter:title content="The Docker Container Is Running, the Port Is Dead: A Complete Walkthrough of a Silent Host-Bind Failure - Margrop Blog"><meta name=twitter:description content="TL;DR: docker ps says everything is fine. docker inspect’s HostConfig.PortBindings clearly says 203.0.113.14:3001:3000. But on the host, no docker-proxy is …"><meta name=twitter:image content="https://blog.margrop.net/images/avatar.png"><link rel=alternate hreflang=zh-CN href=https://blog.margrop.net/post/docker-port-bind-half-silent/><link rel=alternate hreflang=en-US href=https://blog.margrop.net/en/post/docker-port-bind-half-silent/><link rel=alternate hreflang=x-default href=https://blog.margrop.net/><meta property="article:published_time" content="2026-06-13T07:30:00+08:00"><meta property="article:modified_time" content="2026-06-13T07:30:00+08:00"><meta property="article:tag" content="Docker"><meta property="article:tag" content="Container"><meta property="article:tag" content="Networking"><meta property="article:tag" content="Port Mapping"><meta property="article:tag" content="iptables"><meta property="article:tag" content="docker-proxy"><meta property="article:tag" content="libnetwork"><meta property="article:tag" content="Troubleshooting"><meta property="article:tag" content="Postmortem"><script type=application/ld+json>{"@context":"https://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"Margrop"},"dateModified":"2026-06-13T07:30:00+08:00","datePublished":"2026-06-13T07:30:00+08:00","description":"TL;DR: docker ps says everything is fine. docker inspect’s HostConfig.PortBindings clearly says 203.0.113.14:3001:3000. But on the host, no docker-proxy is …","headline":"The Docker Container Is Running, the Port Is Dead: A Complete Walkthrough of a Silent Host-Bind Failure","mainEntityOfPage":"https://blog.margrop.net/en/post/docker-port-bind-half-silent/","url":"https://blog.margrop.net/en/post/docker-port-bind-half-silent/"}</script><meta name=baidu-site-verification content="code-sVFZ8SER59"><script async src="https://www.googletagmanager.com/gtag/js?id=G-3J2W592DHJ"></script><script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments)}gtag("js",new Date),gtag("config","G-3J2W592DHJ")</script><style>body{font-family:-apple-system,BlinkMacSystemFont,segoe ui,Roboto,sans-serif;max-width:860px;margin:0 auto;padding:20px;line-height:1.7;color:#222}h1{border-bottom:2px solid #333;padding-bottom:10px}.post-list{list-style:none;padding:0}.post-list li{margin:15px 0}.post-list a{text-decoration:none;color:#333;font-size:18px}.post-list a:hover{color:#006cff}.date{color:#666;font-size:14px;margin-right:10px}.tags{margin-top:8px}.tag{background:#eee;padding:2px 8px;border-radius:3px;font-size:12px;margin-right:5px;display:inline-block}nav{margin-bottom:18px;border-bottom:1px solid #eee;padding-bottom:15px}nav a{margin-right:20px;text-decoration:none;color:#333;font-size:16px}nav a:hover{color:#006cff}.language-switcher{margin:-8px 0 26px}.language-switcher a{display:inline-block;margin-right:10px;padding:4px 10px;border:1px solid #ddd;border-radius:999px;color:#555;text-decoration:none;font-size:14px}.language-switcher a.active{background:#006cff;border-color:#006cff;color:#fff}.content{line-height:1.8}.content code{background:#f4f4f4;padding:2px 5px;border-radius:3px}.content pre{background:#f4f4f4;padding:15px;overflow-x:auto;border-radius:5px}.content img{display:block;max-width:100%;height:auto;margin:0 auto}.content .code-snippet__fix{margin:0 0 1.5em}.content .code-snippet__fix .code-snippet__line-index{display:none!important}.meta{color:#666;font-size:14px;margin-bottom:14px}a{color:#006cff}@media(max-width:680px){body{padding:16px}nav a{display:inline-block;margin-right:12px;margin-bottom:8px}}</style></head><body><nav><a href=/en/>Home</a>
+<a href=/en/post/>Archive</a>
+<a href=/en/tags/>Tags</a>
+<a href=/en/post/about/>About</a>
+<a href=https://download.margrop.net target=_blank rel=noopener>Download</a>
+<a href=/en/post/favorites/>Links</a>
+<a href=/en/post/github-project-stars/>Github</a></nav><div class=language-switcher><a href=/post/docker-port-bind-half-silent/>中文</a>
+<a href=/en/post/docker-port-bind-half-silent/ class=active>English</a></div><article><h1>The Docker Container Is Running, the Port Is Dead: A Complete Walkthrough of a Silent Host-Bind Failure</h1><div class=meta>Published: 2026-06-13</div><div class=tags><a href=/en/tag/docker/><span class=tag>Docker</span></a>
+<a href=/en/tag/container/><span class=tag>Container</span></a>
+<a href=/en/tag/networking/><span class=tag>Networking</span></a>
+<a href=/en/tag/port-mapping/><span class=tag>Port Mapping</span></a>
+<a href=/en/tag/iptables/><span class=tag>iptables</span></a>
+<a href=/en/tag/docker-proxy/><span class=tag>docker-proxy</span></a>
+<a href=/en/tag/libnetwork/><span class=tag>libnetwork</span></a>
+<a href=/en/tag/troubleshooting/><span class=tag>Troubleshooting</span></a>
+<a href=/en/tag/postmortem/><span class=tag>Postmortem</span></a></div><div class=content><blockquote><p><strong>TL;DR:</strong></p><p><code>docker ps</code> says everything is fine. <code>docker inspect</code>&rsquo;s <code>HostConfig.PortBindings</code> clearly says <code>203.0.113.14:3001:3000</code>. But on the host, <strong>no <code>docker-proxy</code> is listening</strong>, the iptables <code>nat/DOCKER</code> chain has <strong>no DNAT rule</strong>, and <code>NetworkSettings.Networks</code> and <code>Ports</code> are both <strong>empty <code>{}</code></strong>. This &ldquo;container alive, port dead&rdquo; state is what happens when libnetwork silently rolls back the endpoint creation because the target interface wasn&rsquo;t up at attach time — and Docker doesn&rsquo;t bother to tell you that the port publish never actually happened. <strong>The fix is a single 30-second command</strong>: <code>docker network connect &lt;net> &lt;ctr></code>.</p></blockquote><p><img src=/post-images/docker-port-bind-half-silent/01-symptom-topology.svg alt="The Failure Scene: docker ps looks fine, but the port is unreachable"></p><p><em>Figure 1: A textbook &ldquo;half-alive&rdquo; state — the container process is running, HostConfig still has the port binding, but no process on the host is listening on 3001.</em></p><hr><h2 id=1-background-a-seemingly-impossible-outage>1. Background: A Seemingly Impossible Outage</h2><p>I run a small AI gateway on a public-facing server, with a stack of services managed by Docker Compose: new-api, dockhand, headroom, and a few others. Their <code>compose.yaml</code> looks like this:</p><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-yaml data-lang=yaml><span style=display:flex><span><span style=color:#f92672>ports</span>:
+</span></span><span style=display:flex><span>  - <span style=color:#e6db74>&#34;203.0.113.14:3001:3000&#34;</span>   <span style=color:#75715e># new-api</span>
+</span></span><span style=display:flex><span>  - <span style=color:#e6db74>&#34;203.0.113.14:3003:3000&#34;</span>   <span style=color:#75715e># dockhand</span>
+</span></span><span style=display:flex><span>  - <span style=color:#e6db74>&#34;203.0.113.14:3005:3000&#34;</span>   <span style=color:#75715e># headroom</span>
+</span></span></code></pre></div><p>That is, <strong>every container&rsquo;s host port is bound to a fixed secondary IP on a side NIC</strong> — <code>203.0.113.14</code> is a secondary address configured on top of an auxiliary interface, and every external path (firewall whitelist, DNS, peer routing) keys off this IP.</p><p>On an unremarkable afternoon, I tried to reach <code>http://203.0.113.14:3001/</code> from another node on the same network. I expected the new-api login page. I got:</p><pre tabindex=0><code>curl: (7) Failed to connect to 203.0.113.14 port 3001
       after 0 ms: Couldn&#39;t connect to server
-</code></pre><p>Not just 3001. I tried 3003 and 3005 too:</p>
-<pre tabindex="0"><code>nc -z -v 203.0.113.14 3001   → Connection refused
+</code></pre><p>Not just 3001. I tried 3003 and 3005 too:</p><pre tabindex=0><code>nc -z -v 203.0.113.14 3001   → Connection refused
 nc -z -v 203.0.113.14 3003   → Connection refused
 nc -z -v 203.0.113.14 3005   → Connection refused
-</code></pre><p><strong>Three ports were dead at the same time.</strong> This didn&rsquo;t look like one container crashing on its own — it looked like a systemic problem on the host side.</p>
-<p>But the weird part was <code>docker ps</code>:</p>
-<pre tabindex="0"><code>NAME       STATUS                      PORTS
+</code></pre><p><strong>Three ports were dead at the same time.</strong> This didn&rsquo;t look like one container crashing on its own — it looked like a systemic problem on the host side.</p><p>But the weird part was <code>docker ps</code>:</p><pre tabindex=0><code>NAME       STATUS                      PORTS
 new-api    Up 4 hours                  ─
 dockhand   Up 4 hours (healthy)        ─
 headroom   Up 4 hours (healthy)        ─
-</code></pre><p>The <code>PORTS</code> column is <strong>empty</strong> — no port mappings shown at all. <code>Up 4 hours</code> means they weren&rsquo;t just freshly started. The containers were alive; they just couldn&rsquo;t be reached from outside.</p>
-<hr>
-<h2 id="2-investigation-digging-the-invisible-state-out-of-the-host">2. Investigation: Digging the &ldquo;Invisible&rdquo; State Out of the Host</h2>
-<p>Containers aren&rsquo;t dead, ports aren&rsquo;t mapped, and no host process is listening — this kind of &ldquo;silent failure&rdquo; is the worst category to debug. I dug the host state out in this order.</p>
-<h3 id="21-first-curl-inside-the-container-to-rule-out-a-dead-process">2.1 First, Curl Inside the Container to Rule Out a Dead Process</h3>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>docker exec new-api curl -sS -m <span style="color:#ae81ff">5</span> -o /dev/null <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  -w <span style="color:#e6db74">&#39;HTTP %{http_code}\n&#39;</span> http://127.0.0.1:3000/
-</span></span><span style="display:flex;"><span><span style="color:#75715e"># HTTP 200</span>
-</span></span></code></pre></div><p>Port 3000 inside the container is fine. <strong>The process is fine; the suspicion falls entirely on the host side.</strong></p>
-<h3 id="22-is-anything-listening-on-the-host">2.2 Is Anything Listening on the Host?</h3>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>ss -tlnp | grep -E <span style="color:#e6db74">&#39;3001|3003|3005&#39;</span>
-</span></span><span style="display:flex;"><span><span style="color:#75715e"># (empty)</span>
-</span></span></code></pre></div><p>Nothing is listening. This is a critical signal — <strong>a normal Docker port mapping starts a child process called <code>docker-proxy</code> that acts as a userland proxy, and you should always see it on the host.</strong> It&rsquo;s not there. The proxy never started.</p>
-<h3 id="23-are-there-any-nat-rules-in-iptables">2.3 Are There Any NAT Rules in iptables?</h3>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>iptables -t nat -L DOCKER -n -v
-</span></span><span style="display:flex;"><span><span style="color:#75715e"># Chain DOCKER (2 references)</span>
-</span></span><span style="display:flex;"><span><span style="color:#75715e">#  pkts bytes target prot opt source destination</span>
-</span></span><span style="display:flex;"><span><span style="color:#75715e">#  (no rules)</span>
-</span></span></code></pre></div><p>The <code>DOCKER</code> chain in the <code>nat</code> table is where Docker inserts DNAT rules for port mapping. It&rsquo;s also empty.</p>
-<p><strong>Two key locations empty at the same time</strong> tell us: the port-mapping chain was skipped somewhere along the way.</p>
-<h3 id="24-look-back-at-the-two-fields-in-docker-inspect">2.4 Look Back at the &ldquo;Two Fields&rdquo; in <code>docker inspect</code></h3>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>docker inspect new-api --format <span style="color:#e6db74">&#39;{{json .NetworkSettings}}&#39;</span>
-</span></span><span style="display:flex;"><span><span style="color:#75715e"># {</span>
-</span></span><span style="display:flex;"><span><span style="color:#75715e">#   &#34;SandboxID&#34;: &#34;&#34;,</span>
-</span></span><span style="display:flex;"><span><span style="color:#75715e">#   &#34;SandboxKey&#34;: &#34;&#34;,</span>
-</span></span><span style="display:flex;"><span><span style="color:#75715e">#   &#34;Ports&#34;: {},</span>
-</span></span><span style="display:flex;"><span><span style="color:#75715e">#   &#34;Networks&#34;: {},</span>
-</span></span><span style="display:flex;"><span><span style="color:#75715e">#   &#34;NetworkID&#34;: &#34;&#34;,</span>
-</span></span><span style="display:flex;"><span><span style="color:#75715e">#   &#34;EndpointID&#34;: &#34;&#34;,</span>
-</span></span><span style="display:flex;"><span><span style="color:#75715e">#   &#34;MacAddress&#34;: &#34;&#34;,</span>
-</span></span><span style="display:flex;"><span><span style="color:#75715e">#   &#34;IPAddress&#34;: &#34;&#34;</span>
-</span></span><span style="display:flex;"><span><span style="color:#75715e"># }</span>
-</span></span></code></pre></div><p>— <code>Networks: {}</code> and <code>Ports: {}</code> <strong>both empty</strong>.</p>
-<p>But on the other side:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>docker inspect new-api --format <span style="color:#e6db74">&#39;{{json .HostConfig}}&#39;</span> | head -c <span style="color:#ae81ff">400</span>
-</span></span><span style="display:flex;"><span><span style="color:#75715e"># {&#34;Binds&#34;:[&#34;/docker/newapi_data/data:/data:rw&#34;],</span>
-</span></span><span style="display:flex;"><span><span style="color:#75715e">#  &#34;NetworkMode&#34;:&#34;newapi_data_default&#34;,</span>
-</span></span><span style="display:flex;"><span><span style="color:#75715e">#  &#34;PortBindings&#34;:{&#34;3000/tcp&#34;:[</span>
-</span></span><span style="display:flex;"><span><span style="color:#75715e">#     {&#34;HostIp&#34;:&#34;203.0.113.14&#34;,&#34;HostPort&#34;:&#34;3001&#34;}]},</span>
-</span></span><span style="display:flex;"><span><span style="color:#75715e">#  &#34;RestartPolicy&#34;:{&#34;Name&#34;:&#34;always&#34;,...}}</span>
-</span></span></code></pre></div><p><strong><code>PortBindings</code> is still there</strong> — &ldquo;I want to map the container&rsquo;s 3000 to 203.0.113.14:3001.&rdquo; That intent is written clearly.</p>
-<p><strong><code>NetworkMode</code> is still there</strong> — &ldquo;I want to attach to the <code>newapi_data_default</code> bridge.&rdquo;</p>
-<p><code>HostConfig</code> remembers everything, but <code>NetworkSettings</code> has already &ldquo;forgotten.&rdquo; <strong>This is the classic &ldquo;intent vs. reality&rdquo; mismatch</strong> — Docker wrote <em>what it should do</em> in HostConfig, but <em>what it actually did</em> is blank in NetworkSettings.</p>
-<h3 id="25-did-the-upstream-bridge-even-know-about-the-container">2.5 Did the Upstream Bridge Even Know About the Container?</h3>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>docker network inspect newapi_data_default --format <span style="color:#e6db74">&#39;{{json .Containers}}&#39;</span>
-</span></span><span style="display:flex;"><span><span style="color:#75715e"># {}</span>
-</span></span></code></pre></div><p>On the <code>newapi_data_default</code> bridge, <strong><code>Containers: {}</code></strong> — the bridge thinks no container is attached to it. But the container itself is running, can curl itself, and hasn&rsquo;t restarted.</p>
-<p><strong>This means the <code>attach</code> action between the container and the bridge it declared never actually took effect</strong> — and Docker never explicitly told the user.</p>
-<p><img alt="The Half-Alive Map: The Gap Between HostConfig and NetworkSettings" src="/post-images/docker-port-bind-half-silent/02-hostconfig-vs-networksettings.svg"></p>
-<p><em>Figure 2: HostConfig on the left still has the full port mapping and network name. NetworkSettings on the right is empty <code>{}</code>. Intent is preserved, reality is lost.</em></p>
-<h3 id="26-sweep-the-other-containers--this-isnt-isolated">2.6 Sweep the Other Containers — This Isn&rsquo;t Isolated</h3>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#66d9ef">for</span> c in <span style="color:#66d9ef">$(</span>docker ps --format <span style="color:#e6db74">&#39;{{.Names}}&#39;</span><span style="color:#66d9ef">)</span>; <span style="color:#66d9ef">do</span>
-</span></span><span style="display:flex;"><span>  nets<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>docker inspect $c --format <span style="color:#e6db74">&#39;{{len .NetworkSettings.Networks}}&#39;</span><span style="color:#66d9ef">)</span>
-</span></span><span style="display:flex;"><span>  ports<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>docker inspect $c --format <span style="color:#e6db74">&#39;{{len .NetworkSettings.Ports}}&#39;</span><span style="color:#66d9ef">)</span>
-</span></span><span style="display:flex;"><span>  printf <span style="color:#e6db74">&#39;%-25s | networks=%s | ports=%s\n&#39;</span> <span style="color:#e6db74">&#34;</span>$c<span style="color:#e6db74">&#34;</span> <span style="color:#e6db74">&#34;</span>$nets<span style="color:#e6db74">&#34;</span> <span style="color:#e6db74">&#34;</span>$ports<span style="color:#e6db74">&#34;</span>
-</span></span><span style="display:flex;"><span><span style="color:#66d9ef">done</span>
-</span></span><span style="display:flex;"><span>
-</span></span><span style="display:flex;"><span><span style="color:#75715e"># dockhand   | networks=0 | ports=0</span>
-</span></span><span style="display:flex;"><span><span style="color:#75715e"># new-api    | networks=0 | ports=0</span>
-</span></span><span style="display:flex;"><span><span style="color:#75715e"># easytier   | networks=1 (host) | ports=0   ← this one is fine, it uses host network</span>
-</span></span><span style="display:flex;"><span><span style="color:#75715e"># headroom   | networks=0 | ports=0</span>
-</span></span></code></pre></div><p><strong>Three non-host-network containers all show <code>networks=0, ports=0</code> simultaneously.</strong> The only thing they have in common is that each one&rsquo;s <code>HostConfig.NetworkMode</code> points to a different custom bridge.</p>
-<p>At this point the root-cause direction is locked in: <strong>the bridge network these containers were <em>supposed</em> to attach to never actually got the attach action to succeed.</strong></p>
-<p><img alt="Five-Minute Diagnostic Checklist: Six Steps from Symptom to Root Cause" src="/post-images/docker-port-bind-half-silent/04-diagnose-checklist.svg"></p>
-<p><em>Figure 4: The six steps above compressed into a copy-paste checklist. Next time you hit a &ldquo;container alive, port dead&rdquo; mystery, 30 seconds is enough to localize.</em></p>
-<hr>
-<h2 id="3-root-cause-a-silently-rolled-back-endpoint-creation">3. Root Cause: A Silently Rolled-Back Endpoint Creation</h2>
-<p>Two questions left to answer:</p>
-<ol>
-<li>Why is the state inconsistent? (HostConfig has it, NetworkSettings doesn&rsquo;t)</li>
-<li>Why did it hit three containers at the same time?</li>
-</ol>
-<h3 id="31-the-complete-publish-chain--which-link-is-missing">3.1 The Complete Publish Chain — Which Link Is Missing</h3>
-<p>For Docker to &ldquo;expose&rdquo; a container&rsquo;s port, this chain has to run end-to-end:</p>
-<p><img alt="The Full Publish Chain and the Broken Links" src="/post-images/docker-port-bind-half-silent/03-publish-pipeline.svg"></p>
-<p><em>Figure 3: The full path from a VPN peer to new-api 0.0.0.0:3000. The two ✕ marks are the two links that broke in this incident.</em></p>
-<p>Roughly:</p>
-<ol>
-<li><strong>Inside the container</strong>: the <code>new-api</code> process listens on <code>0.0.0.0:3000</code> (fine);</li>
-<li><strong>libnetwork</strong>: create the network sandbox, attach the container to the <code>newapi_data_default</code> bridge, assign it an internal IP like <code>172.20.0.2</code>;</li>
-<li><strong>Port mapping</strong>: for each <code>HostIp:HostPort</code>, call <code>StartProxy</code> to launch the <code>docker-proxy</code> child process;</li>
-<li><strong>iptables</strong>: insert a <code>DNAT 203.0.113.14:3001 → 172.20.0.2:3000</code> rule in the <code>DOCKER</code> chain of the <code>nat</code> table;</li>
-<li><strong>Report-back</strong>: populate <code>NetworkSettings.Ports</code> and <code>NetworkSettings.Networks</code>.</li>
-</ol>
-<p>Step 5 is the &ldquo;commit&rdquo; step. The empty <code>Ports: {}</code> and <code>Networks: {}</code> mean: from step 1 to step 4, <strong>at least one of them was rolled back during sandbox creation</strong>. <strong>When libnetwork rolls back, it clears <code>NetworkSettings.Networks</code> and <code>NetworkSettings.Ports</code></strong>, but it <strong>doesn&rsquo;t touch <code>HostConfig.PortBindings</code></strong>, which is why you see the state you see.</p>
-<h3 id="32-this-is-a-long-recognized-class-of-bug">3.2 This Is a Long-Recognized Class of Bug</h3>
-<p>This isn&rsquo;t speculation. Moby&rsquo;s issue tracker has a stack of tickets with almost-identical titles:</p>
-<ul>
-<li><strong><a href="https://github.com/moby/moby/issues/9818">moby/moby#9818</a> &ldquo;Container port not expose; neither iptables rules added nor userland proxy started&rdquo;</strong> — a 2014 issue whose title is exactly this incident&rsquo;s symptoms.</li>
-<li><strong><a href="https://github.com/moby/moby/issues/44137">moby/moby#44137</a> &ldquo;docker network connect removes/resets dynamically published/exposed ports&rdquo;</strong> — explicitly states that under certain conditions, <code>docker network connect</code> can &ldquo;reset&rdquo; port mappings.</li>
-<li><strong><a href="https://github.com/moby/moby/pull/52480">moby/moby#52480</a></strong> writes it directly: &ldquo;the conflicting port goes silently unbound… <code>HostConfig.PortBindings</code> is preserved but never applied.&rdquo; — intent preserved, reality abandoned. A textbook case.</li>
-</ul>
-<p>Why didn&rsquo;t <code>docker-proxy</code> start? Why weren&rsquo;t iptables rules inserted? Why is <code>NetworkSettings</code> empty? <strong>It&rsquo;s all the local rollback libnetwork does when sandbox creation fails.</strong></p>
-<h3 id="33-the-common-cause-what-came-up-before-docker">3.3 The Common Cause: &ldquo;What&rdquo; Came Up Before Docker?</h3>
-<p>The key question: why did three non-host-network containers break <strong>at the same time</strong>? Because at the moment Docker tried to attach them, <strong>the interface they were supposed to bind to didn&rsquo;t exist yet</strong>.</p>
-<p><code>203.0.113.14</code> on my box is a <strong>secondary address on a side NIC</strong> — it&rsquo;s not a NIC&rsquo;s primary IP, but a <code>ip addr add</code> configuration on top of it. The NIC itself <strong>does not exist at boot</strong>:</p>
-<ul>
-<li>It&rsquo;s created by a userland TUN service that runs after the system is up;</li>
-<li>Once the TUN service is up, the TUN interface comes up and <code>203.0.113.14</code> gets attached;</li>
-<li>Between these two events there&rsquo;s an <strong>unavoidable race window</strong> — Docker&rsquo;s daemon starts earlier than the TUN.</li>
-</ul>
-<p>When Docker starts the container and tries to attach the bridge network, the target <code>HostIp</code> (i.e. <code>203.0.113.14</code>) <strong>doesn&rsquo;t exist on the host at that moment</strong>. In <a href="https://github.com/moby/moby/blob/master/daemon/libnetwork/portmapper/proxy_linux.go"><code>daemon/libnetwork/portmapper/proxy_linux.go</code></a>, Moby&rsquo;s <code>StartProxy()</code> <strong>does not verify that HostIP is bound to a host interface</strong> — it just passes the address straight to the <code>docker-proxy</code> child process as the <code>-host-ip</code> argument.</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-go" data-lang="go"><span style="display:flex;"><span><span style="color:#75715e">// proxy_linux.go (excerpt)
-</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span><span style="color:#a6e22e">cmd</span> <span style="color:#f92672">:=</span> <span style="color:#a6e22e">reexec</span>.<span style="color:#a6e22e">Command</span>(<span style="color:#e6db74">&#34;docker-proxy&#34;</span>,
-</span></span><span style="display:flex;"><span>    <span style="color:#e6db74">&#34;-host-ip&#34;</span>, <span style="color:#a6e22e">p</span>.<span style="color:#a6e22e">Binding</span>.<span style="color:#a6e22e">HostIP</span>,
-</span></span><span style="display:flex;"><span>    <span style="color:#e6db74">&#34;-host-port&#34;</span>, <span style="color:#a6e22e">p</span>.<span style="color:#a6e22e">Binding</span>.<span style="color:#a6e22e">HostPort</span>,
-</span></span><span style="display:flex;"><span>    <span style="color:#e6db74">&#34;-container-ip&#34;</span>, <span style="color:#a6e22e">p</span>.<span style="color:#a6e22e">Binding</span>.<span style="color:#a6e22e">IP</span>,
-</span></span><span style="display:flex;"><span>    <span style="color:#e6db74">&#34;-container-port&#34;</span>, <span style="color:#a6e22e">strings</span>.<span style="color:#a6e22e">ToLower</span>(<span style="color:#a6e22e">p</span>.<span style="color:#a6e22e">Port</span>),
-</span></span><span style="display:flex;"><span>)
-</span></span></code></pre></div><p>Whether the proxy fails to start or iptables&rsquo; <code>setChildHostIP</code> decides the binding isn&rsquo;t usable, <strong>libnetwork just rolls back the endpoint creation when it gets the error</strong>. The rollback clears the <code>NetworkSettings</code> fields for this attempt, but <strong>it doesn&rsquo;t touch HostConfig</strong>, and it doesn&rsquo;t report to the user that the port mapping never took effect.</p>
-<p>The host process doesn&rsquo;t exit, the container process doesn&rsquo;t exit, the daemon keeps running — but <strong>the port never actually gets exposed from that moment on</strong>. Nobody raises an error.</p>
-<p>The same class of problem appears in WireGuard, Tailscale, and eBPF-based VPN scenarios where the <strong>userland TUN tunnel</strong> comes up late. In <a href="https://github.com/moby/moby/issues/39559">moby/moby#39559</a> there&rsquo;s literally a comment: &ldquo;I&rsquo;m moving the whole server into Docker with compose. Container A sets up WireGuard (using <code>--net=host</code>), and container B runs a DNS server on the IP that container A configured — but the daemon starts before WireGuard, so the port never binds.&rdquo;</p>
-<h3 id="34-the-one-sentence-root-cause">3.4 The One-Sentence Root Cause</h3>
-<blockquote>
-<p><strong>When Docker attaches a container to a user-defined bridge network, if the configured <code>HostIp</code> is not yet bound to any host interface at that exact moment, libnetwork silently rolls back the sandbox creation — <code>docker-proxy</code> doesn&rsquo;t start, no iptables DNAT rule gets inserted, <code>NetworkSettings.Networks/Ports</code> get cleared, but <code>HostConfig.PortBindings</code> still says &ldquo;I want this.&rdquo; The container process is running, but the port is invisible to the outside world.</strong></p>
-</blockquote>
-<hr>
-<h2 id="4-the-fix-one-command-brings-the-half-alive-back">4. The Fix: One Command Brings the &ldquo;Half-Alive&rdquo; Back</h2>
-<p>Once you know the root cause, the fix is two steps.</p>
-<h3 id="41-the-stopgap-docker-network-connect">4.1 The Stopgap: <code>docker network connect</code></h3>
-<p>The most direct command — re-runs libnetwork&rsquo;s attach flow, this time with the TUN already ready:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>docker network connect newapi_data_default new-api
-</span></span><span style="display:flex;"><span>docker network connect dockhand_data_default dockhand
-</span></span><span style="display:flex;"><span>docker network connect headroom_default headroom
-</span></span></code></pre></div><p>For each one you run, <code>NetworkSettings</code> refills from <code>{}</code> to the full structure, the <code>docker-proxy</code> child process gets spawned, and the iptables <code>DOCKER</code> chain gains the matching DNAT rule.</p>
-<blockquote>
-<p>Side note: <code>docker network connect</code> is an official command. The docs say: &ldquo;You can connect a container to one or more networks. The networks need not be the same type.&rdquo; (<a href="https://docs.docker.com/reference/cli/docker/network/connect/">docs.docker.com</a>) — that&rsquo;s literally the action we need to redo.</p>
-</blockquote>
-<p>After the fix:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>ss -tlnp | grep <span style="color:#ae81ff">3001</span>
-</span></span><span style="display:flex;"><span><span style="color:#75715e"># LISTEN 0  4096  203.0.113.14:3001  docker-proxy</span>
-</span></span><span style="display:flex;"><span>
-</span></span><span style="display:flex;"><span>curl -sS -m <span style="color:#ae81ff">5</span> -o /dev/null <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  -w <span style="color:#e6db74">&#39;HTTP %{http_code}\n&#39;</span> http://203.0.113.14:3001/
-</span></span><span style="display:flex;"><span><span style="color:#75715e"># HTTP 200</span>
-</span></span></code></pre></div><p>It&rsquo;s back.</p>
-<h3 id="42-the-durable-fix-make-docker-wait-for-the-tun">4.2 The Durable Fix: Make Docker Wait for the TUN</h3>
-<p>The one-liner above is firefighting. <strong>It will recur on the next reboot or the next TUN reconnect.</strong> To keep the host out of this state, fix the boot order.</p>
-<p><strong>Option A: systemd dependency</strong> (the cleanest)</p>
-<p>Add an <code>After=</code> clause to <code>docker.service</code> to make systemd start Docker strictly after the TUN service:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-ini" data-lang="ini"><span style="display:flex;"><span><span style="color:#66d9ef">[Unit]</span>
-</span></span><span style="display:flex;"><span><span style="color:#a6e22e">After</span><span style="color:#f92672">=</span><span style="color:#e6db74">network-online.target tun-up.service</span>
-</span></span><span style="display:flex;"><span><span style="color:#a6e22e">Wants</span><span style="color:#f92672">=</span><span style="color:#e6db74">network-online.target</span>
-</span></span></code></pre></div><p><code>network-online.target</code> alone won&rsquo;t catch &ldquo;userland TUN still handshaking&rdquo; — pair it with a small wait-online unit that polls <code>ip -4 addr show</code>.</p>
-<p><strong>Option B: Drop HostIp from compose, bind 0.0.0.0</strong> (the most aggressive)</p>
-<p>Change:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-yaml" data-lang="yaml"><span style="display:flex;"><span><span style="color:#f92672">ports</span>:
-</span></span><span style="display:flex;"><span>  - <span style="color:#e6db74">&#34;203.0.113.14:3001:3000&#34;</span>
-</span></span></code></pre></div><p>to:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-yaml" data-lang="yaml"><span style="display:flex;"><span><span style="color:#f92672">ports</span>:
-</span></span><span style="display:flex;"><span>  - <span style="color:#e6db74">&#34;3001:3000&#34;</span>
-</span></span></code></pre></div><p>Docker <strong>doesn&rsquo;t pick an interface</strong> — it tries to bind on all available addresses. The cost is that you lose the &ldquo;only this IP can reach me&rdquo; isolation — you have to enforce that in the host firewall instead.</p>
-<p><strong>Option C: A boot-time probe + reconnect</strong> (the most robust belt-and-suspenders)</p>
-<p>A small script that waits for the interface, then reconnects every container that lost its network:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e">#!/usr/bin/env bash
-</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>set -euo pipefail
-</span></span><span style="display:flex;"><span><span style="color:#75715e"># wait until 203.0.113.14 shows up</span>
-</span></span><span style="display:flex;"><span><span style="color:#66d9ef">until</span> ip -4 addr show | grep -q <span style="color:#e6db74">&#39;203.0.113.14&#39;</span>; <span style="color:#66d9ef">do</span>
-</span></span><span style="display:flex;"><span>  sleep <span style="color:#ae81ff">1</span>
-</span></span><span style="display:flex;"><span><span style="color:#66d9ef">done</span>
-</span></span><span style="display:flex;"><span><span style="color:#75715e"># reconnect every container that&#39;s still in the half-alive state</span>
-</span></span><span style="display:flex;"><span><span style="color:#66d9ef">for</span> c in new-api dockhand headroom; <span style="color:#66d9ef">do</span>
-</span></span><span style="display:flex;"><span>  net<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>docker inspect <span style="color:#e6db74">&#34;</span>$c<span style="color:#e6db74">&#34;</span> --format <span style="color:#e6db74">&#39;{{.HostConfig.NetworkMode}}&#39;</span><span style="color:#66d9ef">)</span>
-</span></span><span style="display:flex;"><span>  docker network connect <span style="color:#e6db74">&#34;</span>$net<span style="color:#e6db74">&#34;</span> <span style="color:#e6db74">&#34;</span>$c<span style="color:#e6db74">&#34;</span> <span style="color:#f92672">||</span> true
-</span></span><span style="display:flex;"><span><span style="color:#66d9ef">done</span>
-</span></span></code></pre></div><p>Hook it into systemd with <code>After=docker.service</code>.</p>
-<p><img alt="Stopgap vs Durable Fix: Reconnect vs Boot-Order Rework" src="/post-images/docker-port-bind-half-silent/05-fix-strategy.svg"></p>
-<p><em>Figure 4: The left column (&ldquo;stopgap&rdquo;) is the 30-second <code>docker network connect</code>. The right column (&ldquo;durable&rdquo;) is making sure the interface is always ready before Docker tries to attach. They aren&rsquo;t mutually exclusive — combine them for the best result.</em></p>
-<h3 id="43-before-vs-after-the-same-docker-inspect-command">4.3 Before vs. After (the Same <code>docker inspect</code> Command)</h3>
-<p><img alt="Before vs After: docker inspect and ss side-by-side" src="/post-images/docker-port-bind-half-silent/06-before-after-compare.svg"></p>
-<p><em>Figure 5: Before the fix, <code>NetworkSettings</code> is full of empty fields and <code>ss</code> shows no docker-proxy. After a single <code>docker network connect</code>, both fields fill up, the proxy appears, and <code>curl</code> returns 200.</em></p>
-<hr>
-<h2 id="5-qa">5. Q&amp;A</h2>
-<h3 id="q1-how-do-i-tell-apart-the-container-process-is-dead-from-the-port-isnt-published-in-one-glance">Q1. How do I tell apart &ldquo;the container process is dead&rdquo; from &ldquo;the port isn&rsquo;t published&rdquo; in one glance?</h3>
-<p><strong>A</strong>: Hitting <code>&lt;container-name&gt;:&lt;port&gt;</code> from the host doesn&rsquo;t work — Docker networks don&rsquo;t see the host&rsquo;s network. <strong>The cleanest one-liner is to curl from inside the container</strong>:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>docker exec &lt;ctr&gt; curl -sf 127.0.0.1:&lt;port&gt; <span style="color:#f92672">&amp;&amp;</span> echo OK <span style="color:#f92672">||</span> echo DEAD
-</span></span></code></pre></div><ul>
-<li><code>OK</code> → the process is fine, suspect the host side (continue with this post);</li>
-<li><code>DEAD</code> → the process is gone, look at <code>docker logs &lt;ctr&gt;</code> instead — this isn&rsquo;t a port-mapping problem.</li>
-</ul>
-<h3 id="q2-will-docker-restart-fix-it">Q2. Will <code>docker restart</code> Fix It?</h3>
-<p><strong>A</strong>: Sometimes, but not reliably. In my testing, if the host IP is already up (the system has been running for a while), <code>docker restart</code> re-runs the sandbox creation and the port usually comes back. But if the host IP isn&rsquo;t up yet, <code>restart</code> won&rsquo;t make Docker &ldquo;wait&rdquo; — it goes through <strong>the same failure path and lands in the same half-alive state</strong>. So <code>restart</code> is a coin-flip; <code>docker network connect</code> is targeted treatment.</p>
-<h3 id="q3-why-doesnt-docker-port-ctr-show-anything">Q3. Why Doesn&rsquo;t <code>docker port &lt;ctr&gt;</code> Show Anything?</h3>
-<p><strong>A</strong>: <code>docker port</code> reads the <code>NetworkSettings.Ports</code> field. That field <strong>is empty in this failure mode</strong> — <code>docker port</code> showing empty is part of the symptom, not a diagnostic. To see the <em>intent</em>, use <code>docker inspect &lt;ctr&gt; --format '{{json .HostConfig.PortBindings}}'</code>.</p>
-<h3 id="q4-do-i-have-to-reconnect-each-container-one-by-one">Q4. Do I Have to Reconnect Each Container One by One?</h3>
-<p><strong>A</strong>: Yes — each container needs its own <code>docker network connect</code>, there&rsquo;s no batch subcommand. In practice three commands take 30 seconds. To save a few keystrokes, a <code>for</code> loop is enough:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#66d9ef">for</span> c in new-api dockhand headroom; <span style="color:#66d9ef">do</span>
-</span></span><span style="display:flex;"><span>  net<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>docker inspect <span style="color:#e6db74">&#34;</span>$c<span style="color:#e6db74">&#34;</span> --format <span style="color:#e6db74">&#39;{{.HostConfig.NetworkMode}}&#39;</span><span style="color:#66d9ef">)</span>
-</span></span><span style="display:flex;"><span>  docker network connect <span style="color:#e6db74">&#34;</span>$net<span style="color:#e6db74">&#34;</span> <span style="color:#e6db74">&#34;</span>$c<span style="color:#e6db74">&#34;</span> <span style="color:#f92672">||</span> true
-</span></span><span style="display:flex;"><span><span style="color:#66d9ef">done</span>
-</span></span></code></pre></div><h3 id="q5-is-network-onlinetarget-really-enough-for-the-durable-fix">Q5. Is <code>network-online.target</code> Really Enough for the Durable Fix?</h3>
-<p><strong>A</strong>: The default <code>network-online.target</code> only fires when systemd-networkd or NetworkManager thinks the <strong>main</strong> network is up. <strong>It doesn&rsquo;t observe userland TUN/WireGuard interfaces on its own.</strong> In production, write a 1-2-line systemd unit that does <code>ip -4 addr show | grep &lt;vpn-ip&gt;</code> in a loop, and only <code>start docker.service</code> after that succeeds. That&rsquo;s far more reliable than trusting the target.</p>
-<h3 id="q6-are-there-other-failure-modes-that-land-in-this-same-half-alive-state">Q6. Are There Other Failure Modes That Land in This Same &ldquo;Half-Alive&rdquo; State?</h3>
-<p><strong>A</strong>: Yes — but they all share the same entry point: <strong>&ldquo;the host IP was unreachable at the moment of attach&rdquo;</strong>. A few more:</p>
-<ul>
-<li>Floating IP / elastic IP drifted, and Docker didn&rsquo;t notice;</li>
-<li>Bonded NIC switched master, and the old master&rsquo;s IP got released;</li>
-<li>DHCP renewal failed, IP was temporarily reclaimed and re-issued;</li>
-<li><code>network_mode: host</code> combined with <code>-p</code> — older Docker versions handled this inconsistently.</li>
-</ul>
-<p>The diagnostic logic is identical: check <code>HostConfig</code> for &ldquo;I want to do this&rdquo;, check <code>NetworkSettings</code> for &ldquo;I actually did this&rdquo;. <strong>Mismatch = a rollback trace from libnetwork.</strong></p>
-<h3 id="q7-did-docker-28-fix-this-bug">Q7. Did Docker 28+ Fix This Bug?</h3>
-<p><strong>A</strong>: As of writing, Moby&rsquo;s issue tracker has <strong><a href="https://github.com/moby/moby/issues/51758">#51758 &ldquo;PortBindings shows binding but NetworkSettings.Ports is empty&rdquo;</a></strong> still being filed, with the matching fix in <strong>PR #52480</strong> waiting to land. <strong>This is a long-standing corner case</strong> — understanding it beats waiting for it to be fixed.</p>
-<hr>
-<h2 id="6-summary">6. Summary</h2>
-<p>The investigation path of this incident boils down to three things:</p>
-<ol>
-<li><strong>Look at the two fields of <code>docker inspect</code> separately</strong> — <code>HostConfig</code> is &ldquo;what I intend to do&rdquo;, <code>NetworkSettings</code> is &ldquo;what I actually did&rdquo;. A mismatch = half-alive.</li>
-<li><strong>Use <code>ss</code> and <code>iptables -t nat -L DOCKER</code> to verify in reverse</strong> — no <code>docker-proxy</code> process + no DNAT rule = 100% matches this scenario.</li>
-<li><strong><code>docker network connect</code> is the minimum stopgap action</strong>. The durable fix is changing the boot order so Docker runs strictly after the userland TUN.</li>
-</ol>
-<p>Burn <code>ss -tlnp</code> and <code>iptables -t nat -L DOCKER</code> into muscle memory. Next time you hit a &ldquo;container alive, port dead&rdquo; mystery, <strong>30 seconds to localize, three commands to recover</strong>.</p>
-<hr>
-<h2 id="references">References</h2>
-<ul>
-<li><a href="https://github.com/moby/moby/blob/master/daemon/libnetwork/portmapper/proxy_linux.go">Moby source · daemon/libnetwork/portmapper/proxy_linux.go</a> — <code>StartProxy</code> passes <code>HostIP</code> straight to docker-proxy as <code>-host-ip</code></li>
-<li><a href="https://github.com/moby/moby/blob/master/daemon/libnetwork/portmappers/nat/mapper_linux.go">Moby source · daemon/libnetwork/portmappers/nat/mapper_linux.go</a> — <code>setChildHostIP</code> and the binding decision</li>
-<li><a href="https://github.com/moby/moby/blob/master/daemon/libnetwork/portmapperapi/api.go">Moby source · daemon/libnetwork/portmapperapi/api.go</a> — <code>PortBinding</code> / <code>StopProxy</code> lifecycle</li>
-<li><a href="https://github.com/moby/moby/issues/9818">moby/moby #9818 — Container port not expose; neither iptables rules added nor userland proxy started</a> — same-symptom ticket from 2014</li>
-<li><a href="https://github.com/moby/moby/issues/39559">moby/moby #39559 — Container does not start (&ndash;restart always) at boot if port bind fails</a> — closest known ticket to the TUN/WireGuard case</li>
-<li><a href="https://github.com/moby/moby/issues/44137">moby/moby #44137 — docker network connect removes/resets dynamically published/exposed ports</a> — port mapping reset under certain conditions</li>
-<li><a href="https://github.com/moby/moby/issues/51758">moby/moby #51758 — PortBindings shows binding but NetworkSettings.Ports is empty</a> — same class of issue still being filed in 2025</li>
-<li><a href="https://github.com/moby/moby/pull/52480">moby/moby #52480 — connectToNetwork: keep Networks on failure</a> — the matching fix PR</li>
-<li><a href="https://docs.docker.com/engine/network/">Docker Docs — Networking overview (engine/network)</a> — official description of <code>-p</code> and firewall rules</li>
-<li><a href="https://docs.docker.com/engine/network/firewall-iptables/">Docker Docs — Docker with iptables (engine/network/firewall-iptables)</a> — authoritative reference for the iptables <code>DOCKER</code> chain</li>
-<li><a href="https://docs.docker.com/engine/network/port-publishing/">Docker Docs — Port publishing and mapping</a> — details on the <code>HostIP</code> form of <code>-p</code></li>
-<li><a href="https://docs.docker.com/reference/cli/docker/network/connect/">Docker Docs — docker network connect reference</a> — the official &ldquo;attach a container to a network&rdquo; command</li>
-<li><a href="https://www.docker.com/blog/docker-engine-28-hardening-container-networking-by-default/">Docker Blog — Docker Engine v28: Hardening Container Networking by Default</a> — context for behavior changes in v28</li>
-<li><a href="https://www.freedesktop.org/software/systemd/man/systemd.unit.html">systemd docs — systemd.unit(5), After=/Wants= relationships</a></li>
-</ul>
-        </div>
-    </article>
-
-    
-  
-
-
-  
-    
-  
-
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk/dist/gitalk.css">
-<script src="https://cdn.jsdelivr.net/npm/gitalk/dist/gitalk.min.js"></script>
-<div id="gitalk-container" style="margin-top:40px"></div>
-<script>
-  (function(){
-    var gitalk = new Gitalk({
-      clientID: '3181fd94e501cc5db0ad',
-      clientSecret: 'af1dab79dae02c69296e6615bfcecf47fc8615ee',
-      repo: 'margropcomment.margrop.io',
-      owner: 'margrop',
-      admin: ["margrop"],
-      
-      id: '\/post\/docker-port-bind-half-silent\/',
-      
-      distractionFreeMode: false
-    });
-    gitalk.render('gitalk-container');
-  })();
-</script>
-  
-
-
-
-
-    
-    <script type="text/javascript" src="https://js.users.51.la/21044367.js"></script>
-    <script charset="UTF-8" id="LA_COLLECT" src="//sdk.51.la/js-sdk-pro.min.js"></script>
-    <script>LA.init({id: "1vVTUWl7zoRjnKXi",ck: "1vVTUWl7zoRjnKXi"})</script>
-    <script src="https://sdk.51.la/perf/js-sdk-perf.min.js" crossorigin="anonymous"></script>
-    <script>
-      new LingQue.Monitor().init({id:"202teQt8THXwqyve"});
-    </script>
-</body>
-</html>
+</code></pre><p>The <code>PORTS</code> column is <strong>empty</strong> — no port mappings shown at all. <code>Up 4 hours</code> means they weren&rsquo;t just freshly started. The containers were alive; they just couldn&rsquo;t be reached from outside.</p><hr><h2 id=2-investigation-digging-the-invisible-state-out-of-the-host>2. Investigation: Digging the &ldquo;Invisible&rdquo; State Out of the Host</h2><p>Containers aren&rsquo;t dead, ports aren&rsquo;t mapped, and no host process is listening — this kind of &ldquo;silent failure&rdquo; is the worst category to debug. I dug the host state out in this order.</p><h3 id=21-first-curl-inside-the-container-to-rule-out-a-dead-process>2.1 First, Curl Inside the Container to Rule Out a Dead Process</h3><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-bash data-lang=bash><span style=display:flex><span>docker exec new-api curl -sS -m <span style=color:#ae81ff>5</span> -o /dev/null <span style=color:#ae81ff>\
+</span></span></span><span style=display:flex><span>  -w <span style=color:#e6db74>&#39;HTTP %{http_code}\n&#39;</span> http://127.0.0.1:3000/
+</span></span><span style=display:flex><span><span style=color:#75715e># HTTP 200</span>
+</span></span></code></pre></div><p>Port 3000 inside the container is fine. <strong>The process is fine; the suspicion falls entirely on the host side.</strong></p><h3 id=22-is-anything-listening-on-the-host>2.2 Is Anything Listening on the Host?</h3><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-bash data-lang=bash><span style=display:flex><span>ss -tlnp | grep -E <span style=color:#e6db74>&#39;3001|3003|3005&#39;</span>
+</span></span><span style=display:flex><span><span style=color:#75715e># (empty)</span>
+</span></span></code></pre></div><p>Nothing is listening. This is a critical signal — <strong>a normal Docker port mapping starts a child process called <code>docker-proxy</code> that acts as a userland proxy, and you should always see it on the host.</strong> It&rsquo;s not there. The proxy never started.</p><h3 id=23-are-there-any-nat-rules-in-iptables>2.3 Are There Any NAT Rules in iptables?</h3><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-bash data-lang=bash><span style=display:flex><span>iptables -t nat -L DOCKER -n -v
+</span></span><span style=display:flex><span><span style=color:#75715e># Chain DOCKER (2 references)</span>
+</span></span><span style=display:flex><span><span style=color:#75715e>#  pkts bytes target prot opt source destination</span>
+</span></span><span style=display:flex><span><span style=color:#75715e>#  (no rules)</span>
+</span></span></code></pre></div><p>The <code>DOCKER</code> chain in the <code>nat</code> table is where Docker inserts DNAT rules for port mapping. It&rsquo;s also empty.</p><p><strong>Two key locations empty at the same time</strong> tell us: the port-mapping chain was skipped somewhere along the way.</p><h3 id=24-look-back-at-the-two-fields-in-docker-inspect>2.4 Look Back at the &ldquo;Two Fields&rdquo; in <code>docker inspect</code></h3><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-bash data-lang=bash><span style=display:flex><span>docker inspect new-api --format <span style=color:#e6db74>&#39;{{json .NetworkSettings}}&#39;</span>
+</span></span><span style=display:flex><span><span style=color:#75715e># {</span>
+</span></span><span style=display:flex><span><span style=color:#75715e>#   &#34;SandboxID&#34;: &#34;&#34;,</span>
+</span></span><span style=display:flex><span><span style=color:#75715e>#   &#34;SandboxKey&#34;: &#34;&#34;,</span>
+</span></span><span style=display:flex><span><span style=color:#75715e>#   &#34;Ports&#34;: {},</span>
+</span></span><span style=display:flex><span><span style=color:#75715e>#   &#34;Networks&#34;: {},</span>
+</span></span><span style=display:flex><span><span style=color:#75715e>#   &#34;NetworkID&#34;: &#34;&#34;,</span>
+</span></span><span style=display:flex><span><span style=color:#75715e>#   &#34;EndpointID&#34;: &#34;&#34;,</span>
+</span></span><span style=display:flex><span><span style=color:#75715e>#   &#34;MacAddress&#34;: &#34;&#34;,</span>
+</span></span><span style=display:flex><span><span style=color:#75715e>#   &#34;IPAddress&#34;: &#34;&#34;</span>
+</span></span><span style=display:flex><span><span style=color:#75715e># }</span>
+</span></span></code></pre></div><p>— <code>Networks: {}</code> and <code>Ports: {}</code> <strong>both empty</strong>.</p><p>But on the other side:</p><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-bash data-lang=bash><span style=display:flex><span>docker inspect new-api --format <span style=color:#e6db74>&#39;{{json .HostConfig}}&#39;</span> | head -c <span style=color:#ae81ff>400</span>
+</span></span><span style=display:flex><span><span style=color:#75715e># {&#34;Binds&#34;:[&#34;/docker/newapi_data/data:/data:rw&#34;],</span>
+</span></span><span style=display:flex><span><span style=color:#75715e>#  &#34;NetworkMode&#34;:&#34;newapi_data_default&#34;,</span>
+</span></span><span style=display:flex><span><span style=color:#75715e>#  &#34;PortBindings&#34;:{&#34;3000/tcp&#34;:[</span>
+</span></span><span style=display:flex><span><span style=color:#75715e>#     {&#34;HostIp&#34;:&#34;203.0.113.14&#34;,&#34;HostPort&#34;:&#34;3001&#34;}]},</span>
+</span></span><span style=display:flex><span><span style=color:#75715e>#  &#34;RestartPolicy&#34;:{&#34;Name&#34;:&#34;always&#34;,...}}</span>
+</span></span></code></pre></div><p><strong><code>PortBindings</code> is still there</strong> — &ldquo;I want to map the container&rsquo;s 3000 to 203.0.113.14:3001.&rdquo; That intent is written clearly.</p><p><strong><code>NetworkMode</code> is still there</strong> — &ldquo;I want to attach to the <code>newapi_data_default</code> bridge.&rdquo;</p><p><code>HostConfig</code> remembers everything, but <code>NetworkSettings</code> has already &ldquo;forgotten.&rdquo; <strong>This is the classic &ldquo;intent vs. reality&rdquo; mismatch</strong> — Docker wrote <em>what it should do</em> in HostConfig, but <em>what it actually did</em> is blank in NetworkSettings.</p><h3 id=25-did-the-upstream-bridge-even-know-about-the-container>2.5 Did the Upstream Bridge Even Know About the Container?</h3><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-bash data-lang=bash><span style=display:flex><span>docker network inspect newapi_data_default --format <span style=color:#e6db74>&#39;{{json .Containers}}&#39;</span>
+</span></span><span style=display:flex><span><span style=color:#75715e># {}</span>
+</span></span></code></pre></div><p>On the <code>newapi_data_default</code> bridge, <strong><code>Containers: {}</code></strong> — the bridge thinks no container is attached to it. But the container itself is running, can curl itself, and hasn&rsquo;t restarted.</p><p><strong>This means the <code>attach</code> action between the container and the bridge it declared never actually took effect</strong> — and Docker never explicitly told the user.</p><p><img src=/post-images/docker-port-bind-half-silent/02-hostconfig-vs-networksettings.svg alt="The Half-Alive Map: The Gap Between HostConfig and NetworkSettings"></p><p><em>Figure 2: HostConfig on the left still has the full port mapping and network name. NetworkSettings on the right is empty <code>{}</code>. Intent is preserved, reality is lost.</em></p><h3 id=26-sweep-the-other-containers--this-isnt-isolated>2.6 Sweep the Other Containers — This Isn&rsquo;t Isolated</h3><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-bash data-lang=bash><span style=display:flex><span><span style=color:#66d9ef>for</span> c in <span style=color:#66d9ef>$(</span>docker ps --format <span style=color:#e6db74>&#39;{{.Names}}&#39;</span><span style=color:#66d9ef>)</span>; <span style=color:#66d9ef>do</span>
+</span></span><span style=display:flex><span>  nets<span style=color:#f92672>=</span><span style=color:#66d9ef>$(</span>docker inspect $c --format <span style=color:#e6db74>&#39;{{len .NetworkSettings.Networks}}&#39;</span><span style=color:#66d9ef>)</span>
+</span></span><span style=display:flex><span>  ports<span style=color:#f92672>=</span><span style=color:#66d9ef>$(</span>docker inspect $c --format <span style=color:#e6db74>&#39;{{len .NetworkSettings.Ports}}&#39;</span><span style=color:#66d9ef>)</span>
+</span></span><span style=display:flex><span>  printf <span style=color:#e6db74>&#39;%-25s | networks=%s | ports=%s\n&#39;</span> <span style=color:#e6db74>&#34;</span>$c<span style=color:#e6db74>&#34;</span> <span style=color:#e6db74>&#34;</span>$nets<span style=color:#e6db74>&#34;</span> <span style=color:#e6db74>&#34;</span>$ports<span style=color:#e6db74>&#34;</span>
+</span></span><span style=display:flex><span><span style=color:#66d9ef>done</span>
+</span></span><span style=display:flex><span>
+</span></span><span style=display:flex><span><span style=color:#75715e># dockhand   | networks=0 | ports=0</span>
+</span></span><span style=display:flex><span><span style=color:#75715e># new-api    | networks=0 | ports=0</span>
+</span></span><span style=display:flex><span><span style=color:#75715e># easytier   | networks=1 (host) | ports=0   ← this one is fine, it uses host network</span>
+</span></span><span style=display:flex><span><span style=color:#75715e># headroom   | networks=0 | ports=0</span>
+</span></span></code></pre></div><p><strong>Three non-host-network containers all show <code>networks=0, ports=0</code> simultaneously.</strong> The only thing they have in common is that each one&rsquo;s <code>HostConfig.NetworkMode</code> points to a different custom bridge.</p><p>At this point the root-cause direction is locked in: <strong>the bridge network these containers were <em>supposed</em> to attach to never actually got the attach action to succeed.</strong></p><p><img src=/post-images/docker-port-bind-half-silent/04-diagnose-checklist.svg alt="Five-Minute Diagnostic Checklist: Six Steps from Symptom to Root Cause"></p><p><em>Figure 4: The six steps above compressed into a copy-paste checklist. Next time you hit a &ldquo;container alive, port dead&rdquo; mystery, 30 seconds is enough to localize.</em></p><hr><h2 id=3-root-cause-a-silently-rolled-back-endpoint-creation>3. Root Cause: A Silently Rolled-Back Endpoint Creation</h2><p>Two questions left to answer:</p><ol><li>Why is the state inconsistent? (HostConfig has it, NetworkSettings doesn&rsquo;t)</li><li>Why did it hit three containers at the same time?</li></ol><h3 id=31-the-complete-publish-chain--which-link-is-missing>3.1 The Complete Publish Chain — Which Link Is Missing</h3><p>For Docker to &ldquo;expose&rdquo; a container&rsquo;s port, this chain has to run end-to-end:</p><p><img src=/post-images/docker-port-bind-half-silent/03-publish-pipeline.svg alt="The Full Publish Chain and the Broken Links"></p><p><em>Figure 3: The full path from a VPN peer to new-api 0.0.0.0:3000. The two ✕ marks are the two links that broke in this incident.</em></p><p>Roughly:</p><ol><li><strong>Inside the container</strong>: the <code>new-api</code> process listens on <code>0.0.0.0:3000</code> (fine);</li><li><strong>libnetwork</strong>: create the network sandbox, attach the container to the <code>newapi_data_default</code> bridge, assign it an internal IP like <code>172.20.0.2</code>;</li><li><strong>Port mapping</strong>: for each <code>HostIp:HostPort</code>, call <code>StartProxy</code> to launch the <code>docker-proxy</code> child process;</li><li><strong>iptables</strong>: insert a <code>DNAT 203.0.113.14:3001 → 172.20.0.2:3000</code> rule in the <code>DOCKER</code> chain of the <code>nat</code> table;</li><li><strong>Report-back</strong>: populate <code>NetworkSettings.Ports</code> and <code>NetworkSettings.Networks</code>.</li></ol><p>Step 5 is the &ldquo;commit&rdquo; step. The empty <code>Ports: {}</code> and <code>Networks: {}</code> mean: from step 1 to step 4, <strong>at least one of them was rolled back during sandbox creation</strong>. <strong>When libnetwork rolls back, it clears <code>NetworkSettings.Networks</code> and <code>NetworkSettings.Ports</code></strong>, but it <strong>doesn&rsquo;t touch <code>HostConfig.PortBindings</code></strong>, which is why you see the state you see.</p><h3 id=32-this-is-a-long-recognized-class-of-bug>3.2 This Is a Long-Recognized Class of Bug</h3><p>This isn&rsquo;t speculation. Moby&rsquo;s issue tracker has a stack of tickets with almost-identical titles:</p><ul><li><strong><a href=https://github.com/moby/moby/issues/9818>moby/moby#9818</a> &ldquo;Container port not expose; neither iptables rules added nor userland proxy started&rdquo;</strong> — a 2014 issue whose title is exactly this incident&rsquo;s symptoms.</li><li><strong><a href=https://github.com/moby/moby/issues/44137>moby/moby#44137</a> &ldquo;docker network connect removes/resets dynamically published/exposed ports&rdquo;</strong> — explicitly states that under certain conditions, <code>docker network connect</code> can &ldquo;reset&rdquo; port mappings.</li><li><strong><a href=https://github.com/moby/moby/pull/52480>moby/moby#52480</a></strong> writes it directly: &ldquo;the conflicting port goes silently unbound… <code>HostConfig.PortBindings</code> is preserved but never applied.&rdquo; — intent preserved, reality abandoned. A textbook case.</li></ul><p>Why didn&rsquo;t <code>docker-proxy</code> start? Why weren&rsquo;t iptables rules inserted? Why is <code>NetworkSettings</code> empty? <strong>It&rsquo;s all the local rollback libnetwork does when sandbox creation fails.</strong></p><h3 id=33-the-common-cause-what-came-up-before-docker>3.3 The Common Cause: &ldquo;What&rdquo; Came Up Before Docker?</h3><p>The key question: why did three non-host-network containers break <strong>at the same time</strong>? Because at the moment Docker tried to attach them, <strong>the interface they were supposed to bind to didn&rsquo;t exist yet</strong>.</p><p><code>203.0.113.14</code> on my box is a <strong>secondary address on a side NIC</strong> — it&rsquo;s not a NIC&rsquo;s primary IP, but a <code>ip addr add</code> configuration on top of it. The NIC itself <strong>does not exist at boot</strong>:</p><ul><li>It&rsquo;s created by a userland TUN service that runs after the system is up;</li><li>Once the TUN service is up, the TUN interface comes up and <code>203.0.113.14</code> gets attached;</li><li>Between these two events there&rsquo;s an <strong>unavoidable race window</strong> — Docker&rsquo;s daemon starts earlier than the TUN.</li></ul><p>When Docker starts the container and tries to attach the bridge network, the target <code>HostIp</code> (i.e. <code>203.0.113.14</code>) <strong>doesn&rsquo;t exist on the host at that moment</strong>. In <a href=https://github.com/moby/moby/blob/master/daemon/libnetwork/portmapper/proxy_linux.go><code>daemon/libnetwork/portmapper/proxy_linux.go</code></a>, Moby&rsquo;s <code>StartProxy()</code> <strong>does not verify that HostIP is bound to a host interface</strong> — it just passes the address straight to the <code>docker-proxy</code> child process as the <code>-host-ip</code> argument.</p><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-go data-lang=go><span style=display:flex><span><span style=color:#75715e>// proxy_linux.go (excerpt)</span>
+</span></span><span style=display:flex><span><span style=color:#a6e22e>cmd</span> <span style=color:#f92672>:=</span> <span style=color:#a6e22e>reexec</span>.<span style=color:#a6e22e>Command</span>(<span style=color:#e6db74>&#34;docker-proxy&#34;</span>,
+</span></span><span style=display:flex><span>    <span style=color:#e6db74>&#34;-host-ip&#34;</span>, <span style=color:#a6e22e>p</span>.<span style=color:#a6e22e>Binding</span>.<span style=color:#a6e22e>HostIP</span>,
+</span></span><span style=display:flex><span>    <span style=color:#e6db74>&#34;-host-port&#34;</span>, <span style=color:#a6e22e>p</span>.<span style=color:#a6e22e>Binding</span>.<span style=color:#a6e22e>HostPort</span>,
+</span></span><span style=display:flex><span>    <span style=color:#e6db74>&#34;-container-ip&#34;</span>, <span style=color:#a6e22e>p</span>.<span style=color:#a6e22e>Binding</span>.<span style=color:#a6e22e>IP</span>,
+</span></span><span style=display:flex><span>    <span style=color:#e6db74>&#34;-container-port&#34;</span>, <span style=color:#a6e22e>strings</span>.<span style=color:#a6e22e>ToLower</span>(<span style=color:#a6e22e>p</span>.<span style=color:#a6e22e>Port</span>),
+</span></span><span style=display:flex><span>)
+</span></span></code></pre></div><p>Whether the proxy fails to start or iptables&rsquo; <code>setChildHostIP</code> decides the binding isn&rsquo;t usable, <strong>libnetwork just rolls back the endpoint creation when it gets the error</strong>. The rollback clears the <code>NetworkSettings</code> fields for this attempt, but <strong>it doesn&rsquo;t touch HostConfig</strong>, and it doesn&rsquo;t report to the user that the port mapping never took effect.</p><p>The host process doesn&rsquo;t exit, the container process doesn&rsquo;t exit, the daemon keeps running — but <strong>the port never actually gets exposed from that moment on</strong>. Nobody raises an error.</p><p>The same class of problem appears in WireGuard, Tailscale, and eBPF-based VPN scenarios where the <strong>userland TUN tunnel</strong> comes up late. In <a href=https://github.com/moby/moby/issues/39559>moby/moby#39559</a> there&rsquo;s literally a comment: &ldquo;I&rsquo;m moving the whole server into Docker with compose. Container A sets up WireGuard (using <code>--net=host</code>), and container B runs a DNS server on the IP that container A configured — but the daemon starts before WireGuard, so the port never binds.&rdquo;</p><h3 id=34-the-one-sentence-root-cause>3.4 The One-Sentence Root Cause</h3><blockquote><p><strong>When Docker attaches a container to a user-defined bridge network, if the configured <code>HostIp</code> is not yet bound to any host interface at that exact moment, libnetwork silently rolls back the sandbox creation — <code>docker-proxy</code> doesn&rsquo;t start, no iptables DNAT rule gets inserted, <code>NetworkSettings.Networks/Ports</code> get cleared, but <code>HostConfig.PortBindings</code> still says &ldquo;I want this.&rdquo; The container process is running, but the port is invisible to the outside world.</strong></p></blockquote><hr><h2 id=4-the-fix-one-command-brings-the-half-alive-back>4. The Fix: One Command Brings the &ldquo;Half-Alive&rdquo; Back</h2><p>Once you know the root cause, the fix is two steps.</p><h3 id=41-the-stopgap-docker-network-connect>4.1 The Stopgap: <code>docker network connect</code></h3><p>The most direct command — re-runs libnetwork&rsquo;s attach flow, this time with the TUN already ready:</p><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-bash data-lang=bash><span style=display:flex><span>docker network connect newapi_data_default new-api
+</span></span><span style=display:flex><span>docker network connect dockhand_data_default dockhand
+</span></span><span style=display:flex><span>docker network connect headroom_default headroom
+</span></span></code></pre></div><p>For each one you run, <code>NetworkSettings</code> refills from <code>{}</code> to the full structure, the <code>docker-proxy</code> child process gets spawned, and the iptables <code>DOCKER</code> chain gains the matching DNAT rule.</p><blockquote><p>Side note: <code>docker network connect</code> is an official command. The docs say: &ldquo;You can connect a container to one or more networks. The networks need not be the same type.&rdquo; (<a href=https://docs.docker.com/reference/cli/docker/network/connect/>docs.docker.com</a>) — that&rsquo;s literally the action we need to redo.</p></blockquote><p>After the fix:</p><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-bash data-lang=bash><span style=display:flex><span>ss -tlnp | grep <span style=color:#ae81ff>3001</span>
+</span></span><span style=display:flex><span><span style=color:#75715e># LISTEN 0  4096  203.0.113.14:3001  docker-proxy</span>
+</span></span><span style=display:flex><span>
+</span></span><span style=display:flex><span>curl -sS -m <span style=color:#ae81ff>5</span> -o /dev/null <span style=color:#ae81ff>\
+</span></span></span><span style=display:flex><span>  -w <span style=color:#e6db74>&#39;HTTP %{http_code}\n&#39;</span> http://203.0.113.14:3001/
+</span></span><span style=display:flex><span><span style=color:#75715e># HTTP 200</span>
+</span></span></code></pre></div><p>It&rsquo;s back.</p><h3 id=42-the-durable-fix-make-docker-wait-for-the-tun>4.2 The Durable Fix: Make Docker Wait for the TUN</h3><p>The one-liner above is firefighting. <strong>It will recur on the next reboot or the next TUN reconnect.</strong> To keep the host out of this state, fix the boot order.</p><p><strong>Option A: systemd dependency</strong> (the cleanest)</p><p>Add an <code>After=</code> clause to <code>docker.service</code> to make systemd start Docker strictly after the TUN service:</p><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-ini data-lang=ini><span style=display:flex><span><span style=color:#66d9ef>[Unit]</span>
+</span></span><span style=display:flex><span><span style=color:#a6e22e>After</span><span style=color:#f92672>=</span><span style=color:#e6db74>network-online.target tun-up.service</span>
+</span></span><span style=display:flex><span><span style=color:#a6e22e>Wants</span><span style=color:#f92672>=</span><span style=color:#e6db74>network-online.target</span>
+</span></span></code></pre></div><p><code>network-online.target</code> alone won&rsquo;t catch &ldquo;userland TUN still handshaking&rdquo; — pair it with a small wait-online unit that polls <code>ip -4 addr show</code>.</p><p><strong>Option B: Drop HostIp from compose, bind 0.0.0.0</strong> (the most aggressive)</p><p>Change:</p><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-yaml data-lang=yaml><span style=display:flex><span><span style=color:#f92672>ports</span>:
+</span></span><span style=display:flex><span>  - <span style=color:#e6db74>&#34;203.0.113.14:3001:3000&#34;</span>
+</span></span></code></pre></div><p>to:</p><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-yaml data-lang=yaml><span style=display:flex><span><span style=color:#f92672>ports</span>:
+</span></span><span style=display:flex><span>  - <span style=color:#e6db74>&#34;3001:3000&#34;</span>
+</span></span></code></pre></div><p>Docker <strong>doesn&rsquo;t pick an interface</strong> — it tries to bind on all available addresses. The cost is that you lose the &ldquo;only this IP can reach me&rdquo; isolation — you have to enforce that in the host firewall instead.</p><p><strong>Option C: A boot-time probe + reconnect</strong> (the most robust belt-and-suspenders)</p><p>A small script that waits for the interface, then reconnects every container that lost its network:</p><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-bash data-lang=bash><span style=display:flex><span><span style=color:#75715e>#!/usr/bin/env bash
+</span></span></span><span style=display:flex><span>set -euo pipefail
+</span></span><span style=display:flex><span><span style=color:#75715e># wait until 203.0.113.14 shows up</span>
+</span></span><span style=display:flex><span><span style=color:#66d9ef>until</span> ip -4 addr show | grep -q <span style=color:#e6db74>&#39;203.0.113.14&#39;</span>; <span style=color:#66d9ef>do</span>
+</span></span><span style=display:flex><span>  sleep <span style=color:#ae81ff>1</span>
+</span></span><span style=display:flex><span><span style=color:#66d9ef>done</span>
+</span></span><span style=display:flex><span><span style=color:#75715e># reconnect every container that&#39;s still in the half-alive state</span>
+</span></span><span style=display:flex><span><span style=color:#66d9ef>for</span> c in new-api dockhand headroom; <span style=color:#66d9ef>do</span>
+</span></span><span style=display:flex><span>  net<span style=color:#f92672>=</span><span style=color:#66d9ef>$(</span>docker inspect <span style=color:#e6db74>&#34;</span>$c<span style=color:#e6db74>&#34;</span> --format <span style=color:#e6db74>&#39;{{.HostConfig.NetworkMode}}&#39;</span><span style=color:#66d9ef>)</span>
+</span></span><span style=display:flex><span>  docker network connect <span style=color:#e6db74>&#34;</span>$net<span style=color:#e6db74>&#34;</span> <span style=color:#e6db74>&#34;</span>$c<span style=color:#e6db74>&#34;</span> <span style=color:#f92672>||</span> true
+</span></span><span style=display:flex><span><span style=color:#66d9ef>done</span>
+</span></span></code></pre></div><p>Hook it into systemd with <code>After=docker.service</code>.</p><p><img src=/post-images/docker-port-bind-half-silent/05-fix-strategy.svg alt="Stopgap vs Durable Fix: Reconnect vs Boot-Order Rework"></p><p><em>Figure 4: The left column (&ldquo;stopgap&rdquo;) is the 30-second <code>docker network connect</code>. The right column (&ldquo;durable&rdquo;) is making sure the interface is always ready before Docker tries to attach. They aren&rsquo;t mutually exclusive — combine them for the best result.</em></p><h3 id=43-before-vs-after-the-same-docker-inspect-command>4.3 Before vs. After (the Same <code>docker inspect</code> Command)</h3><p><img src=/post-images/docker-port-bind-half-silent/06-before-after-compare.svg alt="Before vs After: docker inspect and ss side-by-side"></p><p><em>Figure 5: Before the fix, <code>NetworkSettings</code> is full of empty fields and <code>ss</code> shows no docker-proxy. After a single <code>docker network connect</code>, both fields fill up, the proxy appears, and <code>curl</code> returns 200.</em></p><hr><h2 id=5-qa>5. Q&amp;A</h2><h3 id=q1-how-do-i-tell-apart-the-container-process-is-dead-from-the-port-isnt-published-in-one-glance>Q1. How do I tell apart &ldquo;the container process is dead&rdquo; from &ldquo;the port isn&rsquo;t published&rdquo; in one glance?</h3><p><strong>A</strong>: Hitting <code>&lt;container-name>:&lt;port></code> from the host doesn&rsquo;t work — Docker networks don&rsquo;t see the host&rsquo;s network. <strong>The cleanest one-liner is to curl from inside the container</strong>:</p><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-bash data-lang=bash><span style=display:flex><span>docker exec &lt;ctr&gt; curl -sf 127.0.0.1:&lt;port&gt; <span style=color:#f92672>&amp;&amp;</span> echo OK <span style=color:#f92672>||</span> echo DEAD
+</span></span></code></pre></div><ul><li><code>OK</code> → the process is fine, suspect the host side (continue with this post);</li><li><code>DEAD</code> → the process is gone, look at <code>docker logs &lt;ctr></code> instead — this isn&rsquo;t a port-mapping problem.</li></ul><h3 id=q2-will-docker-restart-fix-it>Q2. Will <code>docker restart</code> Fix It?</h3><p><strong>A</strong>: Sometimes, but not reliably. In my testing, if the host IP is already up (the system has been running for a while), <code>docker restart</code> re-runs the sandbox creation and the port usually comes back. But if the host IP isn&rsquo;t up yet, <code>restart</code> won&rsquo;t make Docker &ldquo;wait&rdquo; — it goes through <strong>the same failure path and lands in the same half-alive state</strong>. So <code>restart</code> is a coin-flip; <code>docker network connect</code> is targeted treatment.</p><h3 id=q3-why-doesnt-docker-port-ctr-show-anything>Q3. Why Doesn&rsquo;t <code>docker port &lt;ctr></code> Show Anything?</h3><p><strong>A</strong>: <code>docker port</code> reads the <code>NetworkSettings.Ports</code> field. That field <strong>is empty in this failure mode</strong> — <code>docker port</code> showing empty is part of the symptom, not a diagnostic. To see the <em>intent</em>, use <code>docker inspect &lt;ctr> --format '{{json .HostConfig.PortBindings}}'</code>.</p><h3 id=q4-do-i-have-to-reconnect-each-container-one-by-one>Q4. Do I Have to Reconnect Each Container One by One?</h3><p><strong>A</strong>: Yes — each container needs its own <code>docker network connect</code>, there&rsquo;s no batch subcommand. In practice three commands take 30 seconds. To save a few keystrokes, a <code>for</code> loop is enough:</p><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-bash data-lang=bash><span style=display:flex><span><span style=color:#66d9ef>for</span> c in new-api dockhand headroom; <span style=color:#66d9ef>do</span>
+</span></span><span style=display:flex><span>  net<span style=color:#f92672>=</span><span style=color:#66d9ef>$(</span>docker inspect <span style=color:#e6db74>&#34;</span>$c<span style=color:#e6db74>&#34;</span> --format <span style=color:#e6db74>&#39;{{.HostConfig.NetworkMode}}&#39;</span><span style=color:#66d9ef>)</span>
+</span></span><span style=display:flex><span>  docker network connect <span style=color:#e6db74>&#34;</span>$net<span style=color:#e6db74>&#34;</span> <span style=color:#e6db74>&#34;</span>$c<span style=color:#e6db74>&#34;</span> <span style=color:#f92672>||</span> true
+</span></span><span style=display:flex><span><span style=color:#66d9ef>done</span>
+</span></span></code></pre></div><h3 id=q5-is-network-onlinetarget-really-enough-for-the-durable-fix>Q5. Is <code>network-online.target</code> Really Enough for the Durable Fix?</h3><p><strong>A</strong>: The default <code>network-online.target</code> only fires when systemd-networkd or NetworkManager thinks the <strong>main</strong> network is up. <strong>It doesn&rsquo;t observe userland TUN/WireGuard interfaces on its own.</strong> In production, write a 1-2-line systemd unit that does <code>ip -4 addr show | grep &lt;vpn-ip></code> in a loop, and only <code>start docker.service</code> after that succeeds. That&rsquo;s far more reliable than trusting the target.</p><h3 id=q6-are-there-other-failure-modes-that-land-in-this-same-half-alive-state>Q6. Are There Other Failure Modes That Land in This Same &ldquo;Half-Alive&rdquo; State?</h3><p><strong>A</strong>: Yes — but they all share the same entry point: <strong>&ldquo;the host IP was unreachable at the moment of attach&rdquo;</strong>. A few more:</p><ul><li>Floating IP / elastic IP drifted, and Docker didn&rsquo;t notice;</li><li>Bonded NIC switched master, and the old master&rsquo;s IP got released;</li><li>DHCP renewal failed, IP was temporarily reclaimed and re-issued;</li><li><code>network_mode: host</code> combined with <code>-p</code> — older Docker versions handled this inconsistently.</li></ul><p>The diagnostic logic is identical: check <code>HostConfig</code> for &ldquo;I want to do this&rdquo;, check <code>NetworkSettings</code> for &ldquo;I actually did this&rdquo;. <strong>Mismatch = a rollback trace from libnetwork.</strong></p><h3 id=q7-did-docker-28-fix-this-bug>Q7. Did Docker 28+ Fix This Bug?</h3><p><strong>A</strong>: As of writing, Moby&rsquo;s issue tracker has <strong><a href=https://github.com/moby/moby/issues/51758>#51758 &ldquo;PortBindings shows binding but NetworkSettings.Ports is empty&rdquo;</a></strong> still being filed, with the matching fix in <strong>PR #52480</strong> waiting to land. <strong>This is a long-standing corner case</strong> — understanding it beats waiting for it to be fixed.</p><hr><h2 id=6-summary>6. Summary</h2><p>The investigation path of this incident boils down to three things:</p><ol><li><strong>Look at the two fields of <code>docker inspect</code> separately</strong> — <code>HostConfig</code> is &ldquo;what I intend to do&rdquo;, <code>NetworkSettings</code> is &ldquo;what I actually did&rdquo;. A mismatch = half-alive.</li><li><strong>Use <code>ss</code> and <code>iptables -t nat -L DOCKER</code> to verify in reverse</strong> — no <code>docker-proxy</code> process + no DNAT rule = 100% matches this scenario.</li><li><strong><code>docker network connect</code> is the minimum stopgap action</strong>. The durable fix is changing the boot order so Docker runs strictly after the userland TUN.</li></ol><p>Burn <code>ss -tlnp</code> and <code>iptables -t nat -L DOCKER</code> into muscle memory. Next time you hit a &ldquo;container alive, port dead&rdquo; mystery, <strong>30 seconds to localize, three commands to recover</strong>.</p><hr><h2 id=references>References</h2><ul><li><a href=https://github.com/moby/moby/blob/master/daemon/libnetwork/portmapper/proxy_linux.go>Moby source · daemon/libnetwork/portmapper/proxy_linux.go</a> — <code>StartProxy</code> passes <code>HostIP</code> straight to docker-proxy as <code>-host-ip</code></li><li><a href=https://github.com/moby/moby/blob/master/daemon/libnetwork/portmappers/nat/mapper_linux.go>Moby source · daemon/libnetwork/portmappers/nat/mapper_linux.go</a> — <code>setChildHostIP</code> and the binding decision</li><li><a href=https://github.com/moby/moby/blob/master/daemon/libnetwork/portmapperapi/api.go>Moby source · daemon/libnetwork/portmapperapi/api.go</a> — <code>PortBinding</code> / <code>StopProxy</code> lifecycle</li><li><a href=https://github.com/moby/moby/issues/9818>moby/moby #9818 — Container port not expose; neither iptables rules added nor userland proxy started</a> — same-symptom ticket from 2014</li><li><a href=https://github.com/moby/moby/issues/39559>moby/moby #39559 — Container does not start (&ndash;restart always) at boot if port bind fails</a> — closest known ticket to the TUN/WireGuard case</li><li><a href=https://github.com/moby/moby/issues/44137>moby/moby #44137 — docker network connect removes/resets dynamically published/exposed ports</a> — port mapping reset under certain conditions</li><li><a href=https://github.com/moby/moby/issues/51758>moby/moby #51758 — PortBindings shows binding but NetworkSettings.Ports is empty</a> — same class of issue still being filed in 2025</li><li><a href=https://github.com/moby/moby/pull/52480>moby/moby #52480 — connectToNetwork: keep Networks on failure</a> — the matching fix PR</li><li><a href=https://docs.docker.com/engine/network/>Docker Docs — Networking overview (engine/network)</a> — official description of <code>-p</code> and firewall rules</li><li><a href=https://docs.docker.com/engine/network/firewall-iptables/>Docker Docs — Docker with iptables (engine/network/firewall-iptables)</a> — authoritative reference for the iptables <code>DOCKER</code> chain</li><li><a href=https://docs.docker.com/engine/network/port-publishing/>Docker Docs — Port publishing and mapping</a> — details on the <code>HostIP</code> form of <code>-p</code></li><li><a href=https://docs.docker.com/reference/cli/docker/network/connect/>Docker Docs — docker network connect reference</a> — the official &ldquo;attach a container to a network&rdquo; command</li><li><a href=https://www.docker.com/blog/docker-engine-28-hardening-container-networking-by-default/>Docker Blog — Docker Engine v28: Hardening Container Networking by Default</a> — context for behavior changes in v28</li><li><a href=https://www.freedesktop.org/software/systemd/man/systemd.unit.html>systemd docs — systemd.unit(5), After=/Wants= relationships</a></li></ul></div></article><link rel=stylesheet href=https://cdn.jsdelivr.net/npm/gitalk/dist/gitalk.css><script src=https://cdn.jsdelivr.net/npm/gitalk/dist/gitalk.min.js></script><div id=gitalk-container style=margin-top:40px></div><script>(function(){var e=new Gitalk({clientID:"3181fd94e501cc5db0ad",clientSecret:"af1dab79dae02c69296e6615bfcecf47fc8615ee",repo:"margropcomment.margrop.io",owner:"margrop",admin:["margrop"],id:"/post/docker-port-bind-half-silent/",distractionFreeMode:!1});e.render("gitalk-container")})()</script><script type=text/javascript src=https://js.users.51.la/21044367.js></script><script id=LA_COLLECT src=//sdk.51.la/js-sdk-pro.min.js></script><script>LA.init({id:"1vVTUWl7zoRjnKXi",ck:"1vVTUWl7zoRjnKXi"})</script><script src=https://sdk.51.la/perf/js-sdk-perf.min.js crossorigin=anonymous></script><script>(new LingQue.Monitor).init({id:"202teQt8THXwqyve"})</script></body></html>

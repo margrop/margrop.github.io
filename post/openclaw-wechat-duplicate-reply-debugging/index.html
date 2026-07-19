@@ -1,375 +1,68 @@
-<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>AI 助手为什么把一句话复读四遍：一次 OpenClaw 微信通道排障复盘 - 魔都水滴</title>
-<meta name="description" content="先说结论 这次问题看起来像“微信通道把同一条回复发了四遍”，但真正的重复发生在更早的位置：消息还没有进入微信发送层之前，OpenClaw Agent 的最终可见文本就已经被模型执行链路重复拼接了。排障的关键不是一上来改微信插件，而是把链路拆成发送层、会话层、模型路由层三段，用最小 prompt 复现，再比较“兼容网关路 …">
-<meta name="robots" content="index, follow">
-<link rel="canonical" href="https://blog.margrop.net/post/openclaw-wechat-duplicate-reply-debugging/">
-
-<meta property="og:site_name" content="魔都水滴">
-<meta property="og:title" content="AI 助手为什么把一句话复读四遍：一次 OpenClaw 微信通道排障复盘 - 魔都水滴">
-<meta property="og:description" content="先说结论 这次问题看起来像“微信通道把同一条回复发了四遍”，但真正的重复发生在更早的位置：消息还没有进入微信发送层之前，OpenClaw Agent 的最终可见文本就已经被模型执行链路重复拼接了。排障的关键不是一上来改微信插件，而是把链路拆成发送层、会话层、模型路由层三段，用最小 prompt 复现，再比较“兼容网关路 …">
-<meta property="og:url" content="https://blog.margrop.net/post/openclaw-wechat-duplicate-reply-debugging/">
-<meta property="og:locale" content="zh_CN"><meta property="og:type" content="article"><meta property="og:locale:alternate" content="en_US"><meta property="og:image" content="https://blog.margrop.net/images/avatar.png"><meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="AI 助手为什么把一句话复读四遍：一次 OpenClaw 微信通道排障复盘 - 魔都水滴">
-<meta name="twitter:description" content="先说结论 这次问题看起来像“微信通道把同一条回复发了四遍”，但真正的重复发生在更早的位置：消息还没有进入微信发送层之前，OpenClaw Agent 的最终可见文本就已经被模型执行链路重复拼接了。排障的关键不是一上来改微信插件，而是把链路拆成发送层、会话层、模型路由层三段，用最小 prompt 复现，再比较“兼容网关路 …"><meta name="twitter:image" content="https://blog.margrop.net/images/avatar.png"><link rel="alternate" hreflang="zh-CN" href="https://blog.margrop.net/post/openclaw-wechat-duplicate-reply-debugging/"><link rel="alternate" hreflang="en-US" href="https://blog.margrop.net/en/post/openclaw-wechat-duplicate-reply-debugging/"><link rel="alternate" hreflang="x-default" href="https://blog.margrop.net/"><meta property="article:published_time" content="2026-05-29T11:24:29&#43;08:00">
-<meta property="article:modified_time" content="2026-05-29T11:24:29&#43;08:00"><meta property="article:tag" content="OpenClaw"><meta property="article:tag" content="微信"><meta property="article:tag" content="AI Agent"><meta property="article:tag" content="模型路由"><meta property="article:tag" content="故障排查"><meta property="article:tag" content="OpenAI兼容接口"><meta property="article:tag" content="MiniMax"><meta property="article:tag" content="工程实践"><script type="application/ld+json">{"@context":"https://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"魔都水滴"},"dateModified":"2026-05-29T11:24:29+08:00","datePublished":"2026-05-29T11:24:29+08:00","description":"先说结论 这次问题看起来像“微信通道把同一条回复发了四遍”，但真正的重复发生在更早的位置：消息还没有进入微信发送层之前，OpenClaw Agent 的最终可见文本就已经被模型执行链路重复拼接了。排障的关键不是一上来改微信插件，而是把链路拆成发送层、会话层、模型路由层三段，用最小 prompt 复现，再比较“兼容网关路 …","headline":"AI 助手为什么把一句话复读四遍：一次 OpenClaw 微信通道排障复盘","mainEntityOfPage":"https://blog.margrop.net/post/openclaw-wechat-duplicate-reply-debugging/","url":"https://blog.margrop.net/post/openclaw-wechat-duplicate-reply-debugging/"}</script>
-    <meta name="baidu-site-verification" content="code-sVFZ8SER59" />
-
-    
-    <script async src="https://www.googletagmanager.com/gtag/js?id=G-3J2W592DHJ"></script>
-    <script>
-      window.dataLayer = window.dataLayer || [];
-      function gtag(){dataLayer.push(arguments);}
-      gtag('js', new Date());
-      gtag('config', 'G-3J2W592DHJ');
-    </script>
-
-    <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 860px; margin: 0 auto; padding: 20px; line-height: 1.7; color: #222; }
-    h1 { border-bottom: 2px solid #333; padding-bottom: 10px; }
-    .post-list { list-style: none; padding: 0; }
-    .post-list li { margin: 15px 0; }
-    .post-list a { text-decoration: none; color: #333; font-size: 18px; }
-    .post-list a:hover { color: #006CFF; }
-    .date { color: #666; font-size: 14px; margin-right: 10px; }
-    .tags { margin-top: 8px; }
-    .tag { background: #eee; padding: 2px 8px; border-radius: 3px; font-size: 12px; margin-right: 5px; display: inline-block; }
-    nav { margin-bottom: 18px; border-bottom: 1px solid #eee; padding-bottom: 15px; }
-    nav a { margin-right: 20px; text-decoration: none; color: #333; font-size: 16px; }
-    nav a:hover { color: #006CFF; }
-    .language-switcher { margin: -8px 0 26px; }
-    .language-switcher a { display: inline-block; margin-right: 10px; padding: 4px 10px; border: 1px solid #ddd; border-radius: 999px; color: #555; text-decoration: none; font-size: 14px; }
-    .language-switcher a.active { background: #006CFF; border-color: #006CFF; color: #fff; }
-    .content { line-height: 1.8; }
-    .content code { background: #f4f4f4; padding: 2px 5px; border-radius: 3px; }
-    .content pre { background: #f4f4f4; padding: 15px; overflow-x: auto; border-radius: 5px; }
-    .content img { display: block; max-width: 100%; height: auto; margin: 0 auto; }
-    .content .code-snippet__fix {
-        margin: 0 0 1.5em;
-    }
-    .content .code-snippet__fix .code-snippet__line-index {
-        display: none !important;
-    }
-    .meta { color: #666; font-size: 14px; margin-bottom: 14px; }
-    a { color: #006CFF; }
-    @media (max-width: 680px) {
-        body { padding: 16px; }
-        nav a { display: inline-block; margin-right: 12px; margin-bottom: 8px; }
-    }
-</style>
-
-</head>
-<body>
-    <nav>
-  
-  <a href="/">首页</a>
-  <a href="/post/">归档</a>
-  <a href="/tags/">标签</a>
-  <a href="/post/about/">关于</a>
-  <a href="https://download.margrop.net" target="_blank" rel="noopener">下载</a>
-  <a href="/post/favorites/">Link</a>
-  <a href="/post/github-project-stars/">Github</a>
-  
-  <a href="https://github-mirrors.margrop.net" target="_blank" rel="noopener">Github加速</a>
-  <a href="https://status.anye.xyz/" target="_blank" rel="noopener">Docker加速</a>
-  
-</nav>
-
-    
-<div class="language-switcher">
-  
-    <a href="/post/openclaw-wechat-duplicate-reply-debugging/" class="active">中文</a>
-  
-    <a href="/en/post/openclaw-wechat-duplicate-reply-debugging/" class="">English</a>
-  
-</div>
-
-
-    
-    <article>
-        <h1>AI 助手为什么把一句话复读四遍：一次 OpenClaw 微信通道排障复盘</h1>
-        <div class="meta">
-            发布时间: 2026-05-29
-        </div>
-        
-<div class="tags">
-    
-    <a href="/tag/openclaw/"><span class="tag">OpenClaw</span></a>
-    
-    <a href="/tag/%E5%BE%AE%E4%BF%A1/"><span class="tag">微信</span></a>
-    
-    <a href="/tag/ai-agent/"><span class="tag">AI Agent</span></a>
-    
-    <a href="/tag/%E6%A8%A1%E5%9E%8B%E8%B7%AF%E7%94%B1/"><span class="tag">模型路由</span></a>
-    
-    <a href="/tag/%E6%95%85%E9%9A%9C%E6%8E%92%E6%9F%A5/"><span class="tag">故障排查</span></a>
-    
-    <a href="/tag/openai%E5%85%BC%E5%AE%B9%E6%8E%A5%E5%8F%A3/"><span class="tag">OpenAI兼容接口</span></a>
-    
-    <a href="/tag/minimax/"><span class="tag">MiniMax</span></a>
-    
-    <a href="/tag/%E5%B7%A5%E7%A8%8B%E5%AE%9E%E8%B7%B5/"><span class="tag">工程实践</span></a>
-    
-</div>
-
-
-        <div class="content">
-            <blockquote>
-<p><strong>先说结论</strong></p>
-<p>这次问题看起来像“微信通道把同一条回复发了四遍”，但真正的重复发生在更早的位置：消息还没有进入微信发送层之前，OpenClaw Agent 的最终可见文本就已经被模型执行链路重复拼接了。排障的关键不是一上来改微信插件，而是把链路拆成发送层、会话层、模型路由层三段，用最小 prompt 复现，再比较“兼容网关路径”和“原生 provider 路径”的输出差异。最后的修复也很朴素：让个人 IM 通道显式走原生 provider，移除容易被误选的故障候选模型路径，重启 Gateway 后复测主会话。</p>
-<p>这篇文章不会出现任何真实内网地址、账号、token、会话 ID、个人微信标识或私有路径。所有配置片段都已经脱敏，并用 <code>&lt;PLACEHOLDER&gt;</code> 形式表示。重点是分享一套可复用的排障方法，而不是公开某个具体环境的细节。</p>
-</blockquote>
-<p><img alt="AI 回复重复的抽象排障题图" src="/post-images/openclaw-wechat-duplicate-reply-debugging/01-hero-duplicate-reply.png"></p>
-<p><em>图 1：本文自制题图。一个看似“微信重复发送”的问题，最后被定位成模型执行链路里的重复输出。</em></p>
-<h2 id="1-问题背景个人-im-入口里的-agent比命令行更容易暴露最终体验问题">1. 问题背景：个人 IM 入口里的 Agent，比命令行更容易暴露“最终体验问题”</h2>
-<p>现在很多人已经不满足于在终端里和 AI Agent 对话。真正方便的形态，是把 Agent 接进日常消息入口：个人微信、企业 IM、Telegram、Slack、飞书、钉钉、iMessage，或者其它自己常用的通知和对话渠道。这样做的好处很明显：不用专门打开一个终端，也不用记住某个 dashboard 地址，随手发一句话，Agent 就能帮你查状态、写摘要、跑脚本、整理资料、提醒事项。</p>
-<p>但 IM 入口也会把问题放大。命令行里多输出一段内容，你可能只觉得有点烦；如果这段内容被发送到微信里，它就是一条正式消息。命令行里一次输出重复，你还能滚屏忽略；微信里一条消息内部重复四遍，就非常刺眼。更重要的是，IM 通道通常跨过了多个层次：消息接收、去重、会话路由、模型选择、Agent 执行、文本归一化、发送 API。任何一层出了问题，最终用户看到的都只是“这条消息不对”。</p>
-<p>这次遇到的问题就是这样：本地 OpenClaw 已经接入个人微信。用户在微信里和 OpenClaw 对话时，不管问什么，OpenClaw 都会把同一句回复在一条消息里重复多次。注意，这不是连续收到四条消息，而是一条消息内部出现四份完全相同的文本。这个差异很重要，因为它直接影响排障方向。</p>
-<p>如果是连续收到四条消息，优先怀疑 webhook 重试、轮询 offset、消息去重、发送 API 被调用多次、队列重复消费。如果是一条消息里有四段相同文本，优先怀疑最终 reply payload 本身已经重复，或者发送层把多个文本 fragment 拼成了一条消息。两者看起来都叫“重复回复”，但根因完全不同。</p>
-<p>这也是我想写这篇文章的原因。AI Agent 的故障越来越不像传统脚本报错：它可能不是崩溃、不是 500、不是 timeout，而是“看起来能工作，但输出很怪”。这类问题最忌讳凭直觉改配置。因为 Agent 链路太长，直觉很容易把你带到最外层：既然是在微信里看到的，那就改微信插件；既然是模型回答重复，那就调 prompt；既然刚升级过，那就回滚版本。真正可靠的做法，是先把重复发生的位置钉住。</p>
-<h2 id="2-问题表现不是多条消息而是一条消息里复读">2. 问题表现：不是多条消息，而是一条消息里复读</h2>
-<p>这次现象可以简化成一句话：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>用户问：只回复这两个字：测试
-</span></span><span style="display:flex;"><span>期望：测试
-</span></span><span style="display:flex;"><span>实际：测试测试测试测试
-</span></span></code></pre></div><p>真实问题里并不一定刚好是四个“测试”，但模式一致：Agent 不是回答了四条消息，而是在一个 reply body 里把同一段文本重复粘贴。对用户来说，这种体验很差。它会让人怀疑三件事：</p>
-<ol>
-<li>微信插件是不是重复发送？</li>
-<li>OpenClaw 是不是接收到了重复输入？</li>
-<li>模型是不是自己复读？</li>
-</ol>
-<p>这三个怀疑都合理，但排查顺序不能乱。因为“看起来重复”不等于“发送重复”。如果发送层只调用一次，而调用参数里的 <code>text</code> 已经重复，那么继续改发送层只会浪费时间。反过来，如果 Agent raw text 是正常的，发送 API 却调用了多次，那再怎么换模型也没用。</p>
-<p>我最终采用的是一个很小的最小复现 prompt：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>只回复这两个字：测试
-</span></span></code></pre></div><p>这个 prompt 有两个好处。第一，它足够短，避免复杂上下文导致模型自由发挥。第二，它有明确期望，输出只要不是单个“测试”，就可以判定异常。排障时不要一开始就拿真实长问题测试，因为长问题会引入太多噪声：系统提示、历史会话、工具调用、摘要、语言风格、模型思考、markdown 格式，都可能让你误判。</p>
-<p>这里还有一个细节：我不只看用户最终看到什么，还看 Agent 执行结果里的 raw text、provider、model、winner provider 和 attempts。也就是说，我要知道这次回答到底是由哪条模型路径生成的，模型返回给 OpenClaw 的最终可见文本是什么。只有拿到这些证据，才能判断重复发生在哪一层。</p>
-<p><img alt="分层排障路径" src="/post-images/openclaw-wechat-duplicate-reply-debugging/02-layered-diagnosis.svg"></p>
-<p><em>图 2：先确认重复发生在哪一层，再决定要改哪个配置。</em></p>
-<h2 id="3-第一轮假设微信发送层是否重复调用">3. 第一轮假设：微信发送层是否重复调用</h2>
-<p>很多 IM 集成问题，第一反应都是看发送层。这是合理的。因为 IM 平台通常有重试、回调、ack、offset、队列、去重等机制。如果接收端没有正确确认，或者发送端在失败后重试，就可能出现重复消息。</p>
-<p>但这次有一个关键区别：用户看到的是一条消息里重复多次，而不是多条消息。为了验证这一点，我查看了微信插件的发送路径。脱敏后可以抽象成下面这个结构：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>Agent reply payload
-</span></span><span style="display:flex;"><span>  -&gt; dispatch reply
-</span></span><span style="display:flex;"><span>    -&gt; build item_list
-</span></span><span style="display:flex;"><span>      -&gt; sendMessage(channel, target, text)
-</span></span></code></pre></div><p>发送层构造的是一个单条文本 item。也就是说，至少从代码路径看，它不是天然会把同一段文本循环发送四次。接下来要看的就是运行时：发送 API 是否被调用多次？如果没有多次调用，那问题就要往上游找。</p>
-<p>在这一步，最重要的不是立刻修改代码，而是先建立一个判断标准：</p>
-<ul>
-<li>如果发送层调用多次，继续查消息去重、回调重试、队列消费。</li>
-<li>如果发送层调用一次，但 text 已经重复，继续查 Agent 输出。</li>
-</ul>
-<p>这次证据指向第二种：微信发送层不是根因。重复文本已经在发送之前形成。这个结论非常关键，因为它把排查范围从“微信插件”缩小到了“Agent 执行链路”。</p>
-<h2 id="4-第二轮假设会话层是否复用了旧状态">4. 第二轮假设：会话层是否复用了旧状态</h2>
-<p>Agent 和普通 API 调用不一样。普通 API 调用通常是无状态的：传入 messages，得到 completion。Agent 通常有 session：它会记住上一轮对话、系统提示是否已经发送、模型 override、通道、目标、工具调用历史、压缩状态、父会话关系等。</p>
-<p>会话层如果有旧状态，也可能造成奇怪输出。例如：</p>
-<ol>
-<li>某个会话曾经设置过模型 override，后续一直沿用。</li>
-<li>主会话和通道会话绑定在一起，导致你以为开了新会话，实际复用了旧会话。</li>
-<li>历史消息里已经有重复内容，模型在总结或延续时又重复了一遍。</li>
-<li>上一次执行失败后保留了 fallback 选择，下次继续走 fallback。</li>
-</ol>
-<p>所以我做了两种测试：一种是新 session key 的最小复现；另一种是个人微信实际使用的主会话复现。这样可以区分“只有旧主会话有问题”还是“新会话也会复现”。结果是，新会话同样会出现重复。这说明问题不是单纯的某个历史会话污染，而是更底层的模型路由或 provider 处理问题。</p>
-<p>同时，主会话确实很有价值。因为最终用户走的是主会话，不是我临时造出来的 debug session。修复后必须回到主会话验证，否则只能证明“某条测试命令没问题”，不能证明“微信入口已经恢复”。</p>
-<h2 id="5-第三轮假设模型路由是否走错了-provider">5. 第三轮假设：模型路由是否走错了 provider</h2>
-<p>这一步是整个问题的转折点。</p>
-<p>OpenClaw 的模型配置里，模型选择不只是一个模型名。完整路径通常包含 provider 和 model，例如：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>provider/model
-</span></span></code></pre></div><p>如果两个 provider 都暴露了同名模型，例如都叫 <code>SomeModel-X</code>，那只看 model ID 就不够了。你必须同时看 provider、API 协议、base URL、兼容层、streaming 行为和最终执行轨迹。</p>
-<p>这次就出现了这样的情况：同一个模型名，在两条路径上都能被看到。</p>
-<p>第一条是原生 provider 路径，使用模型官方或原生适配方式。</p>
-<p>第二条是 OpenAI-compatible 网关路径，也就是把后端模型包装成 OpenAI Chat Completions 或类似协议对外提供。</p>
-<p>理论上，只要兼容层实现正确，两条路径都可以工作。但“可以工作”不等于“在 Agent 流式输出、reasoning 字段、content fragment、工具调用兼容、缓存统计、最终文本拼接上完全等价”。尤其是 Agent 框架通常会处理 streaming delta、reasoning、content block、usage、fallback、重试等细节。如果兼容层返回格式和框架期待之间有一点偏差，就可能出现肉眼很奇怪的问题：内容重复、空输出、reasoning 被当成正文、正文被拼接两次、工具调用重复、stop reason 不一致。</p>
-<p>我做了一个对照实验：同样的 prompt，分别走兼容网关路径和原生 provider 路径。</p>
-<p>结果非常明确：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>兼容网关路径：测试测试
-</span></span><span style="display:flex;"><span>原生 provider 路径：测试
-</span></span></code></pre></div><p>这就把根因范围进一步缩小了：不是模型能力本身突然喜欢复读，也不是微信发送层循环发送，而是某条 OpenAI-compatible 执行路径在 OpenClaw Agent 场景里产生了重复最终文本。</p>
-<p>这里还要强调一句：这并不等价于“OpenAI-compatible 网关都不可靠”。兼容层是很有价值的，它能把不同模型统一到一个 API 形态里，便于客户端接入。但兼容层也确实是一个额外抽象层。对简单 curl 来说，返回一次文本就算通过；对长链路 Agent 来说，还要验证 streaming、上下文预算、reasoning、tool call、fallback、会话状态和最终可见文本。两者验证强度不是一个级别。</p>
-<h2 id="6-真正根因同名模型--故障候选仍可见--agent-执行链路选到了兼容路径">6. 真正根因：同名模型 + 故障候选仍可见 + Agent 执行链路选到了兼容路径</h2>
-<p>把证据串起来，根因可以写成一句工程化结论：</p>
-<blockquote>
-<p>OpenClaw 的默认模型和可见模型集合中存在同名模型的多 provider 候选；其中 OpenAI-compatible 网关路径在当前 Agent 执行链路中会产生重复最终文本。虽然配置层看起来已经把默认模型指向原生 provider，但实际执行轨迹仍命中了兼容 provider，导致个人微信通道收到的 reply payload 本身就是重复文本。</p>
-</blockquote>
-<p>这句话里有几个重点。</p>
-<p>第一，问题不是“微信发了四次”。发送层不是根因。</p>
-<p>第二，问题不是“用户输入重复”。最小 prompt 下也能复现。</p>
-<p>第三，问题不是“模型名不对”。模型名看起来是同一个，真正差异在 provider 和协议路径。</p>
-<p>第四，问题不是“重启就好”。重启 Gateway 后，如果故障候选仍然可见，执行轨迹仍可能继续命中它。</p>
-<p>第五，修复不能只看 <code>models status</code> 或配置表面值。必须看实际执行轨迹里的 winner provider 和 final raw text。</p>
-<p><img alt="模型路由修复前后对比" src="/post-images/openclaw-wechat-duplicate-reply-debugging/03-routing-before-after.svg"></p>
-<p><em>图 3：同名模型在不同 provider 下可能是完全不同的运行路径。排障时必须看 provider。</em></p>
-<h2 id="7-修复过程从切默认值到收窄可见候选">7. 修复过程：从“切默认值”到“收窄可见候选”</h2>
-<p>最开始我尝试的是最直观的修复：把默认模型切到原生 provider。</p>
-<p>脱敏后的配置大概是这样：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-json" data-lang="json"><span style="display:flex;"><span>{
-</span></span><span style="display:flex;"><span>  <span style="color:#f92672">&#34;agents&#34;</span>: {
-</span></span><span style="display:flex;"><span>    <span style="color:#f92672">&#34;defaults&#34;</span>: {
-</span></span><span style="display:flex;"><span>      <span style="color:#f92672">&#34;model&#34;</span>: {
-</span></span><span style="display:flex;"><span>        <span style="color:#f92672">&#34;primary&#34;</span>: <span style="color:#e6db74">&#34;native-provider/Model-X&#34;</span>,
-</span></span><span style="display:flex;"><span>        <span style="color:#f92672">&#34;fallbacks&#34;</span>: [<span style="color:#e6db74">&#34;compatible-gateway/Model-X&#34;</span>]
-</span></span><span style="display:flex;"><span>      }
-</span></span><span style="display:flex;"><span>    }
-</span></span><span style="display:flex;"><span>  }
-</span></span><span style="display:flex;"><span>}
-</span></span></code></pre></div><p>这一步看起来合理，但验证时发现实际执行仍然走兼容路径。这说明“默认值显示正确”不代表“运行时一定按这个默认值执行”。Agent 系统还可能受到以下因素影响：</p>
-<ol>
-<li>会话级模型 override。</li>
-<li>通道级模型 override。</li>
-<li>fallback 选择。</li>
-<li>模型 allowlist。</li>
-<li>同名模型解析。</li>
-<li>provider catalog 的候选顺序。</li>
-<li>历史会话里的运行状态。</li>
-</ol>
-<p>于是我继续做第二步：清空默认 fallback，避免自动回落到故障候选。</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-json" data-lang="json"><span style="display:flex;"><span>{
-</span></span><span style="display:flex;"><span>  <span style="color:#f92672">&#34;agents&#34;</span>: {
-</span></span><span style="display:flex;"><span>    <span style="color:#f92672">&#34;defaults&#34;</span>: {
-</span></span><span style="display:flex;"><span>      <span style="color:#f92672">&#34;model&#34;</span>: {
-</span></span><span style="display:flex;"><span>        <span style="color:#f92672">&#34;primary&#34;</span>: <span style="color:#e6db74">&#34;native-provider/Model-X&#34;</span>,
-</span></span><span style="display:flex;"><span>        <span style="color:#f92672">&#34;fallbacks&#34;</span>: []
-</span></span><span style="display:flex;"><span>      }
-</span></span><span style="display:flex;"><span>    }
-</span></span><span style="display:flex;"><span>  }
-</span></span><span style="display:flex;"><span>}
-</span></span></code></pre></div><p>这仍然不够。因为故障 provider 只要还在模型可见集合里，某些解析路径仍可能选到它。</p>
-<p>第三步是给个人 IM 通道加通道级模型覆盖。这样即使其它通道暂时保留不同模型，个人微信入口也能被强制绑定到验证过的 provider。</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-json" data-lang="json"><span style="display:flex;"><span>{
-</span></span><span style="display:flex;"><span>  <span style="color:#f92672">&#34;channels&#34;</span>: {
-</span></span><span style="display:flex;"><span>    <span style="color:#f92672">&#34;modelByChannel&#34;</span>: {
-</span></span><span style="display:flex;"><span>      <span style="color:#f92672">&#34;personal-im-channel&#34;</span>: {
-</span></span><span style="display:flex;"><span>        <span style="color:#f92672">&#34;*&#34;</span>: <span style="color:#e6db74">&#34;native-provider/Model-X&#34;</span>
-</span></span><span style="display:flex;"><span>      }
-</span></span><span style="display:flex;"><span>    }
-</span></span><span style="display:flex;"><span>  }
-</span></span><span style="display:flex;"><span>}
-</span></span></code></pre></div><p>第四步，也是最终生效的关键，是把故障的兼容网关候选从 OpenClaw 的可见模型配置中移除。注意这里不是泄愤式删除所有网关配置，而是遵循最小可用原则：当前通道不再暴露这条已知会产生重复文本的候选路径。只要它不可见，Agent 就不会在这个入口继续选到它。</p>
-<p>修复后再次运行最小复现：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>输入：只回复这两个字：测试
-</span></span><span style="display:flex;"><span>输出：测试
-</span></span><span style="display:flex;"><span>provider：native-provider
-</span></span><span style="display:flex;"><span>winner：native-provider
-</span></span></code></pre></div><p>再回到个人 IM 主会话验证，同样只返回一次。这才算真正修复。</p>
-<h2 id="8-为什么我不建议用后处理去重当主修复">8. 为什么我不建议用“后处理去重”当主修复</h2>
-<p>看到重复文本，很多人会想到一个简单办法：发消息前做去重。如果发现 <code>abcabcabcabc</code>，就压缩成 <code>abc</code>。这个方法看起来很快，但我不建议把它当主修复。</p>
-<p>原因有四个。</p>
-<p>第一，后处理不知道什么是“合法重复”。用户可能真的要求“把这句话重复三遍”，也可能让 Agent 生成诗歌、歌词、测试数据、表格、日志样例。盲目去重会破坏内容。</p>
-<p>第二，后处理掩盖上游故障。如果 provider 路径持续返回异常，你把文本去重了，表面体验好了，但工具调用、结构化输出、长文本摘要仍可能继续出问题。</p>
-<p>第三，重复不一定总是完美重复。有时是段落重复，有时是 reasoning 与正文混合，有时是 markdown 块重复，有时是中间 fragment 重复。后处理规则会越写越复杂，最后变成另一个不可靠系统。</p>
-<p>第四，Agent 的排障重点是证据链。正确修复应该让执行轨迹变干净，而不是让最终展示层“看起来干净”。</p>
-<p>当然，发送层可以有一些防御性保护，例如避免同一个 message id 短时间重复发送，或者对明显的网络重试做幂等。但这和“把重复文本压缩掉”不是一回事。前者是消息幂等，后者是内容篡改。</p>
-<h2 id="9-可复用排障清单">9. 可复用排障清单</h2>
-<p>如果你也遇到类似“AI 助手回复重复”的问题，可以按下面顺序排查。</p>
-<p><img alt="重复回复排障清单" src="/post-images/openclaw-wechat-duplicate-reply-debugging/04-checklist.svg"></p>
-<p><em>图 4：不要先猜；先确认重复发生在哪一层。</em></p>
-<h3 id="91-先区分重复类型">9.1 先区分重复类型</h3>
-<p>第一问：用户看到的是多条重复消息，还是一条消息内部重复文本？</p>
-<ul>
-<li>多条重复消息：优先查 webhook、队列、offset、ack、重试、幂等。</li>
-<li>一条消息内重复：优先查 reply payload、Agent raw text、文本拼接、模型 streaming。</li>
-</ul>
-<h3 id="92-用最小-prompt-复现">9.2 用最小 prompt 复现</h3>
-<p>不要拿复杂任务排障。先用最小 prompt：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>只回复这两个字：测试
-</span></span></code></pre></div><p>如果最小 prompt 都重复，问题大概率不在业务上下文。如果最小 prompt 正常，复杂任务重复，则要查历史会话、系统提示、工具调用和模型对长上下文的处理。</p>
-<h3 id="93-同时记录-provider-和-model">9.3 同时记录 provider 和 model</h3>
-<p>不要只记录模型名。应该记录：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>provider = ?
-</span></span><span style="display:flex;"><span>model = ?
-</span></span><span style="display:flex;"><span>api protocol = ?
-</span></span><span style="display:flex;"><span>final raw text = ?
-</span></span><span style="display:flex;"><span>winner provider = ?
-</span></span><span style="display:flex;"><span>fallback used = ?
-</span></span></code></pre></div><p>同名模型在不同 provider 下可能走完全不同的协议和兼容层。</p>
-<h3 id="94-做-provider-对照实验">9.4 做 provider 对照实验</h3>
-<p>如果系统里有原生 provider 和兼容 provider，必须做同 prompt 对照。不要只 curl <code>/models</code>，也不要只测非流式 completion。Agent 场景至少要测一次真实 agent turn，并检查最终可见文本。</p>
-<h3 id="95-检查会话覆盖和通道覆盖">9.5 检查会话覆盖和通道覆盖</h3>
-<p>很多 Agent 系统都有多层模型选择：全局默认、agent 默认、会话 override、通道 override、fallback、allowlist。修复时要明确你改的是哪一层。尤其是 IM 入口，最好给关键通道设置明确模型，避免默认链路漂移。</p>
-<h3 id="96-收窄可见模型">9.6 收窄可见模型</h3>
-<p>如果某条模型路径已经被证明会产生错误输出，就不要继续让它留在默认可见候选里。保留一个“坏候选”作为 fallback，等于把问题变成随机复发。</p>
-<h3 id="97-重启后必须复测主入口">9.7 重启后必须复测主入口</h3>
-<p>配置改完后，至少验证三件事：</p>
-<ol>
-<li>Gateway 正常运行。</li>
-<li>目标 IM 通道正常运行。</li>
-<li>目标主会话最小 prompt 返回一次，并且 winner provider 是目标 provider。</li>
-</ol>
-<p>只有这三项都通过，才算修复。</p>
-<h2 id="10-qa">10. Q&amp;A</h2>
-<h3 id="q1为什么-curl-直接请求模型没问题agent-里却重复">Q1：为什么 curl 直接请求模型没问题，Agent 里却重复？</h3>
-<p>因为 curl 测的通常是单次 API 行为，而 Agent 测的是完整执行链路。Agent 会处理系统提示、历史会话、streaming delta、reasoning、工具调用、fallback、上下文预算和最终文本归一化。兼容网关在简单请求里正常，不代表在 Agent streaming 场景里完全等价。</p>
-<h3 id="q2openai-compatible-网关是不是不能用">Q2：OpenAI-compatible 网关是不是不能用？</h3>
-<p>不是。兼容网关很有价值，尤其适合统一多模型入口。但它需要按真实客户端验证。对聊天 UI 来说，能返回文本就够；对 Agent 来说，还要验证工具调用、流式输出、reasoning 字段、stop reason、usage 和长上下文行为。问题不在“兼容”这个概念，而在“没有用目标工作流充分验证兼容性”。</p>
-<h3 id="q3为什么不保留故障路径作为-fallback">Q3：为什么不保留故障路径作为 fallback？</h3>
-<p>fallback 的意义是主路径失败时提供可用替代。如果 fallback 本身会稳定产生错误内容，它就不是 fallback，而是一个延迟触发的故障源。对于 IM 通道这种用户直接可见的入口，fallback 宁可少，也不要把已知坏路径放进去。</p>
-<h3 id="q4通道级模型覆盖有什么价值">Q4：通道级模型覆盖有什么价值？</h3>
-<p>不同通道的容错要求不同。命令行可以接受调试输出，微信入口则需要简洁、稳定、可读。给个人 IM 通道设置明确模型，可以减少全局默认变化带来的意外影响。以后你要实验新模型，也不会直接影响这个高频入口。</p>
-<h3 id="q5如果真的必须继续使用兼容网关怎么办">Q5：如果真的必须继续使用兼容网关怎么办？</h3>
-<p>那就要把它当作一个独立兼容性问题处理：抓取原始响应，比较流式和非流式输出，确认 content delta 是否被重复消费，检查 reasoning 字段是否被误拼进正文，确认客户端对 stop reason 和 content block 的处理是否符合预期。修复兼容层后，再把它放回可见候选，而不是带病上线。</p>
-<h3 id="q6这类问题能不能靠-prompt-解决">Q6：这类问题能不能靠 prompt 解决？</h3>
-<p>不建议。你可以写“不要重复回答”，但如果重复来自客户端拼接、兼容层字段映射或 provider 路由，prompt 只是把系统性问题伪装成模型行为问题。排障要优先找证据链，而不是先给模型加道德约束。</p>
-<h2 id="11-总结ai-agent-排障要像排生产链路一样分层">11. 总结：AI Agent 排障，要像排生产链路一样分层</h2>
-<p>这次问题最有价值的地方，不是“把某个配置改好了”，而是再次证明：AI Agent 已经不是一个简单聊天窗口。它是一条生产链路。链路里有通道、有会话、有模型路由、有 provider、有兼容协议、有流式拼接、有 fallback。最终用户看到的一句重复回复，背后可能不是一个 bug，而是多个抽象层的交汇点。</p>
-<p>我的经验是：遇到这类问题，先不要问“是不是微信坏了”，也不要问“是不是模型傻了”。先问三个更具体的问题：</p>
-<ol>
-<li>重复发生在发送前还是发送后？</li>
-<li>重复发生在会话层还是模型层？</li>
-<li>真实 winner provider 是哪一个？</li>
-</ol>
-<p>只要这三个问题有证据，修复就会变得很直接。反过来，如果没有证据，只看最终现象，任何改动都像是在雾里拧螺丝。</p>
-<p>最后再强调一遍隐私边界：本文所有配置、路径、通道名、provider 名都做了抽象处理。真实环境里的地址、账号、token、会话 ID、用户标识都不应该出现在博客、截图、日志片段或公开 issue 里。排障文章可以分享方法，但不应该把生产环境当素材裸奔。</p>
-<h2 id="参考资料">参考资料</h2>
-<ul>
-<li>OpenClaw CLI Models 文档：<code>https://docs.openclaw.ai/cli/models</code></li>
-<li>OpenClaw CLI Agent 文档：<code>https://docs.openclaw.ai/cli/agent</code></li>
-<li>OpenAI Chat Completions API 文档：<code>https://platform.openai.com/docs/api-reference/chat/create</code></li>
-<li>Anthropic Messages Streaming 文档：<code>https://docs.anthropic.com/en/api/messages-streaming</code></li>
-</ul>
-        </div>
-    </article>
-
-    
-  
-
-
-  
-    
-  
-
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk/dist/gitalk.css">
-<script src="https://cdn.jsdelivr.net/npm/gitalk/dist/gitalk.min.js"></script>
-<div id="gitalk-container" style="margin-top:40px"></div>
-<script>
-  (function(){
-    var gitalk = new Gitalk({
-      clientID: '3181fd94e501cc5db0ad',
-      clientSecret: 'af1dab79dae02c69296e6615bfcecf47fc8615ee',
-      repo: 'margropcomment.margrop.io',
-      owner: 'margrop',
-      admin: ["margrop"],
-      
-      id: '\/post\/openclaw-wechat-duplicate-reply-debugging\/',
-      
-      distractionFreeMode: false
-    });
-    gitalk.render('gitalk-container');
-  })();
-</script>
-  
-
-
-
-
-    
-    <script type="text/javascript" src="https://js.users.51.la/21044367.js"></script>
-    <script charset="UTF-8" id="LA_COLLECT" src="//sdk.51.la/js-sdk-pro.min.js"></script>
-    <script>LA.init({id: "1vVTUWl7zoRjnKXi",ck: "1vVTUWl7zoRjnKXi"})</script>
-    <script src="https://sdk.51.la/perf/js-sdk-perf.min.js" crossorigin="anonymous"></script>
-    <script>
-      new LingQue.Monitor().init({id:"202teQt8THXwqyve"});
-    </script>
-</body>
-</html>
+<!doctype html><html lang=zh-CN><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>AI 助手为什么把一句话复读四遍：一次 OpenClaw 微信通道排障复盘 - 魔都水滴</title><meta name=description content="先说结论 这次问题看起来像“微信通道把同一条回复发了四遍”，但真正的重复发生在更早的位置：消息还没有进入微信发送层之前，OpenClaw Agent 的最终可见文本就已经被模型执行链路重复拼接了。排障的关键不是一上来改微信插件，而是把链路拆成发送层、会话层、模型路由层三段，用最小 prompt 复现，再比较“兼容网关路 …"><meta name=robots content="index, follow"><link rel=canonical href=https://blog.margrop.net/post/openclaw-wechat-duplicate-reply-debugging/><meta property="og:site_name" content="魔都水滴"><meta property="og:title" content="AI 助手为什么把一句话复读四遍：一次 OpenClaw 微信通道排障复盘 - 魔都水滴"><meta property="og:description" content="先说结论 这次问题看起来像“微信通道把同一条回复发了四遍”，但真正的重复发生在更早的位置：消息还没有进入微信发送层之前，OpenClaw Agent 的最终可见文本就已经被模型执行链路重复拼接了。排障的关键不是一上来改微信插件，而是把链路拆成发送层、会话层、模型路由层三段，用最小 prompt 复现，再比较“兼容网关路 …"><meta property="og:url" content="https://blog.margrop.net/post/openclaw-wechat-duplicate-reply-debugging/"><meta property="og:locale" content="zh_CN"><meta property="og:type" content="article"><meta property="og:locale:alternate" content="en_US"><meta property="og:image" content="https://blog.margrop.net/images/avatar.png"><meta name=twitter:card content="summary_large_image"><meta name=twitter:title content="AI 助手为什么把一句话复读四遍：一次 OpenClaw 微信通道排障复盘 - 魔都水滴"><meta name=twitter:description content="先说结论 这次问题看起来像“微信通道把同一条回复发了四遍”，但真正的重复发生在更早的位置：消息还没有进入微信发送层之前，OpenClaw Agent 的最终可见文本就已经被模型执行链路重复拼接了。排障的关键不是一上来改微信插件，而是把链路拆成发送层、会话层、模型路由层三段，用最小 prompt 复现，再比较“兼容网关路 …"><meta name=twitter:image content="https://blog.margrop.net/images/avatar.png"><link rel=alternate hreflang=zh-CN href=https://blog.margrop.net/post/openclaw-wechat-duplicate-reply-debugging/><link rel=alternate hreflang=en-US href=https://blog.margrop.net/en/post/openclaw-wechat-duplicate-reply-debugging/><link rel=alternate hreflang=x-default href=https://blog.margrop.net/><meta property="article:published_time" content="2026-05-29T11:24:29+08:00"><meta property="article:modified_time" content="2026-05-29T11:24:29+08:00"><meta property="article:tag" content="OpenClaw"><meta property="article:tag" content="微信"><meta property="article:tag" content="AI Agent"><meta property="article:tag" content="模型路由"><meta property="article:tag" content="故障排查"><meta property="article:tag" content="OpenAI兼容接口"><meta property="article:tag" content="MiniMax"><meta property="article:tag" content="工程实践"><script type=application/ld+json>{"@context":"https://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"魔都水滴"},"dateModified":"2026-05-29T11:24:29+08:00","datePublished":"2026-05-29T11:24:29+08:00","description":"先说结论 这次问题看起来像“微信通道把同一条回复发了四遍”，但真正的重复发生在更早的位置：消息还没有进入微信发送层之前，OpenClaw Agent 的最终可见文本就已经被模型执行链路重复拼接了。排障的关键不是一上来改微信插件，而是把链路拆成发送层、会话层、模型路由层三段，用最小 prompt 复现，再比较“兼容网关路 …","headline":"AI 助手为什么把一句话复读四遍：一次 OpenClaw 微信通道排障复盘","mainEntityOfPage":"https://blog.margrop.net/post/openclaw-wechat-duplicate-reply-debugging/","url":"https://blog.margrop.net/post/openclaw-wechat-duplicate-reply-debugging/"}</script><meta name=baidu-site-verification content="code-sVFZ8SER59"><script async src="https://www.googletagmanager.com/gtag/js?id=G-3J2W592DHJ"></script><script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments)}gtag("js",new Date),gtag("config","G-3J2W592DHJ")</script><style>body{font-family:-apple-system,BlinkMacSystemFont,segoe ui,Roboto,sans-serif;max-width:860px;margin:0 auto;padding:20px;line-height:1.7;color:#222}h1{border-bottom:2px solid #333;padding-bottom:10px}.post-list{list-style:none;padding:0}.post-list li{margin:15px 0}.post-list a{text-decoration:none;color:#333;font-size:18px}.post-list a:hover{color:#006cff}.date{color:#666;font-size:14px;margin-right:10px}.tags{margin-top:8px}.tag{background:#eee;padding:2px 8px;border-radius:3px;font-size:12px;margin-right:5px;display:inline-block}nav{margin-bottom:18px;border-bottom:1px solid #eee;padding-bottom:15px}nav a{margin-right:20px;text-decoration:none;color:#333;font-size:16px}nav a:hover{color:#006cff}.language-switcher{margin:-8px 0 26px}.language-switcher a{display:inline-block;margin-right:10px;padding:4px 10px;border:1px solid #ddd;border-radius:999px;color:#555;text-decoration:none;font-size:14px}.language-switcher a.active{background:#006cff;border-color:#006cff;color:#fff}.content{line-height:1.8}.content code{background:#f4f4f4;padding:2px 5px;border-radius:3px}.content pre{background:#f4f4f4;padding:15px;overflow-x:auto;border-radius:5px}.content img{display:block;max-width:100%;height:auto;margin:0 auto}.content .code-snippet__fix{margin:0 0 1.5em}.content .code-snippet__fix .code-snippet__line-index{display:none!important}.meta{color:#666;font-size:14px;margin-bottom:14px}a{color:#006cff}@media(max-width:680px){body{padding:16px}nav a{display:inline-block;margin-right:12px;margin-bottom:8px}}</style></head><body><nav><a href=/>首页</a>
+<a href=/post/>归档</a>
+<a href=/tags/>标签</a>
+<a href=/post/about/>关于</a>
+<a href=https://download.margrop.net target=_blank rel=noopener>下载</a>
+<a href=/post/favorites/>Link</a>
+<a href=/post/github-project-stars/>Github</a>
+<a href=https://github-mirrors.margrop.net target=_blank rel=noopener>Github加速</a>
+<a href=https://status.anye.xyz/ target=_blank rel=noopener>Docker加速</a></nav><div class=language-switcher><a href=/post/openclaw-wechat-duplicate-reply-debugging/ class=active>中文</a>
+<a href=/en/post/openclaw-wechat-duplicate-reply-debugging/>English</a></div><article><h1>AI 助手为什么把一句话复读四遍：一次 OpenClaw 微信通道排障复盘</h1><div class=meta>发布时间: 2026-05-29</div><div class=tags><a href=/tag/openclaw/><span class=tag>OpenClaw</span></a>
+<a href=/tag/%E5%BE%AE%E4%BF%A1/><span class=tag>微信</span></a>
+<a href=/tag/ai-agent/><span class=tag>AI Agent</span></a>
+<a href=/tag/%E6%A8%A1%E5%9E%8B%E8%B7%AF%E7%94%B1/><span class=tag>模型路由</span></a>
+<a href=/tag/%E6%95%85%E9%9A%9C%E6%8E%92%E6%9F%A5/><span class=tag>故障排查</span></a>
+<a href=/tag/openai%E5%85%BC%E5%AE%B9%E6%8E%A5%E5%8F%A3/><span class=tag>OpenAI兼容接口</span></a>
+<a href=/tag/minimax/><span class=tag>MiniMax</span></a>
+<a href=/tag/%E5%B7%A5%E7%A8%8B%E5%AE%9E%E8%B7%B5/><span class=tag>工程实践</span></a></div><div class=content><blockquote><p><strong>先说结论</strong></p><p>这次问题看起来像“微信通道把同一条回复发了四遍”，但真正的重复发生在更早的位置：消息还没有进入微信发送层之前，OpenClaw Agent 的最终可见文本就已经被模型执行链路重复拼接了。排障的关键不是一上来改微信插件，而是把链路拆成发送层、会话层、模型路由层三段，用最小 prompt 复现，再比较“兼容网关路径”和“原生 provider 路径”的输出差异。最后的修复也很朴素：让个人 IM 通道显式走原生 provider，移除容易被误选的故障候选模型路径，重启 Gateway 后复测主会话。</p><p>这篇文章不会出现任何真实内网地址、账号、token、会话 ID、个人微信标识或私有路径。所有配置片段都已经脱敏，并用 <code>&lt;PLACEHOLDER></code> 形式表示。重点是分享一套可复用的排障方法，而不是公开某个具体环境的细节。</p></blockquote><p><img src=/post-images/openclaw-wechat-duplicate-reply-debugging/01-hero-duplicate-reply.png alt="AI 回复重复的抽象排障题图"></p><p><em>图 1：本文自制题图。一个看似“微信重复发送”的问题，最后被定位成模型执行链路里的重复输出。</em></p><h2 id=1-问题背景个人-im-入口里的-agent比命令行更容易暴露最终体验问题>1. 问题背景：个人 IM 入口里的 Agent，比命令行更容易暴露“最终体验问题”</h2><p>现在很多人已经不满足于在终端里和 AI Agent 对话。真正方便的形态，是把 Agent 接进日常消息入口：个人微信、企业 IM、Telegram、Slack、飞书、钉钉、iMessage，或者其它自己常用的通知和对话渠道。这样做的好处很明显：不用专门打开一个终端，也不用记住某个 dashboard 地址，随手发一句话，Agent 就能帮你查状态、写摘要、跑脚本、整理资料、提醒事项。</p><p>但 IM 入口也会把问题放大。命令行里多输出一段内容，你可能只觉得有点烦；如果这段内容被发送到微信里，它就是一条正式消息。命令行里一次输出重复，你还能滚屏忽略；微信里一条消息内部重复四遍，就非常刺眼。更重要的是，IM 通道通常跨过了多个层次：消息接收、去重、会话路由、模型选择、Agent 执行、文本归一化、发送 API。任何一层出了问题，最终用户看到的都只是“这条消息不对”。</p><p>这次遇到的问题就是这样：本地 OpenClaw 已经接入个人微信。用户在微信里和 OpenClaw 对话时，不管问什么，OpenClaw 都会把同一句回复在一条消息里重复多次。注意，这不是连续收到四条消息，而是一条消息内部出现四份完全相同的文本。这个差异很重要，因为它直接影响排障方向。</p><p>如果是连续收到四条消息，优先怀疑 webhook 重试、轮询 offset、消息去重、发送 API 被调用多次、队列重复消费。如果是一条消息里有四段相同文本，优先怀疑最终 reply payload 本身已经重复，或者发送层把多个文本 fragment 拼成了一条消息。两者看起来都叫“重复回复”，但根因完全不同。</p><p>这也是我想写这篇文章的原因。AI Agent 的故障越来越不像传统脚本报错：它可能不是崩溃、不是 500、不是 timeout，而是“看起来能工作，但输出很怪”。这类问题最忌讳凭直觉改配置。因为 Agent 链路太长，直觉很容易把你带到最外层：既然是在微信里看到的，那就改微信插件；既然是模型回答重复，那就调 prompt；既然刚升级过，那就回滚版本。真正可靠的做法，是先把重复发生的位置钉住。</p><h2 id=2-问题表现不是多条消息而是一条消息里复读>2. 问题表现：不是多条消息，而是一条消息里复读</h2><p>这次现象可以简化成一句话：</p><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-text data-lang=text><span style=display:flex><span>用户问：只回复这两个字：测试
+</span></span><span style=display:flex><span>期望：测试
+</span></span><span style=display:flex><span>实际：测试测试测试测试
+</span></span></code></pre></div><p>真实问题里并不一定刚好是四个“测试”，但模式一致：Agent 不是回答了四条消息，而是在一个 reply body 里把同一段文本重复粘贴。对用户来说，这种体验很差。它会让人怀疑三件事：</p><ol><li>微信插件是不是重复发送？</li><li>OpenClaw 是不是接收到了重复输入？</li><li>模型是不是自己复读？</li></ol><p>这三个怀疑都合理，但排查顺序不能乱。因为“看起来重复”不等于“发送重复”。如果发送层只调用一次，而调用参数里的 <code>text</code> 已经重复，那么继续改发送层只会浪费时间。反过来，如果 Agent raw text 是正常的，发送 API 却调用了多次，那再怎么换模型也没用。</p><p>我最终采用的是一个很小的最小复现 prompt：</p><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-text data-lang=text><span style=display:flex><span>只回复这两个字：测试
+</span></span></code></pre></div><p>这个 prompt 有两个好处。第一，它足够短，避免复杂上下文导致模型自由发挥。第二，它有明确期望，输出只要不是单个“测试”，就可以判定异常。排障时不要一开始就拿真实长问题测试，因为长问题会引入太多噪声：系统提示、历史会话、工具调用、摘要、语言风格、模型思考、markdown 格式，都可能让你误判。</p><p>这里还有一个细节：我不只看用户最终看到什么，还看 Agent 执行结果里的 raw text、provider、model、winner provider 和 attempts。也就是说，我要知道这次回答到底是由哪条模型路径生成的，模型返回给 OpenClaw 的最终可见文本是什么。只有拿到这些证据，才能判断重复发生在哪一层。</p><p><img src=/post-images/openclaw-wechat-duplicate-reply-debugging/02-layered-diagnosis.svg alt=分层排障路径></p><p><em>图 2：先确认重复发生在哪一层，再决定要改哪个配置。</em></p><h2 id=3-第一轮假设微信发送层是否重复调用>3. 第一轮假设：微信发送层是否重复调用</h2><p>很多 IM 集成问题，第一反应都是看发送层。这是合理的。因为 IM 平台通常有重试、回调、ack、offset、队列、去重等机制。如果接收端没有正确确认，或者发送端在失败后重试，就可能出现重复消息。</p><p>但这次有一个关键区别：用户看到的是一条消息里重复多次，而不是多条消息。为了验证这一点，我查看了微信插件的发送路径。脱敏后可以抽象成下面这个结构：</p><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-text data-lang=text><span style=display:flex><span>Agent reply payload
+</span></span><span style=display:flex><span>  -&gt; dispatch reply
+</span></span><span style=display:flex><span>    -&gt; build item_list
+</span></span><span style=display:flex><span>      -&gt; sendMessage(channel, target, text)
+</span></span></code></pre></div><p>发送层构造的是一个单条文本 item。也就是说，至少从代码路径看，它不是天然会把同一段文本循环发送四次。接下来要看的就是运行时：发送 API 是否被调用多次？如果没有多次调用，那问题就要往上游找。</p><p>在这一步，最重要的不是立刻修改代码，而是先建立一个判断标准：</p><ul><li>如果发送层调用多次，继续查消息去重、回调重试、队列消费。</li><li>如果发送层调用一次，但 text 已经重复，继续查 Agent 输出。</li></ul><p>这次证据指向第二种：微信发送层不是根因。重复文本已经在发送之前形成。这个结论非常关键，因为它把排查范围从“微信插件”缩小到了“Agent 执行链路”。</p><h2 id=4-第二轮假设会话层是否复用了旧状态>4. 第二轮假设：会话层是否复用了旧状态</h2><p>Agent 和普通 API 调用不一样。普通 API 调用通常是无状态的：传入 messages，得到 completion。Agent 通常有 session：它会记住上一轮对话、系统提示是否已经发送、模型 override、通道、目标、工具调用历史、压缩状态、父会话关系等。</p><p>会话层如果有旧状态，也可能造成奇怪输出。例如：</p><ol><li>某个会话曾经设置过模型 override，后续一直沿用。</li><li>主会话和通道会话绑定在一起，导致你以为开了新会话，实际复用了旧会话。</li><li>历史消息里已经有重复内容，模型在总结或延续时又重复了一遍。</li><li>上一次执行失败后保留了 fallback 选择，下次继续走 fallback。</li></ol><p>所以我做了两种测试：一种是新 session key 的最小复现；另一种是个人微信实际使用的主会话复现。这样可以区分“只有旧主会话有问题”还是“新会话也会复现”。结果是，新会话同样会出现重复。这说明问题不是单纯的某个历史会话污染，而是更底层的模型路由或 provider 处理问题。</p><p>同时，主会话确实很有价值。因为最终用户走的是主会话，不是我临时造出来的 debug session。修复后必须回到主会话验证，否则只能证明“某条测试命令没问题”，不能证明“微信入口已经恢复”。</p><h2 id=5-第三轮假设模型路由是否走错了-provider>5. 第三轮假设：模型路由是否走错了 provider</h2><p>这一步是整个问题的转折点。</p><p>OpenClaw 的模型配置里，模型选择不只是一个模型名。完整路径通常包含 provider 和 model，例如：</p><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-text data-lang=text><span style=display:flex><span>provider/model
+</span></span></code></pre></div><p>如果两个 provider 都暴露了同名模型，例如都叫 <code>SomeModel-X</code>，那只看 model ID 就不够了。你必须同时看 provider、API 协议、base URL、兼容层、streaming 行为和最终执行轨迹。</p><p>这次就出现了这样的情况：同一个模型名，在两条路径上都能被看到。</p><p>第一条是原生 provider 路径，使用模型官方或原生适配方式。</p><p>第二条是 OpenAI-compatible 网关路径，也就是把后端模型包装成 OpenAI Chat Completions 或类似协议对外提供。</p><p>理论上，只要兼容层实现正确，两条路径都可以工作。但“可以工作”不等于“在 Agent 流式输出、reasoning 字段、content fragment、工具调用兼容、缓存统计、最终文本拼接上完全等价”。尤其是 Agent 框架通常会处理 streaming delta、reasoning、content block、usage、fallback、重试等细节。如果兼容层返回格式和框架期待之间有一点偏差，就可能出现肉眼很奇怪的问题：内容重复、空输出、reasoning 被当成正文、正文被拼接两次、工具调用重复、stop reason 不一致。</p><p>我做了一个对照实验：同样的 prompt，分别走兼容网关路径和原生 provider 路径。</p><p>结果非常明确：</p><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-text data-lang=text><span style=display:flex><span>兼容网关路径：测试测试
+</span></span><span style=display:flex><span>原生 provider 路径：测试
+</span></span></code></pre></div><p>这就把根因范围进一步缩小了：不是模型能力本身突然喜欢复读，也不是微信发送层循环发送，而是某条 OpenAI-compatible 执行路径在 OpenClaw Agent 场景里产生了重复最终文本。</p><p>这里还要强调一句：这并不等价于“OpenAI-compatible 网关都不可靠”。兼容层是很有价值的，它能把不同模型统一到一个 API 形态里，便于客户端接入。但兼容层也确实是一个额外抽象层。对简单 curl 来说，返回一次文本就算通过；对长链路 Agent 来说，还要验证 streaming、上下文预算、reasoning、tool call、fallback、会话状态和最终可见文本。两者验证强度不是一个级别。</p><h2 id=6-真正根因同名模型--故障候选仍可见--agent-执行链路选到了兼容路径>6. 真正根因：同名模型 + 故障候选仍可见 + Agent 执行链路选到了兼容路径</h2><p>把证据串起来，根因可以写成一句工程化结论：</p><blockquote><p>OpenClaw 的默认模型和可见模型集合中存在同名模型的多 provider 候选；其中 OpenAI-compatible 网关路径在当前 Agent 执行链路中会产生重复最终文本。虽然配置层看起来已经把默认模型指向原生 provider，但实际执行轨迹仍命中了兼容 provider，导致个人微信通道收到的 reply payload 本身就是重复文本。</p></blockquote><p>这句话里有几个重点。</p><p>第一，问题不是“微信发了四次”。发送层不是根因。</p><p>第二，问题不是“用户输入重复”。最小 prompt 下也能复现。</p><p>第三，问题不是“模型名不对”。模型名看起来是同一个，真正差异在 provider 和协议路径。</p><p>第四，问题不是“重启就好”。重启 Gateway 后，如果故障候选仍然可见，执行轨迹仍可能继续命中它。</p><p>第五，修复不能只看 <code>models status</code> 或配置表面值。必须看实际执行轨迹里的 winner provider 和 final raw text。</p><p><img src=/post-images/openclaw-wechat-duplicate-reply-debugging/03-routing-before-after.svg alt=模型路由修复前后对比></p><p><em>图 3：同名模型在不同 provider 下可能是完全不同的运行路径。排障时必须看 provider。</em></p><h2 id=7-修复过程从切默认值到收窄可见候选>7. 修复过程：从“切默认值”到“收窄可见候选”</h2><p>最开始我尝试的是最直观的修复：把默认模型切到原生 provider。</p><p>脱敏后的配置大概是这样：</p><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-json data-lang=json><span style=display:flex><span>{
+</span></span><span style=display:flex><span>  <span style=color:#f92672>&#34;agents&#34;</span>: {
+</span></span><span style=display:flex><span>    <span style=color:#f92672>&#34;defaults&#34;</span>: {
+</span></span><span style=display:flex><span>      <span style=color:#f92672>&#34;model&#34;</span>: {
+</span></span><span style=display:flex><span>        <span style=color:#f92672>&#34;primary&#34;</span>: <span style=color:#e6db74>&#34;native-provider/Model-X&#34;</span>,
+</span></span><span style=display:flex><span>        <span style=color:#f92672>&#34;fallbacks&#34;</span>: [<span style=color:#e6db74>&#34;compatible-gateway/Model-X&#34;</span>]
+</span></span><span style=display:flex><span>      }
+</span></span><span style=display:flex><span>    }
+</span></span><span style=display:flex><span>  }
+</span></span><span style=display:flex><span>}
+</span></span></code></pre></div><p>这一步看起来合理，但验证时发现实际执行仍然走兼容路径。这说明“默认值显示正确”不代表“运行时一定按这个默认值执行”。Agent 系统还可能受到以下因素影响：</p><ol><li>会话级模型 override。</li><li>通道级模型 override。</li><li>fallback 选择。</li><li>模型 allowlist。</li><li>同名模型解析。</li><li>provider catalog 的候选顺序。</li><li>历史会话里的运行状态。</li></ol><p>于是我继续做第二步：清空默认 fallback，避免自动回落到故障候选。</p><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-json data-lang=json><span style=display:flex><span>{
+</span></span><span style=display:flex><span>  <span style=color:#f92672>&#34;agents&#34;</span>: {
+</span></span><span style=display:flex><span>    <span style=color:#f92672>&#34;defaults&#34;</span>: {
+</span></span><span style=display:flex><span>      <span style=color:#f92672>&#34;model&#34;</span>: {
+</span></span><span style=display:flex><span>        <span style=color:#f92672>&#34;primary&#34;</span>: <span style=color:#e6db74>&#34;native-provider/Model-X&#34;</span>,
+</span></span><span style=display:flex><span>        <span style=color:#f92672>&#34;fallbacks&#34;</span>: []
+</span></span><span style=display:flex><span>      }
+</span></span><span style=display:flex><span>    }
+</span></span><span style=display:flex><span>  }
+</span></span><span style=display:flex><span>}
+</span></span></code></pre></div><p>这仍然不够。因为故障 provider 只要还在模型可见集合里，某些解析路径仍可能选到它。</p><p>第三步是给个人 IM 通道加通道级模型覆盖。这样即使其它通道暂时保留不同模型，个人微信入口也能被强制绑定到验证过的 provider。</p><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-json data-lang=json><span style=display:flex><span>{
+</span></span><span style=display:flex><span>  <span style=color:#f92672>&#34;channels&#34;</span>: {
+</span></span><span style=display:flex><span>    <span style=color:#f92672>&#34;modelByChannel&#34;</span>: {
+</span></span><span style=display:flex><span>      <span style=color:#f92672>&#34;personal-im-channel&#34;</span>: {
+</span></span><span style=display:flex><span>        <span style=color:#f92672>&#34;*&#34;</span>: <span style=color:#e6db74>&#34;native-provider/Model-X&#34;</span>
+</span></span><span style=display:flex><span>      }
+</span></span><span style=display:flex><span>    }
+</span></span><span style=display:flex><span>  }
+</span></span><span style=display:flex><span>}
+</span></span></code></pre></div><p>第四步，也是最终生效的关键，是把故障的兼容网关候选从 OpenClaw 的可见模型配置中移除。注意这里不是泄愤式删除所有网关配置，而是遵循最小可用原则：当前通道不再暴露这条已知会产生重复文本的候选路径。只要它不可见，Agent 就不会在这个入口继续选到它。</p><p>修复后再次运行最小复现：</p><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-text data-lang=text><span style=display:flex><span>输入：只回复这两个字：测试
+</span></span><span style=display:flex><span>输出：测试
+</span></span><span style=display:flex><span>provider：native-provider
+</span></span><span style=display:flex><span>winner：native-provider
+</span></span></code></pre></div><p>再回到个人 IM 主会话验证，同样只返回一次。这才算真正修复。</p><h2 id=8-为什么我不建议用后处理去重当主修复>8. 为什么我不建议用“后处理去重”当主修复</h2><p>看到重复文本，很多人会想到一个简单办法：发消息前做去重。如果发现 <code>abcabcabcabc</code>，就压缩成 <code>abc</code>。这个方法看起来很快，但我不建议把它当主修复。</p><p>原因有四个。</p><p>第一，后处理不知道什么是“合法重复”。用户可能真的要求“把这句话重复三遍”，也可能让 Agent 生成诗歌、歌词、测试数据、表格、日志样例。盲目去重会破坏内容。</p><p>第二，后处理掩盖上游故障。如果 provider 路径持续返回异常，你把文本去重了，表面体验好了，但工具调用、结构化输出、长文本摘要仍可能继续出问题。</p><p>第三，重复不一定总是完美重复。有时是段落重复，有时是 reasoning 与正文混合，有时是 markdown 块重复，有时是中间 fragment 重复。后处理规则会越写越复杂，最后变成另一个不可靠系统。</p><p>第四，Agent 的排障重点是证据链。正确修复应该让执行轨迹变干净，而不是让最终展示层“看起来干净”。</p><p>当然，发送层可以有一些防御性保护，例如避免同一个 message id 短时间重复发送，或者对明显的网络重试做幂等。但这和“把重复文本压缩掉”不是一回事。前者是消息幂等，后者是内容篡改。</p><h2 id=9-可复用排障清单>9. 可复用排障清单</h2><p>如果你也遇到类似“AI 助手回复重复”的问题，可以按下面顺序排查。</p><p><img src=/post-images/openclaw-wechat-duplicate-reply-debugging/04-checklist.svg alt=重复回复排障清单></p><p><em>图 4：不要先猜；先确认重复发生在哪一层。</em></p><h3 id=91-先区分重复类型>9.1 先区分重复类型</h3><p>第一问：用户看到的是多条重复消息，还是一条消息内部重复文本？</p><ul><li>多条重复消息：优先查 webhook、队列、offset、ack、重试、幂等。</li><li>一条消息内重复：优先查 reply payload、Agent raw text、文本拼接、模型 streaming。</li></ul><h3 id=92-用最小-prompt-复现>9.2 用最小 prompt 复现</h3><p>不要拿复杂任务排障。先用最小 prompt：</p><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-text data-lang=text><span style=display:flex><span>只回复这两个字：测试
+</span></span></code></pre></div><p>如果最小 prompt 都重复，问题大概率不在业务上下文。如果最小 prompt 正常，复杂任务重复，则要查历史会话、系统提示、工具调用和模型对长上下文的处理。</p><h3 id=93-同时记录-provider-和-model>9.3 同时记录 provider 和 model</h3><p>不要只记录模型名。应该记录：</p><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-text data-lang=text><span style=display:flex><span>provider = ?
+</span></span><span style=display:flex><span>model = ?
+</span></span><span style=display:flex><span>api protocol = ?
+</span></span><span style=display:flex><span>final raw text = ?
+</span></span><span style=display:flex><span>winner provider = ?
+</span></span><span style=display:flex><span>fallback used = ?
+</span></span></code></pre></div><p>同名模型在不同 provider 下可能走完全不同的协议和兼容层。</p><h3 id=94-做-provider-对照实验>9.4 做 provider 对照实验</h3><p>如果系统里有原生 provider 和兼容 provider，必须做同 prompt 对照。不要只 curl <code>/models</code>，也不要只测非流式 completion。Agent 场景至少要测一次真实 agent turn，并检查最终可见文本。</p><h3 id=95-检查会话覆盖和通道覆盖>9.5 检查会话覆盖和通道覆盖</h3><p>很多 Agent 系统都有多层模型选择：全局默认、agent 默认、会话 override、通道 override、fallback、allowlist。修复时要明确你改的是哪一层。尤其是 IM 入口，最好给关键通道设置明确模型，避免默认链路漂移。</p><h3 id=96-收窄可见模型>9.6 收窄可见模型</h3><p>如果某条模型路径已经被证明会产生错误输出，就不要继续让它留在默认可见候选里。保留一个“坏候选”作为 fallback，等于把问题变成随机复发。</p><h3 id=97-重启后必须复测主入口>9.7 重启后必须复测主入口</h3><p>配置改完后，至少验证三件事：</p><ol><li>Gateway 正常运行。</li><li>目标 IM 通道正常运行。</li><li>目标主会话最小 prompt 返回一次，并且 winner provider 是目标 provider。</li></ol><p>只有这三项都通过，才算修复。</p><h2 id=10-qa>10. Q&amp;A</h2><h3 id=q1为什么-curl-直接请求模型没问题agent-里却重复>Q1：为什么 curl 直接请求模型没问题，Agent 里却重复？</h3><p>因为 curl 测的通常是单次 API 行为，而 Agent 测的是完整执行链路。Agent 会处理系统提示、历史会话、streaming delta、reasoning、工具调用、fallback、上下文预算和最终文本归一化。兼容网关在简单请求里正常，不代表在 Agent streaming 场景里完全等价。</p><h3 id=q2openai-compatible-网关是不是不能用>Q2：OpenAI-compatible 网关是不是不能用？</h3><p>不是。兼容网关很有价值，尤其适合统一多模型入口。但它需要按真实客户端验证。对聊天 UI 来说，能返回文本就够；对 Agent 来说，还要验证工具调用、流式输出、reasoning 字段、stop reason、usage 和长上下文行为。问题不在“兼容”这个概念，而在“没有用目标工作流充分验证兼容性”。</p><h3 id=q3为什么不保留故障路径作为-fallback>Q3：为什么不保留故障路径作为 fallback？</h3><p>fallback 的意义是主路径失败时提供可用替代。如果 fallback 本身会稳定产生错误内容，它就不是 fallback，而是一个延迟触发的故障源。对于 IM 通道这种用户直接可见的入口，fallback 宁可少，也不要把已知坏路径放进去。</p><h3 id=q4通道级模型覆盖有什么价值>Q4：通道级模型覆盖有什么价值？</h3><p>不同通道的容错要求不同。命令行可以接受调试输出，微信入口则需要简洁、稳定、可读。给个人 IM 通道设置明确模型，可以减少全局默认变化带来的意外影响。以后你要实验新模型，也不会直接影响这个高频入口。</p><h3 id=q5如果真的必须继续使用兼容网关怎么办>Q5：如果真的必须继续使用兼容网关怎么办？</h3><p>那就要把它当作一个独立兼容性问题处理：抓取原始响应，比较流式和非流式输出，确认 content delta 是否被重复消费，检查 reasoning 字段是否被误拼进正文，确认客户端对 stop reason 和 content block 的处理是否符合预期。修复兼容层后，再把它放回可见候选，而不是带病上线。</p><h3 id=q6这类问题能不能靠-prompt-解决>Q6：这类问题能不能靠 prompt 解决？</h3><p>不建议。你可以写“不要重复回答”，但如果重复来自客户端拼接、兼容层字段映射或 provider 路由，prompt 只是把系统性问题伪装成模型行为问题。排障要优先找证据链，而不是先给模型加道德约束。</p><h2 id=11-总结ai-agent-排障要像排生产链路一样分层>11. 总结：AI Agent 排障，要像排生产链路一样分层</h2><p>这次问题最有价值的地方，不是“把某个配置改好了”，而是再次证明：AI Agent 已经不是一个简单聊天窗口。它是一条生产链路。链路里有通道、有会话、有模型路由、有 provider、有兼容协议、有流式拼接、有 fallback。最终用户看到的一句重复回复，背后可能不是一个 bug，而是多个抽象层的交汇点。</p><p>我的经验是：遇到这类问题，先不要问“是不是微信坏了”，也不要问“是不是模型傻了”。先问三个更具体的问题：</p><ol><li>重复发生在发送前还是发送后？</li><li>重复发生在会话层还是模型层？</li><li>真实 winner provider 是哪一个？</li></ol><p>只要这三个问题有证据，修复就会变得很直接。反过来，如果没有证据，只看最终现象，任何改动都像是在雾里拧螺丝。</p><p>最后再强调一遍隐私边界：本文所有配置、路径、通道名、provider 名都做了抽象处理。真实环境里的地址、账号、token、会话 ID、用户标识都不应该出现在博客、截图、日志片段或公开 issue 里。排障文章可以分享方法，但不应该把生产环境当素材裸奔。</p><h2 id=参考资料>参考资料</h2><ul><li>OpenClaw CLI Models 文档：<code>https://docs.openclaw.ai/cli/models</code></li><li>OpenClaw CLI Agent 文档：<code>https://docs.openclaw.ai/cli/agent</code></li><li>OpenAI Chat Completions API 文档：<code>https://platform.openai.com/docs/api-reference/chat/create</code></li><li>Anthropic Messages Streaming 文档：<code>https://docs.anthropic.com/en/api/messages-streaming</code></li></ul></div></article><link rel=stylesheet href=https://cdn.jsdelivr.net/npm/gitalk/dist/gitalk.css><script src=https://cdn.jsdelivr.net/npm/gitalk/dist/gitalk.min.js></script><div id=gitalk-container style=margin-top:40px></div><script>(function(){var e=new Gitalk({clientID:"3181fd94e501cc5db0ad",clientSecret:"af1dab79dae02c69296e6615bfcecf47fc8615ee",repo:"margropcomment.margrop.io",owner:"margrop",admin:["margrop"],id:"/post/openclaw-wechat-duplicate-reply-debugging/",distractionFreeMode:!1});e.render("gitalk-container")})()</script><script type=text/javascript src=https://js.users.51.la/21044367.js></script><script id=LA_COLLECT src=//sdk.51.la/js-sdk-pro.min.js></script><script>LA.init({id:"1vVTUWl7zoRjnKXi",ck:"1vVTUWl7zoRjnKXi"})</script><script src=https://sdk.51.la/perf/js-sdk-perf.min.js crossorigin=anonymous></script><script>(new LingQue.Monitor).init({id:"202teQt8THXwqyve"})</script></body></html>
