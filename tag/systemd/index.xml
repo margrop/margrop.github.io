@@ -1,19 +1,40 @@
-<?xml version="1.0" encoding="utf-8" standalone="yes"?><rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom"><channel><title>Systemd on 魔都水滴</title><link>https://blog.margrop.net/tag/systemd/</link><description>Recent content in Systemd on 魔都水滴</description><generator>Hugo</generator><language>zh-CN</language><lastBuildDate>Fri, 19 Jun 2026 10:58:00 +0800</lastBuildDate><atom:link href="https://blog.margrop.net/tag/systemd/index.xml" rel="self" type="application/rss+xml"/><item><title>Ubuntu 关机要等 90 秒?Python asyncio 服务不肯接 SIGTERM 的排查与修复</title><link>https://blog.margrop.net/post/ubuntu-shutdown-stuck/</link><pubDate>Fri, 19 Jun 2026 10:58:00 +0800</pubDate><guid>https://blog.margrop.net/post/ubuntu-shutdown-stuck/</guid><description>&lt;blockquote&gt;
-&lt;p&gt;&lt;strong&gt;先说结论&lt;/strong&gt;&lt;/p&gt;
-&lt;p&gt;这台升级到 24.04 的代理机,关机变成了一件折磨人的事:&lt;code&gt;systemctl reboot&lt;/code&gt; 之后,SSH 不掉、灯不灭,要干等 &lt;strong&gt;90 秒&lt;/strong&gt; 才进入真正的 shutdown 流程。journalctl 里很明确:&lt;code&gt;smart-proxy.service: State 'stop-sigterm' timed out. Killing.&lt;/code&gt;——systemd 给了 SIGTERM,等 90 秒没人响应,只能 SIGKILL 强杀。&lt;/p&gt;
-&lt;p&gt;根因不是 systemd 的错,也不是 Ubuntu 的错,是 &lt;strong&gt;Python 的 asyncio 服务在收到 SIGTERM 后,没有真正去结束它的子任务&lt;/strong&gt;——它正卡在某个 &lt;code&gt;socket.recv&lt;/code&gt; 上,Python 解释器根本不主动去看&amp;quot;有人叫我走&amp;quot;。&lt;/p&gt;
-&lt;p&gt;修复分两步,缺一不可:&lt;strong&gt;(1)&lt;/strong&gt; 给两个 Python unit 写 systemd drop-in,把 &lt;code&gt;TimeoutStopSec&lt;/code&gt; 从默认的 90s 缩到 20s;&lt;strong&gt;(2)&lt;/strong&gt; 在 Python 服务里主动遍历 &lt;code&gt;asyncio.all_tasks()&lt;/code&gt;,收到 SIGTERM 后把所有 in-flight 的 handler &lt;code&gt;cancel()&lt;/code&gt; 掉,再用 &lt;code&gt;asyncio.wait_for(self.stop(), timeout=10)&lt;/code&gt; 包一层做兜底。改完之后,同样一次 &lt;code&gt;reboot&lt;/code&gt;,从 90 秒掉到 1 秒。&lt;/p&gt;
-&lt;/blockquote&gt;</description></item><item><title>一句话让 Claude 把 Ubuntu 22.04 升级到 24.04:一次几乎不用盯屏幕的跨 LTS 实战</title><link>https://blog.margrop.net/post/upgrade-ubuntu-via-agent/</link><pubDate>Fri, 19 Jun 2026 10:58:00 +0800</pubDate><guid>https://blog.margrop.net/post/upgrade-ubuntu-via-agent/</guid><description>&lt;blockquote&gt;
-&lt;p&gt;&lt;strong&gt;先说结论&lt;/strong&gt;&lt;/p&gt;
-&lt;p&gt;这台远端机器是家里那台 24 小时开机的代理机,系统一直停在 Ubuntu 22.04.4 LTS(jammy),内核 5.15。一句&amp;quot;帮我把 192.168.103.182 升级到 ubuntu24.04&amp;quot;,Claude 就替我拆开了旧柜子,在另一个房间装上了新柜子,过程中它自己开了 tmux 守夜、自己起了 fallback sshd 备胎、自己用 &lt;code&gt;do-release-upgrade -f DistUpgradeViewNonInteractive&lt;/code&gt; 跑完了整段流水线。25 分钟后主机回来,内核已经是 6.8.0-124,所有服务依旧在听。&lt;/p&gt;
-&lt;p&gt;本文不是讲 do-release-upgrade 怎么用,那是 Ubuntu 官方文档的事;本文是讲&amp;quot;当 Agent 拿到 SSH 之后,它在做什么、为什么这么做、以及哪些坑你必须提前排&amp;quot;。&lt;/p&gt;
-&lt;/blockquote&gt;</description></item><item><title>避坑指南：新装 Ubuntu 26.04 与 PVE 9.2 别急着用！Fail2Ban 无法启动与拦截失效的终极解决办法</title><link>https://blog.margrop.net/post/ubuntu-2604-pve-92-fail2ban-nftables-guide/</link><pubDate>Tue, 26 May 2026 22:20:00 +0800</pubDate><guid>https://blog.margrop.net/post/ubuntu-2604-pve-92-fail2ban-nftables-guide/</guid><description>&lt;blockquote&gt;
-&lt;p&gt;&lt;strong&gt;先说结论&lt;/strong&gt;&lt;/p&gt;
-&lt;p&gt;随着 Ubuntu 26.04 LTS 与 Proxmox VE (PVE) 9.2 的相继发布，许多运维工程师与 Host 玩家在第一时间完成了系统升级或新装。然而，在进行服务器安全加固时，你会发现一个令人抓狂的现象：&lt;strong&gt;直接沿用旧版本（如 Ubuntu 20.04/22.04 或 PVE 7.x/8.x）的 Fail2Ban 配置，不仅服务可能直接报错无法启动，甚至即使显示 Running，外部恶意扫描也根本无法被成功拦截！&lt;/strong&gt;&lt;/p&gt;
-&lt;p&gt;这并不是 Fail2Ban 软件本身出了 Bug，而是因为新版系统在底层日志架构、服务激活机制和防火墙后端上默默丢下了三颗“隐形炸弹”。本文将深度剖析这三个底层变化，并提供一套完美的、基于 &lt;code&gt;systemd-journald&lt;/code&gt; + &lt;code&gt;nftables&lt;/code&gt; 的 Fail2Ban 现代配置方案。&lt;/p&gt;
-&lt;/blockquote&gt;</description></item><item><title>别再用那些臃肿的内网穿透了！手把手带你用 EasyTier 在 Ubuntu 26.04 搭建去中心化虚拟局域网</title><link>https://blog.margrop.net/post/ubuntu-2604-install-latest-easytier-guide/</link><pubDate>Tue, 26 May 2026 21:40:00 +0800</pubDate><guid>https://blog.margrop.net/post/ubuntu-2604-install-latest-easytier-guide/</guid><description>&lt;blockquote&gt;
-&lt;p&gt;&lt;strong&gt;先说结论&lt;/strong&gt;&lt;/p&gt;
-&lt;p&gt;在多设备互联的今天，异地组网（虚拟局域网）已经成为刚需。传统的 ZeroTier、Tailscale 虽然优秀，但往往受制于中心化控制器和服务器位于国外的问题，导致握手慢、打洞成功率低。而自建 frp / nps 又需要一台公网 IP 服务器，且流量全部经过服务器中转，带宽有限。&lt;/p&gt;
-&lt;p&gt;&lt;strong&gt;EasyTier&lt;/strong&gt; 是一款使用 Rust 语言编写的、完全去中心化的虚拟局域网组网工具。它最大的特点是：&lt;strong&gt;节点对等&lt;/strong&gt;。一旦节点通过握手互相认识，即使最初的中继/引导服务器挂了，节点间依然能保持稳定的 P2P 通信。更令人兴奋的是，它原生支持&lt;strong&gt;子网代理（网对网）&lt;strong&gt;和&lt;/strong&gt;内置 WireGuard 门户&lt;/strong&gt;。本文将手把手带你在最新的 &lt;strong&gt;Ubuntu 26.04 LTS&lt;/strong&gt; 上，从零开始安装、配置并以 Systemd 服务托管运行最新版的 EasyTier。&lt;/p&gt;
-&lt;/blockquote&gt;
-&lt;p&gt;本文所有配置、命令及拓扑结构均采用通用占位符，不包含任何真实内网敏感信息。&lt;/p&gt;</description></item></channel></rss>
+<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
+  <channel>
+    <title>Systemd on 魔都水滴</title>
+    <link>https://blog.margrop.net/tag/systemd/</link>
+    <description>Recent content in Systemd on 魔都水滴</description>
+    <generator>Hugo</generator>
+    <language>zh-CN</language>
+    <lastBuildDate>Fri, 19 Jun 2026 10:58:00 +0800</lastBuildDate>
+    <atom:link href="https://blog.margrop.net/tag/systemd/index.xml" rel="self" type="application/rss+xml" />
+    <item>
+      <title>Ubuntu 关机要等 90 秒?Python asyncio 服务不肯接 SIGTERM 的排查与修复</title>
+      <link>https://blog.margrop.net/post/ubuntu-shutdown-stuck/</link>
+      <pubDate>Fri, 19 Jun 2026 10:58:00 +0800</pubDate>
+      <guid>https://blog.margrop.net/post/ubuntu-shutdown-stuck/</guid>
+      <description>&lt;blockquote&gt;&#xA;&lt;p&gt;&lt;strong&gt;先说结论&lt;/strong&gt;&lt;/p&gt;&#xA;&lt;p&gt;这台升级到 24.04 的代理机,关机变成了一件折磨人的事:&lt;code&gt;systemctl reboot&lt;/code&gt; 之后,SSH 不掉、灯不灭,要干等 &lt;strong&gt;90 秒&lt;/strong&gt; 才进入真正的 shutdown 流程。journalctl 里很明确:&lt;code&gt;smart-proxy.service: State &#39;stop-sigterm&#39; timed out. Killing.&lt;/code&gt;——systemd 给了 SIGTERM,等 90 秒没人响应,只能 SIGKILL 强杀。&lt;/p&gt;&#xA;&lt;p&gt;根因不是 systemd 的错,也不是 Ubuntu 的错,是 &lt;strong&gt;Python 的 asyncio 服务在收到 SIGTERM 后,没有真正去结束它的子任务&lt;/strong&gt;——它正卡在某个 &lt;code&gt;socket.recv&lt;/code&gt; 上,Python 解释器根本不主动去看&amp;quot;有人叫我走&amp;quot;。&lt;/p&gt;&#xA;&lt;p&gt;修复分两步,缺一不可:&lt;strong&gt;(1)&lt;/strong&gt; 给两个 Python unit 写 systemd drop-in,把 &lt;code&gt;TimeoutStopSec&lt;/code&gt; 从默认的 90s 缩到 20s;&lt;strong&gt;(2)&lt;/strong&gt; 在 Python 服务里主动遍历 &lt;code&gt;asyncio.all_tasks()&lt;/code&gt;,收到 SIGTERM 后把所有 in-flight 的 handler &lt;code&gt;cancel()&lt;/code&gt; 掉,再用 &lt;code&gt;asyncio.wait_for(self.stop(), timeout=10)&lt;/code&gt; 包一层做兜底。改完之后,同样一次 &lt;code&gt;reboot&lt;/code&gt;,从 90 秒掉到 1 秒。&lt;/p&gt;&#xA;&lt;/blockquote&gt;</description>
+    </item>
+    <item>
+      <title>一句话让 Claude 把 Ubuntu 22.04 升级到 24.04:一次几乎不用盯屏幕的跨 LTS 实战</title>
+      <link>https://blog.margrop.net/post/upgrade-ubuntu-via-agent/</link>
+      <pubDate>Fri, 19 Jun 2026 10:58:00 +0800</pubDate>
+      <guid>https://blog.margrop.net/post/upgrade-ubuntu-via-agent/</guid>
+      <description>&lt;blockquote&gt;&#xA;&lt;p&gt;&lt;strong&gt;先说结论&lt;/strong&gt;&lt;/p&gt;&#xA;&lt;p&gt;这台远端机器是家里那台 24 小时开机的代理机,系统一直停在 Ubuntu 22.04.4 LTS(jammy),内核 5.15。一句&amp;quot;帮我把 192.168.103.182 升级到 ubuntu24.04&amp;quot;,Claude 就替我拆开了旧柜子,在另一个房间装上了新柜子,过程中它自己开了 tmux 守夜、自己起了 fallback sshd 备胎、自己用 &lt;code&gt;do-release-upgrade -f DistUpgradeViewNonInteractive&lt;/code&gt; 跑完了整段流水线。25 分钟后主机回来,内核已经是 6.8.0-124,所有服务依旧在听。&lt;/p&gt;&#xA;&lt;p&gt;本文不是讲 do-release-upgrade 怎么用,那是 Ubuntu 官方文档的事;本文是讲&amp;quot;当 Agent 拿到 SSH 之后,它在做什么、为什么这么做、以及哪些坑你必须提前排&amp;quot;。&lt;/p&gt;&#xA;&lt;/blockquote&gt;</description>
+    </item>
+    <item>
+      <title>避坑指南：新装 Ubuntu 26.04 与 PVE 9.2 别急着用！Fail2Ban 无法启动与拦截失效的终极解决办法</title>
+      <link>https://blog.margrop.net/post/ubuntu-2604-pve-92-fail2ban-nftables-guide/</link>
+      <pubDate>Tue, 26 May 2026 22:20:00 +0800</pubDate>
+      <guid>https://blog.margrop.net/post/ubuntu-2604-pve-92-fail2ban-nftables-guide/</guid>
+      <description>&lt;blockquote&gt;&#xA;&lt;p&gt;&lt;strong&gt;先说结论&lt;/strong&gt;&lt;/p&gt;&#xA;&lt;p&gt;随着 Ubuntu 26.04 LTS 与 Proxmox VE (PVE) 9.2 的相继发布，许多运维工程师与 Host 玩家在第一时间完成了系统升级或新装。然而，在进行服务器安全加固时，你会发现一个令人抓狂的现象：&lt;strong&gt;直接沿用旧版本（如 Ubuntu 20.04/22.04 或 PVE 7.x/8.x）的 Fail2Ban 配置，不仅服务可能直接报错无法启动，甚至即使显示 Running，外部恶意扫描也根本无法被成功拦截！&lt;/strong&gt;&lt;/p&gt;&#xA;&lt;p&gt;这并不是 Fail2Ban 软件本身出了 Bug，而是因为新版系统在底层日志架构、服务激活机制和防火墙后端上默默丢下了三颗“隐形炸弹”。本文将深度剖析这三个底层变化，并提供一套完美的、基于 &lt;code&gt;systemd-journald&lt;/code&gt; + &lt;code&gt;nftables&lt;/code&gt; 的 Fail2Ban 现代配置方案。&lt;/p&gt;&#xA;&lt;/blockquote&gt;</description>
+    </item>
+    <item>
+      <title>别再用那些臃肿的内网穿透了！手把手带你用 EasyTier 在 Ubuntu 26.04 搭建去中心化虚拟局域网</title>
+      <link>https://blog.margrop.net/post/ubuntu-2604-install-latest-easytier-guide/</link>
+      <pubDate>Tue, 26 May 2026 21:40:00 +0800</pubDate>
+      <guid>https://blog.margrop.net/post/ubuntu-2604-install-latest-easytier-guide/</guid>
+      <description>&lt;blockquote&gt;&#xA;&lt;p&gt;&lt;strong&gt;先说结论&lt;/strong&gt;&lt;/p&gt;&#xA;&lt;p&gt;在多设备互联的今天，异地组网（虚拟局域网）已经成为刚需。传统的 ZeroTier、Tailscale 虽然优秀，但往往受制于中心化控制器和服务器位于国外的问题，导致握手慢、打洞成功率低。而自建 frp / nps 又需要一台公网 IP 服务器，且流量全部经过服务器中转，带宽有限。&lt;/p&gt;&#xA;&lt;p&gt;&lt;strong&gt;EasyTier&lt;/strong&gt; 是一款使用 Rust 语言编写的、完全去中心化的虚拟局域网组网工具。它最大的特点是：&lt;strong&gt;节点对等&lt;/strong&gt;。一旦节点通过握手互相认识，即使最初的中继/引导服务器挂了，节点间依然能保持稳定的 P2P 通信。更令人兴奋的是，它原生支持&lt;strong&gt;子网代理（网对网）&lt;strong&gt;和&lt;/strong&gt;内置 WireGuard 门户&lt;/strong&gt;。本文将手把手带你在最新的 &lt;strong&gt;Ubuntu 26.04 LTS&lt;/strong&gt; 上，从零开始安装、配置并以 Systemd 服务托管运行最新版的 EasyTier。&lt;/p&gt;&#xA;&lt;/blockquote&gt;&#xA;&lt;p&gt;本文所有配置、命令及拓扑结构均采用通用占位符，不包含任何真实内网敏感信息。&lt;/p&gt;</description>
+    </item>
+  </channel>
+</rss>

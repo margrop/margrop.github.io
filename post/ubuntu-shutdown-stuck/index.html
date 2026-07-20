@@ -1,32 +1,170 @@
-<!doctype html><html lang=zh-CN><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>Ubuntu 关机要等 90 秒?Python asyncio 服务不肯接 SIGTERM 的排查与修复 - 魔都水滴</title><meta name=description content="先说结论 这台升级到 24.04 的代理机,关机变成了一件折磨人的事:systemctl reboot 之后,SSH 不掉、灯不灭,要干等 90 秒 才进入真正的 shutdown 流程。journalctl 里很明确:smart-proxy.service: State 'stop-sigterm' timed …"><meta name=robots content="index, follow"><link rel=canonical href=https://blog.margrop.net/post/ubuntu-shutdown-stuck/><meta property="og:site_name" content="魔都水滴"><meta property="og:title" content="Ubuntu 关机要等 90 秒?Python asyncio 服务不肯接 SIGTERM 的排查与修复 - 魔都水滴"><meta property="og:description" content="先说结论 这台升级到 24.04 的代理机,关机变成了一件折磨人的事:systemctl reboot 之后,SSH 不掉、灯不灭,要干等 90 秒 才进入真正的 shutdown 流程。journalctl 里很明确:smart-proxy.service: State 'stop-sigterm' timed …"><meta property="og:url" content="https://blog.margrop.net/post/ubuntu-shutdown-stuck/"><meta property="og:locale" content="zh_CN"><meta property="og:type" content="article"><meta property="og:locale:alternate" content="en_US"><meta property="og:image" content="https://blog.margrop.net/images/avatar.png"><meta name=twitter:card content="summary_large_image"><meta name=twitter:title content="Ubuntu 关机要等 90 秒?Python asyncio 服务不肯接 SIGTERM 的排查与修复 - 魔都水滴"><meta name=twitter:description content="先说结论 这台升级到 24.04 的代理机,关机变成了一件折磨人的事:systemctl reboot 之后,SSH 不掉、灯不灭,要干等 90 秒 才进入真正的 shutdown 流程。journalctl 里很明确:smart-proxy.service: State 'stop-sigterm' timed …"><meta name=twitter:image content="https://blog.margrop.net/images/avatar.png"><link rel=alternate hreflang=zh-CN href=https://blog.margrop.net/post/ubuntu-shutdown-stuck/><link rel=alternate hreflang=en-US href=https://blog.margrop.net/en/post/ubuntu-shutdown-stuck/><link rel=alternate hreflang=x-default href=https://blog.margrop.net/><meta property="article:published_time" content="2026-06-19T10:58:00+08:00"><meta property="article:modified_time" content="2026-06-19T10:58:00+08:00"><meta property="article:tag" content="Ubuntu"><meta property="article:tag" content="systemd"><meta property="article:tag" content="systemd unit"><meta property="article:tag" content="TimeoutStopSec"><meta property="article:tag" content="SIGTERM"><meta property="article:tag" content="SIGKILL"><meta property="article:tag" content="Python"><meta property="article:tag" content="asyncio"><meta property="article:tag" content="drop-in"><meta property="article:tag" content="journalctl"><meta property="article:tag" content="故障排查"><meta property="article:tag" content="运维"><meta property="article:tag" content="家庭实验室"><script type=application/ld+json>{"@context":"https://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"魔都水滴"},"dateModified":"2026-06-19T10:58:00+08:00","datePublished":"2026-06-19T10:58:00+08:00","description":"先说结论 这台升级到 24.04 的代理机,关机变成了一件折磨人的事:systemctl reboot 之后,SSH 不掉、灯不灭,要干等 90 秒 才进入真正的 shutdown 流程。journalctl 里很明确:smart-proxy.service: State \u0026#39;stop-sigterm\u0026#39; timed …","headline":"Ubuntu 关机要等 90 秒?Python asyncio 服务不肯接 SIGTERM 的排查与修复","mainEntityOfPage":"https://blog.margrop.net/post/ubuntu-shutdown-stuck/","url":"https://blog.margrop.net/post/ubuntu-shutdown-stuck/"}</script><meta name=baidu-site-verification content="code-sVFZ8SER59"><script async src="https://www.googletagmanager.com/gtag/js?id=G-3J2W592DHJ"></script><script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments)}gtag("js",new Date),gtag("config","G-3J2W592DHJ")</script><style>body{font-family:-apple-system,BlinkMacSystemFont,segoe ui,Roboto,sans-serif;max-width:860px;margin:0 auto;padding:20px;line-height:1.7;color:#222}h1{border-bottom:2px solid #333;padding-bottom:10px}.post-list{list-style:none;padding:0}.post-list li{margin:15px 0}.post-list a{text-decoration:none;color:#333;font-size:18px}.post-list a:hover{color:#006cff}.date{color:#666;font-size:14px;margin-right:10px}.tags{margin-top:8px}.tag{background:#eee;padding:2px 8px;border-radius:3px;font-size:12px;margin-right:5px;display:inline-block}nav{margin-bottom:18px;border-bottom:1px solid #eee;padding-bottom:15px}nav a{margin-right:20px;text-decoration:none;color:#333;font-size:16px}nav a:hover{color:#006cff}.language-switcher{margin:-8px 0 26px}.language-switcher a{display:inline-block;margin-right:10px;padding:4px 10px;border:1px solid #ddd;border-radius:999px;color:#555;text-decoration:none;font-size:14px}.language-switcher a.active{background:#006cff;border-color:#006cff;color:#fff}.content{line-height:1.8}.content code{background:#f4f4f4;padding:2px 5px;border-radius:3px}.content pre{background:#f4f4f4;padding:15px;overflow-x:auto;border-radius:5px}.content img{display:block;max-width:100%;height:auto;margin:0 auto}.content .code-snippet__fix{margin:0 0 1.5em}.content .code-snippet__fix .code-snippet__line-index{display:none!important}.meta{color:#666;font-size:14px;margin-bottom:14px}a{color:#006cff}@media(max-width:680px){body{padding:16px}nav a{display:inline-block;margin-right:12px;margin-bottom:8px}}</style></head><body><nav><a href=/>首页</a>
-<a href=/post/>归档</a>
-<a href=/tags/>标签</a>
-<a href=/post/about/>关于</a>
-<a href=https://download.margrop.net target=_blank rel=noopener>下载</a>
-<a href=/post/favorites/>Link</a>
-<a href=/post/github-project-stars/>Github</a>
-<a href=https://github-mirrors.margrop.net target=_blank rel=noopener>Github加速</a>
-<a href=https://status.anye.xyz/ target=_blank rel=noopener>Docker加速</a></nav><div class=language-switcher><a href=/post/ubuntu-shutdown-stuck/ class=active>中文</a>
-<a href=/en/post/ubuntu-shutdown-stuck/>English</a></div><article><h1>Ubuntu 关机要等 90 秒?Python asyncio 服务不肯接 SIGTERM 的排查与修复</h1><div class=meta>发布时间: 2026-06-19</div><div class=tags><a href=/tag/ubuntu/><span class=tag>Ubuntu</span></a>
-<a href=/tag/systemd/><span class=tag>systemd</span></a>
-<a href=/tag/systemd-unit/><span class=tag>systemd unit</span></a>
-<a href=/tag/timeoutstopsec/><span class=tag>TimeoutStopSec</span></a>
-<a href=/tag/sigterm/><span class=tag>SIGTERM</span></a>
-<a href=/tag/sigkill/><span class=tag>SIGKILL</span></a>
-<a href=/tag/python/><span class=tag>Python</span></a>
-<a href=/tag/asyncio/><span class=tag>asyncio</span></a>
-<a href=/tag/drop-in/><span class=tag>drop-in</span></a>
-<a href=/tag/journalctl/><span class=tag>journalctl</span></a>
-<a href=/tag/%E6%95%85%E9%9A%9C%E6%8E%92%E6%9F%A5/><span class=tag>故障排查</span></a>
-<a href=/tag/%E8%BF%90%E7%BB%B4/><span class=tag>运维</span></a>
-<a href=/tag/%E5%AE%B6%E5%BA%AD%E5%AE%9E%E9%AA%8C%E5%AE%A4/><span class=tag>家庭实验室</span></a></div><div class=content><blockquote><p><strong>先说结论</strong></p><p>这台升级到 24.04 的代理机,关机变成了一件折磨人的事:<code>systemctl reboot</code> 之后,SSH 不掉、灯不灭,要干等 <strong>90 秒</strong> 才进入真正的 shutdown 流程。journalctl 里很明确:<code>smart-proxy.service: State 'stop-sigterm' timed out. Killing.</code>——systemd 给了 SIGTERM,等 90 秒没人响应,只能 SIGKILL 强杀。</p><p>根因不是 systemd 的错,也不是 Ubuntu 的错,是 <strong>Python 的 asyncio 服务在收到 SIGTERM 后,没有真正去结束它的子任务</strong>——它正卡在某个 <code>socket.recv</code> 上,Python 解释器根本不主动去看"有人叫我走"。</p><p>修复分两步,缺一不可:<strong>(1)</strong> 给两个 Python unit 写 systemd drop-in,把 <code>TimeoutStopSec</code> 从默认的 90s 缩到 20s;<strong>(2)</strong> 在 Python 服务里主动遍历 <code>asyncio.all_tasks()</code>,收到 SIGTERM 后把所有 in-flight 的 handler <code>cancel()</code> 掉,再用 <code>asyncio.wait_for(self.stop(), timeout=10)</code> 包一层做兜底。改完之后,同样一次 <code>reboot</code>,从 90 秒掉到 1 秒。</p></blockquote><p><img src=/post-images/ubuntu-shutdown-stuck/zh/01-pizza-restaurant.svg alt="关机像打烊:系统是餐厅,服务是顾客,sshd 是保安"></p><p><em>封面:把"关机"这件事画成"餐厅打烊前最后十分钟"。服务员 finalrd 1 秒起身,Python 顾客 smart-proxy / rule-proxy 卡在电话里不肯挂,保安 systemd 等 90 秒只能掐电话。这张图是整篇文章的"地图"。</em></p><hr><h2 id=一问题背景刚升级完的代理机关机变慢了>一、问题背景:刚升级完的代理机,关机变慢了</h2><p>时间线是这样的——</p><p>前一天下午,我刚把家里这台代理机从 Ubuntu 22.04 (jammy) 升级到了 24.04 (noble),内核 6.8。升级本身 27 分钟搞定,服务全在,听上去一切顺利。</p><p>第二天,我想重启一次进入新内核做"冷启动验证"。于是:</p><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-bash data-lang=bash><span style=display:flex><span>ssh root@host <span style=color:#e6db74>&#39;systemctl reboot&#39;</span>
-</span></span></code></pre></div><p>然后——</p><p>我盯着本地终端的 SSH,<strong>整整 90 秒没有掉</strong>。</p><p><img src=/post-images/upgrade-ubuntu-via-agent/zh/06-noble-wallpaper.png alt="Ubuntu 24.04 桌面"></p><p><em>图 0 · 这台机器的主人是 Ubuntu 24.04 Noble Numbat(官方壁纸),系统服务里跑着自研 Python 代理 + v2ray。</em></p><p>90 秒后,SSH 终于断了。等了一会儿,再 ping,主机起来了。我登回去 <code>journalctl -b -1</code>,看到这条:</p><pre tabindex=0><code>Oct 23 10:34:01 host systemd[1]: Stopping smart-proxy.service ...
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Ubuntu 关机要等 90 秒?Python asyncio 服务不肯接 SIGTERM 的排查与修复 - 魔都水滴</title>
+<meta name="description" content="先说结论 这台升级到 24.04 的代理机,关机变成了一件折磨人的事:systemctl reboot 之后,SSH 不掉、灯不灭,要干等 90 秒 才进入真正的 shutdown 流程。journalctl 里很明确:smart-proxy.service: State &#39;stop-sigterm&#39; timed …">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://blog.margrop.net/post/ubuntu-shutdown-stuck/">
+
+<meta property="og:site_name" content="魔都水滴">
+<meta property="og:title" content="Ubuntu 关机要等 90 秒?Python asyncio 服务不肯接 SIGTERM 的排查与修复 - 魔都水滴">
+<meta property="og:description" content="先说结论 这台升级到 24.04 的代理机,关机变成了一件折磨人的事:systemctl reboot 之后,SSH 不掉、灯不灭,要干等 90 秒 才进入真正的 shutdown 流程。journalctl 里很明确:smart-proxy.service: State &#39;stop-sigterm&#39; timed …">
+<meta property="og:url" content="https://blog.margrop.net/post/ubuntu-shutdown-stuck/">
+<meta property="og:locale" content="zh_CN"><meta property="og:type" content="article"><meta property="og:locale:alternate" content="en_US"><meta property="og:image" content="https://blog.margrop.net/images/avatar.png"><meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Ubuntu 关机要等 90 秒?Python asyncio 服务不肯接 SIGTERM 的排查与修复 - 魔都水滴">
+<meta name="twitter:description" content="先说结论 这台升级到 24.04 的代理机,关机变成了一件折磨人的事:systemctl reboot 之后,SSH 不掉、灯不灭,要干等 90 秒 才进入真正的 shutdown 流程。journalctl 里很明确:smart-proxy.service: State &#39;stop-sigterm&#39; timed …"><meta name="twitter:image" content="https://blog.margrop.net/images/avatar.png"><link rel="alternate" hreflang="zh-CN" href="https://blog.margrop.net/post/ubuntu-shutdown-stuck/"><link rel="alternate" hreflang="en-US" href="https://blog.margrop.net/en/post/ubuntu-shutdown-stuck/"><link rel="alternate" hreflang="x-default" href="https://blog.margrop.net/"><meta property="article:published_time" content="2026-06-19T10:58:00&#43;08:00">
+<meta property="article:modified_time" content="2026-06-19T10:58:00&#43;08:00"><meta property="article:tag" content="Ubuntu"><meta property="article:tag" content="systemd"><meta property="article:tag" content="systemd unit"><meta property="article:tag" content="TimeoutStopSec"><meta property="article:tag" content="SIGTERM"><meta property="article:tag" content="SIGKILL"><meta property="article:tag" content="Python"><meta property="article:tag" content="asyncio"><meta property="article:tag" content="drop-in"><meta property="article:tag" content="journalctl"><meta property="article:tag" content="故障排查"><meta property="article:tag" content="运维"><meta property="article:tag" content="家庭实验室"><script type="application/ld+json">{"@context":"https://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"魔都水滴"},"dateModified":"2026-06-19T10:58:00+08:00","datePublished":"2026-06-19T10:58:00+08:00","description":"先说结论 这台升级到 24.04 的代理机,关机变成了一件折磨人的事:systemctl reboot 之后,SSH 不掉、灯不灭,要干等 90 秒 才进入真正的 shutdown 流程。journalctl 里很明确:smart-proxy.service: State \u0026#39;stop-sigterm\u0026#39; timed …","headline":"Ubuntu 关机要等 90 秒?Python asyncio 服务不肯接 SIGTERM 的排查与修复","mainEntityOfPage":"https://blog.margrop.net/post/ubuntu-shutdown-stuck/","url":"https://blog.margrop.net/post/ubuntu-shutdown-stuck/"}</script>
+    <meta name="baidu-site-verification" content="code-sVFZ8SER59" />
+
+    
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-3J2W592DHJ"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-3J2W592DHJ');
+    </script>
+
+    <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 860px; margin: 0 auto; padding: 20px; line-height: 1.7; color: #222; }
+    h1 { border-bottom: 2px solid #333; padding-bottom: 10px; }
+    .post-list { list-style: none; padding: 0; }
+    .post-list li { margin: 15px 0; }
+    .post-list a { text-decoration: none; color: #333; font-size: 18px; }
+    .post-list a:hover { color: #006CFF; }
+    .date { color: #666; font-size: 14px; margin-right: 10px; }
+    .tags { margin-top: 8px; }
+    .tag { background: #eee; padding: 2px 8px; border-radius: 3px; font-size: 12px; margin-right: 5px; display: inline-block; }
+    nav { margin-bottom: 18px; border-bottom: 1px solid #eee; padding-bottom: 15px; }
+    nav a { margin-right: 20px; text-decoration: none; color: #333; font-size: 16px; }
+    nav a:hover { color: #006CFF; }
+    .language-switcher { margin: -8px 0 26px; }
+    .language-switcher a { display: inline-block; margin-right: 10px; padding: 4px 10px; border: 1px solid #ddd; border-radius: 999px; color: #555; text-decoration: none; font-size: 14px; }
+    .language-switcher a.active { background: #006CFF; border-color: #006CFF; color: #fff; }
+    .content { line-height: 1.8; }
+    .content code { background: #f4f4f4; padding: 2px 5px; border-radius: 3px; }
+    .content pre { background: #f4f4f4; padding: 15px; overflow-x: auto; border-radius: 5px; }
+    .content img { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+    .content .code-snippet__fix {
+        margin: 0 0 1.5em;
+    }
+    .content .code-snippet__fix .code-snippet__line-index {
+        display: none !important;
+    }
+    .meta { color: #666; font-size: 14px; margin-bottom: 14px; }
+    a { color: #006CFF; }
+    @media (max-width: 680px) {
+        body { padding: 16px; }
+        nav a { display: inline-block; margin-right: 12px; margin-bottom: 8px; }
+    }
+</style>
+
+</head>
+<body>
+    <nav>
+  
+  <a href="/">首页</a>
+  <a href="/post/">归档</a>
+  <a href="/tags/">标签</a>
+  <a href="/post/about/">关于</a>
+  <a href="https://download.margrop.net" target="_blank" rel="noopener">下载</a>
+  <a href="/post/favorites/">Link</a>
+  <a href="/post/github-project-stars/">Github</a>
+  
+  <a href="https://github-mirrors.margrop.net" target="_blank" rel="noopener">Github加速</a>
+  <a href="https://status.anye.xyz/" target="_blank" rel="noopener">Docker加速</a>
+  
+</nav>
+
+    
+<div class="language-switcher">
+  
+    <a href="/post/ubuntu-shutdown-stuck/" class="active">中文</a>
+  
+    <a href="/en/post/ubuntu-shutdown-stuck/" class="">English</a>
+  
+</div>
+
+
+    
+    <article>
+        <h1>Ubuntu 关机要等 90 秒?Python asyncio 服务不肯接 SIGTERM 的排查与修复</h1>
+        <div class="meta">
+            发布时间: 2026-06-19
+        </div>
+        
+<div class="tags">
+    
+    <a href="/tag/ubuntu/"><span class="tag">Ubuntu</span></a>
+    
+    <a href="/tag/systemd/"><span class="tag">systemd</span></a>
+    
+    <a href="/tag/systemd-unit/"><span class="tag">systemd unit</span></a>
+    
+    <a href="/tag/timeoutstopsec/"><span class="tag">TimeoutStopSec</span></a>
+    
+    <a href="/tag/sigterm/"><span class="tag">SIGTERM</span></a>
+    
+    <a href="/tag/sigkill/"><span class="tag">SIGKILL</span></a>
+    
+    <a href="/tag/python/"><span class="tag">Python</span></a>
+    
+    <a href="/tag/asyncio/"><span class="tag">asyncio</span></a>
+    
+    <a href="/tag/drop-in/"><span class="tag">drop-in</span></a>
+    
+    <a href="/tag/journalctl/"><span class="tag">journalctl</span></a>
+    
+    <a href="/tag/%E6%95%85%E9%9A%9C%E6%8E%92%E6%9F%A5/"><span class="tag">故障排查</span></a>
+    
+    <a href="/tag/%E8%BF%90%E7%BB%B4/"><span class="tag">运维</span></a>
+    
+    <a href="/tag/%E5%AE%B6%E5%BA%AD%E5%AE%9E%E9%AA%8C%E5%AE%A4/"><span class="tag">家庭实验室</span></a>
+    
+</div>
+
+
+        <div class="content">
+            <blockquote>
+<p><strong>先说结论</strong></p>
+<p>这台升级到 24.04 的代理机,关机变成了一件折磨人的事:<code>systemctl reboot</code> 之后,SSH 不掉、灯不灭,要干等 <strong>90 秒</strong> 才进入真正的 shutdown 流程。journalctl 里很明确:<code>smart-proxy.service: State 'stop-sigterm' timed out. Killing.</code>——systemd 给了 SIGTERM,等 90 秒没人响应,只能 SIGKILL 强杀。</p>
+<p>根因不是 systemd 的错,也不是 Ubuntu 的错,是 <strong>Python 的 asyncio 服务在收到 SIGTERM 后,没有真正去结束它的子任务</strong>——它正卡在某个 <code>socket.recv</code> 上,Python 解释器根本不主动去看&quot;有人叫我走&quot;。</p>
+<p>修复分两步,缺一不可:<strong>(1)</strong> 给两个 Python unit 写 systemd drop-in,把 <code>TimeoutStopSec</code> 从默认的 90s 缩到 20s;<strong>(2)</strong> 在 Python 服务里主动遍历 <code>asyncio.all_tasks()</code>,收到 SIGTERM 后把所有 in-flight 的 handler <code>cancel()</code> 掉,再用 <code>asyncio.wait_for(self.stop(), timeout=10)</code> 包一层做兜底。改完之后,同样一次 <code>reboot</code>,从 90 秒掉到 1 秒。</p>
+</blockquote>
+<p><img src="/post-images/ubuntu-shutdown-stuck/zh/01-pizza-restaurant.svg" alt="关机像打烊:系统是餐厅,服务是顾客,sshd 是保安"></p>
+<p><em>封面:把&quot;关机&quot;这件事画成&quot;餐厅打烊前最后十分钟&quot;。服务员 finalrd 1 秒起身,Python 顾客 smart-proxy / rule-proxy 卡在电话里不肯挂,保安 systemd 等 90 秒只能掐电话。这张图是整篇文章的&quot;地图&quot;。</em></p>
+<hr>
+<h2 id="一问题背景刚升级完的代理机关机变慢了">一、问题背景:刚升级完的代理机,关机变慢了</h2>
+<p>时间线是这样的——</p>
+<p>前一天下午,我刚把家里这台代理机从 Ubuntu 22.04 (jammy) 升级到了 24.04 (noble),内核 6.8。升级本身 27 分钟搞定,服务全在,听上去一切顺利。</p>
+<p>第二天,我想重启一次进入新内核做&quot;冷启动验证&quot;。于是:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>ssh root@host <span style="color:#e6db74">&#39;systemctl reboot&#39;</span>
+</span></span></code></pre></div><p>然后——</p>
+<p>我盯着本地终端的 SSH,<strong>整整 90 秒没有掉</strong>。</p>
+<p><img src="/post-images/upgrade-ubuntu-via-agent/zh/06-noble-wallpaper.png" alt="Ubuntu 24.04 桌面"></p>
+<p><em>图 0 · 这台机器的主人是 Ubuntu 24.04 Noble Numbat(官方壁纸),系统服务里跑着自研 Python 代理 + v2ray。</em></p>
+<p>90 秒后,SSH 终于断了。等了一会儿,再 ping,主机起来了。我登回去 <code>journalctl -b -1</code>,看到这条:</p>
+<pre tabindex="0"><code>Oct 23 10:34:01 host systemd[1]: Stopping smart-proxy.service ...
 Oct 23 10:35:31 host systemd[1]: smart-proxy.service: State &#39;stop-sigterm&#39; timed out. Killing.
 Oct 23 10:35:31 host systemd[1]: smart-proxy.service: Killing process 728 (python3) with signal SIGKILL.
 Oct 23 10:35:31 host systemd[1]: smart-proxy.service: Main process exited, code=killed, status=9/KILL
 Oct 23 10:35:31 host systemd[1]: smart-proxy.service: Failed with result &#39;timeout&#39;.
 Oct 23 10:35:31 host systemd[1]: Stopped smart-proxy.service.
-</code></pre><blockquote><p>注意时间:从 10:34:01 systemd 说"我要 stop 它"开始,到 10:35:31 systemd 忍无可忍 SIGKILL,中间正好 <strong>90 秒</strong>。这就是 systemd 的默认 <code>TimeoutStopSec=90s</code>。</p></blockquote><p>下面那张图把这条时间线画清楚了:</p><p><img src=/post-images/ubuntu-shutdown-stuck/zh/02-signal-vs-kill.svg alt="SIGTERM vs SIGKILL:同一进程前后两次关机的不同结局"></p><p><em>图 2:同一次关机,t=0 systemd 发 SIGTERM;t=1s 老代码完全没响应;t=90s systemd 忍无可忍,发 SIGKILL,强杀。之后 reboot 才真正开始。整段"等"的时间全部浪费在 Python 进程上。</em></p><p>为什么会这样?我们需要先弄懂两件事:<strong>systemd 怎么 stop 一个 service</strong>,以及<strong>Python asyncio 收到 SIGTERM 时到底在干什么</strong>。</p><hr><h2 id=二问题分析systemd-发的是请帖不是执行令>二、问题分析:systemd 发的是"请帖",不是"执行令"</h2><p>很多人(包括最初的我)以为,systemd <code>stop</code> 一个 service 就是"立刻杀死进程"。<strong>不是。</strong></p><p>systemd 的"温柔"是有原因的:它要让进程有机会做清理工作。比如关数据库,正确的做法是"刷 dirty page、写 WAL、关 socket",而不是被 SIGKILL 一下,丢数据。</p><p>systemd 的 stop 流程是这样:</p><pre tabindex=0><code>                  TimeoutStopSec (默认 90s)
+</code></pre><blockquote>
+<p>注意时间:从 10:34:01 systemd 说&quot;我要 stop 它&quot;开始,到 10:35:31 systemd 忍无可忍 SIGKILL,中间正好 <strong>90 秒</strong>。这就是 systemd 的默认 <code>TimeoutStopSec=90s</code>。</p>
+</blockquote>
+<p>下面那张图把这条时间线画清楚了:</p>
+<p><img src="/post-images/ubuntu-shutdown-stuck/zh/02-signal-vs-kill.svg" alt="SIGTERM vs SIGKILL:同一进程前后两次关机的不同结局"></p>
+<p><em>图 2:同一次关机,t=0 systemd 发 SIGTERM;t=1s 老代码完全没响应;t=90s systemd 忍无可忍,发 SIGKILL,强杀。之后 reboot 才真正开始。整段&quot;等&quot;的时间全部浪费在 Python 进程上。</em></p>
+<p>为什么会这样?我们需要先弄懂两件事:<strong>systemd 怎么 stop 一个 service</strong>,以及<strong>Python asyncio 收到 SIGTERM 时到底在干什么</strong>。</p>
+<hr>
+<h2 id="二问题分析systemd-发的是请帖不是执行令">二、问题分析:systemd 发的是&quot;请帖&quot;,不是&quot;执行令&quot;</h2>
+<p>很多人(包括最初的我)以为,systemd <code>stop</code> 一个 service 就是&quot;立刻杀死进程&quot;。<strong>不是。</strong></p>
+<p>systemd 的&quot;温柔&quot;是有原因的:它要让进程有机会做清理工作。比如关数据库,正确的做法是&quot;刷 dirty page、写 WAL、关 socket&quot;,而不是被 SIGKILL 一下,丢数据。</p>
+<p>systemd 的 stop 流程是这样:</p>
+<pre tabindex="0"><code>                  TimeoutStopSec (默认 90s)
                   &lt;------------------------------&gt;
 t=0              t=1s                          t=90s
   |                |                              |
@@ -39,56 +177,112 @@ t=0              t=1s                          t=90s
   |                |  ExitCode=0                  |  ExitCode=137
   v                v                              v
   systemd: stop    systemd: Deactivated           systemd: failed &#39;timeout&#39;
-</code></pre><p>SIGTERM 是一个<strong>协商信号</strong>——它说"我希望你离开,你方便的时候收拾一下再走"。如果进程乖乖 exit,systemd 就 happy。如果 90 秒过去还没走,systemd 升级到 SIGKILL——这个信号<strong>不能被 catch、不能被 block</strong>,进程立刻被内核杀掉。</p><p>这里有一个很多人没意识到的细节:<strong>systemd 在 t=0 发完 SIGTERM 之后,进程是否有"看到"这个信号,完全取决于进程在干什么</strong>。如果进程此刻正在执行一段纯 Python 代码,信号一来就被处理;但如果进程此刻正阻塞在系统调用上(比如 <code>socket.recv</code>、<code>time.sleep</code>、<code>select.select</code>),Python 解释器<strong>根本不会主动去看"有没有信号"</strong>——它要等那个系统调用自己返回,而那个调用可能要等几小时。</p><p>这一段解释成日常——</p><blockquote><p>systemd 像餐厅的保安,要打烊了挨桌说"先生,我们要关门了"。smart-proxy 这位顾客正在打电话,点头示意听到了,但<strong>电话对面的人在讲一个事故报告,他走不开</strong>。保安等 1 分钟、5 分钟、89 分钟,顾客还是没挂电话。第 90 分钟保安说"对不起,我得把电话线拔了"。这就是 SIGKILL。</p></blockquote><hr><h2 id=三问题根因python-asyncio-的子任务被困在-socket-上>三、问题根因:Python asyncio 的子任务被"困"在 socket 上</h2><p>再看一眼我的 Python 服务——<code>smart_proxy_failover.py</code>,449 行。它是个 asyncio 服务,主要做两件事:</p><ol><li><strong>跑两个 TCP server</strong>——SOCKS5 在 1080、HTTP proxy 在 1081,接收家庭设备的代理请求。</li><li><strong>跑两个 health check loop</strong>——每 10 秒向上游 vps 探活,做 failover。</li></ol><p>每次收到一个新连接,asyncio 会创建一条 <code>handle_socks_client</code> 或 <code>handle_http_client</code> 的协程。这条协程会做一件事:<strong><code>asyncio.open_connection()</code> 连上游 vps,然后 <code>socket.recv()</code> 读上游响应</strong>。</p><p>服务跑了一晚上之后,<strong>几十条这种协程同时挂在 <code>socket.recv</code> 上</strong>——它们都在等上游 vps 回包,可能是 keepalive,可能是长轮询,可能根本就是死连接——反正没回。</p><p>收到 SIGTERM 的时候,Python 解释器的事件循环正在 <code>select()</code> 等 I/O。<strong><code>select()</code> 不知道 SIGTERM</strong>,它只等文件描述符。SIGTERM 排队等着,但只要有一个 socket 在 select 上,Python 就不会去看信号队列。</p><p>结果就是:90 秒里,<strong>SIGTERM 信号被塞在队列里</strong>,Python 根本不知道有人在叫它。直到 systemd SIGKILL 把它整个撕掉,Python 才"知道"自己死了。</p><p>把这件事画成任务树就清楚了:</p><p><img src=/post-images/ubuntu-shutdown-stuck/zh/03-asyncio-task-tree.svg alt="asyncio 任务树:父任务要负责拆掉子任务"></p><p><em>图 3:Python 进程的 asyncio 任务树。父任务 <code>serve_forever</code> 等 SIGTERM。它下面挂了 N 个 <code>handle_socks_client</code> / <code>handle_http_client</code> 子任务,每个子任务下面又挂了 <code>asyncio.open_connection</code> 协程。健康检查 loop 是另一支。SIGTERM 只到了父任务那一层,子任务的 socket 还在等,父任务 <code>await self.stop()</code> 也卡着。</em></p><hr><h2 id=四解决方案系统层和应用层各做一半>四、解决方案:系统层和应用层各做一半</h2><p>修这个问题,只动一边不够。</p><ul><li><strong>只改 systemd 的 <code>TimeoutStopSec=20s</code></strong>:把 90 秒缩到 20 秒,看起来快了,<strong>但本质上还是 SIGKILL 强杀</strong>——任何在飞行中的连接都会被截断,SOCKS5 客户端会收到 <code>Connection reset</code>,HTTP 客户端会收到半个 HTTP 响应。体验不好。</li><li><strong>只改 Python 加 signal handler</strong>:Python 不响应 SIGTERM 的话,systemd 永远要等 90 秒。</li></ul><p><strong>正确做法是两边都改,而且要让 Python 自己 cancel 它的子任务,而不是依赖 SIGKILL。</strong></p><p>下面这张图是把整个修复策略画明白:</p><p><img src=/post-images/ubuntu-shutdown-stuck/zh/04-drop-in-fix.svg alt="systemd drop-in:不打补丁也能给 unit 套新规则"></p><p><em>图 4:左侧是原 unit 文件,不动一行;右侧是 systemd drop-in,只覆盖 4 个关键键值,实现"在不动原文件的前提下打补丁"。drop-in 是 systemd 给你留的安全位。</em></p><h3 id=41-系统层写-systemd-drop-in>4.1 系统层:写 systemd drop-in</h3><p><code>/etc/systemd/system/&lt;service>.service</code> 是不能随便改的——下次包升级,有可能被冲掉。systemd 提供了一种<strong>安全补丁位</strong>:<code>/etc/systemd/system/&lt;service>.service.d/</code> 目录,里面放 <code>*.conf</code> 文件,会自动叠加到 unit 上。</p><p>为 <code>smart-proxy.service</code> 建一个 drop-in:</p><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-bash data-lang=bash><span style=display:flex><span>mkdir -p /etc/systemd/system/smart-proxy.service.d
-</span></span><span style=display:flex><span>cat &gt; /etc/systemd/system/smart-proxy.service.d/override.conf <span style=color:#e6db74>&lt;&lt;&#39;EOF&#39;
-</span></span></span><span style=display:flex><span><span style=color:#e6db74>[Service]
-</span></span></span><span style=display:flex><span><span style=color:#e6db74>TimeoutStopSec=20s
-</span></span></span><span style=display:flex><span><span style=color:#e6db74>KillMode=mixed
-</span></span></span><span style=display:flex><span><span style=color:#e6db74>KillSignal=SIGTERM
-</span></span></span><span style=display:flex><span><span style=color:#e6db74>FinalKillSignal=SIGKILL
-</span></span></span><span style=display:flex><span><span style=color:#e6db74>EOF</span>
-</span></span><span style=display:flex><span>systemctl daemon-reload
-</span></span></code></pre></div><p>四个键值的含义:</p><ul><li><code>TimeoutStopSec=20s</code>:<strong>最坏情况 20 秒</strong>,无论 Python 怎么摆烂,systemd 到点就 SIGKILL。</li><li><code>KillMode=mixed</code>:<code>SIGTERM</code> 时只杀主进程,不杀整个 cgroup(留点余地给 Python 自己清理);<code>SIGKILL</code> 时杀整个 cgroup。</li><li><code>KillSignal=SIGTERM</code>:<strong>先发 SIGTERM</strong>(默认就是,但显式写出来更清楚)。</li><li><code>FinalKillSignal=SIGKILL</code>:超时之后升级到 SIGKILL。</li></ul><p>对 <code>rule-proxy.service</code> 做一模一样的事。<code>daemon-reload</code> 后,<strong>这两个服务下次 stop 时就生效</strong>——不用重启服务、不用改原 unit 文件。</p><h3 id=42-应用层python-自己-cancel-子任务>4.2 应用层:Python 自己 cancel 子任务</h3><p>drop-in 把"最长等多久"从 90 秒压到 20 秒,但更彻底的做法是让 Python <strong>在收到 SIGTERM 的 1 秒内主动结束自己</strong>。</p><p>asyncio 服务的 <code>serve_forever</code> 原本长这样(简化):</p><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-python data-lang=python><span style=display:flex><span><span style=color:#66d9ef>async</span> <span style=color:#66d9ef>def</span> <span style=color:#a6e22e>serve_forever</span>(self) <span style=color:#f92672>-&gt;</span> <span style=color:#66d9ef>None</span>:
-</span></span><span style=display:flex><span>    <span style=color:#66d9ef>await</span> self<span style=color:#f92672>.</span>start()
-</span></span><span style=display:flex><span>    stop_event <span style=color:#f92672>=</span> asyncio<span style=color:#f92672>.</span>Event()
-</span></span><span style=display:flex><span>    loop <span style=color:#f92672>=</span> asyncio<span style=color:#f92672>.</span>get_running_loop()
-</span></span><span style=display:flex><span>    <span style=color:#66d9ef>for</span> sig <span style=color:#f92672>in</span> (signal<span style=color:#f92672>.</span>SIGTERM, signal<span style=color:#f92672>.</span>SIGINT):
-</span></span><span style=display:flex><span>        loop<span style=color:#f92672>.</span>add_signal_handler(sig, stop_event<span style=color:#f92672>.</span>set)
-</span></span><span style=display:flex><span>    <span style=color:#66d9ef>await</span> stop_event<span style=color:#f92672>.</span>wait()
-</span></span><span style=display:flex><span>    <span style=color:#66d9ef>await</span> self<span style=color:#f92672>.</span>stop()
-</span></span></code></pre></div><p>逻辑没问题——收到 SIGTERM 后 <code>stop_event.set()</code>,然后 <code>await self.stop()</code>。</p><p><strong>真正的问题在 <code>self.stop()</code> 里</strong>:</p><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-python data-lang=python><span style=display:flex><span><span style=color:#66d9ef>async</span> <span style=color:#66d9ef>def</span> <span style=color:#a6e22e>stop</span>(self) <span style=color:#f92672>-&gt;</span> <span style=color:#66d9ef>None</span>:
-</span></span><span style=display:flex><span>    <span style=color:#66d9ef>for</span> server <span style=color:#f92672>in</span> self<span style=color:#f92672>.</span>servers:
-</span></span><span style=display:flex><span>        server<span style=color:#f92672>.</span>close()
-</span></span><span style=display:flex><span>        <span style=color:#66d9ef>await</span> server<span style=color:#f92672>.</span>wait_closed()   <span style=color:#75715e># ← 这步会卡住!</span>
-</span></span><span style=display:flex><span>    <span style=color:#66d9ef>for</span> task <span style=color:#f92672>in</span> self<span style=color:#f92672>.</span>background_tasks:
-</span></span><span style=display:flex><span>        task<span style=color:#f92672>.</span>cancel()
-</span></span><span style=display:flex><span>    <span style=color:#66d9ef>if</span> self<span style=color:#f92672>.</span>background_tasks:
-</span></span><span style=display:flex><span>        <span style=color:#66d9ef>await</span> asyncio<span style=color:#f92672>.</span>gather(<span style=color:#f92672>*</span>self<span style=color:#f92672>.</span>background_tasks, return_exceptions<span style=color:#f92672>=</span><span style=color:#66d9ef>True</span>)
-</span></span></code></pre></div><p><code>server.close()</code> 之后,新连接不再接受,但<strong>已经在跑的连接(<code>handle_socks_client</code> 协程)还在跑</strong>。这些协程挂在 <code>socket.recv</code> 上,而 <code>socket.recv</code> 不响应 SIGTERM,Python 不知道这些协程应该被取消。</p><p><strong>所以 stop_event 被 set 之后,事件循环仍然在 select,仍然不响应任何东西。</strong> 只有等 systemd 90 秒到点强杀。</p><p>修复方法是:在 <code>serve_forever</code> 的 <code>stop_event.wait()</code> 之后,<strong>显式遍历所有正在跑的 task,匹配名字,把 in-flight 的连接 handler 强制 cancel</strong>:</p><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-python data-lang=python><span style=display:flex><span><span style=color:#66d9ef>async</span> <span style=color:#66d9ef>def</span> <span style=color:#a6e22e>serve_forever</span>(self) <span style=color:#f92672>-&gt;</span> <span style=color:#66d9ef>None</span>:
-</span></span><span style=display:flex><span>    <span style=color:#66d9ef>await</span> self<span style=color:#f92672>.</span>start()
-</span></span><span style=display:flex><span>    stop_event <span style=color:#f92672>=</span> asyncio<span style=color:#f92672>.</span>Event()
-</span></span><span style=display:flex><span>    loop <span style=color:#f92672>=</span> asyncio<span style=color:#f92672>.</span>get_running_loop()
-</span></span><span style=display:flex><span>    <span style=color:#66d9ef>for</span> sig <span style=color:#f92672>in</span> (signal<span style=color:#f92672>.</span>SIGTERM, signal<span style=color:#f92672>.</span>SIGINT):
-</span></span><span style=display:flex><span>        loop<span style=color:#f92672>.</span>add_signal_handler(sig, stop_event<span style=color:#f92672>.</span>set)
-</span></span><span style=display:flex><span>    <span style=color:#66d9ef>try</span>:
-</span></span><span style=display:flex><span>        <span style=color:#66d9ef>await</span> stop_event<span style=color:#f92672>.</span>wait()
-</span></span><span style=display:flex><span>    <span style=color:#66d9ef>finally</span>:
-</span></span><span style=display:flex><span>        <span style=color:#75715e># 收到信号后,主动把还在跑的&#34;接客协程&#34;砍掉</span>
-</span></span><span style=display:flex><span>        me <span style=color:#f92672>=</span> asyncio<span style=color:#f92672>.</span>current_task()
-</span></span><span style=display:flex><span>        <span style=color:#66d9ef>for</span> task <span style=color:#f92672>in</span> asyncio<span style=color:#f92672>.</span>all_tasks():
-</span></span><span style=display:flex><span>            <span style=color:#66d9ef>if</span> task <span style=color:#f92672>is</span> me:
-</span></span><span style=display:flex><span>                <span style=color:#66d9ef>continue</span>
-</span></span><span style=display:flex><span>            <span style=color:#66d9ef>if</span> task<span style=color:#f92672>.</span>get_coro()<span style=color:#f92672>.</span>__qualname__ <span style=color:#f92672>in</span> (
-</span></span><span style=display:flex><span>                <span style=color:#e6db74>&#34;SmartProxyServer.handle_socks_client&#34;</span>,
-</span></span><span style=display:flex><span>                <span style=color:#e6db74>&#34;SmartProxyServer.handle_http_client&#34;</span>,
-</span></span><span style=display:flex><span>            ):
-</span></span><span style=display:flex><span>                task<span style=color:#f92672>.</span>cancel()
-</span></span><span style=display:flex><span>        <span style=color:#75715e># stop() 本身也套个超时,防止 server.wait_closed() 也卡</span>
-</span></span><span style=display:flex><span>        <span style=color:#66d9ef>try</span>:
-</span></span><span style=display:flex><span>            <span style=color:#66d9ef>await</span> asyncio<span style=color:#f92672>.</span>wait_for(self<span style=color:#f92672>.</span>stop(), timeout<span style=color:#f92672>=</span><span style=color:#ae81ff>10</span>)
-</span></span><span style=display:flex><span>        <span style=color:#66d9ef>except</span> asyncio<span style=color:#f92672>.</span>TimeoutError:
-</span></span><span style=display:flex><span>            LOGGER<span style=color:#f92672>.</span>warning(<span style=color:#e6db74>&#34;self.stop() timed out; forcing exit&#34;</span>)
-</span></span></code></pre></div><p><code>task.cancel()</code> 会让对应的协程在下一个 <code>await</code> 处抛 <code>CancelledError</code>,通常就是在 <code>socket.recv</code> 那——抛完之后协程会进入 <code>finally</code> 分支关掉自己的 socket,然后 <code>return</code>,整条链路就被干净地拆掉了。</p><p><code>rule_proxy.py</code> 做一模一样的修复,只是类名不同(<code>RuleProxy.handle_socks</code>、<code>RuleProxy.handle_http</code>)。</p><p>改完两件事,关机的时间就从 90 秒掉到了 1 秒。</p><hr><h2 id=五验证用一次真实的-reboot-来看时间>五、验证:用一次真实的 reboot 来看时间</h2><p>修复后,我触发了一次真实的 reboot,看 journalctl:</p><pre tabindex=0><code>10:41:21  smart-proxy 启动监听 1080/1081
+</code></pre><p>SIGTERM 是一个<strong>协商信号</strong>——它说&quot;我希望你离开,你方便的时候收拾一下再走&quot;。如果进程乖乖 exit,systemd 就 happy。如果 90 秒过去还没走,systemd 升级到 SIGKILL——这个信号<strong>不能被 catch、不能被 block</strong>,进程立刻被内核杀掉。</p>
+<p>这里有一个很多人没意识到的细节:<strong>systemd 在 t=0 发完 SIGTERM 之后,进程是否有&quot;看到&quot;这个信号,完全取决于进程在干什么</strong>。如果进程此刻正在执行一段纯 Python 代码,信号一来就被处理;但如果进程此刻正阻塞在系统调用上(比如 <code>socket.recv</code>、<code>time.sleep</code>、<code>select.select</code>),Python 解释器<strong>根本不会主动去看&quot;有没有信号&quot;</strong>——它要等那个系统调用自己返回,而那个调用可能要等几小时。</p>
+<p>这一段解释成日常——</p>
+<blockquote>
+<p>systemd 像餐厅的保安,要打烊了挨桌说&quot;先生,我们要关门了&quot;。smart-proxy 这位顾客正在打电话,点头示意听到了,但<strong>电话对面的人在讲一个事故报告,他走不开</strong>。保安等 1 分钟、5 分钟、89 分钟,顾客还是没挂电话。第 90 分钟保安说&quot;对不起,我得把电话线拔了&quot;。这就是 SIGKILL。</p>
+</blockquote>
+<hr>
+<h2 id="三问题根因python-asyncio-的子任务被困在-socket-上">三、问题根因:Python asyncio 的子任务被&quot;困&quot;在 socket 上</h2>
+<p>再看一眼我的 Python 服务——<code>smart_proxy_failover.py</code>,449 行。它是个 asyncio 服务,主要做两件事:</p>
+<ol>
+<li><strong>跑两个 TCP server</strong>——SOCKS5 在 1080、HTTP proxy 在 1081,接收家庭设备的代理请求。</li>
+<li><strong>跑两个 health check loop</strong>——每 10 秒向上游 vps 探活,做 failover。</li>
+</ol>
+<p>每次收到一个新连接,asyncio 会创建一条 <code>handle_socks_client</code> 或 <code>handle_http_client</code> 的协程。这条协程会做一件事:<strong><code>asyncio.open_connection()</code> 连上游 vps,然后 <code>socket.recv()</code> 读上游响应</strong>。</p>
+<p>服务跑了一晚上之后,<strong>几十条这种协程同时挂在 <code>socket.recv</code> 上</strong>——它们都在等上游 vps 回包,可能是 keepalive,可能是长轮询,可能根本就是死连接——反正没回。</p>
+<p>收到 SIGTERM 的时候,Python 解释器的事件循环正在 <code>select()</code> 等 I/O。<strong><code>select()</code> 不知道 SIGTERM</strong>,它只等文件描述符。SIGTERM 排队等着,但只要有一个 socket 在 select 上,Python 就不会去看信号队列。</p>
+<p>结果就是:90 秒里,<strong>SIGTERM 信号被塞在队列里</strong>,Python 根本不知道有人在叫它。直到 systemd SIGKILL 把它整个撕掉,Python 才&quot;知道&quot;自己死了。</p>
+<p>把这件事画成任务树就清楚了:</p>
+<p><img src="/post-images/ubuntu-shutdown-stuck/zh/03-asyncio-task-tree.svg" alt="asyncio 任务树:父任务要负责拆掉子任务"></p>
+<p><em>图 3:Python 进程的 asyncio 任务树。父任务 <code>serve_forever</code> 等 SIGTERM。它下面挂了 N 个 <code>handle_socks_client</code> / <code>handle_http_client</code> 子任务,每个子任务下面又挂了 <code>asyncio.open_connection</code> 协程。健康检查 loop 是另一支。SIGTERM 只到了父任务那一层,子任务的 socket 还在等,父任务 <code>await self.stop()</code> 也卡着。</em></p>
+<hr>
+<h2 id="四解决方案系统层和应用层各做一半">四、解决方案:系统层和应用层各做一半</h2>
+<p>修这个问题,只动一边不够。</p>
+<ul>
+<li><strong>只改 systemd 的 <code>TimeoutStopSec=20s</code></strong>:把 90 秒缩到 20 秒,看起来快了,<strong>但本质上还是 SIGKILL 强杀</strong>——任何在飞行中的连接都会被截断,SOCKS5 客户端会收到 <code>Connection reset</code>,HTTP 客户端会收到半个 HTTP 响应。体验不好。</li>
+<li><strong>只改 Python 加 signal handler</strong>:Python 不响应 SIGTERM 的话,systemd 永远要等 90 秒。</li>
+</ul>
+<p><strong>正确做法是两边都改,而且要让 Python 自己 cancel 它的子任务,而不是依赖 SIGKILL。</strong></p>
+<p>下面这张图是把整个修复策略画明白:</p>
+<p><img src="/post-images/ubuntu-shutdown-stuck/zh/04-drop-in-fix.svg" alt="systemd drop-in:不打补丁也能给 unit 套新规则"></p>
+<p><em>图 4:左侧是原 unit 文件,不动一行;右侧是 systemd drop-in,只覆盖 4 个关键键值,实现&quot;在不动原文件的前提下打补丁&quot;。drop-in 是 systemd 给你留的安全位。</em></p>
+<h3 id="41-系统层写-systemd-drop-in">4.1 系统层:写 systemd drop-in</h3>
+<p><code>/etc/systemd/system/&lt;service&gt;.service</code> 是不能随便改的——下次包升级,有可能被冲掉。systemd 提供了一种<strong>安全补丁位</strong>:<code>/etc/systemd/system/&lt;service&gt;.service.d/</code> 目录,里面放 <code>*.conf</code> 文件,会自动叠加到 unit 上。</p>
+<p>为 <code>smart-proxy.service</code> 建一个 drop-in:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>mkdir -p /etc/systemd/system/smart-proxy.service.d
+</span></span><span style="display:flex;"><span>cat &gt; /etc/systemd/system/smart-proxy.service.d/override.conf <span style="color:#e6db74">&lt;&lt;&#39;EOF&#39;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">[Service]
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">TimeoutStopSec=20s
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">KillMode=mixed
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">KillSignal=SIGTERM
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">FinalKillSignal=SIGKILL
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">EOF</span>
+</span></span><span style="display:flex;"><span>systemctl daemon-reload
+</span></span></code></pre></div><p>四个键值的含义:</p>
+<ul>
+<li><code>TimeoutStopSec=20s</code>:<strong>最坏情况 20 秒</strong>,无论 Python 怎么摆烂,systemd 到点就 SIGKILL。</li>
+<li><code>KillMode=mixed</code>:<code>SIGTERM</code> 时只杀主进程,不杀整个 cgroup(留点余地给 Python 自己清理);<code>SIGKILL</code> 时杀整个 cgroup。</li>
+<li><code>KillSignal=SIGTERM</code>:<strong>先发 SIGTERM</strong>(默认就是,但显式写出来更清楚)。</li>
+<li><code>FinalKillSignal=SIGKILL</code>:超时之后升级到 SIGKILL。</li>
+</ul>
+<p>对 <code>rule-proxy.service</code> 做一模一样的事。<code>daemon-reload</code> 后,<strong>这两个服务下次 stop 时就生效</strong>——不用重启服务、不用改原 unit 文件。</p>
+<h3 id="42-应用层python-自己-cancel-子任务">4.2 应用层:Python 自己 cancel 子任务</h3>
+<p>drop-in 把&quot;最长等多久&quot;从 90 秒压到 20 秒,但更彻底的做法是让 Python <strong>在收到 SIGTERM 的 1 秒内主动结束自己</strong>。</p>
+<p>asyncio 服务的 <code>serve_forever</code> 原本长这样(简化):</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-python" data-lang="python"><span style="display:flex;"><span><span style="color:#66d9ef">async</span> <span style="color:#66d9ef">def</span> <span style="color:#a6e22e">serve_forever</span>(self) <span style="color:#f92672">-&gt;</span> <span style="color:#66d9ef">None</span>:
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">await</span> self<span style="color:#f92672">.</span>start()
+</span></span><span style="display:flex;"><span>    stop_event <span style="color:#f92672">=</span> asyncio<span style="color:#f92672">.</span>Event()
+</span></span><span style="display:flex;"><span>    loop <span style="color:#f92672">=</span> asyncio<span style="color:#f92672">.</span>get_running_loop()
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">for</span> sig <span style="color:#f92672">in</span> (signal<span style="color:#f92672">.</span>SIGTERM, signal<span style="color:#f92672">.</span>SIGINT):
+</span></span><span style="display:flex;"><span>        loop<span style="color:#f92672">.</span>add_signal_handler(sig, stop_event<span style="color:#f92672">.</span>set)
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">await</span> stop_event<span style="color:#f92672">.</span>wait()
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">await</span> self<span style="color:#f92672">.</span>stop()
+</span></span></code></pre></div><p>逻辑没问题——收到 SIGTERM 后 <code>stop_event.set()</code>,然后 <code>await self.stop()</code>。</p>
+<p><strong>真正的问题在 <code>self.stop()</code> 里</strong>:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-python" data-lang="python"><span style="display:flex;"><span><span style="color:#66d9ef">async</span> <span style="color:#66d9ef">def</span> <span style="color:#a6e22e">stop</span>(self) <span style="color:#f92672">-&gt;</span> <span style="color:#66d9ef">None</span>:
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">for</span> server <span style="color:#f92672">in</span> self<span style="color:#f92672">.</span>servers:
+</span></span><span style="display:flex;"><span>        server<span style="color:#f92672">.</span>close()
+</span></span><span style="display:flex;"><span>        <span style="color:#66d9ef">await</span> server<span style="color:#f92672">.</span>wait_closed()   <span style="color:#75715e"># ← 这步会卡住!</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">for</span> task <span style="color:#f92672">in</span> self<span style="color:#f92672">.</span>background_tasks:
+</span></span><span style="display:flex;"><span>        task<span style="color:#f92672">.</span>cancel()
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">if</span> self<span style="color:#f92672">.</span>background_tasks:
+</span></span><span style="display:flex;"><span>        <span style="color:#66d9ef">await</span> asyncio<span style="color:#f92672">.</span>gather(<span style="color:#f92672">*</span>self<span style="color:#f92672">.</span>background_tasks, return_exceptions<span style="color:#f92672">=</span><span style="color:#66d9ef">True</span>)
+</span></span></code></pre></div><p><code>server.close()</code> 之后,新连接不再接受,但<strong>已经在跑的连接(<code>handle_socks_client</code> 协程)还在跑</strong>。这些协程挂在 <code>socket.recv</code> 上,而 <code>socket.recv</code> 不响应 SIGTERM,Python 不知道这些协程应该被取消。</p>
+<p><strong>所以 stop_event 被 set 之后,事件循环仍然在 select,仍然不响应任何东西。</strong> 只有等 systemd 90 秒到点强杀。</p>
+<p>修复方法是:在 <code>serve_forever</code> 的 <code>stop_event.wait()</code> 之后,<strong>显式遍历所有正在跑的 task,匹配名字,把 in-flight 的连接 handler 强制 cancel</strong>:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-python" data-lang="python"><span style="display:flex;"><span><span style="color:#66d9ef">async</span> <span style="color:#66d9ef">def</span> <span style="color:#a6e22e">serve_forever</span>(self) <span style="color:#f92672">-&gt;</span> <span style="color:#66d9ef">None</span>:
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">await</span> self<span style="color:#f92672">.</span>start()
+</span></span><span style="display:flex;"><span>    stop_event <span style="color:#f92672">=</span> asyncio<span style="color:#f92672">.</span>Event()
+</span></span><span style="display:flex;"><span>    loop <span style="color:#f92672">=</span> asyncio<span style="color:#f92672">.</span>get_running_loop()
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">for</span> sig <span style="color:#f92672">in</span> (signal<span style="color:#f92672">.</span>SIGTERM, signal<span style="color:#f92672">.</span>SIGINT):
+</span></span><span style="display:flex;"><span>        loop<span style="color:#f92672">.</span>add_signal_handler(sig, stop_event<span style="color:#f92672">.</span>set)
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">try</span>:
+</span></span><span style="display:flex;"><span>        <span style="color:#66d9ef">await</span> stop_event<span style="color:#f92672">.</span>wait()
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">finally</span>:
+</span></span><span style="display:flex;"><span>        <span style="color:#75715e"># 收到信号后,主动把还在跑的&#34;接客协程&#34;砍掉</span>
+</span></span><span style="display:flex;"><span>        me <span style="color:#f92672">=</span> asyncio<span style="color:#f92672">.</span>current_task()
+</span></span><span style="display:flex;"><span>        <span style="color:#66d9ef">for</span> task <span style="color:#f92672">in</span> asyncio<span style="color:#f92672">.</span>all_tasks():
+</span></span><span style="display:flex;"><span>            <span style="color:#66d9ef">if</span> task <span style="color:#f92672">is</span> me:
+</span></span><span style="display:flex;"><span>                <span style="color:#66d9ef">continue</span>
+</span></span><span style="display:flex;"><span>            <span style="color:#66d9ef">if</span> task<span style="color:#f92672">.</span>get_coro()<span style="color:#f92672">.</span>__qualname__ <span style="color:#f92672">in</span> (
+</span></span><span style="display:flex;"><span>                <span style="color:#e6db74">&#34;SmartProxyServer.handle_socks_client&#34;</span>,
+</span></span><span style="display:flex;"><span>                <span style="color:#e6db74">&#34;SmartProxyServer.handle_http_client&#34;</span>,
+</span></span><span style="display:flex;"><span>            ):
+</span></span><span style="display:flex;"><span>                task<span style="color:#f92672">.</span>cancel()
+</span></span><span style="display:flex;"><span>        <span style="color:#75715e"># stop() 本身也套个超时,防止 server.wait_closed() 也卡</span>
+</span></span><span style="display:flex;"><span>        <span style="color:#66d9ef">try</span>:
+</span></span><span style="display:flex;"><span>            <span style="color:#66d9ef">await</span> asyncio<span style="color:#f92672">.</span>wait_for(self<span style="color:#f92672">.</span>stop(), timeout<span style="color:#f92672">=</span><span style="color:#ae81ff">10</span>)
+</span></span><span style="display:flex;"><span>        <span style="color:#66d9ef">except</span> asyncio<span style="color:#f92672">.</span>TimeoutError:
+</span></span><span style="display:flex;"><span>            LOGGER<span style="color:#f92672">.</span>warning(<span style="color:#e6db74">&#34;self.stop() timed out; forcing exit&#34;</span>)
+</span></span></code></pre></div><p><code>task.cancel()</code> 会让对应的协程在下一个 <code>await</code> 处抛 <code>CancelledError</code>,通常就是在 <code>socket.recv</code> 那——抛完之后协程会进入 <code>finally</code> 分支关掉自己的 socket,然后 <code>return</code>,整条链路就被干净地拆掉了。</p>
+<p><code>rule_proxy.py</code> 做一模一样的修复,只是类名不同(<code>RuleProxy.handle_socks</code>、<code>RuleProxy.handle_http</code>)。</p>
+<p>改完两件事,关机的时间就从 90 秒掉到了 1 秒。</p>
+<hr>
+<h2 id="五验证用一次真实的-reboot-来看时间">五、验证:用一次真实的 reboot 来看时间</h2>
+<p>修复后,我触发了一次真实的 reboot,看 journalctl:</p>
+<pre tabindex="0"><code>10:41:21  smart-proxy 启动监听 1080/1081
 10:41:24  rule-proxy  启动监听 1090/1091
 10:41:32  systemd 开始 stop rule-proxy
 10:41:32  rule-proxy: Deactivated successfully    ← &lt;1s
@@ -98,17 +292,114 @@ t=0              t=1s                          t=90s
 10:41:33  finalrd: Deactivated successfully
 10:41:33  Reached target shutdown.target
 10:41:45  下一次 boot 的第一条 log
-</code></pre><p><strong>rule-proxy 和 smart-proxy 各自在 1 秒内 Deactivated</strong>,而不再是卡 90 秒被 SIGKILL。</p><p>下面这张对比图是这个修复的核心:</p><p><img src=/post-images/ubuntu-shutdown-stuck/zh/02-signal-vs-kill.svg alt="SIGTERM vs SIGKILL 时间轴对比:90 秒变 1 秒"></p><p><em>图 2 (回看):同样的进程、同样的服务、同样的 reboot 命令,只是 Python 加了 15 行主动 cancel 的代码,systemd 加了一个 4 行 drop-in。从 90 秒到 1 秒。</em></p><p>修复在 <code>/opt/smart-proxy/</code> 里留了 <code>.bak.20260619_103832</code> 备份。如果新代码有问题想回滚,直接 <code>cp</code> 回去 <code>systemctl restart</code> 即可。</p><hr><h2 id=六留给你的几条经验>六、留给你的几条经验</h2><p>这次排查让我重新认识了几件事:</p><p><strong>1. <code>TimeoutStopSec=90s</code> 是个"最长等 90s"的兜底,不是"应该等 90s"的设计。</strong> systemd 默认值是给"老派 daemon"准备的——那些会响应 SIGTERM 自己清理的服务。对 Python asyncio 这类"事件循环被 socket 卡住"的程序,默认 90s 就是"无论你写得有多烂,我也给你 90 秒体面地走"。<strong>真正体面的服务应该在毫秒级响应</strong>。</p><p><strong>2. SIGTERM 不是 SIGKILL,systemd 在给你机会。</strong> 如果你的服务在 SIGTERM 时挂住了,不要把责任推给 systemd,先想想是不是你的 signal handler 漏了什么。asyncio 的世界里,<strong><code>loop.add_signal_handler</code> 只是入口,真正的活是去 cancel 那些卡在 I/O 上的协程</strong>。</p><p><strong>3. drop-in 是 systemd 给你留的安全补丁位。</strong> <code>/etc/systemd/system/&lt;service>.service.d/override.conf</code> 比直接改原 unit 文件安全得多——包升级不会冲掉它,可以版本控制,review 起来一目了然。所有"对 system unit 的小调整"都应该走 drop-in。</p><p><strong>4. <code>finalrd</code> 不是元凶。</strong> 我一开始看到 <code>Stopping finalrd.service</code> 也耗了"一分钟",就去翻它的 source,后来发现那只是 journal 的视觉错位——它实际 &lt;1 秒就结束了。<strong>遇到慢,先抓 journal 的精确时间戳,别靠肉眼估计</strong>。</p><hr><h2 id=qa>Q&amp;A</h2><h3 id=q1为什么-systemd-默认-timeoutstopsec90s>Q1:为什么 systemd 默认 <code>TimeoutStopSec=90s</code>?</h3><p>为了兼容老派守护进程(那些只用 <code>signal.signal(signal.SIGTERM, handler)</code> 设了个 handler,但 handler 里只打了一行 log 就 <code>return</code> 的程序)。90s 是给"进程可能正在做关键写入"的兜底,比如数据库刷盘。Python asyncio 这类"事件循环 + 长连接"程序不在这个假设里。</p><h3 id=q2能不能直接把-timeoutstopsec5s什么都不改-python>Q2:能不能直接把 <code>TimeoutStopSec=5s</code>,什么都不改 Python?</h3><p>可以——会把 90 秒压到 5 秒,但<strong>本质还是 SIGKILL 强杀</strong>。正在飞的 SOCKS5 连接会被切断,客户端会拿到 <code>Connection reset</code>。体验差。drop-in 是兜底,不是治愈。</p><h3 id=q3taskcancel-是立刻结束吗>Q3:<code>task.cancel()</code> 是立刻结束吗?</h3><p>不是。<code>cancel()</code> 只是给协程发了一个"该停了"的标记。协程要等到<strong>下一个 <code>await</code> 点</strong>才会真正抛 <code>CancelledError</code>。对挂在 <code>socket.recv</code> 上的协程,这个 <code>await</code> 就是 <code>recv</code> 那里——信号一来,socket 会被 asyncio 内部取消,recv 返回 <code>CancelledError</code>,协程进入 <code>finally</code>,关 socket,结束。<strong>所以 cancel() 是"毫秒级"而不是"立刻",但比 SIGKILL 干净</strong>。</p><h3 id=q4serverwait_closed-也会卡吗>Q4:<code>server.wait_closed()</code> 也会卡吗?</h3><p>偶尔会。如果还有 connection 在 write buffer 里没收完,它会等收完。最安全的做法是 <code>server.close()</code> 之后<strong>不再 await wait_closed()</strong>,直接退出。我的修复用了 <code>asyncio.wait_for(self.stop(), timeout=10)</code> 给它 10 秒兜底,过了就放弃。</p><h3 id=q5为什么不用-loopstop-或-loopclose>Q5:为什么不用 <code>loop.stop()</code> 或 <code>loop.close()</code>?</h3><p><code>loop.stop()</code> 只是让事件循环停止调度,<strong>不会取消已经创建的 task</strong>。你 stop 之后 Python 进程会立刻 exit,但子任务还在 socket.recv 上挂着——内核层面是干净的,但如果有 finally 块想做清理(比如写"已断开连接"日志),就跑不到了。<strong>主动 cancel 是更体面的做法</strong>。</p><h3 id=q6asyncioall_tasks-里会不会漏掉>Q6:<code>asyncio.all_tasks()</code> 里会不会漏掉?</h3><p>如果某些连接是在 <code>Task</code> 之外被 <code>asyncio.ensure_future()</code> 启动的,默认它们也算"all tasks"。但有些用了 <code>asyncio.TaskGroup</code> 的复杂服务可能有自己的 task 树,这种时候 <code>all_tasks()</code> 仍然有效,因为它返回的是<strong>整个事件循环里的全部 task</strong>,不依赖任何分组。<strong>唯一会漏的,是用裸 coroutine <code>await coroutine</code> 而不是 <code>asyncio.create_task(coroutine)</code> 的情况——那种根本就没成为 task</strong>。</p><h3 id=q7这套方法适用于非-asyncio-的普通-python-服务吗>Q7:这套方法适用于非 asyncio 的普通 Python 服务吗?</h3><p>适用,但代码不同。普通阻塞 Python 服务,你需要的是 <code>signal.signal(signal.SIGTERM, handler)</code>,handler 里 <code>sys.exit(0)</code> 即可——阻塞服务收到 SIGTERM 时,Python 解释器本身会主动处理。<strong>只有事件循环"被卡住"的程序(asyncio、twisted、tornado)才需要这种主动 cancel 的处理</strong>。</p><h3 id=q8不重启服务能-reload-修复吗>Q8:不重启服务能 reload 修复吗?</h3><p>不能。Python 进程的代码段在内存里,你必须 <code>systemctl restart smart-proxy.service</code> 让它重新加载新代码。但 drop-in 改了之后,<strong>只要 <code>systemctl daemon-reload</code>,unit 配置就生效</strong>——下次这个服务 stop 时就用新规则。所以这两件事是分开的:</p><ul><li><strong>立即</strong>: <code>systemctl daemon-reload</code> + <code>systemctl restart smart-proxy rule-proxy</code></li><li><strong>永久</strong>: drop-in 文件留在盘上,下次升级也不会被冲掉</li></ul><h3 id=q9有没有更工程化的方案>Q9:有没有更"工程化"的方案?</h3><p>有。如果你做长期维护,可以写一个 <code>asyncio.ShutdownContext</code> 上下文管理器:</p><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-python data-lang=python><span style=display:flex><span><span style=color:#a6e22e>@asynccontextmanager</span>
-</span></span><span style=display:flex><span><span style=color:#66d9ef>async</span> <span style=color:#66d9ef>def</span> <span style=color:#a6e22e>graceful_shutdown</span>(handler_names, timeout<span style=color:#f92672>=</span><span style=color:#ae81ff>10</span>):
-</span></span><span style=display:flex><span>    <span style=color:#66d9ef>yield</span>
-</span></span><span style=display:flex><span>    <span style=color:#75715e># 收尾逻辑</span>
-</span></span><span style=display:flex><span>    me <span style=color:#f92672>=</span> asyncio<span style=color:#f92672>.</span>current_task()
-</span></span><span style=display:flex><span>    <span style=color:#66d9ef>for</span> t <span style=color:#f92672>in</span> asyncio<span style=color:#f92672>.</span>all_tasks():
-</span></span><span style=display:flex><span>        <span style=color:#66d9ef>if</span> t <span style=color:#f92672>is</span> me: <span style=color:#66d9ef>continue</span>
-</span></span><span style=display:flex><span>        <span style=color:#66d9ef>if</span> t<span style=color:#f92672>.</span>get_coro()<span style=color:#f92672>.</span>__qualname__ <span style=color:#f92672>in</span> handler_names:
-</span></span><span style=display:flex><span>            t<span style=color:#f92672>.</span>cancel()
-</span></span><span style=display:flex><span>    <span style=color:#66d9ef>try</span>:
-</span></span><span style=display:flex><span>        <span style=color:#66d9ef>await</span> asyncio<span style=color:#f92672>.</span>wait_for(server<span style=color:#f92672>.</span>close_all(), timeout<span style=color:#f92672>=</span>timeout)
-</span></span><span style=display:flex><span>    <span style=color:#66d9ef>except</span> asyncio<span style=color:#f92672>.</span>TimeoutError:
-</span></span><span style=display:flex><span>        <span style=color:#66d9ef>pass</span>
-</span></span></code></pre></div><p>每个 asyncio 服务套这个上下文,信号处理逻辑就一致了。这次我没做这层抽象,因为只有两个服务,<strong>抽象的代价大于重复的代价</strong>。</p><h3 id=q10这次修复是不是过度设计>Q10:这次修复是不是过度设计?</h3><p>不算。这次只有一个 unit 慢。但<strong>今晚的"一个 unit 慢",明晚就可能是"五个 unit 慢"</strong>。先把"系统层兜底 + 应用层主动 cancel"这两件套搞清楚,以后再遇到 asyncio 服务卡 SIGTERM,5 分钟就能修。</p><hr><h2 id=参考资料>参考资料</h2><ol><li>systemd <code>service</code> 手册(<code>TimeoutStopSec</code> / <code>KillMode</code> / <code>KillSignal</code>):<a href=https://www.freedesktop.org/software/systemd/man/latest/systemd.service.html>https://www.freedesktop.org/software/systemd/man/latest/systemd.service.html</a></li><li>systemd unit drop-in 机制(<code>service.d/*.conf</code>):<a href=https://www.freedesktop.org/software/systemd/man/latest/systemd.unit.html>https://www.freedesktop.org/software/systemd/man/latest/systemd.unit.html</a></li><li>Python 官方 asyncio 文档(<code>loop.add_signal_handler</code> / <code>Task.cancel</code>):<a href=https://docs.python.org/3/library/asyncio-eventloop.html#asyncio.loop.add_signal_handler>https://docs.python.org/3/library/asyncio-eventloop.html#asyncio.loop.add_signal_handler</a></li><li>PEP 492 — Coroutines with async and await:<a href=https://peps.python.org/pep-0492/>https://peps.python.org/pep-0492/</a></li><li>systemd finalrd 手册:<a href=https://www.freedesktop.org/software/systemd/man/latest/finalrd.html>https://www.freedesktop.org/software/systemd/man/latest/finalrd.html</a></li><li>journalctl 时间戳的正确读法:<a href=https://www.freedesktop.org/software/systemd/man/latest/journalctl.html>https://www.freedesktop.org/software/systemd/man/latest/journalctl.html</a></li><li>systemd <code>KillMode=mixed</code> 的语义:<a href=https://www.freedesktop.org/software/systemd/man/latest/systemd.kill.html>https://www.freedesktop.org/software/systemd/man/latest/systemd.kill.html</a></li></ol><blockquote><p>本文涉及的所有内网 IP、内网域名、用户名、密码、配置路径均已在公开前做脱敏处理;具体网络拓扑以你自家环境为准。</p></blockquote></div></article><link rel=stylesheet href=https://cdn.jsdelivr.net/npm/gitalk/dist/gitalk.css><script src=https://cdn.jsdelivr.net/npm/gitalk/dist/gitalk.min.js></script><div id=gitalk-container style=margin-top:40px></div><script>(function(){var e=new Gitalk({clientID:"3181fd94e501cc5db0ad",clientSecret:"af1dab79dae02c69296e6615bfcecf47fc8615ee",repo:"margropcomment.margrop.io",owner:"margrop",admin:["margrop"],id:"/post/ubuntu-shutdown-stuck/",distractionFreeMode:!1});e.render("gitalk-container")})()</script><script type=text/javascript src=https://js.users.51.la/21044367.js></script><script id=LA_COLLECT src=//sdk.51.la/js-sdk-pro.min.js></script><script>LA.init({id:"1vVTUWl7zoRjnKXi",ck:"1vVTUWl7zoRjnKXi"})</script><script src=https://sdk.51.la/perf/js-sdk-perf.min.js crossorigin=anonymous></script><script>(new LingQue.Monitor).init({id:"202teQt8THXwqyve"})</script></body></html>
+</code></pre><p><strong>rule-proxy 和 smart-proxy 各自在 1 秒内 Deactivated</strong>,而不再是卡 90 秒被 SIGKILL。</p>
+<p>下面这张对比图是这个修复的核心:</p>
+<p><img src="/post-images/ubuntu-shutdown-stuck/zh/02-signal-vs-kill.svg" alt="SIGTERM vs SIGKILL 时间轴对比:90 秒变 1 秒"></p>
+<p><em>图 2 (回看):同样的进程、同样的服务、同样的 reboot 命令,只是 Python 加了 15 行主动 cancel 的代码,systemd 加了一个 4 行 drop-in。从 90 秒到 1 秒。</em></p>
+<p>修复在 <code>/opt/smart-proxy/</code> 里留了 <code>.bak.20260619_103832</code> 备份。如果新代码有问题想回滚,直接 <code>cp</code> 回去 <code>systemctl restart</code> 即可。</p>
+<hr>
+<h2 id="六留给你的几条经验">六、留给你的几条经验</h2>
+<p>这次排查让我重新认识了几件事:</p>
+<p><strong>1. <code>TimeoutStopSec=90s</code> 是个&quot;最长等 90s&quot;的兜底,不是&quot;应该等 90s&quot;的设计。</strong> systemd 默认值是给&quot;老派 daemon&quot;准备的——那些会响应 SIGTERM 自己清理的服务。对 Python asyncio 这类&quot;事件循环被 socket 卡住&quot;的程序,默认 90s 就是&quot;无论你写得有多烂,我也给你 90 秒体面地走&quot;。<strong>真正体面的服务应该在毫秒级响应</strong>。</p>
+<p><strong>2. SIGTERM 不是 SIGKILL,systemd 在给你机会。</strong> 如果你的服务在 SIGTERM 时挂住了,不要把责任推给 systemd,先想想是不是你的 signal handler 漏了什么。asyncio 的世界里,<strong><code>loop.add_signal_handler</code> 只是入口,真正的活是去 cancel 那些卡在 I/O 上的协程</strong>。</p>
+<p><strong>3. drop-in 是 systemd 给你留的安全补丁位。</strong> <code>/etc/systemd/system/&lt;service&gt;.service.d/override.conf</code> 比直接改原 unit 文件安全得多——包升级不会冲掉它,可以版本控制,review 起来一目了然。所有&quot;对 system unit 的小调整&quot;都应该走 drop-in。</p>
+<p><strong>4. <code>finalrd</code> 不是元凶。</strong> 我一开始看到 <code>Stopping finalrd.service</code> 也耗了&quot;一分钟&quot;,就去翻它的 source,后来发现那只是 journal 的视觉错位——它实际 &lt;1 秒就结束了。<strong>遇到慢,先抓 journal 的精确时间戳,别靠肉眼估计</strong>。</p>
+<hr>
+<h2 id="qa">Q&amp;A</h2>
+<h3 id="q1为什么-systemd-默认-timeoutstopsec90s">Q1:为什么 systemd 默认 <code>TimeoutStopSec=90s</code>?</h3>
+<p>为了兼容老派守护进程(那些只用 <code>signal.signal(signal.SIGTERM, handler)</code> 设了个 handler,但 handler 里只打了一行 log 就 <code>return</code> 的程序)。90s 是给&quot;进程可能正在做关键写入&quot;的兜底,比如数据库刷盘。Python asyncio 这类&quot;事件循环 + 长连接&quot;程序不在这个假设里。</p>
+<h3 id="q2能不能直接把-timeoutstopsec5s什么都不改-python">Q2:能不能直接把 <code>TimeoutStopSec=5s</code>,什么都不改 Python?</h3>
+<p>可以——会把 90 秒压到 5 秒,但<strong>本质还是 SIGKILL 强杀</strong>。正在飞的 SOCKS5 连接会被切断,客户端会拿到 <code>Connection reset</code>。体验差。drop-in 是兜底,不是治愈。</p>
+<h3 id="q3taskcancel-是立刻结束吗">Q3:<code>task.cancel()</code> 是立刻结束吗?</h3>
+<p>不是。<code>cancel()</code> 只是给协程发了一个&quot;该停了&quot;的标记。协程要等到<strong>下一个 <code>await</code> 点</strong>才会真正抛 <code>CancelledError</code>。对挂在 <code>socket.recv</code> 上的协程,这个 <code>await</code> 就是 <code>recv</code> 那里——信号一来,socket 会被 asyncio 内部取消,recv 返回 <code>CancelledError</code>,协程进入 <code>finally</code>,关 socket,结束。<strong>所以 cancel() 是&quot;毫秒级&quot;而不是&quot;立刻&quot;,但比 SIGKILL 干净</strong>。</p>
+<h3 id="q4serverwait_closed-也会卡吗">Q4:<code>server.wait_closed()</code> 也会卡吗?</h3>
+<p>偶尔会。如果还有 connection 在 write buffer 里没收完,它会等收完。最安全的做法是 <code>server.close()</code> 之后<strong>不再 await wait_closed()</strong>,直接退出。我的修复用了 <code>asyncio.wait_for(self.stop(), timeout=10)</code> 给它 10 秒兜底,过了就放弃。</p>
+<h3 id="q5为什么不用-loopstop-或-loopclose">Q5:为什么不用 <code>loop.stop()</code> 或 <code>loop.close()</code>?</h3>
+<p><code>loop.stop()</code> 只是让事件循环停止调度,<strong>不会取消已经创建的 task</strong>。你 stop 之后 Python 进程会立刻 exit,但子任务还在 socket.recv 上挂着——内核层面是干净的,但如果有 finally 块想做清理(比如写&quot;已断开连接&quot;日志),就跑不到了。<strong>主动 cancel 是更体面的做法</strong>。</p>
+<h3 id="q6asyncioall_tasks-里会不会漏掉">Q6:<code>asyncio.all_tasks()</code> 里会不会漏掉?</h3>
+<p>如果某些连接是在 <code>Task</code> 之外被 <code>asyncio.ensure_future()</code> 启动的,默认它们也算&quot;all tasks&quot;。但有些用了 <code>asyncio.TaskGroup</code> 的复杂服务可能有自己的 task 树,这种时候 <code>all_tasks()</code> 仍然有效,因为它返回的是<strong>整个事件循环里的全部 task</strong>,不依赖任何分组。<strong>唯一会漏的,是用裸 coroutine <code>await coroutine</code> 而不是 <code>asyncio.create_task(coroutine)</code> 的情况——那种根本就没成为 task</strong>。</p>
+<h3 id="q7这套方法适用于非-asyncio-的普通-python-服务吗">Q7:这套方法适用于非 asyncio 的普通 Python 服务吗?</h3>
+<p>适用,但代码不同。普通阻塞 Python 服务,你需要的是 <code>signal.signal(signal.SIGTERM, handler)</code>,handler 里 <code>sys.exit(0)</code> 即可——阻塞服务收到 SIGTERM 时,Python 解释器本身会主动处理。<strong>只有事件循环&quot;被卡住&quot;的程序(asyncio、twisted、tornado)才需要这种主动 cancel 的处理</strong>。</p>
+<h3 id="q8不重启服务能-reload-修复吗">Q8:不重启服务能 reload 修复吗?</h3>
+<p>不能。Python 进程的代码段在内存里,你必须 <code>systemctl restart smart-proxy.service</code> 让它重新加载新代码。但 drop-in 改了之后,<strong>只要 <code>systemctl daemon-reload</code>,unit 配置就生效</strong>——下次这个服务 stop 时就用新规则。所以这两件事是分开的:</p>
+<ul>
+<li><strong>立即</strong>: <code>systemctl daemon-reload</code> + <code>systemctl restart smart-proxy rule-proxy</code></li>
+<li><strong>永久</strong>: drop-in 文件留在盘上,下次升级也不会被冲掉</li>
+</ul>
+<h3 id="q9有没有更工程化的方案">Q9:有没有更&quot;工程化&quot;的方案?</h3>
+<p>有。如果你做长期维护,可以写一个 <code>asyncio.ShutdownContext</code> 上下文管理器:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-python" data-lang="python"><span style="display:flex;"><span><span style="color:#a6e22e">@asynccontextmanager</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">async</span> <span style="color:#66d9ef">def</span> <span style="color:#a6e22e">graceful_shutdown</span>(handler_names, timeout<span style="color:#f92672">=</span><span style="color:#ae81ff">10</span>):
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">yield</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#75715e"># 收尾逻辑</span>
+</span></span><span style="display:flex;"><span>    me <span style="color:#f92672">=</span> asyncio<span style="color:#f92672">.</span>current_task()
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">for</span> t <span style="color:#f92672">in</span> asyncio<span style="color:#f92672">.</span>all_tasks():
+</span></span><span style="display:flex;"><span>        <span style="color:#66d9ef">if</span> t <span style="color:#f92672">is</span> me: <span style="color:#66d9ef">continue</span>
+</span></span><span style="display:flex;"><span>        <span style="color:#66d9ef">if</span> t<span style="color:#f92672">.</span>get_coro()<span style="color:#f92672">.</span>__qualname__ <span style="color:#f92672">in</span> handler_names:
+</span></span><span style="display:flex;"><span>            t<span style="color:#f92672">.</span>cancel()
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">try</span>:
+</span></span><span style="display:flex;"><span>        <span style="color:#66d9ef">await</span> asyncio<span style="color:#f92672">.</span>wait_for(server<span style="color:#f92672">.</span>close_all(), timeout<span style="color:#f92672">=</span>timeout)
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">except</span> asyncio<span style="color:#f92672">.</span>TimeoutError:
+</span></span><span style="display:flex;"><span>        <span style="color:#66d9ef">pass</span>
+</span></span></code></pre></div><p>每个 asyncio 服务套这个上下文,信号处理逻辑就一致了。这次我没做这层抽象,因为只有两个服务,<strong>抽象的代价大于重复的代价</strong>。</p>
+<h3 id="q10这次修复是不是过度设计">Q10:这次修复是不是过度设计?</h3>
+<p>不算。这次只有一个 unit 慢。但<strong>今晚的&quot;一个 unit 慢&quot;,明晚就可能是&quot;五个 unit 慢&quot;</strong>。先把&quot;系统层兜底 + 应用层主动 cancel&quot;这两件套搞清楚,以后再遇到 asyncio 服务卡 SIGTERM,5 分钟就能修。</p>
+<hr>
+<h2 id="参考资料">参考资料</h2>
+<ol>
+<li>systemd <code>service</code> 手册(<code>TimeoutStopSec</code> / <code>KillMode</code> / <code>KillSignal</code>):<a href="https://www.freedesktop.org/software/systemd/man/latest/systemd.service.html">https://www.freedesktop.org/software/systemd/man/latest/systemd.service.html</a></li>
+<li>systemd unit drop-in 机制(<code>service.d/*.conf</code>):<a href="https://www.freedesktop.org/software/systemd/man/latest/systemd.unit.html">https://www.freedesktop.org/software/systemd/man/latest/systemd.unit.html</a></li>
+<li>Python 官方 asyncio 文档(<code>loop.add_signal_handler</code> / <code>Task.cancel</code>):<a href="https://docs.python.org/3/library/asyncio-eventloop.html#asyncio.loop.add_signal_handler">https://docs.python.org/3/library/asyncio-eventloop.html#asyncio.loop.add_signal_handler</a></li>
+<li>PEP 492 — Coroutines with async and await:<a href="https://peps.python.org/pep-0492/">https://peps.python.org/pep-0492/</a></li>
+<li>systemd finalrd 手册:<a href="https://www.freedesktop.org/software/systemd/man/latest/finalrd.html">https://www.freedesktop.org/software/systemd/man/latest/finalrd.html</a></li>
+<li>journalctl 时间戳的正确读法:<a href="https://www.freedesktop.org/software/systemd/man/latest/journalctl.html">https://www.freedesktop.org/software/systemd/man/latest/journalctl.html</a></li>
+<li>systemd <code>KillMode=mixed</code> 的语义:<a href="https://www.freedesktop.org/software/systemd/man/latest/systemd.kill.html">https://www.freedesktop.org/software/systemd/man/latest/systemd.kill.html</a></li>
+</ol>
+<blockquote>
+<p>本文涉及的所有内网 IP、内网域名、用户名、密码、配置路径均已在公开前做脱敏处理;具体网络拓扑以你自家环境为准。</p>
+</blockquote>
+        </div>
+    </article>
+
+    
+  
+
+
+  
+    
+  
+
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk/dist/gitalk.css">
+<script src="https://cdn.jsdelivr.net/npm/gitalk/dist/gitalk.min.js"></script>
+<div id="gitalk-container" style="margin-top:40px"></div>
+<script>
+  (function(){
+    var gitalk = new Gitalk({
+      clientID: '3181fd94e501cc5db0ad',
+      clientSecret: 'af1dab79dae02c69296e6615bfcecf47fc8615ee',
+      repo: 'margropcomment.margrop.io',
+      owner: 'margrop',
+      admin: ["margrop"],
+      
+      id: '\/post\/ubuntu-shutdown-stuck\/',
+      
+      distractionFreeMode: false
+    });
+    gitalk.render('gitalk-container');
+  })();
+</script>
+  
+
+
+
+
+    
+    <script type="text/javascript" src="https://js.users.51.la/21044367.js"></script>
+    <script charset="UTF-8" id="LA_COLLECT" src="//sdk.51.la/js-sdk-pro.min.js"></script>
+    <script>LA.init({id: "1vVTUWl7zoRjnKXi",ck: "1vVTUWl7zoRjnKXi"})</script>
+    <script src="https://sdk.51.la/perf/js-sdk-perf.min.js" crossorigin="anonymous"></script>
+    <script>
+      new LingQue.Monitor().init({id:"202teQt8THXwqyve"});
+    </script>
+</body>
+</html>

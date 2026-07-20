@@ -1,26 +1,296 @@
-<!doctype html><html lang=zh-CN><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>你能 SSH 出去，却 SSH 不回来：一次被 Fail2Ban 误伤的反向访问排障实录 - 魔都水滴</title><meta name=description content="先说结论 这次问题的表象很简单：本机可以主动 SSH 到远端内网机器，但远端机器反过来 SSH 回本机时，连接直接被拒绝。sshd 明明在监听，路由也没断，最后却卡在“反向访问”这一步。 真正的根因不是 sshd 挂了，而是 Fail2Ban 把承载反向连接的 VPN 网关地址 封掉了。对本机来说，来自远端的连接并不是 …"><meta name=robots content="index, follow"><link rel=canonical href=https://blog.margrop.net/post/reverse-ssh-fail2ban-vpn-gateway-investigation/><meta property="og:site_name" content="魔都水滴"><meta property="og:title" content="你能 SSH 出去，却 SSH 不回来：一次被 Fail2Ban 误伤的反向访问排障实录 - 魔都水滴"><meta property="og:description" content="先说结论 这次问题的表象很简单：本机可以主动 SSH 到远端内网机器，但远端机器反过来 SSH 回本机时，连接直接被拒绝。sshd 明明在监听，路由也没断，最后却卡在“反向访问”这一步。 真正的根因不是 sshd 挂了，而是 Fail2Ban 把承载反向连接的 VPN 网关地址 封掉了。对本机来说，来自远端的连接并不是 …"><meta property="og:url" content="https://blog.margrop.net/post/reverse-ssh-fail2ban-vpn-gateway-investigation/"><meta property="og:locale" content="zh_CN"><meta property="og:type" content="article"><meta property="og:locale:alternate" content="en_US"><meta property="og:image" content="https://blog.margrop.net/images/avatar.png"><meta name=twitter:card content="summary_large_image"><meta name=twitter:title content="你能 SSH 出去，却 SSH 不回来：一次被 Fail2Ban 误伤的反向访问排障实录 - 魔都水滴"><meta name=twitter:description content="先说结论 这次问题的表象很简单：本机可以主动 SSH 到远端内网机器，但远端机器反过来 SSH 回本机时，连接直接被拒绝。sshd 明明在监听，路由也没断，最后却卡在“反向访问”这一步。 真正的根因不是 sshd 挂了，而是 Fail2Ban 把承载反向连接的 VPN 网关地址 封掉了。对本机来说，来自远端的连接并不是 …"><meta name=twitter:image content="https://blog.margrop.net/images/avatar.png"><link rel=alternate hreflang=zh-CN href=https://blog.margrop.net/post/reverse-ssh-fail2ban-vpn-gateway-investigation/><link rel=alternate hreflang=en-US href=https://blog.margrop.net/en/post/reverse-ssh-fail2ban-vpn-gateway-investigation/><link rel=alternate hreflang=x-default href=https://blog.margrop.net/><meta property="article:published_time" content="2026-05-30T15:45:00+08:00"><meta property="article:modified_time" content="2026-05-30T15:45:00+08:00"><meta property="article:tag" content="SSH"><meta property="article:tag" content="Fail2Ban"><meta property="article:tag" content="nftables"><meta property="article:tag" content="VPN"><meta property="article:tag" content="故障排查"><meta property="article:tag" content="网络"><meta property="article:tag" content="安全"><meta property="article:tag" content="Linux"><script type=application/ld+json>{"@context":"https://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"魔都水滴"},"dateModified":"2026-05-30T15:45:00+08:00","datePublished":"2026-05-30T15:45:00+08:00","description":"先说结论 这次问题的表象很简单：本机可以主动 SSH 到远端内网机器，但远端机器反过来 SSH 回本机时，连接直接被拒绝。sshd 明明在监听，路由也没断，最后却卡在“反向访问”这一步。 真正的根因不是 sshd 挂了，而是 Fail2Ban 把承载反向连接的 VPN 网关地址 封掉了。对本机来说，来自远端的连接并不是 …","headline":"你能 SSH 出去，却 SSH 不回来：一次被 Fail2Ban 误伤的反向访问排障实录","mainEntityOfPage":"https://blog.margrop.net/post/reverse-ssh-fail2ban-vpn-gateway-investigation/","url":"https://blog.margrop.net/post/reverse-ssh-fail2ban-vpn-gateway-investigation/"}</script><meta name=baidu-site-verification content="code-sVFZ8SER59"><script async src="https://www.googletagmanager.com/gtag/js?id=G-3J2W592DHJ"></script><script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments)}gtag("js",new Date),gtag("config","G-3J2W592DHJ")</script><style>body{font-family:-apple-system,BlinkMacSystemFont,segoe ui,Roboto,sans-serif;max-width:860px;margin:0 auto;padding:20px;line-height:1.7;color:#222}h1{border-bottom:2px solid #333;padding-bottom:10px}.post-list{list-style:none;padding:0}.post-list li{margin:15px 0}.post-list a{text-decoration:none;color:#333;font-size:18px}.post-list a:hover{color:#006cff}.date{color:#666;font-size:14px;margin-right:10px}.tags{margin-top:8px}.tag{background:#eee;padding:2px 8px;border-radius:3px;font-size:12px;margin-right:5px;display:inline-block}nav{margin-bottom:18px;border-bottom:1px solid #eee;padding-bottom:15px}nav a{margin-right:20px;text-decoration:none;color:#333;font-size:16px}nav a:hover{color:#006cff}.language-switcher{margin:-8px 0 26px}.language-switcher a{display:inline-block;margin-right:10px;padding:4px 10px;border:1px solid #ddd;border-radius:999px;color:#555;text-decoration:none;font-size:14px}.language-switcher a.active{background:#006cff;border-color:#006cff;color:#fff}.content{line-height:1.8}.content code{background:#f4f4f4;padding:2px 5px;border-radius:3px}.content pre{background:#f4f4f4;padding:15px;overflow-x:auto;border-radius:5px}.content img{display:block;max-width:100%;height:auto;margin:0 auto}.content .code-snippet__fix{margin:0 0 1.5em}.content .code-snippet__fix .code-snippet__line-index{display:none!important}.meta{color:#666;font-size:14px;margin-bottom:14px}a{color:#006cff}@media(max-width:680px){body{padding:16px}nav a{display:inline-block;margin-right:12px;margin-bottom:8px}}</style></head><body><nav><a href=/>首页</a>
-<a href=/post/>归档</a>
-<a href=/tags/>标签</a>
-<a href=/post/about/>关于</a>
-<a href=https://download.margrop.net target=_blank rel=noopener>下载</a>
-<a href=/post/favorites/>Link</a>
-<a href=/post/github-project-stars/>Github</a>
-<a href=https://github-mirrors.margrop.net target=_blank rel=noopener>Github加速</a>
-<a href=https://status.anye.xyz/ target=_blank rel=noopener>Docker加速</a></nav><div class=language-switcher><a href=/post/reverse-ssh-fail2ban-vpn-gateway-investigation/ class=active>中文</a>
-<a href=/en/post/reverse-ssh-fail2ban-vpn-gateway-investigation/>English</a></div><article><h1>你能 SSH 出去，却 SSH 不回来：一次被 Fail2Ban 误伤的反向访问排障实录</h1><div class=meta>发布时间: 2026-05-30</div><div class=tags><a href=/tag/ssh/><span class=tag>SSH</span></a>
-<a href=/tag/fail2ban/><span class=tag>Fail2Ban</span></a>
-<a href=/tag/nftables/><span class=tag>nftables</span></a>
-<a href=/tag/vpn/><span class=tag>VPN</span></a>
-<a href=/tag/%E6%95%85%E9%9A%9C%E6%8E%92%E6%9F%A5/><span class=tag>故障排查</span></a>
-<a href=/tag/%E7%BD%91%E7%BB%9C/><span class=tag>网络</span></a>
-<a href=/tag/%E5%AE%89%E5%85%A8/><span class=tag>安全</span></a>
-<a href=/tag/linux/><span class=tag>Linux</span></a></div><div class=content><blockquote><p><strong>先说结论</strong></p><p>这次问题的表象很简单：本机可以主动 SSH 到远端内网机器，但远端机器反过来 SSH 回本机时，连接直接被拒绝。<code>sshd</code> 明明在监听，路由也没断，最后却卡在“反向访问”这一步。</p><p>真正的根因不是 <code>sshd</code> 挂了，而是 <code>Fail2Ban</code> 把承载反向连接的 <strong>VPN 网关地址</strong> 封掉了。对本机来说，来自远端的连接并不是以“远端机器本身”的地址出现，而是以网关地址出现。于是，错误的封禁对象把整条回程链路一并打断了。</p></blockquote><p><img src=/post-images/reverse-ssh-fail2ban-vpn-gateway/01-cover.svg alt="reverse ssh cover"></p><h2 id=1-问题背景单向能通反向却断>1. 问题背景：单向能通，反向却断</h2><p>这类故障非常容易让人陷入第一层直觉：既然我能从本机连到远端，那网络大体应该没问题；既然远端反过来连不上本机，那大概率是本机 <code>sshd</code> 出故障了。</p><p>但真实情况往往更绕。</p><p>我这次遇到的场景是：</p><ol><li>本机可以正常 <code>ssh</code> 到远端内网机器。</li><li>远端内网机器也确实能“看到”本机。</li><li>但是远端机器一旦尝试反向 <code>ssh root@本机</code>，就直接失败。</li><li>本机 <code>sshd</code> 服务和 22 端口监听都正常。</li><li>日志里没有明显的服务崩溃。</li></ol><p>如果只看结果，很像是“本机拒绝了远端”。但如果看链路，就会发现真正需要验证的是：<strong>到底是谁在对本机发起连接，源地址又是谁。</strong></p><p><img src=/post-images/reverse-ssh-fail2ban-vpn-gateway/02-path-map.svg alt="reverse ssh path map"></p><h2 id=2-问题表现connection-refused-不是sshd-挂了>2. 问题表现：<code>Connection refused</code> 不是“sshd 挂了”</h2><p>排查初期，我先从最基础的地方开始：</p><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-bash data-lang=bash><span style=display:flex><span>ss -lntp | grep <span style=color:#e6db74>&#39;:22&#39;</span>
-</span></span><span style=display:flex><span>systemctl status ssh
-</span></span></code></pre></div><p>结果都正常。<code>sshd</code> 在监听，systemd 服务也在运行。于是我又从远端机器做了一个最小化连接测试，得到的不是超时，而是 <code>Connection refused</code>。</p><p>这个细节很重要。</p><p>一般来说：</p><ol><li><code>timeout</code> 更像是路径中间断了，或者包被静默丢弃。</li><li><code>refused</code> 则说明有一端明确回了拒绝。</li></ol><p>这就提示我：问题很可能不是“完全到不了”，而是“到了，但被某个规则主动拒绝了”。</p><h2 id=3-第一层排查本机-sshd-没问题>3. 第一层排查：本机 <code>sshd</code> 没问题</h2><p>为了不被表象带偏，我继续做了三件事。</p><h3 id=先看监听>先看监听</h3><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-bash data-lang=bash><span style=display:flex><span>ss -lntp | grep <span style=color:#e6db74>&#39;:22&#39;</span>
-</span></span></code></pre></div><p>确认 <code>sshd</code> 在 <code>0.0.0.0:22</code> 上监听，没有绑定错地址，也没有只监听回环。</p><h3 id=再看日志>再看日志</h3><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-bash data-lang=bash><span style=display:flex><span>journalctl -u ssh -n <span style=color:#ae81ff>100</span> --no-pager
-</span></span></code></pre></div><p>日志里能看到大量正常的连接尝试、认证失败和成功记录，说明 SSH 服务链路本身是活的。</p><h3 id=最后看防火墙>最后看防火墙</h3><p>这一步才是关键。</p><p>我检查了 <code>nftables</code> 规则，发现有一张 <code>fail2ban</code> 创建的表，里面 <code>sshd</code> 的封禁集合已经包含了一个我非常熟悉的地址：<strong>VPN 网关地址</strong>。</p><p><img src=/post-images/reverse-ssh-fail2ban-vpn-gateway/03-timeline.svg alt="debug timeline"></p><h2 id=4-问题分析为什么远端机器会变成网关地址>4. 问题分析：为什么“远端机器”会变成“网关地址”</h2><p>这一步是整个问题的核心。</p><p>很多人会默认“远端机器连回来，源地址就应该是远端机器自己的地址”。但在内网、VPN、隧道、网关转发这些场景下，事情不一定这么简单。</p><p>对本机来说，实际看到的连接源头并不是远端机器的真实地址，而是：</p><ol><li>VPN 出口地址。</li><li>隧道终端地址。</li><li>或者某种会话转发后的中间地址。</li></ol><p>换句话说，<strong>远端机器是通过一个共享的网关路径回来的</strong>。当本机收到包时，它只看得见网关，不一定看得见最终客户端。</p><p>这就解释了为什么 <code>Fail2Ban</code> 会误伤：</p><ol><li>之前某些 SSH 失败行为积累到了阈值。</li><li><code>Fail2Ban</code> 把“网关地址”判定成了攻击源。</li><li>一旦网关被封，所有经由该网关回来的连接都会被一起拦掉。</li></ol><p>所以表面上看是“远端不能 SSH 回本机”，实际上是“回程链路的中间地址被封了”。</p><h2 id=5-根因fail2ban-误封了-vpn-网关>5. 根因：<code>Fail2Ban</code> 误封了 VPN 网关</h2><p>最终我在 <code>fail2ban-client</code> 里确认了这一点：</p><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-bash data-lang=bash><span style=display:flex><span>fail2ban-client status sshd
-</span></span></code></pre></div><p>输出里，<code>Banned IP list</code> 就是那个网关地址。</p><p>这意味着：</p><ol><li><code>sshd</code> 没坏。</li><li>路由没断。</li><li>反向访问的客户端也不是“凭空消失”。</li><li>真正断掉的是 <code>Fail2Ban</code> 触发的防火墙拒绝。</li></ol><p>这类故障最容易误导人的地方在于：SSH 层和防火墙层都没有明显报错，只有客户端看到一个非常笼统的 <code>Connection refused</code>。如果没有抓包和状态检查，很容易把它归到“网络不稳定”或者“服务没起来”。</p><h2 id=6-如何修复先解封再白名单>6. 如何修复：先解封，再白名单</h2><p>修复策略分两步。</p><h3 id=第一步立刻解封当前网关>第一步：立刻解封当前网关</h3><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-bash data-lang=bash><span style=display:flex><span>fail2ban-client set sshd unbanip &lt;VPN_GATEWAY_IP&gt;
-</span></span></code></pre></div><p>这一步能让当前反向连接马上恢复。</p><h3 id=第二步把这个网关加入-ignoreip>第二步：把这个网关加入 <code>ignoreip</code></h3><p>我在 <code>/etc/fail2ban/jail.local</code> 里为 <code>sshd</code> 添加了白名单：</p><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-ini data-lang=ini><span style=display:flex><span><span style=color:#66d9ef>[sshd]</span>
-</span></span><span style=display:flex><span><span style=color:#a6e22e>ignoreip</span> <span style=color:#f92672>=</span> <span style=color:#e6db74>127.0.0.1/8 ::1 &lt;VPN_GATEWAY_IP&gt;</span>
-</span></span></code></pre></div><p>这不是“关掉防护”，而是把<strong>明确可信的中间层地址</strong>从 SSH 爆破检测中排除出去。</p><p>如果你的环境里有多个稳定入口网关，也可以把它们做成一个受控的白名单；但不要为了图省事把整个大网段一股脑放进去。Fail2Ban 的价值就在于它能替你挡住明显不可信的来源，白名单应当尽量精确。</p><h3 id=之后重载>之后重载</h3><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-bash data-lang=bash><span style=display:flex><span>fail2ban-client reload
-</span></span></code></pre></div><p>然后再从远端测试，反向 SSH 就恢复了。</p><h2 id=7-为什么这个问题很隐蔽>7. 为什么这个问题很隐蔽</h2><p>它隐蔽在三个地方。</p><h3 id=第一单向访问是好的>第一，单向访问是好的</h3><p>因为本机能主动连出去，所以人很容易把“网络”判定为整体正常。</p><h3 id=第二服务状态也是好的>第二，服务状态也是好的</h3><p><code>sshd</code> 在监听，系统服务正常，很多人会继续去查认证配置，而忽略防火墙和封禁状态。</p><h3 id=第三封禁对象并不直观>第三，封禁对象并不直观</h3><p>如果你没有意识到“反向 SSH 的源地址是网关而不是终端”，那你就很难第一时间想到 <code>Fail2Ban</code> 会误伤整条路径。</p><p>这就是为什么我这次没有直接“改配置碰碰运气”，而是先做了：</p><ol><li><code>ss</code> 看监听。</li><li><code>tcpdump</code> 看包从哪里来。</li><li><code>fail2ban-client status</code> 看谁被封。</li><li>最后才改 <code>ignoreip</code>。</li></ol><h2 id=8-faq>8. FAQ</h2><h3 id=q1-为什么显示的是-connection-refused不是超时>Q1: 为什么显示的是 <code>Connection refused</code>，不是超时？</h3><p>因为连接并不是完全被丢弃，而是被防火墙或规则链显式拒绝了。拒绝比静默丢包更容易在客户端侧表现成 <code>refused</code>。</p><h3 id=q2-既然是-fail2ban-误伤直接关掉它不就行了>Q2: 既然是 <code>Fail2Ban</code> 误伤，直接关掉它不就行了？</h3><p>不建议。</p><p><code>Fail2Ban</code> 仍然有价值，只是需要把“可信中间层地址”从 SSH 规则里排除。直接关闭相当于为了修一个误封，把整套防爆破能力一并拿掉。</p><h3 id=q3-怎么避免以后再出现同类问题>Q3: 怎么避免以后再出现同类问题？</h3><p>最有效的办法是：</p><ol><li>先弄清楚你的远端流量到底经过了谁。</li><li>只对白名单中真正可信的入口做排除。</li><li>定期检查 <code>fail2ban-client status sshd</code>，确认被封的到底是谁。</li><li>如果你依赖 VPN / 隧道 / 网关转发，务必把它们当成“链路节点”来管理，而不是把终端机和网关混成同一个地址。</li></ol><h3 id=q4-有没有更安全的做法>Q4: 有没有更安全的做法？</h3><p>有。</p><p>如果你的网络条件允许，可以把管理入口单独隔离到一个专门的管理网段，或者在 SSH 前面再加一层更明确的访问控制。这样即使 <code>Fail2Ban</code> 做了封禁，也不会误伤业务流量。</p><h2 id=9-参考资料>9. 参考资料</h2><p>这次写作时我参考了几份官方资料：</p><ol><li><a href=https://fail2ban.readthedocs.io/>Fail2Ban documentation</a></li><li><a href=https://github.com/fail2ban/fail2ban>Fail2Ban project repository</a></li><li><a href=https://man.openbsd.org/sshd_config>OpenSSH <code>sshd_config</code> manual</a></li><li><a href=https://wiki.nftables.org/>nftables wiki</a></li></ol><h2 id=10-总结>10. 总结</h2><p>这次问题表面上是“远端机器不能 SSH 回来”，真正的根因却是“回程路径上的 VPN 网关被 <code>Fail2Ban</code> 封了”。</p><p>这类故障最值得记住的不是某条命令，而是一个排障习惯：</p><p><strong>当服务看起来正常、路由看起来正常、单向通信也正常时，别忘了检查中间层是否在替你改写源地址。</strong></p><p>只要源地址变了，安全策略就可能把“合法访问”误判成“攻击流量”。</p><p>这次把 <code>ignoreip</code> 和 <code>unbanip</code> 处理对了，反向 SSH 就恢复了。更重要的是，我也把这条链路重新理解了一遍：不是所有看起来像“远端”的连接，最后都会以“远端”的身份出现在本机上。</p></div></article><link rel=stylesheet href=https://cdn.jsdelivr.net/npm/gitalk/dist/gitalk.css><script src=https://cdn.jsdelivr.net/npm/gitalk/dist/gitalk.min.js></script><div id=gitalk-container style=margin-top:40px></div><script>(function(){var e=new Gitalk({clientID:"3181fd94e501cc5db0ad",clientSecret:"af1dab79dae02c69296e6615bfcecf47fc8615ee",repo:"margropcomment.margrop.io",owner:"margrop",admin:["margrop"],id:"/post/reverse-ssh-fail2ban-vpn-gateway-investigat",distractionFreeMode:!1});e.render("gitalk-container")})()</script><script type=text/javascript src=https://js.users.51.la/21044367.js></script><script id=LA_COLLECT src=//sdk.51.la/js-sdk-pro.min.js></script><script>LA.init({id:"1vVTUWl7zoRjnKXi",ck:"1vVTUWl7zoRjnKXi"})</script><script src=https://sdk.51.la/perf/js-sdk-perf.min.js crossorigin=anonymous></script><script>(new LingQue.Monitor).init({id:"202teQt8THXwqyve"})</script></body></html>
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>你能 SSH 出去，却 SSH 不回来：一次被 Fail2Ban 误伤的反向访问排障实录 - 魔都水滴</title>
+<meta name="description" content="先说结论 这次问题的表象很简单：本机可以主动 SSH 到远端内网机器，但远端机器反过来 SSH 回本机时，连接直接被拒绝。sshd 明明在监听，路由也没断，最后却卡在“反向访问”这一步。 真正的根因不是 sshd 挂了，而是 Fail2Ban 把承载反向连接的 VPN 网关地址 封掉了。对本机来说，来自远端的连接并不是 …">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://blog.margrop.net/post/reverse-ssh-fail2ban-vpn-gateway-investigation/">
+
+<meta property="og:site_name" content="魔都水滴">
+<meta property="og:title" content="你能 SSH 出去，却 SSH 不回来：一次被 Fail2Ban 误伤的反向访问排障实录 - 魔都水滴">
+<meta property="og:description" content="先说结论 这次问题的表象很简单：本机可以主动 SSH 到远端内网机器，但远端机器反过来 SSH 回本机时，连接直接被拒绝。sshd 明明在监听，路由也没断，最后却卡在“反向访问”这一步。 真正的根因不是 sshd 挂了，而是 Fail2Ban 把承载反向连接的 VPN 网关地址 封掉了。对本机来说，来自远端的连接并不是 …">
+<meta property="og:url" content="https://blog.margrop.net/post/reverse-ssh-fail2ban-vpn-gateway-investigation/">
+<meta property="og:locale" content="zh_CN"><meta property="og:type" content="article"><meta property="og:locale:alternate" content="en_US"><meta property="og:image" content="https://blog.margrop.net/images/avatar.png"><meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="你能 SSH 出去，却 SSH 不回来：一次被 Fail2Ban 误伤的反向访问排障实录 - 魔都水滴">
+<meta name="twitter:description" content="先说结论 这次问题的表象很简单：本机可以主动 SSH 到远端内网机器，但远端机器反过来 SSH 回本机时，连接直接被拒绝。sshd 明明在监听，路由也没断，最后却卡在“反向访问”这一步。 真正的根因不是 sshd 挂了，而是 Fail2Ban 把承载反向连接的 VPN 网关地址 封掉了。对本机来说，来自远端的连接并不是 …"><meta name="twitter:image" content="https://blog.margrop.net/images/avatar.png"><link rel="alternate" hreflang="zh-CN" href="https://blog.margrop.net/post/reverse-ssh-fail2ban-vpn-gateway-investigation/"><link rel="alternate" hreflang="en-US" href="https://blog.margrop.net/en/post/reverse-ssh-fail2ban-vpn-gateway-investigation/"><link rel="alternate" hreflang="x-default" href="https://blog.margrop.net/"><meta property="article:published_time" content="2026-05-30T15:45:00&#43;08:00">
+<meta property="article:modified_time" content="2026-05-30T15:45:00&#43;08:00"><meta property="article:tag" content="SSH"><meta property="article:tag" content="Fail2Ban"><meta property="article:tag" content="nftables"><meta property="article:tag" content="VPN"><meta property="article:tag" content="故障排查"><meta property="article:tag" content="网络"><meta property="article:tag" content="安全"><meta property="article:tag" content="Linux"><script type="application/ld+json">{"@context":"https://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"魔都水滴"},"dateModified":"2026-05-30T15:45:00+08:00","datePublished":"2026-05-30T15:45:00+08:00","description":"先说结论 这次问题的表象很简单：本机可以主动 SSH 到远端内网机器，但远端机器反过来 SSH 回本机时，连接直接被拒绝。sshd 明明在监听，路由也没断，最后却卡在“反向访问”这一步。 真正的根因不是 sshd 挂了，而是 Fail2Ban 把承载反向连接的 VPN 网关地址 封掉了。对本机来说，来自远端的连接并不是 …","headline":"你能 SSH 出去，却 SSH 不回来：一次被 Fail2Ban 误伤的反向访问排障实录","mainEntityOfPage":"https://blog.margrop.net/post/reverse-ssh-fail2ban-vpn-gateway-investigation/","url":"https://blog.margrop.net/post/reverse-ssh-fail2ban-vpn-gateway-investigation/"}</script>
+    <meta name="baidu-site-verification" content="code-sVFZ8SER59" />
+
+    
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-3J2W592DHJ"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-3J2W592DHJ');
+    </script>
+
+    <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 860px; margin: 0 auto; padding: 20px; line-height: 1.7; color: #222; }
+    h1 { border-bottom: 2px solid #333; padding-bottom: 10px; }
+    .post-list { list-style: none; padding: 0; }
+    .post-list li { margin: 15px 0; }
+    .post-list a { text-decoration: none; color: #333; font-size: 18px; }
+    .post-list a:hover { color: #006CFF; }
+    .date { color: #666; font-size: 14px; margin-right: 10px; }
+    .tags { margin-top: 8px; }
+    .tag { background: #eee; padding: 2px 8px; border-radius: 3px; font-size: 12px; margin-right: 5px; display: inline-block; }
+    nav { margin-bottom: 18px; border-bottom: 1px solid #eee; padding-bottom: 15px; }
+    nav a { margin-right: 20px; text-decoration: none; color: #333; font-size: 16px; }
+    nav a:hover { color: #006CFF; }
+    .language-switcher { margin: -8px 0 26px; }
+    .language-switcher a { display: inline-block; margin-right: 10px; padding: 4px 10px; border: 1px solid #ddd; border-radius: 999px; color: #555; text-decoration: none; font-size: 14px; }
+    .language-switcher a.active { background: #006CFF; border-color: #006CFF; color: #fff; }
+    .content { line-height: 1.8; }
+    .content code { background: #f4f4f4; padding: 2px 5px; border-radius: 3px; }
+    .content pre { background: #f4f4f4; padding: 15px; overflow-x: auto; border-radius: 5px; }
+    .content img { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+    .content .code-snippet__fix {
+        margin: 0 0 1.5em;
+    }
+    .content .code-snippet__fix .code-snippet__line-index {
+        display: none !important;
+    }
+    .meta { color: #666; font-size: 14px; margin-bottom: 14px; }
+    a { color: #006CFF; }
+    @media (max-width: 680px) {
+        body { padding: 16px; }
+        nav a { display: inline-block; margin-right: 12px; margin-bottom: 8px; }
+    }
+</style>
+
+</head>
+<body>
+    <nav>
+  
+  <a href="/">首页</a>
+  <a href="/post/">归档</a>
+  <a href="/tags/">标签</a>
+  <a href="/post/about/">关于</a>
+  <a href="https://download.margrop.net" target="_blank" rel="noopener">下载</a>
+  <a href="/post/favorites/">Link</a>
+  <a href="/post/github-project-stars/">Github</a>
+  
+  <a href="https://github-mirrors.margrop.net" target="_blank" rel="noopener">Github加速</a>
+  <a href="https://status.anye.xyz/" target="_blank" rel="noopener">Docker加速</a>
+  
+</nav>
+
+    
+<div class="language-switcher">
+  
+    <a href="/post/reverse-ssh-fail2ban-vpn-gateway-investigation/" class="active">中文</a>
+  
+    <a href="/en/post/reverse-ssh-fail2ban-vpn-gateway-investigation/" class="">English</a>
+  
+</div>
+
+
+    
+    <article>
+        <h1>你能 SSH 出去，却 SSH 不回来：一次被 Fail2Ban 误伤的反向访问排障实录</h1>
+        <div class="meta">
+            发布时间: 2026-05-30
+        </div>
+        
+<div class="tags">
+    
+    <a href="/tag/ssh/"><span class="tag">SSH</span></a>
+    
+    <a href="/tag/fail2ban/"><span class="tag">Fail2Ban</span></a>
+    
+    <a href="/tag/nftables/"><span class="tag">nftables</span></a>
+    
+    <a href="/tag/vpn/"><span class="tag">VPN</span></a>
+    
+    <a href="/tag/%E6%95%85%E9%9A%9C%E6%8E%92%E6%9F%A5/"><span class="tag">故障排查</span></a>
+    
+    <a href="/tag/%E7%BD%91%E7%BB%9C/"><span class="tag">网络</span></a>
+    
+    <a href="/tag/%E5%AE%89%E5%85%A8/"><span class="tag">安全</span></a>
+    
+    <a href="/tag/linux/"><span class="tag">Linux</span></a>
+    
+</div>
+
+
+        <div class="content">
+            <blockquote>
+<p><strong>先说结论</strong></p>
+<p>这次问题的表象很简单：本机可以主动 SSH 到远端内网机器，但远端机器反过来 SSH 回本机时，连接直接被拒绝。<code>sshd</code> 明明在监听，路由也没断，最后却卡在“反向访问”这一步。</p>
+<p>真正的根因不是 <code>sshd</code> 挂了，而是 <code>Fail2Ban</code> 把承载反向连接的 <strong>VPN 网关地址</strong> 封掉了。对本机来说，来自远端的连接并不是以“远端机器本身”的地址出现，而是以网关地址出现。于是，错误的封禁对象把整条回程链路一并打断了。</p>
+</blockquote>
+<p><img src="/post-images/reverse-ssh-fail2ban-vpn-gateway/01-cover.svg" alt="reverse ssh cover"></p>
+<h2 id="1-问题背景单向能通反向却断">1. 问题背景：单向能通，反向却断</h2>
+<p>这类故障非常容易让人陷入第一层直觉：既然我能从本机连到远端，那网络大体应该没问题；既然远端反过来连不上本机，那大概率是本机 <code>sshd</code> 出故障了。</p>
+<p>但真实情况往往更绕。</p>
+<p>我这次遇到的场景是：</p>
+<ol>
+<li>本机可以正常 <code>ssh</code> 到远端内网机器。</li>
+<li>远端内网机器也确实能“看到”本机。</li>
+<li>但是远端机器一旦尝试反向 <code>ssh root@本机</code>，就直接失败。</li>
+<li>本机 <code>sshd</code> 服务和 22 端口监听都正常。</li>
+<li>日志里没有明显的服务崩溃。</li>
+</ol>
+<p>如果只看结果，很像是“本机拒绝了远端”。但如果看链路，就会发现真正需要验证的是：<strong>到底是谁在对本机发起连接，源地址又是谁。</strong></p>
+<p><img src="/post-images/reverse-ssh-fail2ban-vpn-gateway/02-path-map.svg" alt="reverse ssh path map"></p>
+<h2 id="2-问题表现connection-refused-不是sshd-挂了">2. 问题表现：<code>Connection refused</code> 不是“sshd 挂了”</h2>
+<p>排查初期，我先从最基础的地方开始：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>ss -lntp | grep <span style="color:#e6db74">&#39;:22&#39;</span>
+</span></span><span style="display:flex;"><span>systemctl status ssh
+</span></span></code></pre></div><p>结果都正常。<code>sshd</code> 在监听，systemd 服务也在运行。于是我又从远端机器做了一个最小化连接测试，得到的不是超时，而是 <code>Connection refused</code>。</p>
+<p>这个细节很重要。</p>
+<p>一般来说：</p>
+<ol>
+<li><code>timeout</code> 更像是路径中间断了，或者包被静默丢弃。</li>
+<li><code>refused</code> 则说明有一端明确回了拒绝。</li>
+</ol>
+<p>这就提示我：问题很可能不是“完全到不了”，而是“到了，但被某个规则主动拒绝了”。</p>
+<h2 id="3-第一层排查本机-sshd-没问题">3. 第一层排查：本机 <code>sshd</code> 没问题</h2>
+<p>为了不被表象带偏，我继续做了三件事。</p>
+<h3 id="先看监听">先看监听</h3>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>ss -lntp | grep <span style="color:#e6db74">&#39;:22&#39;</span>
+</span></span></code></pre></div><p>确认 <code>sshd</code> 在 <code>0.0.0.0:22</code> 上监听，没有绑定错地址，也没有只监听回环。</p>
+<h3 id="再看日志">再看日志</h3>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>journalctl -u ssh -n <span style="color:#ae81ff">100</span> --no-pager
+</span></span></code></pre></div><p>日志里能看到大量正常的连接尝试、认证失败和成功记录，说明 SSH 服务链路本身是活的。</p>
+<h3 id="最后看防火墙">最后看防火墙</h3>
+<p>这一步才是关键。</p>
+<p>我检查了 <code>nftables</code> 规则，发现有一张 <code>fail2ban</code> 创建的表，里面 <code>sshd</code> 的封禁集合已经包含了一个我非常熟悉的地址：<strong>VPN 网关地址</strong>。</p>
+<p><img src="/post-images/reverse-ssh-fail2ban-vpn-gateway/03-timeline.svg" alt="debug timeline"></p>
+<h2 id="4-问题分析为什么远端机器会变成网关地址">4. 问题分析：为什么“远端机器”会变成“网关地址”</h2>
+<p>这一步是整个问题的核心。</p>
+<p>很多人会默认“远端机器连回来，源地址就应该是远端机器自己的地址”。但在内网、VPN、隧道、网关转发这些场景下，事情不一定这么简单。</p>
+<p>对本机来说，实际看到的连接源头并不是远端机器的真实地址，而是：</p>
+<ol>
+<li>VPN 出口地址。</li>
+<li>隧道终端地址。</li>
+<li>或者某种会话转发后的中间地址。</li>
+</ol>
+<p>换句话说，<strong>远端机器是通过一个共享的网关路径回来的</strong>。当本机收到包时，它只看得见网关，不一定看得见最终客户端。</p>
+<p>这就解释了为什么 <code>Fail2Ban</code> 会误伤：</p>
+<ol>
+<li>之前某些 SSH 失败行为积累到了阈值。</li>
+<li><code>Fail2Ban</code> 把“网关地址”判定成了攻击源。</li>
+<li>一旦网关被封，所有经由该网关回来的连接都会被一起拦掉。</li>
+</ol>
+<p>所以表面上看是“远端不能 SSH 回本机”，实际上是“回程链路的中间地址被封了”。</p>
+<h2 id="5-根因fail2ban-误封了-vpn-网关">5. 根因：<code>Fail2Ban</code> 误封了 VPN 网关</h2>
+<p>最终我在 <code>fail2ban-client</code> 里确认了这一点：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>fail2ban-client status sshd
+</span></span></code></pre></div><p>输出里，<code>Banned IP list</code> 就是那个网关地址。</p>
+<p>这意味着：</p>
+<ol>
+<li><code>sshd</code> 没坏。</li>
+<li>路由没断。</li>
+<li>反向访问的客户端也不是“凭空消失”。</li>
+<li>真正断掉的是 <code>Fail2Ban</code> 触发的防火墙拒绝。</li>
+</ol>
+<p>这类故障最容易误导人的地方在于：SSH 层和防火墙层都没有明显报错，只有客户端看到一个非常笼统的 <code>Connection refused</code>。如果没有抓包和状态检查，很容易把它归到“网络不稳定”或者“服务没起来”。</p>
+<h2 id="6-如何修复先解封再白名单">6. 如何修复：先解封，再白名单</h2>
+<p>修复策略分两步。</p>
+<h3 id="第一步立刻解封当前网关">第一步：立刻解封当前网关</h3>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>fail2ban-client set sshd unbanip &lt;VPN_GATEWAY_IP&gt;
+</span></span></code></pre></div><p>这一步能让当前反向连接马上恢复。</p>
+<h3 id="第二步把这个网关加入-ignoreip">第二步：把这个网关加入 <code>ignoreip</code></h3>
+<p>我在 <code>/etc/fail2ban/jail.local</code> 里为 <code>sshd</code> 添加了白名单：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-ini" data-lang="ini"><span style="display:flex;"><span><span style="color:#66d9ef">[sshd]</span>
+</span></span><span style="display:flex;"><span><span style="color:#a6e22e">ignoreip</span> <span style="color:#f92672">=</span> <span style="color:#e6db74">127.0.0.1/8 ::1 &lt;VPN_GATEWAY_IP&gt;</span>
+</span></span></code></pre></div><p>这不是“关掉防护”，而是把<strong>明确可信的中间层地址</strong>从 SSH 爆破检测中排除出去。</p>
+<p>如果你的环境里有多个稳定入口网关，也可以把它们做成一个受控的白名单；但不要为了图省事把整个大网段一股脑放进去。Fail2Ban 的价值就在于它能替你挡住明显不可信的来源，白名单应当尽量精确。</p>
+<h3 id="之后重载">之后重载</h3>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>fail2ban-client reload
+</span></span></code></pre></div><p>然后再从远端测试，反向 SSH 就恢复了。</p>
+<h2 id="7-为什么这个问题很隐蔽">7. 为什么这个问题很隐蔽</h2>
+<p>它隐蔽在三个地方。</p>
+<h3 id="第一单向访问是好的">第一，单向访问是好的</h3>
+<p>因为本机能主动连出去，所以人很容易把“网络”判定为整体正常。</p>
+<h3 id="第二服务状态也是好的">第二，服务状态也是好的</h3>
+<p><code>sshd</code> 在监听，系统服务正常，很多人会继续去查认证配置，而忽略防火墙和封禁状态。</p>
+<h3 id="第三封禁对象并不直观">第三，封禁对象并不直观</h3>
+<p>如果你没有意识到“反向 SSH 的源地址是网关而不是终端”，那你就很难第一时间想到 <code>Fail2Ban</code> 会误伤整条路径。</p>
+<p>这就是为什么我这次没有直接“改配置碰碰运气”，而是先做了：</p>
+<ol>
+<li><code>ss</code> 看监听。</li>
+<li><code>tcpdump</code> 看包从哪里来。</li>
+<li><code>fail2ban-client status</code> 看谁被封。</li>
+<li>最后才改 <code>ignoreip</code>。</li>
+</ol>
+<h2 id="8-faq">8. FAQ</h2>
+<h3 id="q1-为什么显示的是-connection-refused不是超时">Q1: 为什么显示的是 <code>Connection refused</code>，不是超时？</h3>
+<p>因为连接并不是完全被丢弃，而是被防火墙或规则链显式拒绝了。拒绝比静默丢包更容易在客户端侧表现成 <code>refused</code>。</p>
+<h3 id="q2-既然是-fail2ban-误伤直接关掉它不就行了">Q2: 既然是 <code>Fail2Ban</code> 误伤，直接关掉它不就行了？</h3>
+<p>不建议。</p>
+<p><code>Fail2Ban</code> 仍然有价值，只是需要把“可信中间层地址”从 SSH 规则里排除。直接关闭相当于为了修一个误封，把整套防爆破能力一并拿掉。</p>
+<h3 id="q3-怎么避免以后再出现同类问题">Q3: 怎么避免以后再出现同类问题？</h3>
+<p>最有效的办法是：</p>
+<ol>
+<li>先弄清楚你的远端流量到底经过了谁。</li>
+<li>只对白名单中真正可信的入口做排除。</li>
+<li>定期检查 <code>fail2ban-client status sshd</code>，确认被封的到底是谁。</li>
+<li>如果你依赖 VPN / 隧道 / 网关转发，务必把它们当成“链路节点”来管理，而不是把终端机和网关混成同一个地址。</li>
+</ol>
+<h3 id="q4-有没有更安全的做法">Q4: 有没有更安全的做法？</h3>
+<p>有。</p>
+<p>如果你的网络条件允许，可以把管理入口单独隔离到一个专门的管理网段，或者在 SSH 前面再加一层更明确的访问控制。这样即使 <code>Fail2Ban</code> 做了封禁，也不会误伤业务流量。</p>
+<h2 id="9-参考资料">9. 参考资料</h2>
+<p>这次写作时我参考了几份官方资料：</p>
+<ol>
+<li><a href="https://fail2ban.readthedocs.io/">Fail2Ban documentation</a></li>
+<li><a href="https://github.com/fail2ban/fail2ban">Fail2Ban project repository</a></li>
+<li><a href="https://man.openbsd.org/sshd_config">OpenSSH <code>sshd_config</code> manual</a></li>
+<li><a href="https://wiki.nftables.org/">nftables wiki</a></li>
+</ol>
+<h2 id="10-总结">10. 总结</h2>
+<p>这次问题表面上是“远端机器不能 SSH 回来”，真正的根因却是“回程路径上的 VPN 网关被 <code>Fail2Ban</code> 封了”。</p>
+<p>这类故障最值得记住的不是某条命令，而是一个排障习惯：</p>
+<p><strong>当服务看起来正常、路由看起来正常、单向通信也正常时，别忘了检查中间层是否在替你改写源地址。</strong></p>
+<p>只要源地址变了，安全策略就可能把“合法访问”误判成“攻击流量”。</p>
+<p>这次把 <code>ignoreip</code> 和 <code>unbanip</code> 处理对了，反向 SSH 就恢复了。更重要的是，我也把这条链路重新理解了一遍：不是所有看起来像“远端”的连接，最后都会以“远端”的身份出现在本机上。</p>
+        </div>
+    </article>
+
+    
+  
+
+
+  
+    
+  
+
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk/dist/gitalk.css">
+<script src="https://cdn.jsdelivr.net/npm/gitalk/dist/gitalk.min.js"></script>
+<div id="gitalk-container" style="margin-top:40px"></div>
+<script>
+  (function(){
+    var gitalk = new Gitalk({
+      clientID: '3181fd94e501cc5db0ad',
+      clientSecret: 'af1dab79dae02c69296e6615bfcecf47fc8615ee',
+      repo: 'margropcomment.margrop.io',
+      owner: 'margrop',
+      admin: ["margrop"],
+      
+      id: '\/post\/reverse-ssh-fail2ban-vpn-gateway-investigat',
+      
+      distractionFreeMode: false
+    });
+    gitalk.render('gitalk-container');
+  })();
+</script>
+  
+
+
+
+
+    
+    <script type="text/javascript" src="https://js.users.51.la/21044367.js"></script>
+    <script charset="UTF-8" id="LA_COLLECT" src="//sdk.51.la/js-sdk-pro.min.js"></script>
+    <script>LA.init({id: "1vVTUWl7zoRjnKXi",ck: "1vVTUWl7zoRjnKXi"})</script>
+    <script src="https://sdk.51.la/perf/js-sdk-perf.min.js" crossorigin="anonymous"></script>
+    <script>
+      new LingQue.Monitor().init({id:"202teQt8THXwqyve"});
+    </script>
+</body>
+</html>

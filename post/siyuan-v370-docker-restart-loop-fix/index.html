@@ -1,301 +1,634 @@
-<!doctype html><html lang=zh-CN><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>Docker 容器无限重启？只因 v3.7.0 少了一个 serve —— 思源笔记 CLI 破坏性变更修复实录 - 魔都水滴</title><meta name=description content="先说结论 把思源笔记从 v3.6.x 升级到 v3.7.0 后，Docker 容器陷入无限重启循环。docker logs 显示 Error: unknown flag: --accessAuthCode。根因是 v3.7.0 引入了 CLI 子命令架构，原来的顶级 flag 现在需要加一个 serve 子命令。修复只 …"><meta name=robots content="index, follow"><link rel=canonical href=https://blog.margrop.net/post/siyuan-v370-docker-restart-loop-fix/><meta property="og:site_name" content="魔都水滴"><meta property="og:title" content="Docker 容器无限重启？只因 v3.7.0 少了一个 serve —— 思源笔记 CLI 破坏性变更修复实录 - 魔都水滴"><meta property="og:description" content="先说结论 把思源笔记从 v3.6.x 升级到 v3.7.0 后，Docker 容器陷入无限重启循环。docker logs 显示 Error: unknown flag: --accessAuthCode。根因是 v3.7.0 引入了 CLI 子命令架构，原来的顶级 flag 现在需要加一个 serve 子命令。修复只 …"><meta property="og:url" content="https://blog.margrop.net/post/siyuan-v370-docker-restart-loop-fix/"><meta property="og:locale" content="zh_CN"><meta property="og:type" content="article"><meta property="og:locale:alternate" content="en_US"><meta property="og:image" content="https://blog.margrop.net/images/avatar.png"><meta name=twitter:card content="summary_large_image"><meta name=twitter:title content="Docker 容器无限重启？只因 v3.7.0 少了一个 serve —— 思源笔记 CLI 破坏性变更修复实录 - 魔都水滴"><meta name=twitter:description content="先说结论 把思源笔记从 v3.6.x 升级到 v3.7.0 后，Docker 容器陷入无限重启循环。docker logs 显示 Error: unknown flag: --accessAuthCode。根因是 v3.7.0 引入了 CLI 子命令架构，原来的顶级 flag 现在需要加一个 serve 子命令。修复只 …"><meta name=twitter:image content="https://blog.margrop.net/images/avatar.png"><link rel=alternate hreflang=zh-CN href=https://blog.margrop.net/post/siyuan-v370-docker-restart-loop-fix/><link rel=alternate hreflang=en-US href=https://blog.margrop.net/en/post/siyuan-v370-docker-restart-loop-fix/><link rel=alternate hreflang=x-default href=https://blog.margrop.net/><meta property="article:published_time" content="2026-07-02T19:30:00+08:00"><meta property="article:modified_time" content="2026-07-02T19:30:00+08:00"><meta property="article:tag" content="Docker"><meta property="article:tag" content="Siyuan"><meta property="article:tag" content="思源笔记"><meta property="article:tag" content="CLI"><meta property="article:tag" content="破坏性变更"><meta property="article:tag" content="docker-compose"><meta property="article:tag" content="故障排查"><meta property="article:tag" content="AI Agent"><script type=application/ld+json>{"@context":"https://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"魔都水滴"},"dateModified":"2026-07-02T19:30:00+08:00","datePublished":"2026-07-02T19:30:00+08:00","description":"先说结论 把思源笔记从 v3.6.x 升级到 v3.7.0 后，Docker 容器陷入无限重启循环。docker logs 显示 Error: unknown flag: --accessAuthCode。根因是 v3.7.0 引入了 CLI 子命令架构，原来的顶级 flag 现在需要加一个 serve 子命令。修复只 …","headline":"Docker 容器无限重启？只因 v3.7.0 少了一个 serve —— 思源笔记 CLI 破坏性变更修复实录","mainEntityOfPage":"https://blog.margrop.net/post/siyuan-v370-docker-restart-loop-fix/","url":"https://blog.margrop.net/post/siyuan-v370-docker-restart-loop-fix/"}</script><meta name=baidu-site-verification content="code-sVFZ8SER59"><script async src="https://www.googletagmanager.com/gtag/js?id=G-3J2W592DHJ"></script><script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments)}gtag("js",new Date),gtag("config","G-3J2W592DHJ")</script><style>body{font-family:-apple-system,BlinkMacSystemFont,segoe ui,Roboto,sans-serif;max-width:860px;margin:0 auto;padding:20px;line-height:1.7;color:#222}h1{border-bottom:2px solid #333;padding-bottom:10px}.post-list{list-style:none;padding:0}.post-list li{margin:15px 0}.post-list a{text-decoration:none;color:#333;font-size:18px}.post-list a:hover{color:#006cff}.date{color:#666;font-size:14px;margin-right:10px}.tags{margin-top:8px}.tag{background:#eee;padding:2px 8px;border-radius:3px;font-size:12px;margin-right:5px;display:inline-block}nav{margin-bottom:18px;border-bottom:1px solid #eee;padding-bottom:15px}nav a{margin-right:20px;text-decoration:none;color:#333;font-size:16px}nav a:hover{color:#006cff}.language-switcher{margin:-8px 0 26px}.language-switcher a{display:inline-block;margin-right:10px;padding:4px 10px;border:1px solid #ddd;border-radius:999px;color:#555;text-decoration:none;font-size:14px}.language-switcher a.active{background:#006cff;border-color:#006cff;color:#fff}.content{line-height:1.8}.content code{background:#f4f4f4;padding:2px 5px;border-radius:3px}.content pre{background:#f4f4f4;padding:15px;overflow-x:auto;border-radius:5px}.content img{display:block;max-width:100%;height:auto;margin:0 auto}.content .code-snippet__fix{margin:0 0 1.5em}.content .code-snippet__fix .code-snippet__line-index{display:none!important}.meta{color:#666;font-size:14px;margin-bottom:14px}a{color:#006cff}@media(max-width:680px){body{padding:16px}nav a{display:inline-block;margin-right:12px;margin-bottom:8px}}</style></head><body><nav><a href=/>首页</a>
-<a href=/post/>归档</a>
-<a href=/tags/>标签</a>
-<a href=/post/about/>关于</a>
-<a href=https://download.margrop.net target=_blank rel=noopener>下载</a>
-<a href=/post/favorites/>Link</a>
-<a href=/post/github-project-stars/>Github</a>
-<a href=https://github-mirrors.margrop.net target=_blank rel=noopener>Github加速</a>
-<a href=https://status.anye.xyz/ target=_blank rel=noopener>Docker加速</a></nav><div class=language-switcher><a href=/post/siyuan-v370-docker-restart-loop-fix/ class=active>中文</a>
-<a href=/en/post/siyuan-v370-docker-restart-loop-fix/>English</a></div><article><h1>Docker 容器无限重启？只因 v3.7.0 少了一个 serve —— 思源笔记 CLI 破坏性变更修复实录</h1><div class=meta>发布时间: 2026-07-02</div><div class=tags><a href=/tag/docker/><span class=tag>Docker</span></a>
-<a href=/tag/siyuan/><span class=tag>Siyuan</span></a>
-<a href=/tag/%E6%80%9D%E6%BA%90%E7%AC%94%E8%AE%B0/><span class=tag>思源笔记</span></a>
-<a href=/tag/cli/><span class=tag>CLI</span></a>
-<a href=/tag/%E7%A0%B4%E5%9D%8F%E6%80%A7%E5%8F%98%E6%9B%B4/><span class=tag>破坏性变更</span></a>
-<a href=/tag/docker-compose/><span class=tag>docker-compose</span></a>
-<a href=/tag/%E6%95%85%E9%9A%9C%E6%8E%92%E6%9F%A5/><span class=tag>故障排查</span></a>
-<a href=/tag/ai-agent/><span class=tag>AI Agent</span></a></div><div class=content><blockquote><p><strong>先说结论</strong></p><p>把思源笔记从 v3.6.x 升级到 v3.7.0 后，Docker 容器陷入无限重启循环。<code>docker logs</code> 显示 <code>Error: unknown flag: --accessAuthCode</code>。根因是 v3.7.0 引入了 CLI 子命令架构，原来的顶级 flag 现在需要加一个 <code>serve</code> 子命令。修复只需在 docker-compose.yml 的 <code>command</code> 字段最前面加上 <code>'serve'</code>，多 7 个字符，从无限重启到正常运行。</p><p>本文给出完整排查过程、三种操作系统下的一键修复脚本（Windows 11 / Ubuntu 26.04 / macOS 26），以及人工执行和 AI Agent 自动配置两种方法。所有脚本只调用 Docker CLI 和 SSH，不依赖第三方服务。</p></blockquote><p><img src=/post-images/siyuan-v370-docker-restart-loop-fix/00-ai-cover.png alt="AI 生成封面：Docker 容器无限重启的排查与修复。"></p><p><em>图 1：AI 生成封面。容器重启循环的修复，往往只需要一行改动。</em></p><h2 id=一问题背景思源笔记与-docker-部署>一、问题背景：思源笔记与 Docker 部署</h2><p><a href=https://github.com/siyuan-note/siyuan>思源笔记（SiYuan）</a> 是一款开源的个人知识管理系统，支持 Markdown 编辑、双向链接、数据同步和 Docker 部署。很多用户选择用 Docker 在服务器上运行思源，通过浏览器随时随地访问自己的笔记。</p><p>Docker 部署的典型配置如下：</p><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-yaml data-lang=yaml><span style=display:flex><span><span style=color:#f92672>version</span>: <span style=color:#e6db74>&#34;3.9&#34;</span>
-</span></span><span style=display:flex><span><span style=color:#f92672>services</span>:
-</span></span><span style=display:flex><span>  <span style=color:#f92672>main</span>:
-</span></span><span style=display:flex><span>    <span style=color:#f92672>image</span>: <span style=color:#ae81ff>b3log/siyuan:v3.7.0</span>
-</span></span><span style=display:flex><span>    <span style=color:#f92672>command</span>: [<span style=color:#e6db74>&#39;--workspace=/siyuan/workspace/&#39;</span>, <span style=color:#e6db74>&#39;--accessAuthCode=xxx&#39;</span>]
-</span></span><span style=display:flex><span>    <span style=color:#f92672>ports</span>:
-</span></span><span style=display:flex><span>      - <span style=color:#ae81ff>6806</span>:<span style=color:#ae81ff>6806</span>
-</span></span><span style=display:flex><span>    <span style=color:#f92672>volumes</span>:
-</span></span><span style=display:flex><span>      - <span style=color:#ae81ff>/docker/siyuan_data:/siyuan/workspace</span>
-</span></span><span style=display:flex><span>    <span style=color:#f92672>restart</span>: <span style=color:#ae81ff>always</span>
-</span></span><span style=display:flex><span>    <span style=color:#f92672>environment</span>:
-</span></span><span style=display:flex><span>      - <span style=color:#ae81ff>PUID=1001</span>
-</span></span><span style=display:flex><span>      - <span style=color:#ae81ff>PGID=1002</span>
-</span></span><span style=display:flex><span>      - <span style=color:#ae81ff>SIYUAN_LANG=zh-CN</span>
-</span></span></code></pre></div><p>这个配置在 v3.6.x 及之前的版本中工作良好。然而，2026 年 6 月 30 日发布的 <strong>v3.7.0</strong> 是一个大版本更新，带来了全新的用户界面、内核插件系统和命令行接口（CLI）重构。正是这个 CLI 重构，导致了许多 Docker 用户的容器在升级后无法启动。</p><h3 id=v370-带来了什么>v3.7.0 带来了什么？</h3><p>根据<a href=https://github.com/siyuan-note/siyuan/releases/tag/v3.7.0>官方发布说明</a>，v3.7.0 是一次全面的版本革新：</p><ul><li><strong>重新设计的用户界面</strong>：更精致的视觉层次</li><li><strong>移动端快捷方式</strong>：长按应用图标即可快速记录灵感</li><li><strong>内核插件系统</strong>：插件在单一内核中常驻运行，消除多窗口数据冲突</li><li><strong>命令行接口（CLI）</strong>：无需启动思源桌面端即可连接内核数据层，用于批量导入导出、定时处理和外部系统集成</li><li><strong>AI 知识库</strong>：思源 Agent 和向量嵌入搜索进入公开测试</li></ul><p>其中第四项 —— <strong>CLI 命令行接口</strong>，就是本文要讨论的"罪魁祸首"。它带来了更强大的自动化能力，但也引入了一个破坏性变更。</p><p><img src=/post-images/siyuan-v370-docker-restart-loop-fix/04-architecture-overview.png alt="思源 v3.7.0 架构概览。"></p><p><em>图 2：思源 Docker 部署架构。Portainer 管理 Stack，容器内 entrypoint.sh 启动 kernel，kernel 再通过 serve 子命令启动 HTTP 服务。</em></p><h2 id=二问题表现容器无限重启循环>二、问题表现：容器无限重启循环</h2><p>某天，我在 Portainer 中把思源笔记的镜像从 <code>v3.6.1</code> 升级到了 <code>v3.7.0</code>，点击"重新部署"后，发现容器状态不对劲：</p><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-bash data-lang=bash><span style=display:flex><span>$ docker ps --filter name<span style=color:#f92672>=</span>siyuan
-</span></span><span style=display:flex><span>NAMES          STATUS
-</span></span><span style=display:flex><span>siyuan-qiniu   Restarting <span style=color:#f92672>(</span>1<span style=color:#f92672>)</span> <span style=color:#ae81ff>8</span> seconds ago
-</span></span></code></pre></div><p>容器不断经历 <strong>启动 → 退出（exit code 1）→ Docker 自动重启 → 又退出</strong> 的死循环。从外面看，端口映射存在但无法访问，浏览器打开对应地址一直转圈。</p><p><img src=/post-images/siyuan-v370-docker-restart-loop-fix/shot-01-docker-restarting.png alt="docker ps 显示容器无限重启。"></p><p><em>图 3：真实终端截图 — docker ps 显示 siyuan 容器处于 Restarting 状态。</em></p><p>这就好比你家小区新换了一个门禁系统（升级镜像），结果门禁主机不断重启 —— 刚启动、闪一下屏、然后黑掉、再重启。你站在门口进不去，干着急。</p><h3 id=用生活场景理解容器重启循环>用生活场景理解"容器重启循环"</h3><p><strong>打比方 —— 汽车启动故障</strong>：</p><p>你换了新发动机（升级镜像），但点火方式不对。每次转动钥匙，发动机"咔"响一声就熄火了。车载电脑自动尝试重新点火（<code>restart: always</code>），于是你听到"咔-咔-咔"不断重复。要修好它，不能只拔电瓶，得看故障码 —— 对容器来说，故障码就是 <code>docker logs</code>。</p><h2 id=三问题分析从-docker-logs-找到第一线索>三、问题分析：从 docker logs 找到第一线索</h2><p>容器出问题，第一反应不是重启、不是回滚、不是重装，而是 <strong>看日志</strong>。</p><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-bash data-lang=bash><span style=display:flex><span>$ docker logs --tail <span style=color:#ae81ff>40</span> siyuan-qiniu
-</span></span><span style=display:flex><span>Error: unknown flag: --accessAuthCode
-</span></span><span style=display:flex><span>Usage:
-</span></span><span style=display:flex><span>  kernel <span style=color:#f92672>[</span>command<span style=color:#f92672>]</span>
-</span></span><span style=display:flex><span>
-</span></span><span style=display:flex><span>Available Commands:
-</span></span><span style=display:flex><span>  asset       Manage assets
-</span></span><span style=display:flex><span>  attr        Manage block attributes
-</span></span><span style=display:flex><span>  block       Block operations
-</span></span><span style=display:flex><span>  bookmark    Manage bookmarks
-</span></span><span style=display:flex><span>  completion  Generate the autocompletion script
-</span></span><span style=display:flex><span>  serve       Start kernel HTTP server
-</span></span><span style=display:flex><span>  export      Export documents
-</span></span><span style=display:flex><span>  ...
-</span></span><span style=display:flex><span>Flags:
-</span></span><span style=display:flex><span>      --dry-run            dry run mode
-</span></span><span style=display:flex><span>  -h, --help               help <span style=color:#66d9ef>for</span> kernel
-</span></span><span style=display:flex><span>  -w, --workspace string   workspace path
-</span></span></code></pre></div><p><img src=/post-images/siyuan-v370-docker-restart-loop-fix/shot-06-real-error-log.png alt=真实错误日志。></p><p><em>图 4：真实截图 — docker logs 显示的 kernel CLI 错误信息。</em></p><p><img src=/post-images/siyuan-v370-docker-restart-loop-fix/shot-05-siyuan-real-login.png alt="思源笔记 v3.7.0 锁屏登录页面。"></p><p><em>图 5：真实截图 — 修复后思源笔记 v3.7.0 的锁屏登录页面。输入 accessAuthCode 即可访问笔记。</em></p><p>日志非常清楚地告诉我们：<strong><code>--accessAuthCode</code> 是一个未知的 flag</strong>。而且，kernel 列出了它认识的所有<strong>子命令</strong>（<code>serve</code>、<code>asset</code>、<code>block</code> 等），其中 <code>serve</code> 的描述正是 &ldquo;Start kernel HTTP server&rdquo;。</p><p>这个输出本身就是一个巨大的提示：kernel 期望的第一个参数是一个<strong>子命令</strong>，而不是 <code>--workspace</code> 或 <code>--accessAuthCode</code> 这样的 flag。</p><h3 id=排查链路>排查链路</h3><p>完整的排查链路如下：</p><ol><li><code>docker ps -a</code> → 发现容器 <code>Restarting</code></li><li><code>docker logs</code> → 看到 <code>unknown flag: --accessAuthCode</code></li><li><code>docker inspect</code> → 确认 compose 配置路径和 command 字段</li><li>查阅官方 README → 发现 v3.7.0 起必须显式传入 <code>serve</code> 子命令</li><li>定位根因 → compose 文件中 <code>command</code> 缺少 <code>serve</code></li></ol><p><img src=/post-images/siyuan-v370-docker-restart-loop-fix/03-troubleshooting-flow.png alt=故障排查流程。></p><p><em>图 6：Docker 容器故障排查标准流程。docker logs 是第一线索，不要只看 docker ps。</em></p><h2 id=四问题根因v370-cli-子命令架构变更>四、问题根因：v3.7.0 CLI 子命令架构变更</h2><h3 id=打比方--餐厅点餐系统升级>打比方 —— 餐厅点餐系统升级</h3><p><strong>旧系统（v3.6.x 及之前）</strong>：你走进餐厅，直接对服务员说"宫保鸡丁、米饭、可乐"。服务员知道你在点餐，就帮你下单了。</p><p><strong>新系统（v3.7.0）</strong>：餐厅装了新的 POS 系统。现在你必须先说"<strong>点餐</strong>"，然后再说"宫保鸡丁、米饭、可乐"。如果你直接说"宫保鸡丁"，系统会疑惑：&ldquo;宫保鸡丁是什么操作？我只认识&rsquo;点餐&rsquo;、&lsquo;结账&rsquo;、&lsquo;打包&rsquo;这些操作。&rdquo;</p><p>这里的"点餐"就是 <code>serve</code> 子命令，&ldquo;宫保鸡丁"就是 <code>--workspace</code> 和 <code>--accessAuthCode</code> 参数。</p><h3 id=技术层面>技术层面</h3><p>在 v3.7.0 之前，思源的 kernel 入口直接接受顶级 flag：</p><pre tabindex=0><code>kernel --workspace=/siyuan/workspace/ --accessAuthCode=xxx
-</code></pre><p>v3.7.0 引入了完整的 CLI 子命令架构（这是 <a href=https://github.com/siyuan-note/siyuan/issues/17674>Issue #17674</a> 的实现），kernel 现在需要一个子命令：</p><pre tabindex=0><code>kernel serve --workspace=/siyuan/workspace/ --accessAuthCode=xxx
-</code></pre><p>Docker 镜像的 <code>ENTRYPOINT</code> 是 <code>/opt/siyuan/entrypoint.sh</code>，这个脚本负责设置 PUID/PGID 然后调用 <code>kernel</code>。但它本身不会自动加上 <code>serve</code> 子命令 —— 这个责任落在了 <code>CMD</code> 或 compose 的 <code>command</code> 字段上。</p><p>在 docker-compose.yml 中，原来的配置是：</p><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-yaml data-lang=yaml><span style=display:flex><span><span style=color:#f92672>command</span>: [<span style=color:#e6db74>&#39;--workspace=/siyuan/workspace/&#39;</span>, <span style=color:#e6db74>&#39;--accessAuthCode=xxx&#39;</span>]
-</span></span></code></pre></div><p>这些参数直接传给了 <code>entrypoint.sh</code>，然后传给 <code>kernel</code>。kernel 把 <code>--workspace</code> 当成子命令名来解析，发现不认识，于是报错退出。Docker 的 <code>restart: always</code> 策略又把它拉起来，如此往复。</p><p><img src=/post-images/siyuan-v370-docker-restart-loop-fix/02-cli-breaking-change.png alt="CLI 破坏性变更对比。"></p><p><em>图 7：v3.6.x vs v3.7.0 CLI 参数结构对比。新增的 serve 子命令是唯一的区别。</em></p><blockquote><p><strong>注意</strong>：官方 README 第 216 行已经明确写了这个变更：
-&ldquo;自 v3.7.0 起，必须显式传入 <code>serve</code> 子命令（例如 <code>docker run b3log/siyuan serve --workspace=...</code>）。&rdquo;</p><p>但在升级已有部署时，很多人（包括我）不会重新读一遍 README，导致踩坑。</p></blockquote><h2 id=五如何解决问题>五、如何解决问题</h2><h3 id=51-修复原理>5.1 修复原理</h3><p>修复极其简单：在 compose 文件的 <code>command</code> 数组最前面加一个 <code>'serve'</code>。</p><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-diff data-lang=diff><span style=display:flex><span><span style=color:#f92672>- command: [&#39;--workspace=/siyuan/workspace/&#39;, &#39;--accessAuthCode=xxx&#39;]
-</span></span></span><span style=display:flex><span><span style=color:#a6e22e>+ command: [&#39;serve&#39;, &#39;--workspace=/siyuan/workspace/&#39;, &#39;--accessAuthCode=xxx&#39;]
-</span></span></span></code></pre></div><p>仅 7 个字符的改动，从无限重启到正常运行。</p><p><img src=/post-images/siyuan-v370-docker-restart-loop-fix/05-compose-fix-diff.png alt="compose 文件修改 diff。"></p><p><em>图 8：docker-compose.yml 修改内容 —— 只在 command 数组最前面加了 &lsquo;serve&rsquo;。</em></p><h3 id=52-一键修复脚本>5.2 一键修复脚本</h3><p>以下脚本适用于三种操作系统。它们通过 SSH 连接到 Docker 宿主机，自动检测思源容器、备份原配置、修补 command 字段、重建容器。</p><blockquote><p><strong>安全提醒</strong>：脚本会自动备份原 docker-compose.yml（带时间戳），不会覆盖数据卷，可安全回滚。</p></blockquote><h4 id=windows-11powershell>Windows 11（PowerShell）</h4><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-powershell data-lang=powershell><span style=display:flex><span><span style=color:#75715e># siyuan-fix.ps1 — 思源 v3.7.0 容器修复脚本</span>
-</span></span><span style=display:flex><span><span style=color:#75715e># 用法：.\siyuan-fix.ps1 -ServerHost &lt;docker-host&gt; -ServerUser root -StackName siyuan-note-qiniu</span>
-</span></span><span style=display:flex><span><span style=color:#66d9ef>param</span>(
-</span></span><span style=display:flex><span>    [Parameter(<span style=color:#a6e22e>Mandatory</span>=$true)][<span style=color:#66d9ef>string</span>]$ServerHost,
-</span></span><span style=display:flex><span>    [<span style=color:#66d9ef>string</span>]$ServerUser = <span style=color:#e6db74>&#34;root&#34;</span>,
-</span></span><span style=display:flex><span>    [<span style=color:#66d9ef>string</span>]$StackName = <span style=color:#e6db74>&#34;siyuan-note-qiniu&#34;</span>
-</span></span><span style=display:flex><span>)
-</span></span><span style=display:flex><span>
-</span></span><span style=display:flex><span>$ErrorActionPreference = <span style=color:#e6db74>&#34;Stop&#34;</span>
-</span></span><span style=display:flex><span>
-</span></span><span style=display:flex><span>Write-Host <span style=color:#e6db74>&#34;=== 思源 v3.7.0 Docker 容器修复 ===&#34;</span> -ForegroundColor Cyan
-</span></span><span style=display:flex><span>
-</span></span><span style=display:flex><span><span style=color:#75715e># 1. 检测容器状态</span>
-</span></span><span style=display:flex><span>Write-Host <span style=color:#e6db74>&#34;[1/5] 检查容器状态...&#34;</span> -ForegroundColor Yellow
-</span></span><span style=display:flex><span>$status = ssh <span style=color:#e6db74>&#34;</span>${ServerUser}<span style=color:#e6db74>@</span>${ServerHost}<span style=color:#e6db74>&#34;</span> <span style=color:#e6db74>&#34;docker ps --filter name=</span>$StackName<span style=color:#e6db74> --format &#39;{{.Status}}&#39;&#34;</span>
-</span></span><span style=display:flex><span>Write-Host <span style=color:#e6db74>&#34;  容器状态: </span>$status<span style=color:#e6db74>&#34;</span>
-</span></span><span style=display:flex><span>
-</span></span><span style=display:flex><span><span style=color:#75715e># 2. 查看日志确认问题</span>
-</span></span><span style=display:flex><span>Write-Host <span style=color:#e6db74>&#34;[2/5] 查看容器日志...&#34;</span> -ForegroundColor Yellow
-</span></span><span style=display:flex><span>$logs = ssh <span style=color:#e6db74>&#34;</span>${ServerUser}<span style=color:#e6db74>@</span>${ServerHost}<span style=color:#e6db74>&#34;</span> <span style=color:#e6db74>&#34;docker logs --tail 20 </span>$($StackName)<span style=color:#e6db74>_main_1 2&gt;&amp;1 || docker logs --tail 20 siyuan-qiniu 2&gt;&amp;1 || docker logs --tail 20 \</span>$(docker ps -a --filter name=siyuan --format <span style=color:#e6db74>&#39;{{.Names}}&#39;</span>)<span style=color:#e6db74> 2&gt;&amp;1&#34;</span>
-</span></span><span style=display:flex><span><span style=color:#66d9ef>if</span> ($logs <span style=color:#f92672>-match</span> <span style=color:#e6db74>&#34;unknown flag.*accessAuthCode&#34;</span>) {
-</span></span><span style=display:flex><span>    Write-Host <span style=color:#e6db74>&#34;  ✓ 确认为 v3.7.0 CLI 变更导致的问题&#34;</span> -ForegroundColor Green
-</span></span><span style=display:flex><span>} <span style=color:#66d9ef>else</span> {
-</span></span><span style=display:flex><span>    Write-Host <span style=color:#e6db74>&#34;  ⚠ 错误信息与预期不符，请手动检查&#34;</span> -ForegroundColor Red
-</span></span><span style=display:flex><span>    Write-Host $logs
-</span></span><span style=display:flex><span>    exit <span style=color:#ae81ff>1</span>
-</span></span><span style=display:flex><span>}
-</span></span><span style=display:flex><span>
-</span></span><span style=display:flex><span><span style=color:#75715e># 3. 定位 compose 文件</span>
-</span></span><span style=display:flex><span>Write-Host <span style=color:#e6db74>&#34;[3/5] 定位 docker-compose.yml...&#34;</span> -ForegroundColor Yellow
-</span></span><span style=display:flex><span>$composePath = ssh <span style=color:#e6db74>&#34;</span>${ServerUser}<span style=color:#e6db74>@</span>${ServerHost}<span style=color:#e6db74>&#34;</span> <span style=color:#e6db74>&#34;docker inspect --format &#39;{{index .Config.Labels \&#34;</span>com.docker.compose.project.config_files\<span style=color:#e6db74>&#34;}}&#39; \</span>$(docker ps -a --filter name=siyuan --format <span style=color:#e6db74>&#39;{{.ID}}&#39;</span> | head <span style=color:#ae81ff>-1</span>)<span style=color:#e6db74> 2&gt;/dev/null&#34;</span>
-</span></span><span style=display:flex><span><span style=color:#66d9ef>if</span> (<span style=color:#f92672>-not</span> $composePath) {
-</span></span><span style=display:flex><span>    <span style=color:#75715e># 备用方案：搜索 Portainer 目录</span>
-</span></span><span style=display:flex><span>    $composePath = ssh <span style=color:#e6db74>&#34;</span>${ServerUser}<span style=color:#e6db74>@</span>${ServerHost}<span style=color:#e6db74>&#34;</span> <span style=color:#e6db74>&#34;grep -rl &#39;siyuan&#39; /docker/portainer_data/compose/*/docker-compose.yml 2&gt;/dev/null | head -1&#34;</span>
-</span></span><span style=display:flex><span>}
-</span></span><span style=display:flex><span>Write-Host <span style=color:#e6db74>&#34;  Compose 文件: </span>$composePath<span style=color:#e6db74>&#34;</span>
-</span></span><span style=display:flex><span>
-</span></span><span style=display:flex><span><span style=color:#75715e># 4. 备份并修复</span>
-</span></span><span style=display:flex><span>Write-Host <span style=color:#e6db74>&#34;[4/5] 备份并修复 compose 文件...&#34;</span> -ForegroundColor Yellow
-</span></span><span style=display:flex><span>$fixCmd = <span style=color:#e6db74>@&#34;
-</span></span></span><span style=display:flex><span><span style=color:#e6db74>cp &#39;</span>$composePath<span style=color:#e6db74>&#39; &#39;</span>$composePath<span style=color:#e6db74>.bak.\</span>$(date +<span style=color:#66d9ef>%</span>Y<span style=color:#66d9ef>%</span>m<span style=color:#66d9ef>%</span>d-<span style=color:#66d9ef>%</span>H<span style=color:#66d9ef>%</span>M<span style=color:#66d9ef>%</span>S)<span style=color:#e6db74>&#39; &amp;&amp; \
-</span></span></span><span style=display:flex><span><span style=color:#e6db74>sed -i \&#34;s|command: \\[\&#34;--workspace|command: \\[\&#34;serve\&#34;, \&#34;--workspace|g\&#34; &#39;</span>$composePath<span style=color:#e6db74>&#39; &amp;&amp; \
-</span></span></span><span style=display:flex><span><span style=color:#e6db74>echo &#39;FIXED&#39; &amp;&amp; cat &#39;</span>$composePath<span style=color:#e6db74>&#39; | grep -A 2 &#39;command:&#39;
-</span></span></span><span style=display:flex><span><span style=color:#e6db74>&#34;@</span>
-</span></span><span style=display:flex><span>$result = ssh <span style=color:#e6db74>&#34;</span>${ServerUser}<span style=color:#e6db74>@</span>${ServerHost}<span style=color:#e6db74>&#34;</span> $fixCmd
-</span></span><span style=display:flex><span>Write-Host $result
-</span></span><span style=display:flex><span><span style=color:#66d9ef>if</span> ($result <span style=color:#f92672>-match</span> <span style=color:#e6db74>&#34;FIXED&#34;</span>) {
-</span></span><span style=display:flex><span>    Write-Host <span style=color:#e6db74>&#34;  ✓ compose 文件已修复&#34;</span> -ForegroundColor Green
-</span></span><span style=display:flex><span>} <span style=color:#66d9ef>else</span> {
-</span></span><span style=display:flex><span>    Write-Host <span style=color:#e6db74>&#34;  ⚠ 修复可能未生效，请手动检查&#34;</span> -ForegroundColor Red
-</span></span><span style=display:flex><span>    exit <span style=color:#ae81ff>1</span>
-</span></span><span style=display:flex><span>}
-</span></span><span style=display:flex><span>
-</span></span><span style=display:flex><span><span style=color:#75715e># 5. 重建容器</span>
-</span></span><span style=display:flex><span>Write-Host <span style=color:#e6db74>&#34;[5/5] 重建容器...&#34;</span> -ForegroundColor Yellow
-</span></span><span style=display:flex><span>$composeDir = Split-Path $composePath -Parent
-</span></span><span style=display:flex><span>$projectName = <span style=color:#e6db74>&#34;siyuan-note-qiniu&#34;</span>
-</span></span><span style=display:flex><span>$rebuildResult = ssh <span style=color:#e6db74>&#34;</span>${ServerUser}<span style=color:#e6db74>@</span>${ServerHost}<span style=color:#e6db74>&#34;</span> <span style=color:#e6db74>&#34;cd &#39;</span>$composeDir<span style=color:#e6db74>&#39; &amp;&amp; docker compose -p </span>$projectName<span style=color:#e6db74> up -d --force-recreate 2&gt;&amp;1&#34;</span>
-</span></span><span style=display:flex><span>Write-Host $rebuildResult
-</span></span><span style=display:flex><span>
-</span></span><span style=display:flex><span><span style=color:#75715e># 验证</span>
-</span></span><span style=display:flex><span>Start-Sleep -Seconds <span style=color:#ae81ff>5</span>
-</span></span><span style=display:flex><span>$finalStatus = ssh <span style=color:#e6db74>&#34;</span>${ServerUser}<span style=color:#e6db74>@</span>${ServerHost}<span style=color:#e6db74>&#34;</span> <span style=color:#e6db74>&#34;docker ps --filter name=siyuan --format &#39;table {{.Names}}\t{{.Status}}\t{{.Ports}}&#39;&#34;</span>
-</span></span><span style=display:flex><span>Write-Host <span style=color:#e6db74>&#34;</span><span style=color:#ae81ff>`n</span><span style=color:#e6db74>=== 最终状态 ===&#34;</span> -ForegroundColor Cyan
-</span></span><span style=display:flex><span>Write-Host $finalStatus
-</span></span><span style=display:flex><span>
-</span></span><span style=display:flex><span>$healthCheck = ssh <span style=color:#e6db74>&#34;</span>${ServerUser}<span style=color:#e6db74>@</span>${ServerHost}<span style=color:#e6db74>&#34;</span> <span style=color:#e6db74>&#34;curl -sf -o /dev/null -w &#39;%{http_code}&#39; http://127.0.0.1:6001/ 2&gt;&amp;1 || echo &#39;port may differ&#39;&#34;</span>
-</span></span><span style=display:flex><span>Write-Host <span style=color:#e6db74>&#34;HTTP 状态码: </span>$healthCheck<span style=color:#e6db74> (401 = 正常，锁屏密码生效)&#34;</span>
-</span></span><span style=display:flex><span>Write-Host <span style=color:#e6db74>&#34;</span><span style=color:#ae81ff>`n</span><span style=color:#e6db74>✅ 修复完成！&#34;</span> -ForegroundColor Green
-</span></span></code></pre></div><h4 id=ubuntu-2604--debian>Ubuntu 26.04 / Debian</h4><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-bash data-lang=bash><span style=display:flex><span><span style=color:#75715e>#!/usr/bin/env bash
-</span></span></span><span style=display:flex><span><span style=color:#75715e># siyuan-fix.sh — 思源 v3.7.0 容器修复脚本</span>
-</span></span><span style=display:flex><span><span style=color:#75715e># 用法: bash siyuan-fix.sh &lt;docker-host&gt; [ssh-user] [stack-name]</span>
-</span></span><span style=display:flex><span>set -euo pipefail
-</span></span><span style=display:flex><span>
-</span></span><span style=display:flex><span>SERVER_HOST<span style=color:#f92672>=</span><span style=color:#e6db74>&#34;</span><span style=color:#e6db74>${</span>1:?请指定 Docker 宿主机地址<span style=color:#e6db74>}</span><span style=color:#e6db74>&#34;</span>
-</span></span><span style=display:flex><span>SERVER_USER<span style=color:#f92672>=</span><span style=color:#e6db74>&#34;</span><span style=color:#e6db74>${</span>2<span style=color:#66d9ef>:-</span>root<span style=color:#e6db74>}</span><span style=color:#e6db74>&#34;</span>
-</span></span><span style=display:flex><span>STACK_NAME<span style=color:#f92672>=</span><span style=color:#e6db74>&#34;</span><span style=color:#e6db74>${</span>3<span style=color:#66d9ef>:-</span>siyuan-note-qiniu<span style=color:#e6db74>}</span><span style=color:#e6db74>&#34;</span>
-</span></span><span style=display:flex><span>
-</span></span><span style=display:flex><span>RED<span style=color:#f92672>=</span><span style=color:#e6db74>&#39;\033[0;31m&#39;</span>; GREEN<span style=color:#f92672>=</span><span style=color:#e6db74>&#39;\033[0;32m&#39;</span>; YELLOW<span style=color:#f92672>=</span><span style=color:#e6db74>&#39;\033[1;33m&#39;</span>; CYAN<span style=color:#f92672>=</span><span style=color:#e6db74>&#39;\033[0;36m&#39;</span>; NC<span style=color:#f92672>=</span><span style=color:#e6db74>&#39;\033[0m&#39;</span>
-</span></span><span style=display:flex><span>ssh_cmd<span style=color:#f92672>()</span> <span style=color:#f92672>{</span> ssh -o StrictHostKeyChecking<span style=color:#f92672>=</span>accept-new <span style=color:#e6db74>&#34;</span><span style=color:#e6db74>${</span>SERVER_USER<span style=color:#e6db74>}</span><span style=color:#e6db74>@</span><span style=color:#e6db74>${</span>SERVER_HOST<span style=color:#e6db74>}</span><span style=color:#e6db74>&#34;</span> <span style=color:#e6db74>&#34;</span>$@<span style=color:#e6db74>&#34;</span>; <span style=color:#f92672>}</span>
-</span></span><span style=display:flex><span>
-</span></span><span style=display:flex><span>echo -e <span style=color:#e6db74>&#34;</span><span style=color:#e6db74>${</span>CYAN<span style=color:#e6db74>}</span><span style=color:#e6db74>=== 思源 v3.7.0 Docker 容器修复 ===</span><span style=color:#e6db74>${</span>NC<span style=color:#e6db74>}</span><span style=color:#e6db74>&#34;</span>
-</span></span><span style=display:flex><span>
-</span></span><span style=display:flex><span><span style=color:#75715e># 1. 检测容器状态</span>
-</span></span><span style=display:flex><span>echo -e <span style=color:#e6db74>&#34;</span><span style=color:#e6db74>${</span>YELLOW<span style=color:#e6db74>}</span><span style=color:#e6db74>[1/5] 检查容器状态...</span><span style=color:#e6db74>${</span>NC<span style=color:#e6db74>}</span><span style=color:#e6db74>&#34;</span>
-</span></span><span style=display:flex><span>ssh_cmd <span style=color:#e6db74>&#34;docker ps -a --filter name=siyuan --format &#39;table {{.Names}}\t{{.Status}}\t{{.Ports}}&#39;&#34;</span>
-</span></span><span style=display:flex><span>
-</span></span><span style=display:flex><span><span style=color:#75715e># 2. 确认日志中的错误</span>
-</span></span><span style=display:flex><span>echo -e <span style=color:#e6db74>&#34;</span><span style=color:#e6db74>${</span>YELLOW<span style=color:#e6db74>}</span><span style=color:#e6db74>[2/5] 确认错误日志...</span><span style=color:#e6db74>${</span>NC<span style=color:#e6db74>}</span><span style=color:#e6db74>&#34;</span>
-</span></span><span style=display:flex><span>CONTAINER_NAME<span style=color:#f92672>=</span><span style=color:#66d9ef>$(</span>ssh_cmd <span style=color:#e6db74>&#34;docker ps -a --filter name=siyuan --format &#39;{{.Names}}&#39; | head -1&#34;</span><span style=color:#66d9ef>)</span>
-</span></span><span style=display:flex><span>LOGS<span style=color:#f92672>=</span><span style=color:#66d9ef>$(</span>ssh_cmd <span style=color:#e6db74>&#34;docker logs --tail 20 </span><span style=color:#e6db74>${</span>CONTAINER_NAME<span style=color:#e6db74>}</span><span style=color:#e6db74> 2&gt;&amp;1&#34;</span> <span style=color:#f92672>||</span> true<span style=color:#66d9ef>)</span>
-</span></span><span style=display:flex><span><span style=color:#66d9ef>if</span> echo <span style=color:#e6db74>&#34;</span>$LOGS<span style=color:#e6db74>&#34;</span> | grep -q <span style=color:#e6db74>&#34;unknown flag.*accessAuthCode&#34;</span>; <span style=color:#66d9ef>then</span>
-</span></span><span style=display:flex><span>    echo -e <span style=color:#e6db74>&#34;</span><span style=color:#e6db74>${</span>GREEN<span style=color:#e6db74>}</span><span style=color:#e6db74>  ✓ 确认为 v3.7.0 CLI 变更导致的问题</span><span style=color:#e6db74>${</span>NC<span style=color:#e6db74>}</span><span style=color:#e6db74>&#34;</span>
-</span></span><span style=display:flex><span><span style=color:#66d9ef>else</span>
-</span></span><span style=display:flex><span>    echo -e <span style=color:#e6db74>&#34;</span><span style=color:#e6db74>${</span>RED<span style=color:#e6db74>}</span><span style=color:#e6db74>  ⚠ 错误信息与预期不符，请手动检查</span><span style=color:#e6db74>${</span>NC<span style=color:#e6db74>}</span><span style=color:#e6db74>&#34;</span>
-</span></span><span style=display:flex><span>    echo <span style=color:#e6db74>&#34;</span>$LOGS<span style=color:#e6db74>&#34;</span>
-</span></span><span style=display:flex><span>    exit <span style=color:#ae81ff>1</span>
-</span></span><span style=display:flex><span><span style=color:#66d9ef>fi</span>
-</span></span><span style=display:flex><span>
-</span></span><span style=display:flex><span><span style=color:#75715e># 3. 定位 compose 文件</span>
-</span></span><span style=display:flex><span>echo -e <span style=color:#e6db74>&#34;</span><span style=color:#e6db74>${</span>YELLOW<span style=color:#e6db74>}</span><span style=color:#e6db74>[3/5] 定位 docker-compose.yml...</span><span style=color:#e6db74>${</span>NC<span style=color:#e6db74>}</span><span style=color:#e6db74>&#34;</span>
-</span></span><span style=display:flex><span>COMPOSE_PATH<span style=color:#f92672>=</span><span style=color:#66d9ef>$(</span>ssh_cmd <span style=color:#e6db74>&#34;docker inspect --format &#39;{{index .Config.Labels \&#34;com.docker.compose.project.config_files\&#34;}}&#39; \$(docker ps -a --filter name=siyuan --format &#39;{{.ID}}&#39; | head -1) 2&gt;/dev/null&#34;</span> <span style=color:#f92672>||</span> true<span style=color:#66d9ef>)</span>
-</span></span><span style=display:flex><span><span style=color:#66d9ef>if</span> <span style=color:#f92672>[[</span> -z <span style=color:#e6db74>&#34;</span>$COMPOSE_PATH<span style=color:#e6db74>&#34;</span> <span style=color:#f92672>]]</span>; <span style=color:#66d9ef>then</span>
-</span></span><span style=display:flex><span>    COMPOSE_PATH<span style=color:#f92672>=</span><span style=color:#66d9ef>$(</span>ssh_cmd <span style=color:#e6db74>&#34;grep -rl &#39;siyuan&#39; /docker/portainer_data/compose/*/docker-compose.yml 2&gt;/dev/null | head -1&#34;</span> <span style=color:#f92672>||</span> true<span style=color:#66d9ef>)</span>
-</span></span><span style=display:flex><span><span style=color:#66d9ef>fi</span>
-</span></span><span style=display:flex><span><span style=color:#66d9ef>if</span> <span style=color:#f92672>[[</span> -z <span style=color:#e6db74>&#34;</span>$COMPOSE_PATH<span style=color:#e6db74>&#34;</span> <span style=color:#f92672>]]</span>; <span style=color:#66d9ef>then</span>
-</span></span><span style=display:flex><span>    echo -e <span style=color:#e6db74>&#34;</span><span style=color:#e6db74>${</span>RED<span style=color:#e6db74>}</span><span style=color:#e6db74>无法定位 docker-compose.yml，请手动指定</span><span style=color:#e6db74>${</span>NC<span style=color:#e6db74>}</span><span style=color:#e6db74>&#34;</span>
-</span></span><span style=display:flex><span>    exit <span style=color:#ae81ff>1</span>
-</span></span><span style=display:flex><span><span style=color:#66d9ef>fi</span>
-</span></span><span style=display:flex><span>echo <span style=color:#e6db74>&#34;  Compose 文件: </span>$COMPOSE_PATH<span style=color:#e6db74>&#34;</span>
-</span></span><span style=display:flex><span>
-</span></span><span style=display:flex><span><span style=color:#75715e># 4. 备份并修复</span>
-</span></span><span style=display:flex><span>echo -e <span style=color:#e6db74>&#34;</span><span style=color:#e6db74>${</span>YELLOW<span style=color:#e6db74>}</span><span style=color:#e6db74>[4/5] 备份并修复 compose 文件...</span><span style=color:#e6db74>${</span>NC<span style=color:#e6db74>}</span><span style=color:#e6db74>&#34;</span>
-</span></span><span style=display:flex><span>TIMESTAMP<span style=color:#f92672>=</span><span style=color:#66d9ef>$(</span>date +%Y%m%d-%H%M%S<span style=color:#66d9ef>)</span>
-</span></span><span style=display:flex><span>ssh_cmd <span style=color:#e6db74>&#34;cp &#39;</span>$COMPOSE_PATH<span style=color:#e6db74>&#39; &#39;</span>$COMPOSE_PATH<span style=color:#e6db74>.bak.</span>$TIMESTAMP<span style=color:#e6db74>&#39;&#34;</span> <span style=color:#f92672>&amp;&amp;</span> echo <span style=color:#e6db74>&#34;  ✓ 已备份到 .bak.</span>$TIMESTAMP<span style=color:#e6db74>&#34;</span>
-</span></span><span style=display:flex><span>ssh_cmd <span style=color:#e6db74>&#34;sed -i \&#34;s|command: \\\\[\\\&#34;--workspace|command: \\\\[\\\&#34;serve\\\&#34;, \\\&#34;--workspace|g\&#34; &#39;</span>$COMPOSE_PATH<span style=color:#e6db74>&#39;&#34;</span>
-</span></span><span style=display:flex><span>echo -e <span style=color:#e6db74>&#34;</span><span style=color:#e6db74>${</span>GREEN<span style=color:#e6db74>}</span><span style=color:#e6db74>  ✓ compose 文件已修复</span><span style=color:#e6db74>${</span>NC<span style=color:#e6db74>}</span><span style=color:#e6db74>&#34;</span>
-</span></span><span style=display:flex><span>
-</span></span><span style=display:flex><span><span style=color:#75715e># 5. 重建容器</span>
-</span></span><span style=display:flex><span>echo -e <span style=color:#e6db74>&#34;</span><span style=color:#e6db74>${</span>YELLOW<span style=color:#e6db74>}</span><span style=color:#e6db74>[5/5] 重建容器...</span><span style=color:#e6db74>${</span>NC<span style=color:#e6db74>}</span><span style=color:#e6db74>&#34;</span>
-</span></span><span style=display:flex><span>COMPOSE_DIR<span style=color:#f92672>=</span><span style=color:#66d9ef>$(</span>dirname <span style=color:#e6db74>&#34;</span>$COMPOSE_PATH<span style=color:#e6db74>&#34;</span><span style=color:#66d9ef>)</span>
-</span></span><span style=display:flex><span>ssh_cmd <span style=color:#e6db74>&#34;cd &#39;</span>$COMPOSE_DIR<span style=color:#e6db74>&#39; &amp;&amp; docker compose -p </span>$STACK_NAME<span style=color:#e6db74> up -d --force-recreate 2&gt;&amp;1&#34;</span>
-</span></span><span style=display:flex><span>
-</span></span><span style=display:flex><span><span style=color:#75715e># 验证</span>
-</span></span><span style=display:flex><span>sleep <span style=color:#ae81ff>5</span>
-</span></span><span style=display:flex><span>echo -e <span style=color:#e6db74>&#34;\n</span><span style=color:#e6db74>${</span>CYAN<span style=color:#e6db74>}</span><span style=color:#e6db74>=== 最终状态 ===</span><span style=color:#e6db74>${</span>NC<span style=color:#e6db74>}</span><span style=color:#e6db74>&#34;</span>
-</span></span><span style=display:flex><span>ssh_cmd <span style=color:#e6db74>&#34;docker ps --filter name=siyuan --format &#39;table {{.Names}}\t{{.Status}}\t{{.Ports}}&#39;&#34;</span>
-</span></span><span style=display:flex><span>HTTP_CODE<span style=color:#f92672>=</span><span style=color:#66d9ef>$(</span>ssh_cmd <span style=color:#e6db74>&#34;curl -sf -o /dev/null -w &#39;%{http_code}&#39; http://127.0.0.1:6001/ 2&gt;&amp;1&#34;</span> <span style=color:#f92672>||</span> echo <span style=color:#e6db74>&#34;N/A&#34;</span><span style=color:#66d9ef>)</span>
-</span></span><span style=display:flex><span>echo -e <span style=color:#e6db74>&#34;HTTP 状态码: </span><span style=color:#e6db74>${</span>HTTP_CODE<span style=color:#e6db74>}</span><span style=color:#e6db74> (401 = 正常，锁屏密码生效)&#34;</span>
-</span></span><span style=display:flex><span>echo -e <span style=color:#e6db74>&#34;\n</span><span style=color:#e6db74>${</span>GREEN<span style=color:#e6db74>}</span><span style=color:#e6db74>✅ 修复完成！</span><span style=color:#e6db74>${</span>NC<span style=color:#e6db74>}</span><span style=color:#e6db74>&#34;</span>
-</span></span></code></pre></div><h4 id=macos-26>macOS 26</h4><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-bash data-lang=bash><span style=display:flex><span><span style=color:#75715e>#!/usr/bin/env bash
-</span></span></span><span style=display:flex><span><span style=color:#75715e># siyuan-fix-mac.sh — 思源 v3.7.0 容器修复脚本 (macOS)</span>
-</span></span><span style=display:flex><span><span style=color:#75715e># 用法: bash siyuan-fix-mac.sh &lt;docker-host&gt; [ssh-user] [stack-name]</span>
-</span></span><span style=display:flex><span><span style=color:#75715e># 前置条件: brew install coreutils (提供 gsed)</span>
-</span></span><span style=display:flex><span>
-</span></span><span style=display:flex><span>set -euo pipefail
-</span></span><span style=display:flex><span>
-</span></span><span style=display:flex><span>SERVER_HOST<span style=color:#f92672>=</span><span style=color:#e6db74>&#34;</span><span style=color:#e6db74>${</span>1:?请指定 Docker 宿主机地址<span style=color:#e6db74>}</span><span style=color:#e6db74>&#34;</span>
-</span></span><span style=display:flex><span>SERVER_USER<span style=color:#f92672>=</span><span style=color:#e6db74>&#34;</span><span style=color:#e6db74>${</span>2<span style=color:#66d9ef>:-</span>root<span style=color:#e6db74>}</span><span style=color:#e6db74>&#34;</span>
-</span></span><span style=display:flex><span>STACK_NAME<span style=color:#f92672>=</span><span style=color:#e6db74>&#34;</span><span style=color:#e6db74>${</span>3<span style=color:#66d9ef>:-</span>siyuan-note-qiniu<span style=color:#e6db74>}</span><span style=color:#e6db74>&#34;</span>
-</span></span><span style=display:flex><span>
-</span></span><span style=display:flex><span>RED<span style=color:#f92672>=</span><span style=color:#e6db74>&#39;\033[0;31m&#39;</span>; GREEN<span style=color:#f92672>=</span><span style=color:#e6db74>&#39;\033[0;32m&#39;</span>; YELLOW<span style=color:#f92672>=</span><span style=color:#e6db74>&#39;\033[1;33m&#39;</span>; CYAN<span style=color:#f92672>=</span><span style=color:#e6db74>&#39;\033[0;36m&#39;</span>; NC<span style=color:#f92672>=</span><span style=color:#e6db74>&#39;\033[0m&#39;</span>
-</span></span><span style=display:flex><span>ssh_cmd<span style=color:#f92672>()</span> <span style=color:#f92672>{</span> ssh -o StrictHostKeyChecking<span style=color:#f92672>=</span>accept-new <span style=color:#e6db74>&#34;</span><span style=color:#e6db74>${</span>SERVER_USER<span style=color:#e6db74>}</span><span style=color:#e6db74>@</span><span style=color:#e6db74>${</span>SERVER_HOST<span style=color:#e6db74>}</span><span style=color:#e6db74>&#34;</span> <span style=color:#e6db74>&#34;</span>$@<span style=color:#e6db74>&#34;</span>; <span style=color:#f92672>}</span>
-</span></span><span style=display:flex><span>
-</span></span><span style=display:flex><span>echo -e <span style=color:#e6db74>&#34;</span><span style=color:#e6db74>${</span>CYAN<span style=color:#e6db74>}</span><span style=color:#e6db74>=== 思源 v3.7.0 Docker 容器修复 (macOS) ===</span><span style=color:#e6db74>${</span>NC<span style=color:#e6db74>}</span><span style=color:#e6db74>&#34;</span>
-</span></span><span style=display:flex><span>
-</span></span><span style=display:flex><span><span style=color:#75715e># 检查必要工具</span>
-</span></span><span style=display:flex><span><span style=color:#66d9ef>if</span> ! command -v ssh &amp;&gt;/dev/null; <span style=color:#66d9ef>then</span> echo -e <span style=color:#e6db74>&#34;</span><span style=color:#e6db74>${</span>RED<span style=color:#e6db74>}</span><span style=color:#e6db74>需要 SSH 客户端</span><span style=color:#e6db74>${</span>NC<span style=color:#e6db74>}</span><span style=color:#e6db74>&#34;</span>; exit 1; <span style=color:#66d9ef>fi</span>
-</span></span><span style=display:flex><span>
-</span></span><span style=display:flex><span><span style=color:#75715e># 1. 检测</span>
-</span></span><span style=display:flex><span>echo -e <span style=color:#e6db74>&#34;</span><span style=color:#e6db74>${</span>YELLOW<span style=color:#e6db74>}</span><span style=color:#e6db74>[1/5] 检查容器状态...</span><span style=color:#e6db74>${</span>NC<span style=color:#e6db74>}</span><span style=color:#e6db74>&#34;</span>
-</span></span><span style=display:flex><span>ssh_cmd <span style=color:#e6db74>&#34;docker ps -a --filter name=siyuan --format &#39;table {{.Names}}\t{{.Status}}\t{{.Ports}}&#39;&#34;</span>
-</span></span><span style=display:flex><span>
-</span></span><span style=display:flex><span><span style=color:#75715e># 2. 确认错误</span>
-</span></span><span style=display:flex><span>echo -e <span style=color:#e6db74>&#34;</span><span style=color:#e6db74>${</span>YELLOW<span style=color:#e6db74>}</span><span style=color:#e6db74>[2/5] 确认错误日志...</span><span style=color:#e6db74>${</span>NC<span style=color:#e6db74>}</span><span style=color:#e6db74>&#34;</span>
-</span></span><span style=display:flex><span>CONTAINER_NAME<span style=color:#f92672>=</span><span style=color:#66d9ef>$(</span>ssh_cmd <span style=color:#e6db74>&#34;docker ps -a --filter name=siyuan --format &#39;{{.Names}}&#39; | head -1&#34;</span><span style=color:#66d9ef>)</span>
-</span></span><span style=display:flex><span>LOGS<span style=color:#f92672>=</span><span style=color:#66d9ef>$(</span>ssh_cmd <span style=color:#e6db74>&#34;docker logs --tail 20 </span><span style=color:#e6db74>${</span>CONTAINER_NAME<span style=color:#e6db74>}</span><span style=color:#e6db74> 2&gt;&amp;1&#34;</span> <span style=color:#f92672>||</span> true<span style=color:#66d9ef>)</span>
-</span></span><span style=display:flex><span><span style=color:#66d9ef>if</span> echo <span style=color:#e6db74>&#34;</span>$LOGS<span style=color:#e6db74>&#34;</span> | grep -q <span style=color:#e6db74>&#34;unknown flag.*accessAuthCode&#34;</span>; <span style=color:#66d9ef>then</span>
-</span></span><span style=display:flex><span>    echo -e <span style=color:#e6db74>&#34;</span><span style=color:#e6db74>${</span>GREEN<span style=color:#e6db74>}</span><span style=color:#e6db74>  ✓ 确认为 v3.7.0 CLI 变更问题</span><span style=color:#e6db74>${</span>NC<span style=color:#e6db74>}</span><span style=color:#e6db74>&#34;</span>
-</span></span><span style=display:flex><span><span style=color:#66d9ef>else</span>
-</span></span><span style=display:flex><span>    echo -e <span style=color:#e6db74>&#34;</span><span style=color:#e6db74>${</span>RED<span style=color:#e6db74>}</span><span style=color:#e6db74>  ⚠ 错误信息不符</span><span style=color:#e6db74>${</span>NC<span style=color:#e6db74>}</span><span style=color:#e6db74>&#34;</span>; echo <span style=color:#e6db74>&#34;</span>$LOGS<span style=color:#e6db74>&#34;</span>; exit <span style=color:#ae81ff>1</span>
-</span></span><span style=display:flex><span><span style=color:#66d9ef>fi</span>
-</span></span><span style=display:flex><span>
-</span></span><span style=display:flex><span><span style=color:#75715e># 3. 定位 compose</span>
-</span></span><span style=display:flex><span>echo -e <span style=color:#e6db74>&#34;</span><span style=color:#e6db74>${</span>YELLOW<span style=color:#e6db74>}</span><span style=color:#e6db74>[3/5] 定位 compose 文件...</span><span style=color:#e6db74>${</span>NC<span style=color:#e6db74>}</span><span style=color:#e6db74>&#34;</span>
-</span></span><span style=display:flex><span>COMPOSE_PATH<span style=color:#f92672>=</span><span style=color:#66d9ef>$(</span>ssh_cmd <span style=color:#e6db74>&#34;docker inspect --format &#39;{{index .Config.Labels \&#34;com.docker.compose.project.config_files\&#34;}}&#39; \$(docker ps -a --filter name=siyuan --format &#39;{{.ID}}&#39; | head -1) 2&gt;/dev/null&#34;</span> <span style=color:#f92672>||</span> true<span style=color:#66d9ef>)</span>
-</span></span><span style=display:flex><span><span style=color:#f92672>[[</span> -z <span style=color:#e6db74>&#34;</span>$COMPOSE_PATH<span style=color:#e6db74>&#34;</span> <span style=color:#f92672>]]</span> <span style=color:#f92672>&amp;&amp;</span> COMPOSE_PATH<span style=color:#f92672>=</span><span style=color:#66d9ef>$(</span>ssh_cmd <span style=color:#e6db74>&#34;grep -rl &#39;siyuan&#39; /docker/portainer_data/compose/*/docker-compose.yml 2&gt;/dev/null | head -1&#34;</span> <span style=color:#f92672>||</span> true<span style=color:#66d9ef>)</span>
-</span></span><span style=display:flex><span><span style=color:#f92672>[[</span> -z <span style=color:#e6db74>&#34;</span>$COMPOSE_PATH<span style=color:#e6db74>&#34;</span> <span style=color:#f92672>]]</span> <span style=color:#f92672>&amp;&amp;</span> <span style=color:#f92672>{</span> echo -e <span style=color:#e6db74>&#34;</span><span style=color:#e6db74>${</span>RED<span style=color:#e6db74>}</span><span style=color:#e6db74>无法定位 compose 文件</span><span style=color:#e6db74>${</span>NC<span style=color:#e6db74>}</span><span style=color:#e6db74>&#34;</span>; exit 1; <span style=color:#f92672>}</span>
-</span></span><span style=display:flex><span>echo <span style=color:#e6db74>&#34;  Compose: </span>$COMPOSE_PATH<span style=color:#e6db74>&#34;</span>
-</span></span><span style=display:flex><span>
-</span></span><span style=display:flex><span><span style=color:#75715e># 4. 备份并修复 (macOS 用 gsed 或 python)</span>
-</span></span><span style=display:flex><span>echo -e <span style=color:#e6db74>&#34;</span><span style=color:#e6db74>${</span>YELLOW<span style=color:#e6db74>}</span><span style=color:#e6db74>[4/5] 备份并修复...</span><span style=color:#e6db74>${</span>NC<span style=color:#e6db74>}</span><span style=color:#e6db74>&#34;</span>
-</span></span><span style=display:flex><span>TIMESTAMP<span style=color:#f92672>=</span><span style=color:#66d9ef>$(</span>date +%Y%m%d-%H%M%S<span style=color:#66d9ef>)</span>
-</span></span><span style=display:flex><span>ssh_cmd <span style=color:#e6db74>&#34;cp &#39;</span>$COMPOSE_PATH<span style=color:#e6db74>&#39; &#39;</span>$COMPOSE_PATH<span style=color:#e6db74>.bak.</span>$TIMESTAMP<span style=color:#e6db74>&#39;&#34;</span> <span style=color:#f92672>&amp;&amp;</span> echo <span style=color:#e6db74>&#34;  ✓ 已备份&#34;</span>
-</span></span><span style=display:flex><span><span style=color:#75715e># 使用 python 做替换，避免 macOS sed 兼容问题</span>
-</span></span><span style=display:flex><span>ssh_cmd <span style=color:#e6db74>&#34;python3 -c \&#34;
-</span></span></span><span style=display:flex><span><span style=color:#e6db74>import re
-</span></span></span><span style=display:flex><span><span style=color:#e6db74>p = &#39;</span>$COMPOSE_PATH<span style=color:#e6db74>&#39;
-</span></span></span><span style=display:flex><span><span style=color:#e6db74>c = open(p).read()
-</span></span></span><span style=display:flex><span><span style=color:#e6db74>c = c.replace(&#39;command: [\\\&#34;--workspace&#39;, &#39;command: [\\\&#34;serve\\\&#34;, \\\&#34;--workspace&#39;)
-</span></span></span><span style=display:flex><span><span style=color:#e6db74>open(p, &#39;w&#39;).write(c)
-</span></span></span><span style=display:flex><span><span style=color:#e6db74>print(&#39;FIXED&#39;)
-</span></span></span><span style=display:flex><span><span style=color:#e6db74>\&#34;&#34;</span>
-</span></span><span style=display:flex><span>echo -e <span style=color:#e6db74>&#34;</span><span style=color:#e6db74>${</span>GREEN<span style=color:#e6db74>}</span><span style=color:#e6db74>  ✓ compose 文件已修复</span><span style=color:#e6db74>${</span>NC<span style=color:#e6db74>}</span><span style=color:#e6db74>&#34;</span>
-</span></span><span style=display:flex><span>
-</span></span><span style=display:flex><span><span style=color:#75715e># 5. 重建</span>
-</span></span><span style=display:flex><span>echo -e <span style=color:#e6db74>&#34;</span><span style=color:#e6db74>${</span>YELLOW<span style=color:#e6db74>}</span><span style=color:#e6db74>[5/5] 重建容器...</span><span style=color:#e6db74>${</span>NC<span style=color:#e6db74>}</span><span style=color:#e6db74>&#34;</span>
-</span></span><span style=display:flex><span>COMPOSE_DIR<span style=color:#f92672>=</span><span style=color:#66d9ef>$(</span>dirname <span style=color:#e6db74>&#34;</span>$COMPOSE_PATH<span style=color:#e6db74>&#34;</span><span style=color:#66d9ef>)</span>
-</span></span><span style=display:flex><span>ssh_cmd <span style=color:#e6db74>&#34;cd &#39;</span>$COMPOSE_DIR<span style=color:#e6db74>&#39; &amp;&amp; docker compose -p </span>$STACK_NAME<span style=color:#e6db74> up -d --force-recreate 2&gt;&amp;1&#34;</span>
-</span></span><span style=display:flex><span>
-</span></span><span style=display:flex><span>sleep <span style=color:#ae81ff>5</span>
-</span></span><span style=display:flex><span>echo -e <span style=color:#e6db74>&#34;\n</span><span style=color:#e6db74>${</span>CYAN<span style=color:#e6db74>}</span><span style=color:#e6db74>=== 最终状态 ===</span><span style=color:#e6db74>${</span>NC<span style=color:#e6db74>}</span><span style=color:#e6db74>&#34;</span>
-</span></span><span style=display:flex><span>ssh_cmd <span style=color:#e6db74>&#34;docker ps --filter name=siyuan --format &#39;table {{.Names}}\t{{.Status}}\t{{.Ports}}&#39;&#34;</span>
-</span></span><span style=display:flex><span>HTTP_CODE<span style=color:#f92672>=</span><span style=color:#66d9ef>$(</span>ssh_cmd <span style=color:#e6db74>&#34;curl -sf -o /dev/null -w &#39;%{http_code}&#39; http://127.0.0.1:6001/ 2&gt;&amp;1&#34;</span> <span style=color:#f92672>||</span> echo <span style=color:#e6db74>&#34;N/A&#34;</span><span style=color:#66d9ef>)</span>
-</span></span><span style=display:flex><span>echo -e <span style=color:#e6db74>&#34;HTTP: </span><span style=color:#e6db74>${</span>HTTP_CODE<span style=color:#e6db74>}</span><span style=color:#e6db74> (401 = 正常)&#34;</span>
-</span></span><span style=display:flex><span>echo -e <span style=color:#e6db74>&#34;\n</span><span style=color:#e6db74>${</span>GREEN<span style=color:#e6db74>}</span><span style=color:#e6db74>✅ 修复完成！</span><span style=color:#e6db74>${</span>NC<span style=color:#e6db74>}</span><span style=color:#e6db74>&#34;</span>
-</span></span></code></pre></div><h3 id=53-手动修复步骤无需脚本>5.3 手动修复步骤（无需脚本）</h3><p>如果你不想用脚本，手动修复也很简单：</p><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-bash data-lang=bash><span style=display:flex><span><span style=color:#75715e># 1. SSH 到 Docker 宿主机</span>
-</span></span><span style=display:flex><span>ssh root@&lt;your-docker-host&gt;
-</span></span><span style=display:flex><span>
-</span></span><span style=display:flex><span><span style=color:#75715e># 2. 找到 compose 文件（通常在 Portainer 数据目录下）</span>
-</span></span><span style=display:flex><span>grep -rl <span style=color:#e6db74>&#34;siyuan&#34;</span> /docker/portainer_data/compose/*/docker-compose.yml
-</span></span><span style=display:flex><span>
-</span></span><span style=display:flex><span><span style=color:#75715e># 3. 备份原文件</span>
-</span></span><span style=display:flex><span>cp /path/to/docker-compose.yml /path/to/docker-compose.yml.bak.<span style=color:#66d9ef>$(</span>date +%Y%m%d-%H%M%S<span style=color:#66d9ef>)</span>
-</span></span><span style=display:flex><span>
-</span></span><span style=display:flex><span><span style=color:#75715e># 4. 修改 command 行（在数组最前面加上 &#39;serve&#39;）</span>
-</span></span><span style=display:flex><span><span style=color:#75715e># 原: command: [&#39;--workspace=/siyuan/workspace/&#39;, &#39;--accessAuthCode=xxx&#39;]</span>
-</span></span><span style=display:flex><span><span style=color:#75715e># 改: command: [&#39;serve&#39;, &#39;--workspace=/siyuan/workspace/&#39;, &#39;--accessAuthCode=xxx&#39;]</span>
-</span></span><span style=display:flex><span>
-</span></span><span style=display:flex><span><span style=color:#75715e># 可以用 sed 一键替换:</span>
-</span></span><span style=display:flex><span>sed -i <span style=color:#e6db74>&#34;s|command: \\[\&#34;--workspace|command: \\[\&#34;serve\&#34;, \&#34;--workspace|g&#34;</span> /path/to/docker-compose.yml
-</span></span><span style=display:flex><span>
-</span></span><span style=display:flex><span><span style=color:#75715e># 5. 验证修改</span>
-</span></span><span style=display:flex><span>grep <span style=color:#e6db74>&#34;command:&#34;</span> /path/to/docker-compose.yml
-</span></span><span style=display:flex><span>
-</span></span><span style=display:flex><span><span style=color:#75715e># 6. 重建容器</span>
-</span></span><span style=display:flex><span>cd <span style=color:#66d9ef>$(</span>dirname /path/to/docker-compose.yml<span style=color:#66d9ef>)</span>
-</span></span><span style=display:flex><span>docker compose -p siyuan-note-qiniu up -d --force-recreate
-</span></span><span style=display:flex><span>
-</span></span><span style=display:flex><span><span style=color:#75715e># 7. 验证</span>
-</span></span><span style=display:flex><span>docker ps --filter name<span style=color:#f92672>=</span>siyuan
-</span></span><span style=display:flex><span>curl -o /dev/null -w <span style=color:#e6db74>&#34;%{http_code}\n&#34;</span> http://127.0.0.1:6001/
-</span></span><span style=display:flex><span><span style=color:#75715e># 返回 401 表示锁屏密码生效，服务正常！</span>
-</span></span></code></pre></div><p><img src=/post-images/siyuan-v370-docker-restart-loop-fix/shot-03-compose-up-success.png alt="docker compose up 成功输出。"></p><p><em>图 9：真实终端截图 — 重建容器后 Status 变为 Up，curl 返回 401（锁屏密码生效）。</em></p><h2 id=六人工执行-vs-ai-agent-自动配置>六、人工执行 vs AI Agent 自动配置</h2><h3 id=61-人工执行>6.1 人工执行</h3><p>人工修复这个问题的预估时间是 <strong>15-30 分钟</strong>：</p><ul><li>发现容器重启（1 分钟）</li><li><code>docker logs</code> 查看日志（1 分钟）</li><li>不理解错误信息，Google 搜索（5-15 分钟）</li><li>找到官方 README 或 GitHub Issue（5 分钟）</li><li>修改 compose 并重建（3 分钟）</li><li>验证（2 分钟）</li></ul><p>但实际经验是，大部分时间花在"理解这个错误是什么意思"上。<code>unknown flag</code> 这个提示对于不熟悉 CLI 子命令概念的人来说不够直观。</p><h3 id=62-ai-agent-自动配置>6.2 AI Agent 自动配置</h3><p>如果让 AI Agent 来修复，流程大致如下：</p><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-text data-lang=text><span style=display:flex><span>给 Agent 的提示词：
-</span></span><span style=display:flex><span>---
-</span></span><span style=display:flex><span>我的思源笔记 Docker 容器一直在重启。请帮我排查和修复。
-</span></span><span style=display:flex><span>
-</span></span><span style=display:flex><span>约束条件：
-</span></span><span style=display:flex><span>1. 不要执行大版本 OS 升级
-</span></span><span style=display:flex><span>2. 不要下载不明安装器
-</span></span><span style=display:flex><span>3. 不要输出真实内网 IP、完整计算机名、私有域名或密钥
-</span></span><span style=display:flex><span>4. 修改配置文件前先备份
-</span></span><span style=display:flex><span>5. 修复后验证容器状态和 HTTP 可达性
-</span></span><span style=display:flex><span>---
-</span></span></code></pre></div><p>Agent 的执行流程：</p><ol><li><code>docker ps -a</code> → 发现容器 Restarting</li><li><code>docker logs</code> → 看到 <code>unknown flag: --accessAuthCode</code></li><li><code>docker inspect</code> → 确认 compose 配置和镜像版本</li><li>查阅官方 README → 发现 v3.7.0 的 <code>serve</code> 子命令要求</li><li>备份 → 修改 compose → 重建容器 → 验证</li></ol><p><strong>实测效果</strong>：从开始排查到修复完成，Agent 用时约 <strong>10 分钟</strong>。如果人工来做，考虑到搜索、阅读文档和理解 CLI 架构变更，通常需要 20-30 分钟。</p><p><img src=/post-images/siyuan-v370-docker-restart-loop-fix/06-agent-workflow.png alt="AI Agent 修复流程。"></p><p><em>图 10：AI Agent 远程修复 Docker 容器故障的完整流程。</em></p><h3 id=63-给-agent-的护栏>6.3 给 Agent 的护栏</h3><p>让 Agent 操作生产环境，以下护栏必不可少：</p><table><thead><tr><th>护栏</th><th>说明</th></tr></thead><tbody><tr><td>备份优先</td><td>修改任何配置文件前必须先备份</td></tr><tr><td>不执行 OS 升级</td><td>Agent 只能操作容器层，不能动宿主系统</td></tr><tr><td>不泄露隐私</td><td>日志、配置、路径中不能包含真实 IP/域名/密钥</td></tr><tr><td>先诊断后动手</td><td>必须通过 logs/inspect 确认根因后再修改</td></tr><tr><td>验证闭环</td><td>修复后必须检查容器状态和 HTTP 可达性</td></tr><tr><td>可回滚</td><td>保留备份文件和回滚命令</td></tr></tbody></table><h2 id=七修复后的验证>七、修复后的验证</h2><p>修复完成后，思源笔记的服务会正常运行。访问 <code>http://&lt;your-host>:&lt;port>/</code>（本例中端口为 6001），会看到思源的锁屏页面：</p><p><img src=/post-images/siyuan-v370-docker-restart-loop-fix/shot-07-real-siyuan-login-large.png alt=思源笔记锁屏登录页面。></p><p><em>图 11：真实截图 — 修复后思源笔记 v3.7.0 锁屏登录页面（大尺寸）。输入 accessAuthCode 即可进入笔记。</em></p><p>输入在 <code>--accessAuthCode</code> 中设置的密码即可进入笔记。如果看到 HTTP 401 响应（用 curl 测试），说明锁屏密码生效，服务完全正常。</p><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-bash data-lang=bash><span style=display:flex><span>$ curl -o /dev/null -w <span style=color:#e6db74>&#34;%{http_code}\n&#34;</span> http://&lt;host&gt;:&lt;port&gt;/
-</span></span><span style=display:flex><span><span style=color:#ae81ff>401</span>
-</span></span></code></pre></div><p><strong>HTTP 401 在这里不是错误</strong> —— 它表示思源的访问控制正在工作，只有输入正确密码才能进入。</p><h2 id=八qa>八、Q&amp;A</h2><p><strong>Q1：为什么思源要在 v3.7.0 引入这个破坏性变更？</strong></p><p>因为 v3.7.0 新增了完整的命令行接口（CLI），kernel 现在不仅是一个 HTTP 服务器，还是一个多功能的命令行工具。除了 <code>serve</code>（启动 HTTP 服务），还有 <code>export</code>（导出文档）、<code>import</code>（导入文件）、<code>sync</code>（同步数据）等子命令。把功能拆成子命令是 CLI 设计的标准做法，就像 <code>git commit</code>、<code>git push</code> 一样。</p><p><strong>Q2：我的思源还是 v3.6.x，该不该升级？</strong></p><p>v3.7.0 带来了全新 UI、内核插件系统和 AI 知识库，是非常值得升级的版本。升级前只需确认你的 docker-compose.yml 中 <code>command</code> 字段包含 <code>serve</code> 子命令即可。</p><p><strong>Q3：如果我不止一个思源容器要修怎么办？</strong></p><p>上面提供的一键脚本可以通过参数指定不同的 Stack 名称。如果你有多个思源实例，遍历每个 compose 目录执行修复即可。</p><p><strong>Q4：Portainer 里怎么改？</strong></p><p>在 Portainer 中找到对应的 Stack，点击 Editor，在 <code>command</code> 数组最前面加上 <code>'serve',</code>，然后点击 &ldquo;Update the stack&rdquo; 即可。Portainer 会自动重建容器。</p><p><strong>Q5：修复后数据会不会丢？</strong></p><p>不会。数据存储在 <code>/siyuan/workspace</code>（或你挂载的对应目录）中，修复只改了 compose 文件的 <code>command</code> 字段，不涉及数据卷。而且修复前会自动备份 compose 文件。</p><p><strong>Q6：有没有比改 compose 更简单的方法？</strong></p><p>如果你用 <code>docker run</code> 而不是 compose，只需在命令中加上 <code>serve</code>：</p><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-bash data-lang=bash><span style=display:flex><span>docker run -d <span style=color:#ae81ff>\
-</span></span></span><span style=display:flex><span>  -v /siyuan/workspace:/siyuan/workspace <span style=color:#ae81ff>\
-</span></span></span><span style=display:flex><span>  -p 6806:6806 <span style=color:#ae81ff>\
-</span></span></span><span style=display:flex><span>  b3log/siyuan <span style=color:#ae81ff>\
-</span></span></span><span style=display:flex><span>  serve <span style=color:#ae81ff>\
-</span></span></span><span style=display:flex><span>  --workspace<span style=color:#f92672>=</span>/siyuan/workspace/ <span style=color:#ae81ff>\
-</span></span></span><span style=display:flex><span>  --accessAuthCode<span style=color:#f92672>=</span>xxx
-</span></span></code></pre></div><p><strong>Q7：其他 Docker 镜像也会有这种问题吗？</strong></p><p>任何从"无子命令 CLI"升级到"有子命令 CLI"的软件都可能出现类似问题。升级前看一下 CHANGELOG 中是否有 &ldquo;CLI&rdquo;、&ldquo;command&rdquo;、&ldquo;breaking change&rdquo; 等关键词是个好习惯。</p><h2 id=九总结>九、总结</h2><p>这次排查的教训可以浓缩为三句话：</p><ol><li><strong>容器出问题，先看 <code>docker logs</code></strong>。<code>docker ps</code> 只能告诉你"容器在重启&rdquo;，<code>docker logs</code> 才能告诉你"为什么重启"。</li><li><strong>升级前看一眼 CHANGELOG</strong>。v3.7.0 的 README 已经明确写了需要 <code>serve</code> 子命令，但升级已有部署时很容易漏掉。</li><li><strong>修复前先备份</strong>。<code>cp file.yml file.yml.bak.$(date)</code> 花不了 2 秒，但能在出问题时救命。</li></ol><p>从技术角度看，这次问题的本质是 <strong>CLI 接口的破坏性变更</strong>。思源团队在 v3.7.0 做了正确的架构决策（引入子命令架构），也写了文档，但破坏性变更对已有部署的影响总是最大的。好在这个修复极其简单 —— 多写一个 <code>serve</code>，7 个字符。</p><p>从运维角度看，这个案例完美展示了 <strong>&ldquo;日志优先"排查方法论</strong>的价值：不要猜、不要试、不要急着回滚 —— 先看日志，日志会告诉你一切。</p><p>如果你也遇到了类似问题，希望这篇文章能帮你少走 15 分钟的弯路。</p><h2 id=参考资料>参考资料</h2><ul><li><a href=https://github.com/siyuan-note/siyuan/releases/tag/v3.7.0>SiYuan v3.7.0 Release Notes</a></li><li><a href=https://github.com/siyuan-note/siyuan/blob/master/README.zh-CN.md#docker-%E9%83%A8%E7%BD%B2>SiYuan README (中文) — Docker 部署章节</a></li><li><a href=https://github.com/siyuan-note/siyuan/issues/17674>SiYuan CLI 设计 Issue #17674</a></li><li><a href=https://docs.docker.com/compose/>Docker Compose 文档</a></li><li><a href=https://docs.portainer.io/>Portainer 官方文档</a></li></ul></div></article><link rel=stylesheet href=https://cdn.jsdelivr.net/npm/gitalk/dist/gitalk.css><script src=https://cdn.jsdelivr.net/npm/gitalk/dist/gitalk.min.js></script><div id=gitalk-container style=margin-top:40px></div><script>(function(){var e=new Gitalk({clientID:"3181fd94e501cc5db0ad",clientSecret:"af1dab79dae02c69296e6615bfcecf47fc8615ee",repo:"margropcomment.margrop.io",owner:"margrop",admin:["margrop"],id:"/post/siyuan-v370-docker-restart-loop-fix/",distractionFreeMode:!1});e.render("gitalk-container")})()</script><script type=text/javascript src=https://js.users.51.la/21044367.js></script><script id=LA_COLLECT src=//sdk.51.la/js-sdk-pro.min.js></script><script>LA.init({id:"1vVTUWl7zoRjnKXi",ck:"1vVTUWl7zoRjnKXi"})</script><script src=https://sdk.51.la/perf/js-sdk-perf.min.js crossorigin=anonymous></script><script>(new LingQue.Monitor).init({id:"202teQt8THXwqyve"})</script></body></html>
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Docker 容器无限重启？只因 v3.7.0 少了一个 serve —— 思源笔记 CLI 破坏性变更修复实录 - 魔都水滴</title>
+<meta name="description" content="先说结论 把思源笔记从 v3.6.x 升级到 v3.7.0 后，Docker 容器陷入无限重启循环。docker logs 显示 Error: unknown flag: --accessAuthCode。根因是 v3.7.0 引入了 CLI 子命令架构，原来的顶级 flag 现在需要加一个 serve 子命令。修复只 …">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://blog.margrop.net/post/siyuan-v370-docker-restart-loop-fix/">
+
+<meta property="og:site_name" content="魔都水滴">
+<meta property="og:title" content="Docker 容器无限重启？只因 v3.7.0 少了一个 serve —— 思源笔记 CLI 破坏性变更修复实录 - 魔都水滴">
+<meta property="og:description" content="先说结论 把思源笔记从 v3.6.x 升级到 v3.7.0 后，Docker 容器陷入无限重启循环。docker logs 显示 Error: unknown flag: --accessAuthCode。根因是 v3.7.0 引入了 CLI 子命令架构，原来的顶级 flag 现在需要加一个 serve 子命令。修复只 …">
+<meta property="og:url" content="https://blog.margrop.net/post/siyuan-v370-docker-restart-loop-fix/">
+<meta property="og:locale" content="zh_CN"><meta property="og:type" content="article"><meta property="og:locale:alternate" content="en_US"><meta property="og:image" content="https://blog.margrop.net/images/avatar.png"><meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Docker 容器无限重启？只因 v3.7.0 少了一个 serve —— 思源笔记 CLI 破坏性变更修复实录 - 魔都水滴">
+<meta name="twitter:description" content="先说结论 把思源笔记从 v3.6.x 升级到 v3.7.0 后，Docker 容器陷入无限重启循环。docker logs 显示 Error: unknown flag: --accessAuthCode。根因是 v3.7.0 引入了 CLI 子命令架构，原来的顶级 flag 现在需要加一个 serve 子命令。修复只 …"><meta name="twitter:image" content="https://blog.margrop.net/images/avatar.png"><link rel="alternate" hreflang="zh-CN" href="https://blog.margrop.net/post/siyuan-v370-docker-restart-loop-fix/"><link rel="alternate" hreflang="en-US" href="https://blog.margrop.net/en/post/siyuan-v370-docker-restart-loop-fix/"><link rel="alternate" hreflang="x-default" href="https://blog.margrop.net/"><meta property="article:published_time" content="2026-07-02T19:30:00&#43;08:00">
+<meta property="article:modified_time" content="2026-07-02T19:30:00&#43;08:00"><meta property="article:tag" content="Docker"><meta property="article:tag" content="Siyuan"><meta property="article:tag" content="思源笔记"><meta property="article:tag" content="CLI"><meta property="article:tag" content="破坏性变更"><meta property="article:tag" content="docker-compose"><meta property="article:tag" content="故障排查"><meta property="article:tag" content="AI Agent"><script type="application/ld+json">{"@context":"https://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"魔都水滴"},"dateModified":"2026-07-02T19:30:00+08:00","datePublished":"2026-07-02T19:30:00+08:00","description":"先说结论 把思源笔记从 v3.6.x 升级到 v3.7.0 后，Docker 容器陷入无限重启循环。docker logs 显示 Error: unknown flag: --accessAuthCode。根因是 v3.7.0 引入了 CLI 子命令架构，原来的顶级 flag 现在需要加一个 serve 子命令。修复只 …","headline":"Docker 容器无限重启？只因 v3.7.0 少了一个 serve —— 思源笔记 CLI 破坏性变更修复实录","mainEntityOfPage":"https://blog.margrop.net/post/siyuan-v370-docker-restart-loop-fix/","url":"https://blog.margrop.net/post/siyuan-v370-docker-restart-loop-fix/"}</script>
+    <meta name="baidu-site-verification" content="code-sVFZ8SER59" />
+
+    
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-3J2W592DHJ"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-3J2W592DHJ');
+    </script>
+
+    <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 860px; margin: 0 auto; padding: 20px; line-height: 1.7; color: #222; }
+    h1 { border-bottom: 2px solid #333; padding-bottom: 10px; }
+    .post-list { list-style: none; padding: 0; }
+    .post-list li { margin: 15px 0; }
+    .post-list a { text-decoration: none; color: #333; font-size: 18px; }
+    .post-list a:hover { color: #006CFF; }
+    .date { color: #666; font-size: 14px; margin-right: 10px; }
+    .tags { margin-top: 8px; }
+    .tag { background: #eee; padding: 2px 8px; border-radius: 3px; font-size: 12px; margin-right: 5px; display: inline-block; }
+    nav { margin-bottom: 18px; border-bottom: 1px solid #eee; padding-bottom: 15px; }
+    nav a { margin-right: 20px; text-decoration: none; color: #333; font-size: 16px; }
+    nav a:hover { color: #006CFF; }
+    .language-switcher { margin: -8px 0 26px; }
+    .language-switcher a { display: inline-block; margin-right: 10px; padding: 4px 10px; border: 1px solid #ddd; border-radius: 999px; color: #555; text-decoration: none; font-size: 14px; }
+    .language-switcher a.active { background: #006CFF; border-color: #006CFF; color: #fff; }
+    .content { line-height: 1.8; }
+    .content code { background: #f4f4f4; padding: 2px 5px; border-radius: 3px; }
+    .content pre { background: #f4f4f4; padding: 15px; overflow-x: auto; border-radius: 5px; }
+    .content img { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+    .content .code-snippet__fix {
+        margin: 0 0 1.5em;
+    }
+    .content .code-snippet__fix .code-snippet__line-index {
+        display: none !important;
+    }
+    .meta { color: #666; font-size: 14px; margin-bottom: 14px; }
+    a { color: #006CFF; }
+    @media (max-width: 680px) {
+        body { padding: 16px; }
+        nav a { display: inline-block; margin-right: 12px; margin-bottom: 8px; }
+    }
+</style>
+
+</head>
+<body>
+    <nav>
+  
+  <a href="/">首页</a>
+  <a href="/post/">归档</a>
+  <a href="/tags/">标签</a>
+  <a href="/post/about/">关于</a>
+  <a href="https://download.margrop.net" target="_blank" rel="noopener">下载</a>
+  <a href="/post/favorites/">Link</a>
+  <a href="/post/github-project-stars/">Github</a>
+  
+  <a href="https://github-mirrors.margrop.net" target="_blank" rel="noopener">Github加速</a>
+  <a href="https://status.anye.xyz/" target="_blank" rel="noopener">Docker加速</a>
+  
+</nav>
+
+    
+<div class="language-switcher">
+  
+    <a href="/post/siyuan-v370-docker-restart-loop-fix/" class="active">中文</a>
+  
+    <a href="/en/post/siyuan-v370-docker-restart-loop-fix/" class="">English</a>
+  
+</div>
+
+
+    
+    <article>
+        <h1>Docker 容器无限重启？只因 v3.7.0 少了一个 serve —— 思源笔记 CLI 破坏性变更修复实录</h1>
+        <div class="meta">
+            发布时间: 2026-07-02
+        </div>
+        
+<div class="tags">
+    
+    <a href="/tag/docker/"><span class="tag">Docker</span></a>
+    
+    <a href="/tag/siyuan/"><span class="tag">Siyuan</span></a>
+    
+    <a href="/tag/%E6%80%9D%E6%BA%90%E7%AC%94%E8%AE%B0/"><span class="tag">思源笔记</span></a>
+    
+    <a href="/tag/cli/"><span class="tag">CLI</span></a>
+    
+    <a href="/tag/%E7%A0%B4%E5%9D%8F%E6%80%A7%E5%8F%98%E6%9B%B4/"><span class="tag">破坏性变更</span></a>
+    
+    <a href="/tag/docker-compose/"><span class="tag">docker-compose</span></a>
+    
+    <a href="/tag/%E6%95%85%E9%9A%9C%E6%8E%92%E6%9F%A5/"><span class="tag">故障排查</span></a>
+    
+    <a href="/tag/ai-agent/"><span class="tag">AI Agent</span></a>
+    
+</div>
+
+
+        <div class="content">
+            <blockquote>
+<p><strong>先说结论</strong></p>
+<p>把思源笔记从 v3.6.x 升级到 v3.7.0 后，Docker 容器陷入无限重启循环。<code>docker logs</code> 显示 <code>Error: unknown flag: --accessAuthCode</code>。根因是 v3.7.0 引入了 CLI 子命令架构，原来的顶级 flag 现在需要加一个 <code>serve</code> 子命令。修复只需在 docker-compose.yml 的 <code>command</code> 字段最前面加上 <code>'serve'</code>，多 7 个字符，从无限重启到正常运行。</p>
+<p>本文给出完整排查过程、三种操作系统下的一键修复脚本（Windows 11 / Ubuntu 26.04 / macOS 26），以及人工执行和 AI Agent 自动配置两种方法。所有脚本只调用 Docker CLI 和 SSH，不依赖第三方服务。</p>
+</blockquote>
+<p><img src="/post-images/siyuan-v370-docker-restart-loop-fix/00-ai-cover.png" alt="AI 生成封面：Docker 容器无限重启的排查与修复。"></p>
+<p><em>图 1：AI 生成封面。容器重启循环的修复，往往只需要一行改动。</em></p>
+<h2 id="一问题背景思源笔记与-docker-部署">一、问题背景：思源笔记与 Docker 部署</h2>
+<p><a href="https://github.com/siyuan-note/siyuan">思源笔记（SiYuan）</a> 是一款开源的个人知识管理系统，支持 Markdown 编辑、双向链接、数据同步和 Docker 部署。很多用户选择用 Docker 在服务器上运行思源，通过浏览器随时随地访问自己的笔记。</p>
+<p>Docker 部署的典型配置如下：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-yaml" data-lang="yaml"><span style="display:flex;"><span><span style="color:#f92672">version</span>: <span style="color:#e6db74">&#34;3.9&#34;</span>
+</span></span><span style="display:flex;"><span><span style="color:#f92672">services</span>:
+</span></span><span style="display:flex;"><span>  <span style="color:#f92672">main</span>:
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">image</span>: <span style="color:#ae81ff">b3log/siyuan:v3.7.0</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">command</span>: [<span style="color:#e6db74">&#39;--workspace=/siyuan/workspace/&#39;</span>, <span style="color:#e6db74">&#39;--accessAuthCode=xxx&#39;</span>]
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">ports</span>:
+</span></span><span style="display:flex;"><span>      - <span style="color:#ae81ff">6806</span>:<span style="color:#ae81ff">6806</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">volumes</span>:
+</span></span><span style="display:flex;"><span>      - <span style="color:#ae81ff">/docker/siyuan_data:/siyuan/workspace</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">restart</span>: <span style="color:#ae81ff">always</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">environment</span>:
+</span></span><span style="display:flex;"><span>      - <span style="color:#ae81ff">PUID=1001</span>
+</span></span><span style="display:flex;"><span>      - <span style="color:#ae81ff">PGID=1002</span>
+</span></span><span style="display:flex;"><span>      - <span style="color:#ae81ff">SIYUAN_LANG=zh-CN</span>
+</span></span></code></pre></div><p>这个配置在 v3.6.x 及之前的版本中工作良好。然而，2026 年 6 月 30 日发布的 <strong>v3.7.0</strong> 是一个大版本更新，带来了全新的用户界面、内核插件系统和命令行接口（CLI）重构。正是这个 CLI 重构，导致了许多 Docker 用户的容器在升级后无法启动。</p>
+<h3 id="v370-带来了什么">v3.7.0 带来了什么？</h3>
+<p>根据<a href="https://github.com/siyuan-note/siyuan/releases/tag/v3.7.0">官方发布说明</a>，v3.7.0 是一次全面的版本革新：</p>
+<ul>
+<li><strong>重新设计的用户界面</strong>：更精致的视觉层次</li>
+<li><strong>移动端快捷方式</strong>：长按应用图标即可快速记录灵感</li>
+<li><strong>内核插件系统</strong>：插件在单一内核中常驻运行，消除多窗口数据冲突</li>
+<li><strong>命令行接口（CLI）</strong>：无需启动思源桌面端即可连接内核数据层，用于批量导入导出、定时处理和外部系统集成</li>
+<li><strong>AI 知识库</strong>：思源 Agent 和向量嵌入搜索进入公开测试</li>
+</ul>
+<p>其中第四项 —— <strong>CLI 命令行接口</strong>，就是本文要讨论的&quot;罪魁祸首&quot;。它带来了更强大的自动化能力，但也引入了一个破坏性变更。</p>
+<p><img src="/post-images/siyuan-v370-docker-restart-loop-fix/04-architecture-overview.png" alt="思源 v3.7.0 架构概览。"></p>
+<p><em>图 2：思源 Docker 部署架构。Portainer 管理 Stack，容器内 entrypoint.sh 启动 kernel，kernel 再通过 serve 子命令启动 HTTP 服务。</em></p>
+<h2 id="二问题表现容器无限重启循环">二、问题表现：容器无限重启循环</h2>
+<p>某天，我在 Portainer 中把思源笔记的镜像从 <code>v3.6.1</code> 升级到了 <code>v3.7.0</code>，点击&quot;重新部署&quot;后，发现容器状态不对劲：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>$ docker ps --filter name<span style="color:#f92672">=</span>siyuan
+</span></span><span style="display:flex;"><span>NAMES          STATUS
+</span></span><span style="display:flex;"><span>siyuan-qiniu   Restarting <span style="color:#f92672">(</span>1<span style="color:#f92672">)</span> <span style="color:#ae81ff">8</span> seconds ago
+</span></span></code></pre></div><p>容器不断经历 <strong>启动 → 退出（exit code 1）→ Docker 自动重启 → 又退出</strong> 的死循环。从外面看，端口映射存在但无法访问，浏览器打开对应地址一直转圈。</p>
+<p><img src="/post-images/siyuan-v370-docker-restart-loop-fix/shot-01-docker-restarting.png" alt="docker ps 显示容器无限重启。"></p>
+<p><em>图 3：真实终端截图 — docker ps 显示 siyuan 容器处于 Restarting 状态。</em></p>
+<p>这就好比你家小区新换了一个门禁系统（升级镜像），结果门禁主机不断重启 —— 刚启动、闪一下屏、然后黑掉、再重启。你站在门口进不去，干着急。</p>
+<h3 id="用生活场景理解容器重启循环">用生活场景理解&quot;容器重启循环&quot;</h3>
+<p><strong>打比方 —— 汽车启动故障</strong>：</p>
+<p>你换了新发动机（升级镜像），但点火方式不对。每次转动钥匙，发动机&quot;咔&quot;响一声就熄火了。车载电脑自动尝试重新点火（<code>restart: always</code>），于是你听到&quot;咔-咔-咔&quot;不断重复。要修好它，不能只拔电瓶，得看故障码 —— 对容器来说，故障码就是 <code>docker logs</code>。</p>
+<h2 id="三问题分析从-docker-logs-找到第一线索">三、问题分析：从 docker logs 找到第一线索</h2>
+<p>容器出问题，第一反应不是重启、不是回滚、不是重装，而是 <strong>看日志</strong>。</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>$ docker logs --tail <span style="color:#ae81ff">40</span> siyuan-qiniu
+</span></span><span style="display:flex;"><span>Error: unknown flag: --accessAuthCode
+</span></span><span style="display:flex;"><span>Usage:
+</span></span><span style="display:flex;"><span>  kernel <span style="color:#f92672">[</span>command<span style="color:#f92672">]</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>Available Commands:
+</span></span><span style="display:flex;"><span>  asset       Manage assets
+</span></span><span style="display:flex;"><span>  attr        Manage block attributes
+</span></span><span style="display:flex;"><span>  block       Block operations
+</span></span><span style="display:flex;"><span>  bookmark    Manage bookmarks
+</span></span><span style="display:flex;"><span>  completion  Generate the autocompletion script
+</span></span><span style="display:flex;"><span>  serve       Start kernel HTTP server
+</span></span><span style="display:flex;"><span>  export      Export documents
+</span></span><span style="display:flex;"><span>  ...
+</span></span><span style="display:flex;"><span>Flags:
+</span></span><span style="display:flex;"><span>      --dry-run            dry run mode
+</span></span><span style="display:flex;"><span>  -h, --help               help <span style="color:#66d9ef">for</span> kernel
+</span></span><span style="display:flex;"><span>  -w, --workspace string   workspace path
+</span></span></code></pre></div><p><img src="/post-images/siyuan-v370-docker-restart-loop-fix/shot-06-real-error-log.png" alt="真实错误日志。"></p>
+<p><em>图 4：真实截图 — docker logs 显示的 kernel CLI 错误信息。</em></p>
+<p><img src="/post-images/siyuan-v370-docker-restart-loop-fix/shot-05-siyuan-real-login.png" alt="思源笔记 v3.7.0 锁屏登录页面。"></p>
+<p><em>图 5：真实截图 — 修复后思源笔记 v3.7.0 的锁屏登录页面。输入 accessAuthCode 即可访问笔记。</em></p>
+<p>日志非常清楚地告诉我们：<strong><code>--accessAuthCode</code> 是一个未知的 flag</strong>。而且，kernel 列出了它认识的所有<strong>子命令</strong>（<code>serve</code>、<code>asset</code>、<code>block</code> 等），其中 <code>serve</code> 的描述正是 &ldquo;Start kernel HTTP server&rdquo;。</p>
+<p>这个输出本身就是一个巨大的提示：kernel 期望的第一个参数是一个<strong>子命令</strong>，而不是 <code>--workspace</code> 或 <code>--accessAuthCode</code> 这样的 flag。</p>
+<h3 id="排查链路">排查链路</h3>
+<p>完整的排查链路如下：</p>
+<ol>
+<li><code>docker ps -a</code> → 发现容器 <code>Restarting</code></li>
+<li><code>docker logs</code> → 看到 <code>unknown flag: --accessAuthCode</code></li>
+<li><code>docker inspect</code> → 确认 compose 配置路径和 command 字段</li>
+<li>查阅官方 README → 发现 v3.7.0 起必须显式传入 <code>serve</code> 子命令</li>
+<li>定位根因 → compose 文件中 <code>command</code> 缺少 <code>serve</code></li>
+</ol>
+<p><img src="/post-images/siyuan-v370-docker-restart-loop-fix/03-troubleshooting-flow.png" alt="故障排查流程。"></p>
+<p><em>图 6：Docker 容器故障排查标准流程。docker logs 是第一线索，不要只看 docker ps。</em></p>
+<h2 id="四问题根因v370-cli-子命令架构变更">四、问题根因：v3.7.0 CLI 子命令架构变更</h2>
+<h3 id="打比方--餐厅点餐系统升级">打比方 —— 餐厅点餐系统升级</h3>
+<p><strong>旧系统（v3.6.x 及之前）</strong>：你走进餐厅，直接对服务员说&quot;宫保鸡丁、米饭、可乐&quot;。服务员知道你在点餐，就帮你下单了。</p>
+<p><strong>新系统（v3.7.0）</strong>：餐厅装了新的 POS 系统。现在你必须先说&quot;<strong>点餐</strong>&quot;，然后再说&quot;宫保鸡丁、米饭、可乐&quot;。如果你直接说&quot;宫保鸡丁&quot;，系统会疑惑：&ldquo;宫保鸡丁是什么操作？我只认识&rsquo;点餐&rsquo;、&lsquo;结账&rsquo;、&lsquo;打包&rsquo;这些操作。&rdquo;</p>
+<p>这里的&quot;点餐&quot;就是 <code>serve</code> 子命令，&ldquo;宫保鸡丁&quot;就是 <code>--workspace</code> 和 <code>--accessAuthCode</code> 参数。</p>
+<h3 id="技术层面">技术层面</h3>
+<p>在 v3.7.0 之前，思源的 kernel 入口直接接受顶级 flag：</p>
+<pre tabindex="0"><code>kernel --workspace=/siyuan/workspace/ --accessAuthCode=xxx
+</code></pre><p>v3.7.0 引入了完整的 CLI 子命令架构（这是 <a href="https://github.com/siyuan-note/siyuan/issues/17674">Issue #17674</a> 的实现），kernel 现在需要一个子命令：</p>
+<pre tabindex="0"><code>kernel serve --workspace=/siyuan/workspace/ --accessAuthCode=xxx
+</code></pre><p>Docker 镜像的 <code>ENTRYPOINT</code> 是 <code>/opt/siyuan/entrypoint.sh</code>，这个脚本负责设置 PUID/PGID 然后调用 <code>kernel</code>。但它本身不会自动加上 <code>serve</code> 子命令 —— 这个责任落在了 <code>CMD</code> 或 compose 的 <code>command</code> 字段上。</p>
+<p>在 docker-compose.yml 中，原来的配置是：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-yaml" data-lang="yaml"><span style="display:flex;"><span><span style="color:#f92672">command</span>: [<span style="color:#e6db74">&#39;--workspace=/siyuan/workspace/&#39;</span>, <span style="color:#e6db74">&#39;--accessAuthCode=xxx&#39;</span>]
+</span></span></code></pre></div><p>这些参数直接传给了 <code>entrypoint.sh</code>，然后传给 <code>kernel</code>。kernel 把 <code>--workspace</code> 当成子命令名来解析，发现不认识，于是报错退出。Docker 的 <code>restart: always</code> 策略又把它拉起来，如此往复。</p>
+<p><img src="/post-images/siyuan-v370-docker-restart-loop-fix/02-cli-breaking-change.png" alt="CLI 破坏性变更对比。"></p>
+<p><em>图 7：v3.6.x vs v3.7.0 CLI 参数结构对比。新增的 serve 子命令是唯一的区别。</em></p>
+<blockquote>
+<p><strong>注意</strong>：官方 README 第 216 行已经明确写了这个变更：
+&ldquo;自 v3.7.0 起，必须显式传入 <code>serve</code> 子命令（例如 <code>docker run b3log/siyuan serve --workspace=...</code>）。&rdquo;</p>
+<p>但在升级已有部署时，很多人（包括我）不会重新读一遍 README，导致踩坑。</p>
+</blockquote>
+<h2 id="五如何解决问题">五、如何解决问题</h2>
+<h3 id="51-修复原理">5.1 修复原理</h3>
+<p>修复极其简单：在 compose 文件的 <code>command</code> 数组最前面加一个 <code>'serve'</code>。</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-diff" data-lang="diff"><span style="display:flex;"><span><span style="color:#f92672">- command: [&#39;--workspace=/siyuan/workspace/&#39;, &#39;--accessAuthCode=xxx&#39;]
+</span></span></span><span style="display:flex;"><span><span style="color:#a6e22e">+ command: [&#39;serve&#39;, &#39;--workspace=/siyuan/workspace/&#39;, &#39;--accessAuthCode=xxx&#39;]
+</span></span></span></code></pre></div><p>仅 7 个字符的改动，从无限重启到正常运行。</p>
+<p><img src="/post-images/siyuan-v370-docker-restart-loop-fix/05-compose-fix-diff.png" alt="compose 文件修改 diff。"></p>
+<p><em>图 8：docker-compose.yml 修改内容 —— 只在 command 数组最前面加了 &lsquo;serve&rsquo;。</em></p>
+<h3 id="52-一键修复脚本">5.2 一键修复脚本</h3>
+<p>以下脚本适用于三种操作系统。它们通过 SSH 连接到 Docker 宿主机，自动检测思源容器、备份原配置、修补 command 字段、重建容器。</p>
+<blockquote>
+<p><strong>安全提醒</strong>：脚本会自动备份原 docker-compose.yml（带时间戳），不会覆盖数据卷，可安全回滚。</p>
+</blockquote>
+<h4 id="windows-11powershell">Windows 11（PowerShell）</h4>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-powershell" data-lang="powershell"><span style="display:flex;"><span><span style="color:#75715e"># siyuan-fix.ps1 — 思源 v3.7.0 容器修复脚本</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 用法：.\siyuan-fix.ps1 -ServerHost &lt;docker-host&gt; -ServerUser root -StackName siyuan-note-qiniu</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">param</span>(
+</span></span><span style="display:flex;"><span>    [Parameter(<span style="color:#a6e22e">Mandatory</span>=$true)][<span style="color:#66d9ef">string</span>]$ServerHost,
+</span></span><span style="display:flex;"><span>    [<span style="color:#66d9ef">string</span>]$ServerUser = <span style="color:#e6db74">&#34;root&#34;</span>,
+</span></span><span style="display:flex;"><span>    [<span style="color:#66d9ef">string</span>]$StackName = <span style="color:#e6db74">&#34;siyuan-note-qiniu&#34;</span>
+</span></span><span style="display:flex;"><span>)
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>$ErrorActionPreference = <span style="color:#e6db74">&#34;Stop&#34;</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>Write-Host <span style="color:#e6db74">&#34;=== 思源 v3.7.0 Docker 容器修复 ===&#34;</span> -ForegroundColor Cyan
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 1. 检测容器状态</span>
+</span></span><span style="display:flex;"><span>Write-Host <span style="color:#e6db74">&#34;[1/5] 检查容器状态...&#34;</span> -ForegroundColor Yellow
+</span></span><span style="display:flex;"><span>$status = ssh <span style="color:#e6db74">&#34;</span>${ServerUser}<span style="color:#e6db74">@</span>${ServerHost}<span style="color:#e6db74">&#34;</span> <span style="color:#e6db74">&#34;docker ps --filter name=</span>$StackName<span style="color:#e6db74"> --format &#39;{{.Status}}&#39;&#34;</span>
+</span></span><span style="display:flex;"><span>Write-Host <span style="color:#e6db74">&#34;  容器状态: </span>$status<span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 2. 查看日志确认问题</span>
+</span></span><span style="display:flex;"><span>Write-Host <span style="color:#e6db74">&#34;[2/5] 查看容器日志...&#34;</span> -ForegroundColor Yellow
+</span></span><span style="display:flex;"><span>$logs = ssh <span style="color:#e6db74">&#34;</span>${ServerUser}<span style="color:#e6db74">@</span>${ServerHost}<span style="color:#e6db74">&#34;</span> <span style="color:#e6db74">&#34;docker logs --tail 20 </span>$($StackName)<span style="color:#e6db74">_main_1 2&gt;&amp;1 || docker logs --tail 20 siyuan-qiniu 2&gt;&amp;1 || docker logs --tail 20 \</span>$(docker ps -a --filter name=siyuan --format <span style="color:#e6db74">&#39;{{.Names}}&#39;</span>)<span style="color:#e6db74"> 2&gt;&amp;1&#34;</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> ($logs <span style="color:#f92672">-match</span> <span style="color:#e6db74">&#34;unknown flag.*accessAuthCode&#34;</span>) {
+</span></span><span style="display:flex;"><span>    Write-Host <span style="color:#e6db74">&#34;  ✓ 确认为 v3.7.0 CLI 变更导致的问题&#34;</span> -ForegroundColor Green
+</span></span><span style="display:flex;"><span>} <span style="color:#66d9ef">else</span> {
+</span></span><span style="display:flex;"><span>    Write-Host <span style="color:#e6db74">&#34;  ⚠ 错误信息与预期不符，请手动检查&#34;</span> -ForegroundColor Red
+</span></span><span style="display:flex;"><span>    Write-Host $logs
+</span></span><span style="display:flex;"><span>    exit <span style="color:#ae81ff">1</span>
+</span></span><span style="display:flex;"><span>}
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 3. 定位 compose 文件</span>
+</span></span><span style="display:flex;"><span>Write-Host <span style="color:#e6db74">&#34;[3/5] 定位 docker-compose.yml...&#34;</span> -ForegroundColor Yellow
+</span></span><span style="display:flex;"><span>$composePath = ssh <span style="color:#e6db74">&#34;</span>${ServerUser}<span style="color:#e6db74">@</span>${ServerHost}<span style="color:#e6db74">&#34;</span> <span style="color:#e6db74">&#34;docker inspect --format &#39;{{index .Config.Labels \&#34;</span>com.docker.compose.project.config_files\<span style="color:#e6db74">&#34;}}&#39; \</span>$(docker ps -a --filter name=siyuan --format <span style="color:#e6db74">&#39;{{.ID}}&#39;</span> | head <span style="color:#ae81ff">-1</span>)<span style="color:#e6db74"> 2&gt;/dev/null&#34;</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> (<span style="color:#f92672">-not</span> $composePath) {
+</span></span><span style="display:flex;"><span>    <span style="color:#75715e"># 备用方案：搜索 Portainer 目录</span>
+</span></span><span style="display:flex;"><span>    $composePath = ssh <span style="color:#e6db74">&#34;</span>${ServerUser}<span style="color:#e6db74">@</span>${ServerHost}<span style="color:#e6db74">&#34;</span> <span style="color:#e6db74">&#34;grep -rl &#39;siyuan&#39; /docker/portainer_data/compose/*/docker-compose.yml 2&gt;/dev/null | head -1&#34;</span>
+</span></span><span style="display:flex;"><span>}
+</span></span><span style="display:flex;"><span>Write-Host <span style="color:#e6db74">&#34;  Compose 文件: </span>$composePath<span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 4. 备份并修复</span>
+</span></span><span style="display:flex;"><span>Write-Host <span style="color:#e6db74">&#34;[4/5] 备份并修复 compose 文件...&#34;</span> -ForegroundColor Yellow
+</span></span><span style="display:flex;"><span>$fixCmd = <span style="color:#e6db74">@&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">cp &#39;</span>$composePath<span style="color:#e6db74">&#39; &#39;</span>$composePath<span style="color:#e6db74">.bak.\</span>$(date +<span style="color:#66d9ef">%</span>Y<span style="color:#66d9ef">%</span>m<span style="color:#66d9ef">%</span>d-<span style="color:#66d9ef">%</span>H<span style="color:#66d9ef">%</span>M<span style="color:#66d9ef">%</span>S)<span style="color:#e6db74">&#39; &amp;&amp; \
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">sed -i \&#34;s|command: \\[\&#34;--workspace|command: \\[\&#34;serve\&#34;, \&#34;--workspace|g\&#34; &#39;</span>$composePath<span style="color:#e6db74">&#39; &amp;&amp; \
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">echo &#39;FIXED&#39; &amp;&amp; cat &#39;</span>$composePath<span style="color:#e6db74">&#39; | grep -A 2 &#39;command:&#39;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">&#34;@</span>
+</span></span><span style="display:flex;"><span>$result = ssh <span style="color:#e6db74">&#34;</span>${ServerUser}<span style="color:#e6db74">@</span>${ServerHost}<span style="color:#e6db74">&#34;</span> $fixCmd
+</span></span><span style="display:flex;"><span>Write-Host $result
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> ($result <span style="color:#f92672">-match</span> <span style="color:#e6db74">&#34;FIXED&#34;</span>) {
+</span></span><span style="display:flex;"><span>    Write-Host <span style="color:#e6db74">&#34;  ✓ compose 文件已修复&#34;</span> -ForegroundColor Green
+</span></span><span style="display:flex;"><span>} <span style="color:#66d9ef">else</span> {
+</span></span><span style="display:flex;"><span>    Write-Host <span style="color:#e6db74">&#34;  ⚠ 修复可能未生效，请手动检查&#34;</span> -ForegroundColor Red
+</span></span><span style="display:flex;"><span>    exit <span style="color:#ae81ff">1</span>
+</span></span><span style="display:flex;"><span>}
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 5. 重建容器</span>
+</span></span><span style="display:flex;"><span>Write-Host <span style="color:#e6db74">&#34;[5/5] 重建容器...&#34;</span> -ForegroundColor Yellow
+</span></span><span style="display:flex;"><span>$composeDir = Split-Path $composePath -Parent
+</span></span><span style="display:flex;"><span>$projectName = <span style="color:#e6db74">&#34;siyuan-note-qiniu&#34;</span>
+</span></span><span style="display:flex;"><span>$rebuildResult = ssh <span style="color:#e6db74">&#34;</span>${ServerUser}<span style="color:#e6db74">@</span>${ServerHost}<span style="color:#e6db74">&#34;</span> <span style="color:#e6db74">&#34;cd &#39;</span>$composeDir<span style="color:#e6db74">&#39; &amp;&amp; docker compose -p </span>$projectName<span style="color:#e6db74"> up -d --force-recreate 2&gt;&amp;1&#34;</span>
+</span></span><span style="display:flex;"><span>Write-Host $rebuildResult
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 验证</span>
+</span></span><span style="display:flex;"><span>Start-Sleep -Seconds <span style="color:#ae81ff">5</span>
+</span></span><span style="display:flex;"><span>$finalStatus = ssh <span style="color:#e6db74">&#34;</span>${ServerUser}<span style="color:#e6db74">@</span>${ServerHost}<span style="color:#e6db74">&#34;</span> <span style="color:#e6db74">&#34;docker ps --filter name=siyuan --format &#39;table {{.Names}}\t{{.Status}}\t{{.Ports}}&#39;&#34;</span>
+</span></span><span style="display:flex;"><span>Write-Host <span style="color:#e6db74">&#34;</span><span style="color:#ae81ff">`n</span><span style="color:#e6db74">=== 最终状态 ===&#34;</span> -ForegroundColor Cyan
+</span></span><span style="display:flex;"><span>Write-Host $finalStatus
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>$healthCheck = ssh <span style="color:#e6db74">&#34;</span>${ServerUser}<span style="color:#e6db74">@</span>${ServerHost}<span style="color:#e6db74">&#34;</span> <span style="color:#e6db74">&#34;curl -sf -o /dev/null -w &#39;%{http_code}&#39; http://127.0.0.1:6001/ 2&gt;&amp;1 || echo &#39;port may differ&#39;&#34;</span>
+</span></span><span style="display:flex;"><span>Write-Host <span style="color:#e6db74">&#34;HTTP 状态码: </span>$healthCheck<span style="color:#e6db74"> (401 = 正常，锁屏密码生效)&#34;</span>
+</span></span><span style="display:flex;"><span>Write-Host <span style="color:#e6db74">&#34;</span><span style="color:#ae81ff">`n</span><span style="color:#e6db74">✅ 修复完成！&#34;</span> -ForegroundColor Green
+</span></span></code></pre></div><h4 id="ubuntu-2604--debian">Ubuntu 26.04 / Debian</h4>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e">#!/usr/bin/env bash
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"># siyuan-fix.sh — 思源 v3.7.0 容器修复脚本</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 用法: bash siyuan-fix.sh &lt;docker-host&gt; [ssh-user] [stack-name]</span>
+</span></span><span style="display:flex;"><span>set -euo pipefail
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>SERVER_HOST<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>1:?请指定 Docker 宿主机地址<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>SERVER_USER<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>2<span style="color:#66d9ef">:-</span>root<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>STACK_NAME<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>3<span style="color:#66d9ef">:-</span>siyuan-note-qiniu<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>RED<span style="color:#f92672">=</span><span style="color:#e6db74">&#39;\033[0;31m&#39;</span>; GREEN<span style="color:#f92672">=</span><span style="color:#e6db74">&#39;\033[0;32m&#39;</span>; YELLOW<span style="color:#f92672">=</span><span style="color:#e6db74">&#39;\033[1;33m&#39;</span>; CYAN<span style="color:#f92672">=</span><span style="color:#e6db74">&#39;\033[0;36m&#39;</span>; NC<span style="color:#f92672">=</span><span style="color:#e6db74">&#39;\033[0m&#39;</span>
+</span></span><span style="display:flex;"><span>ssh_cmd<span style="color:#f92672">()</span> <span style="color:#f92672">{</span> ssh -o StrictHostKeyChecking<span style="color:#f92672">=</span>accept-new <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>SERVER_USER<span style="color:#e6db74">}</span><span style="color:#e6db74">@</span><span style="color:#e6db74">${</span>SERVER_HOST<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span> <span style="color:#e6db74">&#34;</span>$@<span style="color:#e6db74">&#34;</span>; <span style="color:#f92672">}</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>echo -e <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>CYAN<span style="color:#e6db74">}</span><span style="color:#e6db74">=== 思源 v3.7.0 Docker 容器修复 ===</span><span style="color:#e6db74">${</span>NC<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 1. 检测容器状态</span>
+</span></span><span style="display:flex;"><span>echo -e <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>YELLOW<span style="color:#e6db74">}</span><span style="color:#e6db74">[1/5] 检查容器状态...</span><span style="color:#e6db74">${</span>NC<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>ssh_cmd <span style="color:#e6db74">&#34;docker ps -a --filter name=siyuan --format &#39;table {{.Names}}\t{{.Status}}\t{{.Ports}}&#39;&#34;</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 2. 确认日志中的错误</span>
+</span></span><span style="display:flex;"><span>echo -e <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>YELLOW<span style="color:#e6db74">}</span><span style="color:#e6db74">[2/5] 确认错误日志...</span><span style="color:#e6db74">${</span>NC<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>CONTAINER_NAME<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>ssh_cmd <span style="color:#e6db74">&#34;docker ps -a --filter name=siyuan --format &#39;{{.Names}}&#39; | head -1&#34;</span><span style="color:#66d9ef">)</span>
+</span></span><span style="display:flex;"><span>LOGS<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>ssh_cmd <span style="color:#e6db74">&#34;docker logs --tail 20 </span><span style="color:#e6db74">${</span>CONTAINER_NAME<span style="color:#e6db74">}</span><span style="color:#e6db74"> 2&gt;&amp;1&#34;</span> <span style="color:#f92672">||</span> true<span style="color:#66d9ef">)</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> echo <span style="color:#e6db74">&#34;</span>$LOGS<span style="color:#e6db74">&#34;</span> | grep -q <span style="color:#e6db74">&#34;unknown flag.*accessAuthCode&#34;</span>; <span style="color:#66d9ef">then</span>
+</span></span><span style="display:flex;"><span>    echo -e <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>GREEN<span style="color:#e6db74">}</span><span style="color:#e6db74">  ✓ 确认为 v3.7.0 CLI 变更导致的问题</span><span style="color:#e6db74">${</span>NC<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">else</span>
+</span></span><span style="display:flex;"><span>    echo -e <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>RED<span style="color:#e6db74">}</span><span style="color:#e6db74">  ⚠ 错误信息与预期不符，请手动检查</span><span style="color:#e6db74">${</span>NC<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>    echo <span style="color:#e6db74">&#34;</span>$LOGS<span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>    exit <span style="color:#ae81ff">1</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">fi</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 3. 定位 compose 文件</span>
+</span></span><span style="display:flex;"><span>echo -e <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>YELLOW<span style="color:#e6db74">}</span><span style="color:#e6db74">[3/5] 定位 docker-compose.yml...</span><span style="color:#e6db74">${</span>NC<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>COMPOSE_PATH<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>ssh_cmd <span style="color:#e6db74">&#34;docker inspect --format &#39;{{index .Config.Labels \&#34;com.docker.compose.project.config_files\&#34;}}&#39; \$(docker ps -a --filter name=siyuan --format &#39;{{.ID}}&#39; | head -1) 2&gt;/dev/null&#34;</span> <span style="color:#f92672">||</span> true<span style="color:#66d9ef">)</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> <span style="color:#f92672">[[</span> -z <span style="color:#e6db74">&#34;</span>$COMPOSE_PATH<span style="color:#e6db74">&#34;</span> <span style="color:#f92672">]]</span>; <span style="color:#66d9ef">then</span>
+</span></span><span style="display:flex;"><span>    COMPOSE_PATH<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>ssh_cmd <span style="color:#e6db74">&#34;grep -rl &#39;siyuan&#39; /docker/portainer_data/compose/*/docker-compose.yml 2&gt;/dev/null | head -1&#34;</span> <span style="color:#f92672">||</span> true<span style="color:#66d9ef">)</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">fi</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> <span style="color:#f92672">[[</span> -z <span style="color:#e6db74">&#34;</span>$COMPOSE_PATH<span style="color:#e6db74">&#34;</span> <span style="color:#f92672">]]</span>; <span style="color:#66d9ef">then</span>
+</span></span><span style="display:flex;"><span>    echo -e <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>RED<span style="color:#e6db74">}</span><span style="color:#e6db74">无法定位 docker-compose.yml，请手动指定</span><span style="color:#e6db74">${</span>NC<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>    exit <span style="color:#ae81ff">1</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">fi</span>
+</span></span><span style="display:flex;"><span>echo <span style="color:#e6db74">&#34;  Compose 文件: </span>$COMPOSE_PATH<span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 4. 备份并修复</span>
+</span></span><span style="display:flex;"><span>echo -e <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>YELLOW<span style="color:#e6db74">}</span><span style="color:#e6db74">[4/5] 备份并修复 compose 文件...</span><span style="color:#e6db74">${</span>NC<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>TIMESTAMP<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>date +%Y%m%d-%H%M%S<span style="color:#66d9ef">)</span>
+</span></span><span style="display:flex;"><span>ssh_cmd <span style="color:#e6db74">&#34;cp &#39;</span>$COMPOSE_PATH<span style="color:#e6db74">&#39; &#39;</span>$COMPOSE_PATH<span style="color:#e6db74">.bak.</span>$TIMESTAMP<span style="color:#e6db74">&#39;&#34;</span> <span style="color:#f92672">&amp;&amp;</span> echo <span style="color:#e6db74">&#34;  ✓ 已备份到 .bak.</span>$TIMESTAMP<span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>ssh_cmd <span style="color:#e6db74">&#34;sed -i \&#34;s|command: \\\\[\\\&#34;--workspace|command: \\\\[\\\&#34;serve\\\&#34;, \\\&#34;--workspace|g\&#34; &#39;</span>$COMPOSE_PATH<span style="color:#e6db74">&#39;&#34;</span>
+</span></span><span style="display:flex;"><span>echo -e <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>GREEN<span style="color:#e6db74">}</span><span style="color:#e6db74">  ✓ compose 文件已修复</span><span style="color:#e6db74">${</span>NC<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 5. 重建容器</span>
+</span></span><span style="display:flex;"><span>echo -e <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>YELLOW<span style="color:#e6db74">}</span><span style="color:#e6db74">[5/5] 重建容器...</span><span style="color:#e6db74">${</span>NC<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>COMPOSE_DIR<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>dirname <span style="color:#e6db74">&#34;</span>$COMPOSE_PATH<span style="color:#e6db74">&#34;</span><span style="color:#66d9ef">)</span>
+</span></span><span style="display:flex;"><span>ssh_cmd <span style="color:#e6db74">&#34;cd &#39;</span>$COMPOSE_DIR<span style="color:#e6db74">&#39; &amp;&amp; docker compose -p </span>$STACK_NAME<span style="color:#e6db74"> up -d --force-recreate 2&gt;&amp;1&#34;</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 验证</span>
+</span></span><span style="display:flex;"><span>sleep <span style="color:#ae81ff">5</span>
+</span></span><span style="display:flex;"><span>echo -e <span style="color:#e6db74">&#34;\n</span><span style="color:#e6db74">${</span>CYAN<span style="color:#e6db74">}</span><span style="color:#e6db74">=== 最终状态 ===</span><span style="color:#e6db74">${</span>NC<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>ssh_cmd <span style="color:#e6db74">&#34;docker ps --filter name=siyuan --format &#39;table {{.Names}}\t{{.Status}}\t{{.Ports}}&#39;&#34;</span>
+</span></span><span style="display:flex;"><span>HTTP_CODE<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>ssh_cmd <span style="color:#e6db74">&#34;curl -sf -o /dev/null -w &#39;%{http_code}&#39; http://127.0.0.1:6001/ 2&gt;&amp;1&#34;</span> <span style="color:#f92672">||</span> echo <span style="color:#e6db74">&#34;N/A&#34;</span><span style="color:#66d9ef">)</span>
+</span></span><span style="display:flex;"><span>echo -e <span style="color:#e6db74">&#34;HTTP 状态码: </span><span style="color:#e6db74">${</span>HTTP_CODE<span style="color:#e6db74">}</span><span style="color:#e6db74"> (401 = 正常，锁屏密码生效)&#34;</span>
+</span></span><span style="display:flex;"><span>echo -e <span style="color:#e6db74">&#34;\n</span><span style="color:#e6db74">${</span>GREEN<span style="color:#e6db74">}</span><span style="color:#e6db74">✅ 修复完成！</span><span style="color:#e6db74">${</span>NC<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span></code></pre></div><h4 id="macos-26">macOS 26</h4>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e">#!/usr/bin/env bash
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"># siyuan-fix-mac.sh — 思源 v3.7.0 容器修复脚本 (macOS)</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 用法: bash siyuan-fix-mac.sh &lt;docker-host&gt; [ssh-user] [stack-name]</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 前置条件: brew install coreutils (提供 gsed)</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>set -euo pipefail
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>SERVER_HOST<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>1:?请指定 Docker 宿主机地址<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>SERVER_USER<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>2<span style="color:#66d9ef">:-</span>root<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>STACK_NAME<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>3<span style="color:#66d9ef">:-</span>siyuan-note-qiniu<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>RED<span style="color:#f92672">=</span><span style="color:#e6db74">&#39;\033[0;31m&#39;</span>; GREEN<span style="color:#f92672">=</span><span style="color:#e6db74">&#39;\033[0;32m&#39;</span>; YELLOW<span style="color:#f92672">=</span><span style="color:#e6db74">&#39;\033[1;33m&#39;</span>; CYAN<span style="color:#f92672">=</span><span style="color:#e6db74">&#39;\033[0;36m&#39;</span>; NC<span style="color:#f92672">=</span><span style="color:#e6db74">&#39;\033[0m&#39;</span>
+</span></span><span style="display:flex;"><span>ssh_cmd<span style="color:#f92672">()</span> <span style="color:#f92672">{</span> ssh -o StrictHostKeyChecking<span style="color:#f92672">=</span>accept-new <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>SERVER_USER<span style="color:#e6db74">}</span><span style="color:#e6db74">@</span><span style="color:#e6db74">${</span>SERVER_HOST<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span> <span style="color:#e6db74">&#34;</span>$@<span style="color:#e6db74">&#34;</span>; <span style="color:#f92672">}</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>echo -e <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>CYAN<span style="color:#e6db74">}</span><span style="color:#e6db74">=== 思源 v3.7.0 Docker 容器修复 (macOS) ===</span><span style="color:#e6db74">${</span>NC<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 检查必要工具</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> ! command -v ssh &amp;&gt;/dev/null; <span style="color:#66d9ef">then</span> echo -e <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>RED<span style="color:#e6db74">}</span><span style="color:#e6db74">需要 SSH 客户端</span><span style="color:#e6db74">${</span>NC<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>; exit 1; <span style="color:#66d9ef">fi</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 1. 检测</span>
+</span></span><span style="display:flex;"><span>echo -e <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>YELLOW<span style="color:#e6db74">}</span><span style="color:#e6db74">[1/5] 检查容器状态...</span><span style="color:#e6db74">${</span>NC<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>ssh_cmd <span style="color:#e6db74">&#34;docker ps -a --filter name=siyuan --format &#39;table {{.Names}}\t{{.Status}}\t{{.Ports}}&#39;&#34;</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 2. 确认错误</span>
+</span></span><span style="display:flex;"><span>echo -e <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>YELLOW<span style="color:#e6db74">}</span><span style="color:#e6db74">[2/5] 确认错误日志...</span><span style="color:#e6db74">${</span>NC<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>CONTAINER_NAME<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>ssh_cmd <span style="color:#e6db74">&#34;docker ps -a --filter name=siyuan --format &#39;{{.Names}}&#39; | head -1&#34;</span><span style="color:#66d9ef">)</span>
+</span></span><span style="display:flex;"><span>LOGS<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>ssh_cmd <span style="color:#e6db74">&#34;docker logs --tail 20 </span><span style="color:#e6db74">${</span>CONTAINER_NAME<span style="color:#e6db74">}</span><span style="color:#e6db74"> 2&gt;&amp;1&#34;</span> <span style="color:#f92672">||</span> true<span style="color:#66d9ef">)</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> echo <span style="color:#e6db74">&#34;</span>$LOGS<span style="color:#e6db74">&#34;</span> | grep -q <span style="color:#e6db74">&#34;unknown flag.*accessAuthCode&#34;</span>; <span style="color:#66d9ef">then</span>
+</span></span><span style="display:flex;"><span>    echo -e <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>GREEN<span style="color:#e6db74">}</span><span style="color:#e6db74">  ✓ 确认为 v3.7.0 CLI 变更问题</span><span style="color:#e6db74">${</span>NC<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">else</span>
+</span></span><span style="display:flex;"><span>    echo -e <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>RED<span style="color:#e6db74">}</span><span style="color:#e6db74">  ⚠ 错误信息不符</span><span style="color:#e6db74">${</span>NC<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>; echo <span style="color:#e6db74">&#34;</span>$LOGS<span style="color:#e6db74">&#34;</span>; exit <span style="color:#ae81ff">1</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">fi</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 3. 定位 compose</span>
+</span></span><span style="display:flex;"><span>echo -e <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>YELLOW<span style="color:#e6db74">}</span><span style="color:#e6db74">[3/5] 定位 compose 文件...</span><span style="color:#e6db74">${</span>NC<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>COMPOSE_PATH<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>ssh_cmd <span style="color:#e6db74">&#34;docker inspect --format &#39;{{index .Config.Labels \&#34;com.docker.compose.project.config_files\&#34;}}&#39; \$(docker ps -a --filter name=siyuan --format &#39;{{.ID}}&#39; | head -1) 2&gt;/dev/null&#34;</span> <span style="color:#f92672">||</span> true<span style="color:#66d9ef">)</span>
+</span></span><span style="display:flex;"><span><span style="color:#f92672">[[</span> -z <span style="color:#e6db74">&#34;</span>$COMPOSE_PATH<span style="color:#e6db74">&#34;</span> <span style="color:#f92672">]]</span> <span style="color:#f92672">&amp;&amp;</span> COMPOSE_PATH<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>ssh_cmd <span style="color:#e6db74">&#34;grep -rl &#39;siyuan&#39; /docker/portainer_data/compose/*/docker-compose.yml 2&gt;/dev/null | head -1&#34;</span> <span style="color:#f92672">||</span> true<span style="color:#66d9ef">)</span>
+</span></span><span style="display:flex;"><span><span style="color:#f92672">[[</span> -z <span style="color:#e6db74">&#34;</span>$COMPOSE_PATH<span style="color:#e6db74">&#34;</span> <span style="color:#f92672">]]</span> <span style="color:#f92672">&amp;&amp;</span> <span style="color:#f92672">{</span> echo -e <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>RED<span style="color:#e6db74">}</span><span style="color:#e6db74">无法定位 compose 文件</span><span style="color:#e6db74">${</span>NC<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>; exit 1; <span style="color:#f92672">}</span>
+</span></span><span style="display:flex;"><span>echo <span style="color:#e6db74">&#34;  Compose: </span>$COMPOSE_PATH<span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 4. 备份并修复 (macOS 用 gsed 或 python)</span>
+</span></span><span style="display:flex;"><span>echo -e <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>YELLOW<span style="color:#e6db74">}</span><span style="color:#e6db74">[4/5] 备份并修复...</span><span style="color:#e6db74">${</span>NC<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>TIMESTAMP<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>date +%Y%m%d-%H%M%S<span style="color:#66d9ef">)</span>
+</span></span><span style="display:flex;"><span>ssh_cmd <span style="color:#e6db74">&#34;cp &#39;</span>$COMPOSE_PATH<span style="color:#e6db74">&#39; &#39;</span>$COMPOSE_PATH<span style="color:#e6db74">.bak.</span>$TIMESTAMP<span style="color:#e6db74">&#39;&#34;</span> <span style="color:#f92672">&amp;&amp;</span> echo <span style="color:#e6db74">&#34;  ✓ 已备份&#34;</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 使用 python 做替换，避免 macOS sed 兼容问题</span>
+</span></span><span style="display:flex;"><span>ssh_cmd <span style="color:#e6db74">&#34;python3 -c \&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">import re
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">p = &#39;</span>$COMPOSE_PATH<span style="color:#e6db74">&#39;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">c = open(p).read()
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">c = c.replace(&#39;command: [\\\&#34;--workspace&#39;, &#39;command: [\\\&#34;serve\\\&#34;, \\\&#34;--workspace&#39;)
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">open(p, &#39;w&#39;).write(c)
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">print(&#39;FIXED&#39;)
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">\&#34;&#34;</span>
+</span></span><span style="display:flex;"><span>echo -e <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>GREEN<span style="color:#e6db74">}</span><span style="color:#e6db74">  ✓ compose 文件已修复</span><span style="color:#e6db74">${</span>NC<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 5. 重建</span>
+</span></span><span style="display:flex;"><span>echo -e <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>YELLOW<span style="color:#e6db74">}</span><span style="color:#e6db74">[5/5] 重建容器...</span><span style="color:#e6db74">${</span>NC<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>COMPOSE_DIR<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>dirname <span style="color:#e6db74">&#34;</span>$COMPOSE_PATH<span style="color:#e6db74">&#34;</span><span style="color:#66d9ef">)</span>
+</span></span><span style="display:flex;"><span>ssh_cmd <span style="color:#e6db74">&#34;cd &#39;</span>$COMPOSE_DIR<span style="color:#e6db74">&#39; &amp;&amp; docker compose -p </span>$STACK_NAME<span style="color:#e6db74"> up -d --force-recreate 2&gt;&amp;1&#34;</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>sleep <span style="color:#ae81ff">5</span>
+</span></span><span style="display:flex;"><span>echo -e <span style="color:#e6db74">&#34;\n</span><span style="color:#e6db74">${</span>CYAN<span style="color:#e6db74">}</span><span style="color:#e6db74">=== 最终状态 ===</span><span style="color:#e6db74">${</span>NC<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>ssh_cmd <span style="color:#e6db74">&#34;docker ps --filter name=siyuan --format &#39;table {{.Names}}\t{{.Status}}\t{{.Ports}}&#39;&#34;</span>
+</span></span><span style="display:flex;"><span>HTTP_CODE<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>ssh_cmd <span style="color:#e6db74">&#34;curl -sf -o /dev/null -w &#39;%{http_code}&#39; http://127.0.0.1:6001/ 2&gt;&amp;1&#34;</span> <span style="color:#f92672">||</span> echo <span style="color:#e6db74">&#34;N/A&#34;</span><span style="color:#66d9ef">)</span>
+</span></span><span style="display:flex;"><span>echo -e <span style="color:#e6db74">&#34;HTTP: </span><span style="color:#e6db74">${</span>HTTP_CODE<span style="color:#e6db74">}</span><span style="color:#e6db74"> (401 = 正常)&#34;</span>
+</span></span><span style="display:flex;"><span>echo -e <span style="color:#e6db74">&#34;\n</span><span style="color:#e6db74">${</span>GREEN<span style="color:#e6db74">}</span><span style="color:#e6db74">✅ 修复完成！</span><span style="color:#e6db74">${</span>NC<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span></code></pre></div><h3 id="53-手动修复步骤无需脚本">5.3 手动修复步骤（无需脚本）</h3>
+<p>如果你不想用脚本，手动修复也很简单：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># 1. SSH 到 Docker 宿主机</span>
+</span></span><span style="display:flex;"><span>ssh root@&lt;your-docker-host&gt;
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 2. 找到 compose 文件（通常在 Portainer 数据目录下）</span>
+</span></span><span style="display:flex;"><span>grep -rl <span style="color:#e6db74">&#34;siyuan&#34;</span> /docker/portainer_data/compose/*/docker-compose.yml
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 3. 备份原文件</span>
+</span></span><span style="display:flex;"><span>cp /path/to/docker-compose.yml /path/to/docker-compose.yml.bak.<span style="color:#66d9ef">$(</span>date +%Y%m%d-%H%M%S<span style="color:#66d9ef">)</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 4. 修改 command 行（在数组最前面加上 &#39;serve&#39;）</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 原: command: [&#39;--workspace=/siyuan/workspace/&#39;, &#39;--accessAuthCode=xxx&#39;]</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 改: command: [&#39;serve&#39;, &#39;--workspace=/siyuan/workspace/&#39;, &#39;--accessAuthCode=xxx&#39;]</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 可以用 sed 一键替换:</span>
+</span></span><span style="display:flex;"><span>sed -i <span style="color:#e6db74">&#34;s|command: \\[\&#34;--workspace|command: \\[\&#34;serve\&#34;, \&#34;--workspace|g&#34;</span> /path/to/docker-compose.yml
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 5. 验证修改</span>
+</span></span><span style="display:flex;"><span>grep <span style="color:#e6db74">&#34;command:&#34;</span> /path/to/docker-compose.yml
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 6. 重建容器</span>
+</span></span><span style="display:flex;"><span>cd <span style="color:#66d9ef">$(</span>dirname /path/to/docker-compose.yml<span style="color:#66d9ef">)</span>
+</span></span><span style="display:flex;"><span>docker compose -p siyuan-note-qiniu up -d --force-recreate
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 7. 验证</span>
+</span></span><span style="display:flex;"><span>docker ps --filter name<span style="color:#f92672">=</span>siyuan
+</span></span><span style="display:flex;"><span>curl -o /dev/null -w <span style="color:#e6db74">&#34;%{http_code}\n&#34;</span> http://127.0.0.1:6001/
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 返回 401 表示锁屏密码生效，服务正常！</span>
+</span></span></code></pre></div><p><img src="/post-images/siyuan-v370-docker-restart-loop-fix/shot-03-compose-up-success.png" alt="docker compose up 成功输出。"></p>
+<p><em>图 9：真实终端截图 — 重建容器后 Status 变为 Up，curl 返回 401（锁屏密码生效）。</em></p>
+<h2 id="六人工执行-vs-ai-agent-自动配置">六、人工执行 vs AI Agent 自动配置</h2>
+<h3 id="61-人工执行">6.1 人工执行</h3>
+<p>人工修复这个问题的预估时间是 <strong>15-30 分钟</strong>：</p>
+<ul>
+<li>发现容器重启（1 分钟）</li>
+<li><code>docker logs</code> 查看日志（1 分钟）</li>
+<li>不理解错误信息，Google 搜索（5-15 分钟）</li>
+<li>找到官方 README 或 GitHub Issue（5 分钟）</li>
+<li>修改 compose 并重建（3 分钟）</li>
+<li>验证（2 分钟）</li>
+</ul>
+<p>但实际经验是，大部分时间花在&quot;理解这个错误是什么意思&quot;上。<code>unknown flag</code> 这个提示对于不熟悉 CLI 子命令概念的人来说不够直观。</p>
+<h3 id="62-ai-agent-自动配置">6.2 AI Agent 自动配置</h3>
+<p>如果让 AI Agent 来修复，流程大致如下：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>给 Agent 的提示词：
+</span></span><span style="display:flex;"><span>---
+</span></span><span style="display:flex;"><span>我的思源笔记 Docker 容器一直在重启。请帮我排查和修复。
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>约束条件：
+</span></span><span style="display:flex;"><span>1. 不要执行大版本 OS 升级
+</span></span><span style="display:flex;"><span>2. 不要下载不明安装器
+</span></span><span style="display:flex;"><span>3. 不要输出真实内网 IP、完整计算机名、私有域名或密钥
+</span></span><span style="display:flex;"><span>4. 修改配置文件前先备份
+</span></span><span style="display:flex;"><span>5. 修复后验证容器状态和 HTTP 可达性
+</span></span><span style="display:flex;"><span>---
+</span></span></code></pre></div><p>Agent 的执行流程：</p>
+<ol>
+<li><code>docker ps -a</code> → 发现容器 Restarting</li>
+<li><code>docker logs</code> → 看到 <code>unknown flag: --accessAuthCode</code></li>
+<li><code>docker inspect</code> → 确认 compose 配置和镜像版本</li>
+<li>查阅官方 README → 发现 v3.7.0 的 <code>serve</code> 子命令要求</li>
+<li>备份 → 修改 compose → 重建容器 → 验证</li>
+</ol>
+<p><strong>实测效果</strong>：从开始排查到修复完成，Agent 用时约 <strong>10 分钟</strong>。如果人工来做，考虑到搜索、阅读文档和理解 CLI 架构变更，通常需要 20-30 分钟。</p>
+<p><img src="/post-images/siyuan-v370-docker-restart-loop-fix/06-agent-workflow.png" alt="AI Agent 修复流程。"></p>
+<p><em>图 10：AI Agent 远程修复 Docker 容器故障的完整流程。</em></p>
+<h3 id="63-给-agent-的护栏">6.3 给 Agent 的护栏</h3>
+<p>让 Agent 操作生产环境，以下护栏必不可少：</p>
+<table>
+  <thead>
+      <tr>
+          <th>护栏</th>
+          <th>说明</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>备份优先</td>
+          <td>修改任何配置文件前必须先备份</td>
+      </tr>
+      <tr>
+          <td>不执行 OS 升级</td>
+          <td>Agent 只能操作容器层，不能动宿主系统</td>
+      </tr>
+      <tr>
+          <td>不泄露隐私</td>
+          <td>日志、配置、路径中不能包含真实 IP/域名/密钥</td>
+      </tr>
+      <tr>
+          <td>先诊断后动手</td>
+          <td>必须通过 logs/inspect 确认根因后再修改</td>
+      </tr>
+      <tr>
+          <td>验证闭环</td>
+          <td>修复后必须检查容器状态和 HTTP 可达性</td>
+      </tr>
+      <tr>
+          <td>可回滚</td>
+          <td>保留备份文件和回滚命令</td>
+      </tr>
+  </tbody>
+</table>
+<h2 id="七修复后的验证">七、修复后的验证</h2>
+<p>修复完成后，思源笔记的服务会正常运行。访问 <code>http://&lt;your-host&gt;:&lt;port&gt;/</code>（本例中端口为 6001），会看到思源的锁屏页面：</p>
+<p><img src="/post-images/siyuan-v370-docker-restart-loop-fix/shot-07-real-siyuan-login-large.png" alt="思源笔记锁屏登录页面。"></p>
+<p><em>图 11：真实截图 — 修复后思源笔记 v3.7.0 锁屏登录页面（大尺寸）。输入 accessAuthCode 即可进入笔记。</em></p>
+<p>输入在 <code>--accessAuthCode</code> 中设置的密码即可进入笔记。如果看到 HTTP 401 响应（用 curl 测试），说明锁屏密码生效，服务完全正常。</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>$ curl -o /dev/null -w <span style="color:#e6db74">&#34;%{http_code}\n&#34;</span> http://&lt;host&gt;:&lt;port&gt;/
+</span></span><span style="display:flex;"><span><span style="color:#ae81ff">401</span>
+</span></span></code></pre></div><p><strong>HTTP 401 在这里不是错误</strong> —— 它表示思源的访问控制正在工作，只有输入正确密码才能进入。</p>
+<h2 id="八qa">八、Q&amp;A</h2>
+<p><strong>Q1：为什么思源要在 v3.7.0 引入这个破坏性变更？</strong></p>
+<p>因为 v3.7.0 新增了完整的命令行接口（CLI），kernel 现在不仅是一个 HTTP 服务器，还是一个多功能的命令行工具。除了 <code>serve</code>（启动 HTTP 服务），还有 <code>export</code>（导出文档）、<code>import</code>（导入文件）、<code>sync</code>（同步数据）等子命令。把功能拆成子命令是 CLI 设计的标准做法，就像 <code>git commit</code>、<code>git push</code> 一样。</p>
+<p><strong>Q2：我的思源还是 v3.6.x，该不该升级？</strong></p>
+<p>v3.7.0 带来了全新 UI、内核插件系统和 AI 知识库，是非常值得升级的版本。升级前只需确认你的 docker-compose.yml 中 <code>command</code> 字段包含 <code>serve</code> 子命令即可。</p>
+<p><strong>Q3：如果我不止一个思源容器要修怎么办？</strong></p>
+<p>上面提供的一键脚本可以通过参数指定不同的 Stack 名称。如果你有多个思源实例，遍历每个 compose 目录执行修复即可。</p>
+<p><strong>Q4：Portainer 里怎么改？</strong></p>
+<p>在 Portainer 中找到对应的 Stack，点击 Editor，在 <code>command</code> 数组最前面加上 <code>'serve',</code>，然后点击 &ldquo;Update the stack&rdquo; 即可。Portainer 会自动重建容器。</p>
+<p><strong>Q5：修复后数据会不会丢？</strong></p>
+<p>不会。数据存储在 <code>/siyuan/workspace</code>（或你挂载的对应目录）中，修复只改了 compose 文件的 <code>command</code> 字段，不涉及数据卷。而且修复前会自动备份 compose 文件。</p>
+<p><strong>Q6：有没有比改 compose 更简单的方法？</strong></p>
+<p>如果你用 <code>docker run</code> 而不是 compose，只需在命令中加上 <code>serve</code>：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>docker run -d <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span>  -v /siyuan/workspace:/siyuan/workspace <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span>  -p 6806:6806 <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span>  b3log/siyuan <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span>  serve <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span>  --workspace<span style="color:#f92672">=</span>/siyuan/workspace/ <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span>  --accessAuthCode<span style="color:#f92672">=</span>xxx
+</span></span></code></pre></div><p><strong>Q7：其他 Docker 镜像也会有这种问题吗？</strong></p>
+<p>任何从&quot;无子命令 CLI&quot;升级到&quot;有子命令 CLI&quot;的软件都可能出现类似问题。升级前看一下 CHANGELOG 中是否有 &ldquo;CLI&rdquo;、&ldquo;command&rdquo;、&ldquo;breaking change&rdquo; 等关键词是个好习惯。</p>
+<h2 id="九总结">九、总结</h2>
+<p>这次排查的教训可以浓缩为三句话：</p>
+<ol>
+<li><strong>容器出问题，先看 <code>docker logs</code></strong>。<code>docker ps</code> 只能告诉你&quot;容器在重启&rdquo;，<code>docker logs</code> 才能告诉你&quot;为什么重启&quot;。</li>
+<li><strong>升级前看一眼 CHANGELOG</strong>。v3.7.0 的 README 已经明确写了需要 <code>serve</code> 子命令，但升级已有部署时很容易漏掉。</li>
+<li><strong>修复前先备份</strong>。<code>cp file.yml file.yml.bak.$(date)</code> 花不了 2 秒，但能在出问题时救命。</li>
+</ol>
+<p>从技术角度看，这次问题的本质是 <strong>CLI 接口的破坏性变更</strong>。思源团队在 v3.7.0 做了正确的架构决策（引入子命令架构），也写了文档，但破坏性变更对已有部署的影响总是最大的。好在这个修复极其简单 —— 多写一个 <code>serve</code>，7 个字符。</p>
+<p>从运维角度看，这个案例完美展示了 <strong>&ldquo;日志优先&quot;排查方法论</strong>的价值：不要猜、不要试、不要急着回滚 —— 先看日志，日志会告诉你一切。</p>
+<p>如果你也遇到了类似问题，希望这篇文章能帮你少走 15 分钟的弯路。</p>
+<h2 id="参考资料">参考资料</h2>
+<ul>
+<li><a href="https://github.com/siyuan-note/siyuan/releases/tag/v3.7.0">SiYuan v3.7.0 Release Notes</a></li>
+<li><a href="https://github.com/siyuan-note/siyuan/blob/master/README.zh-CN.md#docker-%E9%83%A8%E7%BD%B2">SiYuan README (中文) — Docker 部署章节</a></li>
+<li><a href="https://github.com/siyuan-note/siyuan/issues/17674">SiYuan CLI 设计 Issue #17674</a></li>
+<li><a href="https://docs.docker.com/compose/">Docker Compose 文档</a></li>
+<li><a href="https://docs.portainer.io/">Portainer 官方文档</a></li>
+</ul>
+        </div>
+    </article>
+
+    
+  
+
+
+  
+    
+  
+
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk/dist/gitalk.css">
+<script src="https://cdn.jsdelivr.net/npm/gitalk/dist/gitalk.min.js"></script>
+<div id="gitalk-container" style="margin-top:40px"></div>
+<script>
+  (function(){
+    var gitalk = new Gitalk({
+      clientID: '3181fd94e501cc5db0ad',
+      clientSecret: 'af1dab79dae02c69296e6615bfcecf47fc8615ee',
+      repo: 'margropcomment.margrop.io',
+      owner: 'margrop',
+      admin: ["margrop"],
+      
+      id: '\/post\/siyuan-v370-docker-restart-loop-fix\/',
+      
+      distractionFreeMode: false
+    });
+    gitalk.render('gitalk-container');
+  })();
+</script>
+  
+
+
+
+
+    
+    <script type="text/javascript" src="https://js.users.51.la/21044367.js"></script>
+    <script charset="UTF-8" id="LA_COLLECT" src="//sdk.51.la/js-sdk-pro.min.js"></script>
+    <script>LA.init({id: "1vVTUWl7zoRjnKXi",ck: "1vVTUWl7zoRjnKXi"})</script>
+    <script src="https://sdk.51.la/perf/js-sdk-perf.min.js" crossorigin="anonymous"></script>
+    <script>
+      new LingQue.Monitor().init({id:"202teQt8THXwqyve"});
+    </script>
+</body>
+</html>

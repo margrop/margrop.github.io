@@ -1,108 +1,423 @@
-<!doctype html><html lang=zh-CN><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>Docker 容器跑得好好的，端口死活访问不了：一次 HostIp 绑定'半残'的完整复盘 - 魔都水滴</title><meta name=description content="一句话总结： docker ps 看着一切正常，docker inspect 的 HostConfig.PortBindings 也写好了 203.0.113.14:3001:3000——但 host 上没有 docker-proxy 在监听、iptables nat/DOCKER 链里没有 DNAT 规则 …"><meta name=robots content="index, follow"><link rel=canonical href=https://blog.margrop.net/post/docker-port-bind-half-silent/><meta property="og:site_name" content="魔都水滴"><meta property="og:title" content="Docker 容器跑得好好的，端口死活访问不了：一次 HostIp 绑定'半残'的完整复盘 - 魔都水滴"><meta property="og:description" content="一句话总结： docker ps 看着一切正常，docker inspect 的 HostConfig.PortBindings 也写好了 203.0.113.14:3001:3000——但 host 上没有 docker-proxy 在监听、iptables nat/DOCKER 链里没有 DNAT 规则 …"><meta property="og:url" content="https://blog.margrop.net/post/docker-port-bind-half-silent/"><meta property="og:locale" content="zh_CN"><meta property="og:type" content="article"><meta property="og:locale:alternate" content="en_US"><meta property="og:image" content="https://blog.margrop.net/images/avatar.png"><meta name=twitter:card content="summary_large_image"><meta name=twitter:title content="Docker 容器跑得好好的，端口死活访问不了：一次 HostIp 绑定'半残'的完整复盘 - 魔都水滴"><meta name=twitter:description content="一句话总结： docker ps 看着一切正常，docker inspect 的 HostConfig.PortBindings 也写好了 203.0.113.14:3001:3000——但 host 上没有 docker-proxy 在监听、iptables nat/DOCKER 链里没有 DNAT 规则 …"><meta name=twitter:image content="https://blog.margrop.net/images/avatar.png"><link rel=alternate hreflang=zh-CN href=https://blog.margrop.net/post/docker-port-bind-half-silent/><link rel=alternate hreflang=en-US href=https://blog.margrop.net/en/post/docker-port-bind-half-silent/><link rel=alternate hreflang=x-default href=https://blog.margrop.net/><meta property="article:published_time" content="2026-06-13T07:30:00+08:00"><meta property="article:modified_time" content="2026-06-13T07:30:00+08:00"><meta property="article:tag" content="Docker"><meta property="article:tag" content="容器"><meta property="article:tag" content="网络"><meta property="article:tag" content="端口映射"><meta property="article:tag" content="iptables"><meta property="article:tag" content="docker-proxy"><meta property="article:tag" content="libnetwork"><meta property="article:tag" content="排错"><meta property="article:tag" content="故障复盘"><script type=application/ld+json>{"@context":"https://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"魔都水滴"},"dateModified":"2026-06-13T07:30:00+08:00","datePublished":"2026-06-13T07:30:00+08:00","description":"一句话总结： docker ps 看着一切正常，docker inspect 的 HostConfig.PortBindings 也写好了 203.0.113.14:3001:3000——但 host 上没有 docker-proxy 在监听、iptables nat/DOCKER 链里没有 DNAT 规则 …","headline":"Docker 容器跑得好好的，端口死活访问不了：一次 HostIp 绑定'半残'的完整复盘","mainEntityOfPage":"https://blog.margrop.net/post/docker-port-bind-half-silent/","url":"https://blog.margrop.net/post/docker-port-bind-half-silent/"}</script><meta name=baidu-site-verification content="code-sVFZ8SER59"><script async src="https://www.googletagmanager.com/gtag/js?id=G-3J2W592DHJ"></script><script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments)}gtag("js",new Date),gtag("config","G-3J2W592DHJ")</script><style>body{font-family:-apple-system,BlinkMacSystemFont,segoe ui,Roboto,sans-serif;max-width:860px;margin:0 auto;padding:20px;line-height:1.7;color:#222}h1{border-bottom:2px solid #333;padding-bottom:10px}.post-list{list-style:none;padding:0}.post-list li{margin:15px 0}.post-list a{text-decoration:none;color:#333;font-size:18px}.post-list a:hover{color:#006cff}.date{color:#666;font-size:14px;margin-right:10px}.tags{margin-top:8px}.tag{background:#eee;padding:2px 8px;border-radius:3px;font-size:12px;margin-right:5px;display:inline-block}nav{margin-bottom:18px;border-bottom:1px solid #eee;padding-bottom:15px}nav a{margin-right:20px;text-decoration:none;color:#333;font-size:16px}nav a:hover{color:#006cff}.language-switcher{margin:-8px 0 26px}.language-switcher a{display:inline-block;margin-right:10px;padding:4px 10px;border:1px solid #ddd;border-radius:999px;color:#555;text-decoration:none;font-size:14px}.language-switcher a.active{background:#006cff;border-color:#006cff;color:#fff}.content{line-height:1.8}.content code{background:#f4f4f4;padding:2px 5px;border-radius:3px}.content pre{background:#f4f4f4;padding:15px;overflow-x:auto;border-radius:5px}.content img{display:block;max-width:100%;height:auto;margin:0 auto}.content .code-snippet__fix{margin:0 0 1.5em}.content .code-snippet__fix .code-snippet__line-index{display:none!important}.meta{color:#666;font-size:14px;margin-bottom:14px}a{color:#006cff}@media(max-width:680px){body{padding:16px}nav a{display:inline-block;margin-right:12px;margin-bottom:8px}}</style></head><body><nav><a href=/>首页</a>
-<a href=/post/>归档</a>
-<a href=/tags/>标签</a>
-<a href=/post/about/>关于</a>
-<a href=https://download.margrop.net target=_blank rel=noopener>下载</a>
-<a href=/post/favorites/>Link</a>
-<a href=/post/github-project-stars/>Github</a>
-<a href=https://github-mirrors.margrop.net target=_blank rel=noopener>Github加速</a>
-<a href=https://status.anye.xyz/ target=_blank rel=noopener>Docker加速</a></nav><div class=language-switcher><a href=/post/docker-port-bind-half-silent/ class=active>中文</a>
-<a href=/en/post/docker-port-bind-half-silent/>English</a></div><article><h1>Docker 容器跑得好好的，端口死活访问不了：一次 HostIp 绑定'半残'的完整复盘</h1><div class=meta>发布时间: 2026-06-13</div><div class=tags><a href=/tag/docker/><span class=tag>Docker</span></a>
-<a href=/tag/%E5%AE%B9%E5%99%A8/><span class=tag>容器</span></a>
-<a href=/tag/%E7%BD%91%E7%BB%9C/><span class=tag>网络</span></a>
-<a href=/tag/%E7%AB%AF%E5%8F%A3%E6%98%A0%E5%B0%84/><span class=tag>端口映射</span></a>
-<a href=/tag/iptables/><span class=tag>iptables</span></a>
-<a href=/tag/docker-proxy/><span class=tag>docker-proxy</span></a>
-<a href=/tag/libnetwork/><span class=tag>libnetwork</span></a>
-<a href=/tag/%E6%8E%92%E9%94%99/><span class=tag>排错</span></a>
-<a href=/tag/%E6%95%85%E9%9A%9C%E5%A4%8D%E7%9B%98/><span class=tag>故障复盘</span></a></div><div class=content><blockquote><p><strong>一句话总结：</strong></p><p><code>docker ps</code> 看着一切正常，<code>docker inspect</code> 的 <code>HostConfig.PortBindings</code> 也写好了 <code>203.0.113.14:3001:3000</code>——但 host 上<strong>没有 docker-proxy 在监听</strong>、iptables <code>nat/DOCKER</code> 链里<strong>没有 DNAT 规则</strong>、<code>NetworkSettings.Networks</code> 和 <code>Ports</code> <strong>两个字段都是空 <code>{}</code></strong>。这种"容器活着、端口死了"的诡异状态，本质是 libnetwork 在 attach 网络时因为目标接口尚未就绪而<strong>静默回滚了 endpoint 创建</strong>，但容器进程已经起好，docker 也没把"端口没生效"这件事主动告诉我们。<strong>30 秒一行命令就能让端口重新回来</strong>：<code>docker network connect &lt;net> &lt;ctr></code>。</p></blockquote><p><img src=/post-images/docker-port-bind-half-silent/01-symptom-topology.svg alt="故障现场：docker ps 显示一切正常，端口就是访问不了"></p><p><em>图 1：典型的"半残"现场——容器进程在跑、HostConfig 里端口映射写得清清楚楚，但 host 上没有任何进程监听 3001。</em></p><hr><h2 id=一问题背景一个看似不可能的故障>一、问题背景：一个看似不可能的故障</h2><p>我有一台对外提供 AI 网关服务的机器，上面用 Docker Compose 起了一组服务：new-api、dockhand、headroom 等。它们的 compose 里写了这样一段：</p><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-yaml data-lang=yaml><span style=display:flex><span><span style=color:#f92672>ports</span>:
-</span></span><span style=display:flex><span>  - <span style=color:#e6db74>&#34;203.0.113.14:3001:3000&#34;</span>   <span style=color:#75715e># new-api</span>
-</span></span><span style=display:flex><span>  - <span style=color:#e6db74>&#34;203.0.113.14:3003:3000&#34;</span>   <span style=color:#75715e># dockhand</span>
-</span></span><span style=display:flex><span>  - <span style=color:#e6db74>&#34;203.0.113.14:3005:3000&#34;</span>   <span style=color:#75715e># headroom</span>
-</span></span></code></pre></div><p>也就是说，<strong>所有容器的宿主机端口都绑到同一块辅助网卡的固定 IP 上</strong>——<code>203.0.113.14</code> 是这块网卡上额外配置的一个 secondary IP，外部访问走这个 IP。所有的内网互联、防火墙白名单、DNS 解析也都只认这个 IP。</p><p>一个普通的下午，我尝试从同网段其他节点去访问 <code>http://203.0.113.14:3001/</code>，按预期应该看到 new-api 的登录页。结果：</p><pre tabindex=0><code>curl: (7) Failed to connect to 203.0.113.14 port 3001
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Docker 容器跑得好好的，端口死活访问不了：一次 HostIp 绑定&#39;半残&#39;的完整复盘 - 魔都水滴</title>
+<meta name="description" content="一句话总结： docker ps 看着一切正常，docker inspect 的 HostConfig.PortBindings 也写好了 203.0.113.14:3001:3000——但 host 上没有 docker-proxy 在监听、iptables nat/DOCKER 链里没有 DNAT 规则 …">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://blog.margrop.net/post/docker-port-bind-half-silent/">
+
+<meta property="og:site_name" content="魔都水滴">
+<meta property="og:title" content="Docker 容器跑得好好的，端口死活访问不了：一次 HostIp 绑定&#39;半残&#39;的完整复盘 - 魔都水滴">
+<meta property="og:description" content="一句话总结： docker ps 看着一切正常，docker inspect 的 HostConfig.PortBindings 也写好了 203.0.113.14:3001:3000——但 host 上没有 docker-proxy 在监听、iptables nat/DOCKER 链里没有 DNAT 规则 …">
+<meta property="og:url" content="https://blog.margrop.net/post/docker-port-bind-half-silent/">
+<meta property="og:locale" content="zh_CN"><meta property="og:type" content="article"><meta property="og:locale:alternate" content="en_US"><meta property="og:image" content="https://blog.margrop.net/images/avatar.png"><meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Docker 容器跑得好好的，端口死活访问不了：一次 HostIp 绑定&#39;半残&#39;的完整复盘 - 魔都水滴">
+<meta name="twitter:description" content="一句话总结： docker ps 看着一切正常，docker inspect 的 HostConfig.PortBindings 也写好了 203.0.113.14:3001:3000——但 host 上没有 docker-proxy 在监听、iptables nat/DOCKER 链里没有 DNAT 规则 …"><meta name="twitter:image" content="https://blog.margrop.net/images/avatar.png"><link rel="alternate" hreflang="zh-CN" href="https://blog.margrop.net/post/docker-port-bind-half-silent/"><link rel="alternate" hreflang="en-US" href="https://blog.margrop.net/en/post/docker-port-bind-half-silent/"><link rel="alternate" hreflang="x-default" href="https://blog.margrop.net/"><meta property="article:published_time" content="2026-06-13T07:30:00&#43;08:00">
+<meta property="article:modified_time" content="2026-06-13T07:30:00&#43;08:00"><meta property="article:tag" content="Docker"><meta property="article:tag" content="容器"><meta property="article:tag" content="网络"><meta property="article:tag" content="端口映射"><meta property="article:tag" content="iptables"><meta property="article:tag" content="docker-proxy"><meta property="article:tag" content="libnetwork"><meta property="article:tag" content="排错"><meta property="article:tag" content="故障复盘"><script type="application/ld+json">{"@context":"https://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"魔都水滴"},"dateModified":"2026-06-13T07:30:00+08:00","datePublished":"2026-06-13T07:30:00+08:00","description":"一句话总结： docker ps 看着一切正常，docker inspect 的 HostConfig.PortBindings 也写好了 203.0.113.14:3001:3000——但 host 上没有 docker-proxy 在监听、iptables nat/DOCKER 链里没有 DNAT 规则 …","headline":"Docker 容器跑得好好的，端口死活访问不了：一次 HostIp 绑定'半残'的完整复盘","mainEntityOfPage":"https://blog.margrop.net/post/docker-port-bind-half-silent/","url":"https://blog.margrop.net/post/docker-port-bind-half-silent/"}</script>
+    <meta name="baidu-site-verification" content="code-sVFZ8SER59" />
+
+    
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-3J2W592DHJ"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-3J2W592DHJ');
+    </script>
+
+    <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 860px; margin: 0 auto; padding: 20px; line-height: 1.7; color: #222; }
+    h1 { border-bottom: 2px solid #333; padding-bottom: 10px; }
+    .post-list { list-style: none; padding: 0; }
+    .post-list li { margin: 15px 0; }
+    .post-list a { text-decoration: none; color: #333; font-size: 18px; }
+    .post-list a:hover { color: #006CFF; }
+    .date { color: #666; font-size: 14px; margin-right: 10px; }
+    .tags { margin-top: 8px; }
+    .tag { background: #eee; padding: 2px 8px; border-radius: 3px; font-size: 12px; margin-right: 5px; display: inline-block; }
+    nav { margin-bottom: 18px; border-bottom: 1px solid #eee; padding-bottom: 15px; }
+    nav a { margin-right: 20px; text-decoration: none; color: #333; font-size: 16px; }
+    nav a:hover { color: #006CFF; }
+    .language-switcher { margin: -8px 0 26px; }
+    .language-switcher a { display: inline-block; margin-right: 10px; padding: 4px 10px; border: 1px solid #ddd; border-radius: 999px; color: #555; text-decoration: none; font-size: 14px; }
+    .language-switcher a.active { background: #006CFF; border-color: #006CFF; color: #fff; }
+    .content { line-height: 1.8; }
+    .content code { background: #f4f4f4; padding: 2px 5px; border-radius: 3px; }
+    .content pre { background: #f4f4f4; padding: 15px; overflow-x: auto; border-radius: 5px; }
+    .content img { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+    .content .code-snippet__fix {
+        margin: 0 0 1.5em;
+    }
+    .content .code-snippet__fix .code-snippet__line-index {
+        display: none !important;
+    }
+    .meta { color: #666; font-size: 14px; margin-bottom: 14px; }
+    a { color: #006CFF; }
+    @media (max-width: 680px) {
+        body { padding: 16px; }
+        nav a { display: inline-block; margin-right: 12px; margin-bottom: 8px; }
+    }
+</style>
+
+</head>
+<body>
+    <nav>
+  
+  <a href="/">首页</a>
+  <a href="/post/">归档</a>
+  <a href="/tags/">标签</a>
+  <a href="/post/about/">关于</a>
+  <a href="https://download.margrop.net" target="_blank" rel="noopener">下载</a>
+  <a href="/post/favorites/">Link</a>
+  <a href="/post/github-project-stars/">Github</a>
+  
+  <a href="https://github-mirrors.margrop.net" target="_blank" rel="noopener">Github加速</a>
+  <a href="https://status.anye.xyz/" target="_blank" rel="noopener">Docker加速</a>
+  
+</nav>
+
+    
+<div class="language-switcher">
+  
+    <a href="/post/docker-port-bind-half-silent/" class="active">中文</a>
+  
+    <a href="/en/post/docker-port-bind-half-silent/" class="">English</a>
+  
+</div>
+
+
+    
+    <article>
+        <h1>Docker 容器跑得好好的，端口死活访问不了：一次 HostIp 绑定&#39;半残&#39;的完整复盘</h1>
+        <div class="meta">
+            发布时间: 2026-06-13
+        </div>
+        
+<div class="tags">
+    
+    <a href="/tag/docker/"><span class="tag">Docker</span></a>
+    
+    <a href="/tag/%E5%AE%B9%E5%99%A8/"><span class="tag">容器</span></a>
+    
+    <a href="/tag/%E7%BD%91%E7%BB%9C/"><span class="tag">网络</span></a>
+    
+    <a href="/tag/%E7%AB%AF%E5%8F%A3%E6%98%A0%E5%B0%84/"><span class="tag">端口映射</span></a>
+    
+    <a href="/tag/iptables/"><span class="tag">iptables</span></a>
+    
+    <a href="/tag/docker-proxy/"><span class="tag">docker-proxy</span></a>
+    
+    <a href="/tag/libnetwork/"><span class="tag">libnetwork</span></a>
+    
+    <a href="/tag/%E6%8E%92%E9%94%99/"><span class="tag">排错</span></a>
+    
+    <a href="/tag/%E6%95%85%E9%9A%9C%E5%A4%8D%E7%9B%98/"><span class="tag">故障复盘</span></a>
+    
+</div>
+
+
+        <div class="content">
+            <blockquote>
+<p><strong>一句话总结：</strong></p>
+<p><code>docker ps</code> 看着一切正常，<code>docker inspect</code> 的 <code>HostConfig.PortBindings</code> 也写好了 <code>203.0.113.14:3001:3000</code>——但 host 上<strong>没有 docker-proxy 在监听</strong>、iptables <code>nat/DOCKER</code> 链里<strong>没有 DNAT 规则</strong>、<code>NetworkSettings.Networks</code> 和 <code>Ports</code> <strong>两个字段都是空 <code>{}</code></strong>。这种&quot;容器活着、端口死了&quot;的诡异状态，本质是 libnetwork 在 attach 网络时因为目标接口尚未就绪而<strong>静默回滚了 endpoint 创建</strong>，但容器进程已经起好，docker 也没把&quot;端口没生效&quot;这件事主动告诉我们。<strong>30 秒一行命令就能让端口重新回来</strong>：<code>docker network connect &lt;net&gt; &lt;ctr&gt;</code>。</p>
+</blockquote>
+<p><img src="/post-images/docker-port-bind-half-silent/01-symptom-topology.svg" alt="故障现场：docker ps 显示一切正常，端口就是访问不了"></p>
+<p><em>图 1：典型的&quot;半残&quot;现场——容器进程在跑、HostConfig 里端口映射写得清清楚楚，但 host 上没有任何进程监听 3001。</em></p>
+<hr>
+<h2 id="一问题背景一个看似不可能的故障">一、问题背景：一个看似不可能的故障</h2>
+<p>我有一台对外提供 AI 网关服务的机器，上面用 Docker Compose 起了一组服务：new-api、dockhand、headroom 等。它们的 compose 里写了这样一段：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-yaml" data-lang="yaml"><span style="display:flex;"><span><span style="color:#f92672">ports</span>:
+</span></span><span style="display:flex;"><span>  - <span style="color:#e6db74">&#34;203.0.113.14:3001:3000&#34;</span>   <span style="color:#75715e"># new-api</span>
+</span></span><span style="display:flex;"><span>  - <span style="color:#e6db74">&#34;203.0.113.14:3003:3000&#34;</span>   <span style="color:#75715e"># dockhand</span>
+</span></span><span style="display:flex;"><span>  - <span style="color:#e6db74">&#34;203.0.113.14:3005:3000&#34;</span>   <span style="color:#75715e"># headroom</span>
+</span></span></code></pre></div><p>也就是说，<strong>所有容器的宿主机端口都绑到同一块辅助网卡的固定 IP 上</strong>——<code>203.0.113.14</code> 是这块网卡上额外配置的一个 secondary IP，外部访问走这个 IP。所有的内网互联、防火墙白名单、DNS 解析也都只认这个 IP。</p>
+<p>一个普通的下午，我尝试从同网段其他节点去访问 <code>http://203.0.113.14:3001/</code>，按预期应该看到 new-api 的登录页。结果：</p>
+<pre tabindex="0"><code>curl: (7) Failed to connect to 203.0.113.14 port 3001
       after 0 ms: Couldn&#39;t connect to server
-</code></pre><p>不只 3001。我又试了 3003、3005：</p><pre tabindex=0><code>nc -z -v 203.0.113.14 3001   → Connection refused
+</code></pre><p>不只 3001。我又试了 3003、3005：</p>
+<pre tabindex="0"><code>nc -z -v 203.0.113.14 3001   → Connection refused
 nc -z -v 203.0.113.14 3003   → Connection refused
 nc -z -v 203.0.113.14 3005   → Connection refused
-</code></pre><p><strong>三个端口同时失联</strong>。这不像是某个容器自己挂了，更像是"宿主这一侧"出了什么共性问题。</p><p>可诡异的是 <code>docker ps</code> 看起来一切正常——</p><pre tabindex=0><code>NAME       STATUS                      PORTS
+</code></pre><p><strong>三个端口同时失联</strong>。这不像是某个容器自己挂了，更像是&quot;宿主这一侧&quot;出了什么共性问题。</p>
+<p>可诡异的是 <code>docker ps</code> 看起来一切正常——</p>
+<pre tabindex="0"><code>NAME       STATUS                      PORTS
 new-api    Up 4 hours                  ─
 dockhand   Up 4 hours (healthy)        ─
 headroom   Up 4 hours (healthy)        ─
-</code></pre><p><code>PORTS</code> 列全是空的，连端口映射都没有显示出来。<code>Up 4 hours</code> 说明它们不是刚刚才启动的，不是重启过程中断。容器是活着的，只是对外不可达。</p><hr><h2 id=二问题分析把看不见的网络状态挖出来>二、问题分析：把"看不见"的网络状态挖出来</h2><p>容器没挂、端口没映射、宿主侧又没人监听——这种"沉默的失败"是最难定位的一类。我按下面这个顺序把 host 状态挖了一遍。</p><h3 id=1-容器里自己-curl-一下先排除进程死了>1. 容器里自己 curl 一下，先排除"进程死了"</h3><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-bash data-lang=bash><span style=display:flex><span>docker exec new-api curl -sS -m <span style=color:#ae81ff>5</span> -o /dev/null <span style=color:#ae81ff>\
-</span></span></span><span style=display:flex><span>  -w <span style=color:#e6db74>&#39;HTTP %{http_code}\n&#39;</span> http://127.0.0.1:3000/
-</span></span><span style=display:flex><span><span style=color:#75715e># HTTP 200</span>
-</span></span></code></pre></div><p>容器内部的 3000 是好的。<strong>进程没问题，怀疑点完全落在 host 侧。</strong></p><h3 id=2-host-上有没有进程在监听>2. host 上有没有进程在监听？</h3><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-bash data-lang=bash><span style=display:flex><span>ss -tlnp | grep -E <span style=color:#e6db74>&#39;3001|3003|3005&#39;</span>
-</span></span><span style=display:flex><span><span style=color:#75715e># 空</span>
-</span></span></code></pre></div><p>什么都没在监听。这是非常关键的信号——<strong>正常的 docker 端口映射会启动一个叫 <code>docker-proxy</code> 的子进程</strong>作为 userland proxy，host 上一定能看到它。现在它不在，proxy 根本没起。</p><h3 id=3-iptables-的-nat-链里有没有规则>3. iptables 的 NAT 链里有没有规则？</h3><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-bash data-lang=bash><span style=display:flex><span>iptables -t nat -L DOCKER -n -v
-</span></span><span style=display:flex><span><span style=color:#75715e># Chain DOCKER (2 references)</span>
-</span></span><span style=display:flex><span><span style=color:#75715e>#  pkts bytes target prot opt source destination</span>
-</span></span><span style=display:flex><span><span style=color:#75715e>#  （没有任何规则）</span>
-</span></span></code></pre></div><p>iptables <code>nat</code> 表的 <code>DOCKER</code> 链是 docker 专门用来做端口 DNAT 的地方。这里也是空的。</p><p><strong>两个关键位置同时为空，告诉我们一件事：端口映射这条链在某个环节被跳过了。</strong></p><h3 id=4-回头看-docker-inspect-的两个字段>4. 回头看 <code>docker inspect</code> 的"两个字段"</h3><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-bash data-lang=bash><span style=display:flex><span>docker inspect new-api --format <span style=color:#e6db74>&#39;{{json .NetworkSettings}}&#39;</span>
-</span></span><span style=display:flex><span><span style=color:#75715e># {</span>
-</span></span><span style=display:flex><span><span style=color:#75715e>#   &#34;SandboxID&#34;: &#34;&#34;,</span>
-</span></span><span style=display:flex><span><span style=color:#75715e>#   &#34;SandboxKey&#34;: &#34;&#34;,</span>
-</span></span><span style=display:flex><span><span style=color:#75715e>#   &#34;Ports&#34;: {},</span>
-</span></span><span style=display:flex><span><span style=color:#75715e>#   &#34;Networks&#34;: {},</span>
-</span></span><span style=display:flex><span><span style=color:#75715e>#   &#34;NetworkID&#34;: &#34;&#34;,</span>
-</span></span><span style=display:flex><span><span style=color:#75715e>#   &#34;EndpointID&#34;: &#34;&#34;,</span>
-</span></span><span style=display:flex><span><span style=color:#75715e>#   &#34;MacAddress&#34;: &#34;&#34;,</span>
-</span></span><span style=display:flex><span><span style=color:#75715e>#   &#34;IPAddress&#34;: &#34;&#34;</span>
-</span></span><span style=display:flex><span><span style=color:#75715e># }</span>
-</span></span></code></pre></div><p>——<code>Networks: {}</code> 和 <code>Ports: {}</code> <strong>同时为空</strong>。</p><p>但另一边呢？</p><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-bash data-lang=bash><span style=display:flex><span>docker inspect new-api --format <span style=color:#e6db74>&#39;{{json .HostConfig}}&#39;</span> | head -c <span style=color:#ae81ff>400</span>
-</span></span><span style=display:flex><span><span style=color:#75715e># {&#34;Binds&#34;:[&#34;/docker/newapi_data/data:/data:rw&#34;],</span>
-</span></span><span style=display:flex><span><span style=color:#75715e>#  &#34;NetworkMode&#34;:&#34;newapi_data_default&#34;,</span>
-</span></span><span style=display:flex><span><span style=color:#75715e>#  &#34;PortBindings&#34;:{&#34;3000/tcp&#34;:[</span>
-</span></span><span style=display:flex><span><span style=color:#75715e>#     {&#34;HostIp&#34;:&#34;203.0.113.14&#34;,&#34;HostPort&#34;:&#34;3001&#34;}]},</span>
-</span></span><span style=display:flex><span><span style=color:#75715e>#  &#34;RestartPolicy&#34;:{&#34;Name&#34;:&#34;always&#34;,...}}</span>
-</span></span></code></pre></div><p><strong><code>PortBindings</code> 还在</strong>——&ldquo;我想把容器的 3000 映射到 203.0.113.14:3001&rdquo;，这条意图写得清清楚楚。</p><p><strong><code>NetworkMode</code> 也还在</strong>——&ldquo;我希望它挂到 <code>newapi_data_default</code> 这个 bridge 上&rdquo;。</p><p><code>HostConfig</code> 记得一切，但 <code>NetworkSettings</code> 已经"忘记"了。<strong>这是典型的"意图和现实不一致"</strong>——docker 把"我应该怎么做"写在了 HostConfig 里，但"我做到了哪一步"在 NetworkSettings 里是空白。</p><h3 id=5-上游的-bridge-网络上有没有人>5. 上游的 bridge 网络上有没有人</h3><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-bash data-lang=bash><span style=display:flex><span>docker network inspect newapi_data_default --format <span style=color:#e6db74>&#39;{{json .Containers}}&#39;</span>
-</span></span><span style=display:flex><span><span style=color:#75715e># {}</span>
-</span></span></code></pre></div><p><code>newapi_data_default</code> 这个 bridge 上，<strong><code>Containers: {}</code></strong>——它觉得没有任何容器挂上来。 但容器本身在跑、还能 curl 自己、还能 restart。</p><p><strong>这说明容器和它声明要加入的 bridge 网络之间，attach 这个动作根本没生效</strong>，但 docker 也没把这个失败显式地告诉用户。</p><p><img src=/post-images/docker-port-bind-half-silent/02-hostconfig-vs-networksettings.svg alt='半残映射：HostConfig 与 NetworkSettings 之间的"裂缝"'></p><p><em>图 2：左侧的 HostConfig 完整写着端口映射和网络名，右侧的 NetworkSettings 却是空 {}。意图还在，现状丢了。</em></p><h3 id=6-顺手扫一眼其他容器果然不是个例>6. 顺手扫一眼其他容器：果然不是个例</h3><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-bash data-lang=bash><span style=display:flex><span><span style=color:#66d9ef>for</span> c in <span style=color:#66d9ef>$(</span>docker ps --format <span style=color:#e6db74>&#39;{{.Names}}&#39;</span><span style=color:#66d9ef>)</span>; <span style=color:#66d9ef>do</span>
-</span></span><span style=display:flex><span>  nets<span style=color:#f92672>=</span><span style=color:#66d9ef>$(</span>docker inspect $c --format <span style=color:#e6db74>&#39;{{len .NetworkSettings.Networks}}&#39;</span><span style=color:#66d9ef>)</span>
-</span></span><span style=display:flex><span>  ports<span style=color:#f92672>=</span><span style=color:#66d9ef>$(</span>docker inspect $c --format <span style=color:#e6db74>&#39;{{len .NetworkSettings.Ports}}&#39;</span><span style=color:#66d9ef>)</span>
-</span></span><span style=display:flex><span>  printf <span style=color:#e6db74>&#39;%-25s | networks=%s | ports=%s\n&#39;</span> <span style=color:#e6db74>&#34;</span>$c<span style=color:#e6db74>&#34;</span> <span style=color:#e6db74>&#34;</span>$nets<span style=color:#e6db74>&#34;</span> <span style=color:#e6db74>&#34;</span>$ports<span style=color:#e6db74>&#34;</span>
-</span></span><span style=display:flex><span><span style=color:#66d9ef>done</span>
-</span></span><span style=display:flex><span>
-</span></span><span style=display:flex><span><span style=color:#75715e># dockhand   | networks=0 | ports=0</span>
-</span></span><span style=display:flex><span><span style=color:#75715e># new-api    | networks=0 | ports=0</span>
-</span></span><span style=display:flex><span><span style=color:#75715e># easytier   | networks=1 (host) | ports=0   ← 这个正常，因为它用 host 网络</span>
-</span></span><span style=display:flex><span><span style=color:#75715e># headroom   | networks=0 | ports=0</span>
-</span></span></code></pre></div><p><strong>三个非 host 网络的容器同时 <code>networks=0, ports=0</code></strong>。共性只有一个：它们的 <code>HostConfig.NetworkMode</code> 各自指向了不同的自定义 bridge 网络。</p><p>到这里，根因的大方向已经基本锁死：<strong>容器"想要"加入的 bridge 网络没成功 attach</strong>。</p><p><img src=/post-images/docker-port-bind-half-silent/04-diagnose-checklist.svg alt=五分钟诊断清单：从症状到根因的六步走></p><p><em>图 4：把上面六步压缩成「抄作业清单」，下次再遇到「容器活着、端口死了」30 秒就能判断。</em></p><hr><h2 id=三问题根因被静默回滚的-endpoint-创建>三、问题根因：被静默回滚的 endpoint 创建</h2><p>接下来要回答两个问题：</p><ol><li>为什么不一致？（<code>HostConfig</code> 有，<code>NetworkSettings</code> 没）</li><li>为什么会"同时"出在三个容器上？</li></ol><h3 id=31-完整的发布链路里少了哪一截>3.1 完整的发布链路里，少了哪一截</h3><p>docker 把容器端口"对外暴露"需要走这条链路：</p><p><img src=/post-images/docker-port-bind-half-silent/03-publish-pipeline.svg alt=完整的发布链路与断裂点></p><p><em>图 3：从 VPN 节点到 new-api 0.0.0.0:3000 的完整路径，标 ✕ 的两处是这次断掉的位置。</em></p><p>它大致是这样的：</p><ol><li><strong>容器内</strong>：<code>new-api</code> 进程 listen 在 <code>0.0.0.0:3000</code>（正常）；</li><li><strong>libnetwork</strong>：创建 network sandbox，把容器接到 <code>newapi_data_default</code> 这个 bridge 上，分配 <code>172.20.0.2</code> 这种内部 IP；</li><li><strong>端口映射</strong>：为 <code>HostIp:HostPort</code> 调用 <code>StartProxy</code> 启动 <code>docker-proxy</code> 子进程；</li><li><strong>iptables</strong>：在 <code>nat</code> 表的 <code>DOCKER</code> 链里插一条 <code>DNAT 203.0.113.14:3001 → 172.20.0.2:3000</code>；</li><li><strong>结果上报</strong>：填充 <code>NetworkSettings.Ports</code> 和 <code>NetworkSettings.Networks</code>。</li></ol><p>第 5 步是"落盘"步骤。我们看到的"<code>Ports: {}</code> 和 <code>Networks: {}</code>"——意思是从第 1 步到第 4 步，<strong>至少其中一步在沙箱创建阶段就被回滚了</strong>。<strong>libnetwork 在回滚时会清空 <code>NetworkSettings.Networks</code> 和 <code>NetworkSettings.Ports</code></strong>，但<strong>不会去修改 <code>HostConfig.PortBindings</code></strong>，所以你看到的就是现在这个状态。</p><h3 id=32-这一类-bug-早就被官方记录在案>3.2 这一类 bug 早就被官方记录在案</h3><p>不是猜的。Moby 的 issue tracker 上早就有一批标题几乎一模一样的工单：</p><ul><li><strong><a href=https://github.com/moby/moby/issues/9818>moby/moby#9818</a> &ldquo;Container port not expose; neither iptables rules added nor userland proxy started&rdquo;</strong>——2014 年的老 issue，标题直接就是这次的症状；</li><li><strong><a href=https://github.com/moby/moby/issues/44137>moby/moby#44137</a> &ldquo;docker network connect removes/resets dynamically published/exposed ports&rdquo;</strong>——明确指出 <code>docker network connect</code> 在某些条件下会"重置"端口映射；</li><li><strong><a href=https://github.com/moby/moby/pull/52480>moby/moby#52480</a></strong> 的描述里直接写了：&ldquo;the conflicting port goes silently unbound… <code>HostConfig.PortBindings</code> is preserved but never applied."——意图保留、现实被放弃，正是这次的精确翻版。</li></ul><p>为什么 docker-proxy 没起来、为什么 iptables 没插规则、为什么 <code>NetworkSettings</code> 是空的——<strong>这一切都是 libnetwork 在 sandbox 创建失败时静默执行的"局部回滚&rdquo;</strong>。</p><h3 id=33-既然是共因那是什么先于-docker-启动>3.3 既然是共因，那"是什么"先于 docker 启动？</h3><p>这一步是关键：为什么三个非 host 网络的容器<strong>同时</strong>出问题？它们在 docker 启动时挂载到了一个还不存在的"接口"上。</p><p><code>203.0.113.14</code> 这块 IP 在我的机器上属于<strong>辅助网卡</strong>——它不是物理网卡的 primary IP，而是用 <code>ip addr add</code> 配上去的 secondary IP。更要命的是这块网卡本身<strong>开机时并不存在</strong>：</p><ul><li>它由一个用户态 TUN 服务在系统起来之后才创建；</li><li>TUN 服务跑起来后，TUN 接口 up、<code>203.0.113.14</code> 才会被挂上；</li><li>这中间有一个<strong>不可避免的时序窗口</strong>——docker 守护进程跑得比 TUN 早。</li></ul><p>docker 启动容器、试图 attach bridge 网络时，目标 <code>HostIp</code>（也就是 <code>203.0.113.14</code>）<strong>在那一刻还不存在</strong>。Moby 在 <a href=https://github.com/moby/moby/blob/master/daemon/libnetwork/portmapper/proxy_linux.go><code>daemon/libnetwork/portmapper/proxy_linux.go</code></a> 的 <code>StartProxy()</code> 里<strong>没有校验 HostIP 是否在本机接口上</strong>——它把这个地址直接透传给 <code>docker-proxy</code> 子进程的 <code>-host-ip</code> 参数。</p><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-go data-lang=go><span style=display:flex><span><span style=color:#75715e>// proxy_linux.go (摘要)</span>
-</span></span><span style=display:flex><span><span style=color:#a6e22e>cmd</span> <span style=color:#f92672>:=</span> <span style=color:#a6e22e>reexec</span>.<span style=color:#a6e22e>Command</span>(<span style=color:#e6db74>&#34;docker-proxy&#34;</span>,
-</span></span><span style=display:flex><span>    <span style=color:#e6db74>&#34;-host-ip&#34;</span>, <span style=color:#a6e22e>p</span>.<span style=color:#a6e22e>Binding</span>.<span style=color:#a6e22e>HostIP</span>,
-</span></span><span style=display:flex><span>    <span style=color:#e6db74>&#34;-host-port&#34;</span>, <span style=color:#a6e22e>p</span>.<span style=color:#a6e22e>Binding</span>.<span style=color:#a6e22e>HostPort</span>,
-</span></span><span style=display:flex><span>    <span style=color:#e6db74>&#34;-container-ip&#34;</span>, <span style=color:#a6e22e>p</span>.<span style=color:#a6e22e>Binding</span>.<span style=color:#a6e22e>IP</span>,
-</span></span><span style=display:flex><span>    <span style=color:#e6db74>&#34;-container-port&#34;</span>, <span style=color:#a6e22e>strings</span>.<span style=color:#a6e22e>ToLower</span>(<span style=color:#a6e22e>p</span>.<span style=color:#a6e22e>Port</span>),
-</span></span><span style=display:flex><span>)
-</span></span></code></pre></div><p>启动失败也好、iptables <code>setChildHostIP</code> 判定该 binding 不可用也好——<strong>libnetwork 拿到错误就直接回滚 endpoint 创建</strong>。回滚动作会把 <code>NetworkSettings</code> 里这一段时间的尝试清空，但<strong>不会动 HostConfig</strong>，也不会向用户报告"端口映射没生效"。</p><p>宿主进程不退出，容器进程不退出，docker 守护进程也还在，但<strong>端口从这一刻起就再也没有真正对外暴露过</strong>。谁也没报错。</p><p>类似的问题在 WireGuard、Tailscale、eBPF-based VPN 这类<strong>用户态 TUN 隧道</strong>场景下都出现过，<a href=https://github.com/moby/moby/issues/39559>moby/moby#39559</a> 这条 issue 的评论里就有人吐槽：&ldquo;我把整个服务器搬进 docker 了，但 docker 启动比 WireGuard 早，结果 WireGuard 配置好的 IP 上的端口永远绑不上。&rdquo;</p><h3 id=34-一句话根因>3.4 一句话根因</h3><blockquote><p><strong>docker 在 attach 容器到用户自定义 bridge 网络时，如果 HostIp 在那一刻还没绑定到本机接口上，libnetwork 会静默地回滚 sandbox 创建，导致 <code>docker-proxy</code> 不启、iptables DNAT 不插、<code>NetworkSettings.Networks/Ports</code> 被清空，但 <code>HostConfig.PortBindings</code> 仍然写着"我想这样做"——容器进程在跑，端口却对外面不可见。</strong></p></blockquote><hr><h2 id=四解决问题一行命令让半残变回完整>四、解决问题：一行命令让"半残"变回完整</h2><p>知道了根因，修复就两步。</p><h3 id=41-临时治标docker-network-connect>4.1 临时治标：<code>docker network connect</code></h3><p>最直接的命令——重新走一遍 libnetwork 的 attach 流程，这次 TUN 早就 ready 了：</p><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-bash data-lang=bash><span style=display:flex><span>docker network connect newapi_data_default new-api
-</span></span><span style=display:flex><span>docker network connect dockhand_data_default dockhand
-</span></span><span style=display:flex><span>docker network connect headroom_default headroom
-</span></span></code></pre></div><p>每跑一行，<code>NetworkSettings</code> 就会从 <code>{}</code> 重新填充到完整的结构，<code>docker-proxy</code> 子进程也会被拉起，iptables <code>DOCKER</code> 链会多出对应的 DNAT 规则。</p><blockquote><p>提示：<code>docker network connect</code> 是一条官方命令，文档原话是 &ldquo;You can connect a container to one or more networks. The networks need not be the same type."（<a href=https://docs.docker.com/reference/cli/docker/network/connect/>docs.docker.com</a>）——它本身就是给"挂在某个网络"这个动作做的。</p></blockquote><p>修复后再看：</p><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-bash data-lang=bash><span style=display:flex><span>ss -tlnp | grep <span style=color:#ae81ff>3001</span>
-</span></span><span style=display:flex><span><span style=color:#75715e># LISTEN 0  4096  203.0.113.14:3001  docker-proxy</span>
-</span></span><span style=display:flex><span>
-</span></span><span style=display:flex><span>curl -sS -m <span style=color:#ae81ff>5</span> -o /dev/null <span style=color:#ae81ff>\
-</span></span></span><span style=display:flex><span>  -w <span style=color:#e6db74>&#39;HTTP %{http_code}\n&#39;</span> http://203.0.113.14:3001/
-</span></span><span style=display:flex><span><span style=color:#75715e># HTTP 200</span>
-</span></span></code></pre></div><p>回来了。</p><h3 id=42-治本让-docker-等-tun-就绪再起来>4.2 治本：让 docker 等 TUN 就绪再起来</h3><p>上面这个一行命令只能救火，<strong>机器下次重启 / TUN 重连之后还会复发</strong>。要把这种"半残"挡在启动链路里，更稳的做法是修改开机顺序。</p><p><strong>方案 A：systemd 依赖</strong>（最干净）</p><p>为 <code>docker.service</code> 加一个 <code>After=</code>，明确告诉 systemd 必须在 TUN 服务起来之后才启动 docker：</p><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-ini data-lang=ini><span style=display:flex><span><span style=color:#66d9ef>[Unit]</span>
-</span></span><span style=display:flex><span><span style=color:#a6e22e>After</span><span style=color:#f92672>=</span><span style=color:#e6db74>network-online.target tun-up.service</span>
-</span></span><span style=display:flex><span><span style=color:#a6e22e>Wants</span><span style=color:#f92672>=</span><span style=color:#e6db74>network-online.target</span>
-</span></span></code></pre></div><p><code>network-online.target</code> 自身不能解决"用户态 TUN 还没握手"的问题，但搭配一个 wait-online 的小服务一起用就够稳了。</p><p><strong>方案 B：compose 里去掉 HostIp，绑 0.0.0.0</strong>（最暴力）</p><p>把 compose 里的：</p><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-yaml data-lang=yaml><span style=display:flex><span><span style=color:#f92672>ports</span>:
-</span></span><span style=display:flex><span>  - <span style=color:#e6db74>&#34;203.0.113.14:3001:3000&#34;</span>
-</span></span></code></pre></div><p>改成：</p><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-yaml data-lang=yaml><span style=display:flex><span><span style=color:#f92672>ports</span>:
-</span></span><span style=display:flex><span>  - <span style=color:#e6db74>&#34;3001:3000&#34;</span>
-</span></span></code></pre></div><p>这样 docker <strong>不挑接口</strong>，所有可用 IP 都尝试绑定。代价是失去了"只有这块 IP 才能访问"的天然隔离——你得在 host 防火墙里手动把 3001 的入站白名单配置好。</p><p><strong>方案 C：开机探针 + 重连</strong>（最稳的兜底）</p><p>写一个开机时跑的脚本，等到接口 ready 之后再去 <code>docker network connect</code>：</p><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-bash data-lang=bash><span style=display:flex><span><span style=color:#75715e>#!/usr/bin/env bash
-</span></span></span><span style=display:flex><span>set -euo pipefail
-</span></span><span style=display:flex><span><span style=color:#75715e># 等待 203.0.113.14 出现</span>
-</span></span><span style=display:flex><span><span style=color:#66d9ef>until</span> ip -4 addr show | grep -q <span style=color:#e6db74>&#39;203.0.113.14&#39;</span>; <span style=color:#66d9ef>do</span>
-</span></span><span style=display:flex><span>  sleep <span style=color:#ae81ff>1</span>
-</span></span><span style=display:flex><span><span style=color:#66d9ef>done</span>
-</span></span><span style=display:flex><span><span style=color:#75715e># 给每个挂掉的容器重连网络</span>
-</span></span><span style=display:flex><span><span style=color:#66d9ef>for</span> c in new-api dockhand headroom; <span style=color:#66d9ef>do</span>
-</span></span><span style=display:flex><span>  net<span style=color:#f92672>=</span><span style=color:#66d9ef>$(</span>docker inspect <span style=color:#e6db74>&#34;</span>$c<span style=color:#e6db74>&#34;</span> --format <span style=color:#e6db74>&#39;{{.HostConfig.NetworkMode}}&#39;</span><span style=color:#66d9ef>)</span>
-</span></span><span style=display:flex><span>  docker network connect <span style=color:#e6db74>&#34;</span>$net<span style=color:#e6db74>&#34;</span> <span style=color:#e6db74>&#34;</span>$c<span style=color:#e6db74>&#34;</span> <span style=color:#f92672>||</span> true
-</span></span><span style=display:flex><span><span style=color:#66d9ef>done</span>
-</span></span></code></pre></div><p>挂到 systemd 里、<code>After=docker.service</code> 即可。</p><p><img src=/post-images/docker-port-bind-half-silent/05-fix-strategy.svg alt="治标 vs 治本：临时重连 vs 启动顺序改造"></p><p><em>图 4：左侧"治标"那一行 <code>docker network connect</code> 30 秒解决；右侧"治本"是让 docker 在 attach 时接口一定就绪。两者并不互斥，组合使用最稳。</em></p><h3 id=43-修复前-vs-修复后同一个-docker-inspect-命令>4.3 修复前 vs 修复后（同一个 docker inspect 命令）</h3><p><img src=/post-images/docker-port-bind-half-silent/06-before-after-compare.svg alt="修复前后的 docker inspect 与 ss 对比"></p><p><em>图 5：修复前 <code>NetworkSettings</code> 全是空 <code>{}</code>、ss 看不到 docker-proxy；一行 <code>docker network connect</code> 之后，两个字段全部填满、docker-proxy 出现、curl 直接 200。</em></p><hr><h2 id=五qa>五、Q&amp;A</h2><h3 id=q1-怎么一眼区分容器进程死了和端口没暴露这两种情况>Q1. 怎么一眼区分"容器进程死了"和"端口没暴露"这两种情况？</h3><p><strong>答</strong>：在 host 上直接 <code>curl 容器名:端口</code> 是行不通的——<code>docker network</code> 看不见 host 网络。<strong>最干净的一招是进容器自己 curl 一下</strong>：</p><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-bash data-lang=bash><span style=display:flex><span>docker exec &lt;ctr&gt; curl -sf 127.0.0.1:&lt;port&gt; <span style=color:#f92672>&amp;&amp;</span> echo OK <span style=color:#f92672>||</span> echo DEAD
-</span></span></code></pre></div><ul><li><code>OK</code> → 进程没事，怀疑 host 侧（按本文继续）；</li><li><code>DEAD</code> → 进程自己挂了，去看 <code>docker logs &lt;ctr></code>，与端口映射无关。</li></ul><h3 id=q2-docker-restart-能不能修好>Q2. <code>docker restart</code> 能不能修好？</h3><p><strong>答</strong>：能，但不一定。我实测下来，如果 host IP 这时候已经 ready（系统跑了一段时间），<code>docker restart</code> 顺带会重新走一遍 sandbox 创建流程，端口可能就回来了。但如果 host IP 还没起，restart 也不会让它"等一会儿再 attach&rdquo;——它会<strong>以同样的失败方式再次进入半残状态</strong>。所以 <code>restart</code> 是"碰运气"方案，<code>docker network connect</code> 才是"定向治疗"。</p><h3 id=q3-为什么-docker-port-ctr-也看不出来>Q3. 为什么 <code>docker port &lt;ctr></code> 也看不出来？</h3><p><strong>答</strong>：<code>docker port</code> 命令读的是**<code>NetworkSettings.Ports</code>** 这个字段。但这个字段在这次故障里<strong>本身就是空的</strong>——<code>docker port</code> 显示为空是"症状"的一部分，不是诊断手段。要看"意图"，得用 <code>docker inspect &lt;ctr> --format '{{json .HostConfig.PortBindings}}'</code>。</p><h3 id=q4-三个容器同时出问题是不是只能一个个重连>Q4. 三个容器同时出问题，是不是只能一个个重连？</h3><p><strong>答</strong>：是的，每个容器只能单独 <code>docker network connect</code>，没有批量子命令。但实际操作上 3 个命令 30 秒不到就完了。要再省事，写个 for 循环就行：</p><div class=highlight><pre tabindex=0 style=color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none><code class=language-bash data-lang=bash><span style=display:flex><span><span style=color:#66d9ef>for</span> c in new-api dockhand headroom; <span style=color:#66d9ef>do</span>
-</span></span><span style=display:flex><span>  net<span style=color:#f92672>=</span><span style=color:#66d9ef>$(</span>docker inspect <span style=color:#e6db74>&#34;</span>$c<span style=color:#e6db74>&#34;</span> --format <span style=color:#e6db74>&#39;{{.HostConfig.NetworkMode}}&#39;</span><span style=color:#66d9ef>)</span>
-</span></span><span style=display:flex><span>  docker network connect <span style=color:#e6db74>&#34;</span>$net<span style=color:#e6db74>&#34;</span> <span style=color:#e6db74>&#34;</span>$c<span style=color:#e6db74>&#34;</span> <span style=color:#f92672>||</span> true
-</span></span><span style=display:flex><span><span style=color:#66d9ef>done</span>
-</span></span></code></pre></div><h3 id=q5-治本方案-a-里network-onlinetarget-真的够用吗>Q5. 治本方案 A 里，<code>network-online.target</code> 真的够用吗？</h3><p><strong>答</strong>：默认的 <code>network-online.target</code> 只在 systemd-networkd 或 NetworkManager 视角下"主线"网络起来时就触发，<strong>对用户态 TUN/WireGuard 这类接口不会自动感知</strong>。生产里推荐写一个 1-2 行的小 systemd unit，自己 <code>ip -4 addr show | grep &lt;vpn-ip></code> 轮询，成功后再 <code>systemctl start docker.service</code>。这比依赖 <code>network-online.target</code> 靠谱得多。</p><h3 id=q6-还有没有别的情况下会出现这种半残>Q6. 还有没有别的情况下会出现这种"半残"？</h3><p><strong>答</strong>：有，但**入口都是"host IP 当时不可达"**这一类：</p><ul><li>浮动 IP（floating IP / elastic IP）漂移之后，docker 没感知到；</li><li>bond 网卡切换 master、IP 跟着走时老 master 已经被释放；</li><li>DHCP 续约失败、IP 临时被收回再下发；</li><li>compose 文件里 <code>network_mode: host</code> 和 <code>-p</code> 同时用，旧版本 docker 行为不一致。</li></ul><p>排查思路都一样：先看 <code>HostConfig</code> 是不是"想这样"，再看 <code>NetworkSettings</code> 是不是"已经这样"，<strong>两者不一致 = libnetwork 的局部回滚留下的痕迹</strong>。</p><h3 id=q7-那-docker-28-之后会不会修好这个-bug>Q7. 那 docker 28 之后会不会"修好"这个 bug？</h3><p><strong>答</strong>：截至本文写作时间，Moby issue tracker 上有 <strong>#51758 &ldquo;PortBindings shows binding but NetworkSettings.Ports is empty&rdquo;</strong>（<a href=https://github.com/moby/moby/issues/51758>issue 链接</a>）这种近期的同类报告仍在被打开，配套修复 PR 是 #52480 但也还在等合入主分支。也就是说，<strong>这是个长期遗留的边角问题</strong>——理解它，比等它修好更现实。</p><hr><h2 id=六总结>六、总结</h2><p>这次故障的复盘路径，核心其实就三件事：</p><ol><li><strong><code>docker inspect</code> 的两个字段要分开看</strong>——<code>HostConfig</code> 是"我打算做什么"，<code>NetworkSettings</code> 是"我真的做到了什么"；两者不一致 = 半残；</li><li><strong>用 <code>ss</code> 和 <code>iptables</code> 反向验证</strong>——没有 docker-proxy 进程 + 没有 DNAT 规则 = 100% 命中本次场景；</li><li><strong><code>docker network connect</code> 是治标的最小动作</strong>，治本要去改开机顺序，让 docker 跑在用户态 TUN 后面。</li></ol><p>把 <code>ss -tlnp</code> 和 <code>iptables -t nat -L DOCKER</code> 这两条命令刻进肌肉记忆，下次遇到"容器活着、端口死了"的诡异问题，<strong>30 秒就能定位、3 个命令就能救火</strong>。</p><hr><h2 id=参考资料>参考资料</h2><ul><li><a href=https://github.com/moby/moby/blob/master/daemon/libnetwork/portmapper/proxy_linux.go>Moby 源码 · daemon/libnetwork/portmapper/proxy_linux.go</a> —— <code>StartProxy</code> 直接以 <code>-host-ip</code> 形式把 HostIP 传给 docker-proxy</li><li><a href=https://github.com/moby/moby/blob/master/daemon/libnetwork/portmappers/nat/mapper_linux.go>Moby 源码 · daemon/libnetwork/portmappers/nat/mapper_linux.go</a> —— <code>setChildHostIP</code> 在 rootless 之外的判定逻辑</li><li><a href=https://github.com/moby/moby/blob/master/daemon/libnetwork/portmapperapi/api.go>Moby 源码 · daemon/libnetwork/portmapperapi/api.go</a> —— <code>PortBinding</code>/<code>StopProxy</code> 的结构与生命周期</li><li><a href=https://github.com/moby/moby/issues/9818>moby/moby #9818 — Container port not expose; neither iptables rules added nor userland proxy started</a> —— 2014 年起的同症状工单</li><li><a href=https://github.com/moby/moby/issues/39559>moby/moby #39559 — Container does not start (&ndash;restart always) at boot if port bind fails</a> —— 跟 TUN/WireGuard 场景最接近的工单</li><li><a href=https://github.com/moby/moby/issues/44137>moby/moby #44137 — docker network connect removes/resets dynamically published/exposed ports</a> —— 端口映射在某些条件下被 <code>network connect</code> 重置</li><li><a href=https://github.com/moby/moby/issues/51758>moby/moby #51758 — PortBindings shows binding but NetworkSettings.Ports is empty</a> —— 2025 年仍在报告的同类问题</li><li><a href=https://github.com/moby/moby/pull/52480>moby/moby #52480 — connectToNetwork: keep Networks on failure</a> —— 同问题修复 PR</li><li><a href=https://docs.docker.com/engine/network/>Docker Docs — Networking overview (engine/network)</a> —— <code>-p</code> 创建防火墙规则的官方描述</li><li><a href=https://docs.docker.com/engine/network/firewall-iptables/>Docker Docs — Docker with iptables (engine/network/firewall-iptables)</a> —— iptables <code>DOCKER</code> 链的权威定义</li><li><a href=https://docs.docker.com/engine/network/port-publishing/>Docker Docs — Port publishing and mapping</a> —— <code>HostIP</code> 形式 <code>-p</code> 的细节</li><li><a href=https://docs.docker.com/reference/cli/docker/network/connect/>Docker Docs — docker network connect reference</a> —— &ldquo;把容器连到网络上"的官方命令</li><li><a href=https://www.docker.com/blog/docker-engine-28-hardening-container-networking-by-default/>Docker Blog — Docker Engine v28: Hardening Container Networking by Default</a> —— 理解 v28 之后容器网络行为变化</li><li><a href=https://www.freedesktop.org/software/systemd/man/systemd.unit.html>systemd 文档 — systemd.unit(5), After=/Wants= 关系</a></li></ul></div></article><link rel=stylesheet href=https://cdn.jsdelivr.net/npm/gitalk/dist/gitalk.css><script src=https://cdn.jsdelivr.net/npm/gitalk/dist/gitalk.min.js></script><div id=gitalk-container style=margin-top:40px></div><script>(function(){var e=new Gitalk({clientID:"3181fd94e501cc5db0ad",clientSecret:"af1dab79dae02c69296e6615bfcecf47fc8615ee",repo:"margropcomment.margrop.io",owner:"margrop",admin:["margrop"],id:"/post/docker-port-bind-half-silent/",distractionFreeMode:!1});e.render("gitalk-container")})()</script><script type=text/javascript src=https://js.users.51.la/21044367.js></script><script id=LA_COLLECT src=//sdk.51.la/js-sdk-pro.min.js></script><script>LA.init({id:"1vVTUWl7zoRjnKXi",ck:"1vVTUWl7zoRjnKXi"})</script><script src=https://sdk.51.la/perf/js-sdk-perf.min.js crossorigin=anonymous></script><script>(new LingQue.Monitor).init({id:"202teQt8THXwqyve"})</script></body></html>
+</code></pre><p><code>PORTS</code> 列全是空的，连端口映射都没有显示出来。<code>Up 4 hours</code> 说明它们不是刚刚才启动的，不是重启过程中断。容器是活着的，只是对外不可达。</p>
+<hr>
+<h2 id="二问题分析把看不见的网络状态挖出来">二、问题分析：把&quot;看不见&quot;的网络状态挖出来</h2>
+<p>容器没挂、端口没映射、宿主侧又没人监听——这种&quot;沉默的失败&quot;是最难定位的一类。我按下面这个顺序把 host 状态挖了一遍。</p>
+<h3 id="1-容器里自己-curl-一下先排除进程死了">1. 容器里自己 curl 一下，先排除&quot;进程死了&quot;</h3>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>docker exec new-api curl -sS -m <span style="color:#ae81ff">5</span> -o /dev/null <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span>  -w <span style="color:#e6db74">&#39;HTTP %{http_code}\n&#39;</span> http://127.0.0.1:3000/
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># HTTP 200</span>
+</span></span></code></pre></div><p>容器内部的 3000 是好的。<strong>进程没问题，怀疑点完全落在 host 侧。</strong></p>
+<h3 id="2-host-上有没有进程在监听">2. host 上有没有进程在监听？</h3>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>ss -tlnp | grep -E <span style="color:#e6db74">&#39;3001|3003|3005&#39;</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 空</span>
+</span></span></code></pre></div><p>什么都没在监听。这是非常关键的信号——<strong>正常的 docker 端口映射会启动一个叫 <code>docker-proxy</code> 的子进程</strong>作为 userland proxy，host 上一定能看到它。现在它不在，proxy 根本没起。</p>
+<h3 id="3-iptables-的-nat-链里有没有规则">3. iptables 的 NAT 链里有没有规则？</h3>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>iptables -t nat -L DOCKER -n -v
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># Chain DOCKER (2 references)</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e">#  pkts bytes target prot opt source destination</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e">#  （没有任何规则）</span>
+</span></span></code></pre></div><p>iptables <code>nat</code> 表的 <code>DOCKER</code> 链是 docker 专门用来做端口 DNAT 的地方。这里也是空的。</p>
+<p><strong>两个关键位置同时为空，告诉我们一件事：端口映射这条链在某个环节被跳过了。</strong></p>
+<h3 id="4-回头看-docker-inspect-的两个字段">4. 回头看 <code>docker inspect</code> 的&quot;两个字段&quot;</h3>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>docker inspect new-api --format <span style="color:#e6db74">&#39;{{json .NetworkSettings}}&#39;</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># {</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e">#   &#34;SandboxID&#34;: &#34;&#34;,</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e">#   &#34;SandboxKey&#34;: &#34;&#34;,</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e">#   &#34;Ports&#34;: {},</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e">#   &#34;Networks&#34;: {},</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e">#   &#34;NetworkID&#34;: &#34;&#34;,</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e">#   &#34;EndpointID&#34;: &#34;&#34;,</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e">#   &#34;MacAddress&#34;: &#34;&#34;,</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e">#   &#34;IPAddress&#34;: &#34;&#34;</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># }</span>
+</span></span></code></pre></div><p>——<code>Networks: {}</code> 和 <code>Ports: {}</code> <strong>同时为空</strong>。</p>
+<p>但另一边呢？</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>docker inspect new-api --format <span style="color:#e6db74">&#39;{{json .HostConfig}}&#39;</span> | head -c <span style="color:#ae81ff">400</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># {&#34;Binds&#34;:[&#34;/docker/newapi_data/data:/data:rw&#34;],</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e">#  &#34;NetworkMode&#34;:&#34;newapi_data_default&#34;,</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e">#  &#34;PortBindings&#34;:{&#34;3000/tcp&#34;:[</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e">#     {&#34;HostIp&#34;:&#34;203.0.113.14&#34;,&#34;HostPort&#34;:&#34;3001&#34;}]},</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e">#  &#34;RestartPolicy&#34;:{&#34;Name&#34;:&#34;always&#34;,...}}</span>
+</span></span></code></pre></div><p><strong><code>PortBindings</code> 还在</strong>——&ldquo;我想把容器的 3000 映射到 203.0.113.14:3001&rdquo;，这条意图写得清清楚楚。</p>
+<p><strong><code>NetworkMode</code> 也还在</strong>——&ldquo;我希望它挂到 <code>newapi_data_default</code> 这个 bridge 上&rdquo;。</p>
+<p><code>HostConfig</code> 记得一切，但 <code>NetworkSettings</code> 已经&quot;忘记&quot;了。<strong>这是典型的&quot;意图和现实不一致&quot;</strong>——docker 把&quot;我应该怎么做&quot;写在了 HostConfig 里，但&quot;我做到了哪一步&quot;在 NetworkSettings 里是空白。</p>
+<h3 id="5-上游的-bridge-网络上有没有人">5. 上游的 bridge 网络上有没有人</h3>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>docker network inspect newapi_data_default --format <span style="color:#e6db74">&#39;{{json .Containers}}&#39;</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># {}</span>
+</span></span></code></pre></div><p><code>newapi_data_default</code> 这个 bridge 上，<strong><code>Containers: {}</code></strong>——它觉得没有任何容器挂上来。 但容器本身在跑、还能 curl 自己、还能 restart。</p>
+<p><strong>这说明容器和它声明要加入的 bridge 网络之间，attach 这个动作根本没生效</strong>，但 docker 也没把这个失败显式地告诉用户。</p>
+<p><img src="/post-images/docker-port-bind-half-silent/02-hostconfig-vs-networksettings.svg" alt="半残映射：HostConfig 与 NetworkSettings 之间的&#34;裂缝&#34;"></p>
+<p><em>图 2：左侧的 HostConfig 完整写着端口映射和网络名，右侧的 NetworkSettings 却是空 {}。意图还在，现状丢了。</em></p>
+<h3 id="6-顺手扫一眼其他容器果然不是个例">6. 顺手扫一眼其他容器：果然不是个例</h3>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#66d9ef">for</span> c in <span style="color:#66d9ef">$(</span>docker ps --format <span style="color:#e6db74">&#39;{{.Names}}&#39;</span><span style="color:#66d9ef">)</span>; <span style="color:#66d9ef">do</span>
+</span></span><span style="display:flex;"><span>  nets<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>docker inspect $c --format <span style="color:#e6db74">&#39;{{len .NetworkSettings.Networks}}&#39;</span><span style="color:#66d9ef">)</span>
+</span></span><span style="display:flex;"><span>  ports<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>docker inspect $c --format <span style="color:#e6db74">&#39;{{len .NetworkSettings.Ports}}&#39;</span><span style="color:#66d9ef">)</span>
+</span></span><span style="display:flex;"><span>  printf <span style="color:#e6db74">&#39;%-25s | networks=%s | ports=%s\n&#39;</span> <span style="color:#e6db74">&#34;</span>$c<span style="color:#e6db74">&#34;</span> <span style="color:#e6db74">&#34;</span>$nets<span style="color:#e6db74">&#34;</span> <span style="color:#e6db74">&#34;</span>$ports<span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">done</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># dockhand   | networks=0 | ports=0</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># new-api    | networks=0 | ports=0</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># easytier   | networks=1 (host) | ports=0   ← 这个正常，因为它用 host 网络</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># headroom   | networks=0 | ports=0</span>
+</span></span></code></pre></div><p><strong>三个非 host 网络的容器同时 <code>networks=0, ports=0</code></strong>。共性只有一个：它们的 <code>HostConfig.NetworkMode</code> 各自指向了不同的自定义 bridge 网络。</p>
+<p>到这里，根因的大方向已经基本锁死：<strong>容器&quot;想要&quot;加入的 bridge 网络没成功 attach</strong>。</p>
+<p><img src="/post-images/docker-port-bind-half-silent/04-diagnose-checklist.svg" alt="五分钟诊断清单：从症状到根因的六步走"></p>
+<p><em>图 4：把上面六步压缩成「抄作业清单」，下次再遇到「容器活着、端口死了」30 秒就能判断。</em></p>
+<hr>
+<h2 id="三问题根因被静默回滚的-endpoint-创建">三、问题根因：被静默回滚的 endpoint 创建</h2>
+<p>接下来要回答两个问题：</p>
+<ol>
+<li>为什么不一致？（<code>HostConfig</code> 有，<code>NetworkSettings</code> 没）</li>
+<li>为什么会&quot;同时&quot;出在三个容器上？</li>
+</ol>
+<h3 id="31-完整的发布链路里少了哪一截">3.1 完整的发布链路里，少了哪一截</h3>
+<p>docker 把容器端口&quot;对外暴露&quot;需要走这条链路：</p>
+<p><img src="/post-images/docker-port-bind-half-silent/03-publish-pipeline.svg" alt="完整的发布链路与断裂点"></p>
+<p><em>图 3：从 VPN 节点到 new-api 0.0.0.0:3000 的完整路径，标 ✕ 的两处是这次断掉的位置。</em></p>
+<p>它大致是这样的：</p>
+<ol>
+<li><strong>容器内</strong>：<code>new-api</code> 进程 listen 在 <code>0.0.0.0:3000</code>（正常）；</li>
+<li><strong>libnetwork</strong>：创建 network sandbox，把容器接到 <code>newapi_data_default</code> 这个 bridge 上，分配 <code>172.20.0.2</code> 这种内部 IP；</li>
+<li><strong>端口映射</strong>：为 <code>HostIp:HostPort</code> 调用 <code>StartProxy</code> 启动 <code>docker-proxy</code> 子进程；</li>
+<li><strong>iptables</strong>：在 <code>nat</code> 表的 <code>DOCKER</code> 链里插一条 <code>DNAT 203.0.113.14:3001 → 172.20.0.2:3000</code>；</li>
+<li><strong>结果上报</strong>：填充 <code>NetworkSettings.Ports</code> 和 <code>NetworkSettings.Networks</code>。</li>
+</ol>
+<p>第 5 步是&quot;落盘&quot;步骤。我们看到的&quot;<code>Ports: {}</code> 和 <code>Networks: {}</code>&quot;——意思是从第 1 步到第 4 步，<strong>至少其中一步在沙箱创建阶段就被回滚了</strong>。<strong>libnetwork 在回滚时会清空 <code>NetworkSettings.Networks</code> 和 <code>NetworkSettings.Ports</code></strong>，但<strong>不会去修改 <code>HostConfig.PortBindings</code></strong>，所以你看到的就是现在这个状态。</p>
+<h3 id="32-这一类-bug-早就被官方记录在案">3.2 这一类 bug 早就被官方记录在案</h3>
+<p>不是猜的。Moby 的 issue tracker 上早就有一批标题几乎一模一样的工单：</p>
+<ul>
+<li><strong><a href="https://github.com/moby/moby/issues/9818">moby/moby#9818</a> &ldquo;Container port not expose; neither iptables rules added nor userland proxy started&rdquo;</strong>——2014 年的老 issue，标题直接就是这次的症状；</li>
+<li><strong><a href="https://github.com/moby/moby/issues/44137">moby/moby#44137</a> &ldquo;docker network connect removes/resets dynamically published/exposed ports&rdquo;</strong>——明确指出 <code>docker network connect</code> 在某些条件下会&quot;重置&quot;端口映射；</li>
+<li><strong><a href="https://github.com/moby/moby/pull/52480">moby/moby#52480</a></strong> 的描述里直接写了：&ldquo;the conflicting port goes silently unbound… <code>HostConfig.PortBindings</code> is preserved but never applied.&quot;——意图保留、现实被放弃，正是这次的精确翻版。</li>
+</ul>
+<p>为什么 docker-proxy 没起来、为什么 iptables 没插规则、为什么 <code>NetworkSettings</code> 是空的——<strong>这一切都是 libnetwork 在 sandbox 创建失败时静默执行的&quot;局部回滚&rdquo;</strong>。</p>
+<h3 id="33-既然是共因那是什么先于-docker-启动">3.3 既然是共因，那&quot;是什么&quot;先于 docker 启动？</h3>
+<p>这一步是关键：为什么三个非 host 网络的容器<strong>同时</strong>出问题？它们在 docker 启动时挂载到了一个还不存在的&quot;接口&quot;上。</p>
+<p><code>203.0.113.14</code> 这块 IP 在我的机器上属于<strong>辅助网卡</strong>——它不是物理网卡的 primary IP，而是用 <code>ip addr add</code> 配上去的 secondary IP。更要命的是这块网卡本身<strong>开机时并不存在</strong>：</p>
+<ul>
+<li>它由一个用户态 TUN 服务在系统起来之后才创建；</li>
+<li>TUN 服务跑起来后，TUN 接口 up、<code>203.0.113.14</code> 才会被挂上；</li>
+<li>这中间有一个<strong>不可避免的时序窗口</strong>——docker 守护进程跑得比 TUN 早。</li>
+</ul>
+<p>docker 启动容器、试图 attach bridge 网络时，目标 <code>HostIp</code>（也就是 <code>203.0.113.14</code>）<strong>在那一刻还不存在</strong>。Moby 在 <a href="https://github.com/moby/moby/blob/master/daemon/libnetwork/portmapper/proxy_linux.go"><code>daemon/libnetwork/portmapper/proxy_linux.go</code></a> 的 <code>StartProxy()</code> 里<strong>没有校验 HostIP 是否在本机接口上</strong>——它把这个地址直接透传给 <code>docker-proxy</code> 子进程的 <code>-host-ip</code> 参数。</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-go" data-lang="go"><span style="display:flex;"><span><span style="color:#75715e">// proxy_linux.go (摘要)</span>
+</span></span><span style="display:flex;"><span><span style="color:#a6e22e">cmd</span> <span style="color:#f92672">:=</span> <span style="color:#a6e22e">reexec</span>.<span style="color:#a6e22e">Command</span>(<span style="color:#e6db74">&#34;docker-proxy&#34;</span>,
+</span></span><span style="display:flex;"><span>    <span style="color:#e6db74">&#34;-host-ip&#34;</span>, <span style="color:#a6e22e">p</span>.<span style="color:#a6e22e">Binding</span>.<span style="color:#a6e22e">HostIP</span>,
+</span></span><span style="display:flex;"><span>    <span style="color:#e6db74">&#34;-host-port&#34;</span>, <span style="color:#a6e22e">p</span>.<span style="color:#a6e22e">Binding</span>.<span style="color:#a6e22e">HostPort</span>,
+</span></span><span style="display:flex;"><span>    <span style="color:#e6db74">&#34;-container-ip&#34;</span>, <span style="color:#a6e22e">p</span>.<span style="color:#a6e22e">Binding</span>.<span style="color:#a6e22e">IP</span>,
+</span></span><span style="display:flex;"><span>    <span style="color:#e6db74">&#34;-container-port&#34;</span>, <span style="color:#a6e22e">strings</span>.<span style="color:#a6e22e">ToLower</span>(<span style="color:#a6e22e">p</span>.<span style="color:#a6e22e">Port</span>),
+</span></span><span style="display:flex;"><span>)
+</span></span></code></pre></div><p>启动失败也好、iptables <code>setChildHostIP</code> 判定该 binding 不可用也好——<strong>libnetwork 拿到错误就直接回滚 endpoint 创建</strong>。回滚动作会把 <code>NetworkSettings</code> 里这一段时间的尝试清空，但<strong>不会动 HostConfig</strong>，也不会向用户报告&quot;端口映射没生效&quot;。</p>
+<p>宿主进程不退出，容器进程不退出，docker 守护进程也还在，但<strong>端口从这一刻起就再也没有真正对外暴露过</strong>。谁也没报错。</p>
+<p>类似的问题在 WireGuard、Tailscale、eBPF-based VPN 这类<strong>用户态 TUN 隧道</strong>场景下都出现过，<a href="https://github.com/moby/moby/issues/39559">moby/moby#39559</a> 这条 issue 的评论里就有人吐槽：&ldquo;我把整个服务器搬进 docker 了，但 docker 启动比 WireGuard 早，结果 WireGuard 配置好的 IP 上的端口永远绑不上。&rdquo;</p>
+<h3 id="34-一句话根因">3.4 一句话根因</h3>
+<blockquote>
+<p><strong>docker 在 attach 容器到用户自定义 bridge 网络时，如果 HostIp 在那一刻还没绑定到本机接口上，libnetwork 会静默地回滚 sandbox 创建，导致 <code>docker-proxy</code> 不启、iptables DNAT 不插、<code>NetworkSettings.Networks/Ports</code> 被清空，但 <code>HostConfig.PortBindings</code> 仍然写着&quot;我想这样做&quot;——容器进程在跑，端口却对外面不可见。</strong></p>
+</blockquote>
+<hr>
+<h2 id="四解决问题一行命令让半残变回完整">四、解决问题：一行命令让&quot;半残&quot;变回完整</h2>
+<p>知道了根因，修复就两步。</p>
+<h3 id="41-临时治标docker-network-connect">4.1 临时治标：<code>docker network connect</code></h3>
+<p>最直接的命令——重新走一遍 libnetwork 的 attach 流程，这次 TUN 早就 ready 了：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>docker network connect newapi_data_default new-api
+</span></span><span style="display:flex;"><span>docker network connect dockhand_data_default dockhand
+</span></span><span style="display:flex;"><span>docker network connect headroom_default headroom
+</span></span></code></pre></div><p>每跑一行，<code>NetworkSettings</code> 就会从 <code>{}</code> 重新填充到完整的结构，<code>docker-proxy</code> 子进程也会被拉起，iptables <code>DOCKER</code> 链会多出对应的 DNAT 规则。</p>
+<blockquote>
+<p>提示：<code>docker network connect</code> 是一条官方命令，文档原话是 &ldquo;You can connect a container to one or more networks. The networks need not be the same type.&quot;（<a href="https://docs.docker.com/reference/cli/docker/network/connect/">docs.docker.com</a>）——它本身就是给&quot;挂在某个网络&quot;这个动作做的。</p>
+</blockquote>
+<p>修复后再看：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>ss -tlnp | grep <span style="color:#ae81ff">3001</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># LISTEN 0  4096  203.0.113.14:3001  docker-proxy</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>curl -sS -m <span style="color:#ae81ff">5</span> -o /dev/null <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span>  -w <span style="color:#e6db74">&#39;HTTP %{http_code}\n&#39;</span> http://203.0.113.14:3001/
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># HTTP 200</span>
+</span></span></code></pre></div><p>回来了。</p>
+<h3 id="42-治本让-docker-等-tun-就绪再起来">4.2 治本：让 docker 等 TUN 就绪再起来</h3>
+<p>上面这个一行命令只能救火，<strong>机器下次重启 / TUN 重连之后还会复发</strong>。要把这种&quot;半残&quot;挡在启动链路里，更稳的做法是修改开机顺序。</p>
+<p><strong>方案 A：systemd 依赖</strong>（最干净）</p>
+<p>为 <code>docker.service</code> 加一个 <code>After=</code>，明确告诉 systemd 必须在 TUN 服务起来之后才启动 docker：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-ini" data-lang="ini"><span style="display:flex;"><span><span style="color:#66d9ef">[Unit]</span>
+</span></span><span style="display:flex;"><span><span style="color:#a6e22e">After</span><span style="color:#f92672">=</span><span style="color:#e6db74">network-online.target tun-up.service</span>
+</span></span><span style="display:flex;"><span><span style="color:#a6e22e">Wants</span><span style="color:#f92672">=</span><span style="color:#e6db74">network-online.target</span>
+</span></span></code></pre></div><p><code>network-online.target</code> 自身不能解决&quot;用户态 TUN 还没握手&quot;的问题，但搭配一个 wait-online 的小服务一起用就够稳了。</p>
+<p><strong>方案 B：compose 里去掉 HostIp，绑 0.0.0.0</strong>（最暴力）</p>
+<p>把 compose 里的：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-yaml" data-lang="yaml"><span style="display:flex;"><span><span style="color:#f92672">ports</span>:
+</span></span><span style="display:flex;"><span>  - <span style="color:#e6db74">&#34;203.0.113.14:3001:3000&#34;</span>
+</span></span></code></pre></div><p>改成：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-yaml" data-lang="yaml"><span style="display:flex;"><span><span style="color:#f92672">ports</span>:
+</span></span><span style="display:flex;"><span>  - <span style="color:#e6db74">&#34;3001:3000&#34;</span>
+</span></span></code></pre></div><p>这样 docker <strong>不挑接口</strong>，所有可用 IP 都尝试绑定。代价是失去了&quot;只有这块 IP 才能访问&quot;的天然隔离——你得在 host 防火墙里手动把 3001 的入站白名单配置好。</p>
+<p><strong>方案 C：开机探针 + 重连</strong>（最稳的兜底）</p>
+<p>写一个开机时跑的脚本，等到接口 ready 之后再去 <code>docker network connect</code>：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e">#!/usr/bin/env bash
+</span></span></span><span style="display:flex;"><span>set -euo pipefail
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 等待 203.0.113.14 出现</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">until</span> ip -4 addr show | grep -q <span style="color:#e6db74">&#39;203.0.113.14&#39;</span>; <span style="color:#66d9ef">do</span>
+</span></span><span style="display:flex;"><span>  sleep <span style="color:#ae81ff">1</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">done</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 给每个挂掉的容器重连网络</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">for</span> c in new-api dockhand headroom; <span style="color:#66d9ef">do</span>
+</span></span><span style="display:flex;"><span>  net<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>docker inspect <span style="color:#e6db74">&#34;</span>$c<span style="color:#e6db74">&#34;</span> --format <span style="color:#e6db74">&#39;{{.HostConfig.NetworkMode}}&#39;</span><span style="color:#66d9ef">)</span>
+</span></span><span style="display:flex;"><span>  docker network connect <span style="color:#e6db74">&#34;</span>$net<span style="color:#e6db74">&#34;</span> <span style="color:#e6db74">&#34;</span>$c<span style="color:#e6db74">&#34;</span> <span style="color:#f92672">||</span> true
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">done</span>
+</span></span></code></pre></div><p>挂到 systemd 里、<code>After=docker.service</code> 即可。</p>
+<p><img src="/post-images/docker-port-bind-half-silent/05-fix-strategy.svg" alt="治标 vs 治本：临时重连 vs 启动顺序改造"></p>
+<p><em>图 4：左侧&quot;治标&quot;那一行 <code>docker network connect</code> 30 秒解决；右侧&quot;治本&quot;是让 docker 在 attach 时接口一定就绪。两者并不互斥，组合使用最稳。</em></p>
+<h3 id="43-修复前-vs-修复后同一个-docker-inspect-命令">4.3 修复前 vs 修复后（同一个 docker inspect 命令）</h3>
+<p><img src="/post-images/docker-port-bind-half-silent/06-before-after-compare.svg" alt="修复前后的 docker inspect 与 ss 对比"></p>
+<p><em>图 5：修复前 <code>NetworkSettings</code> 全是空 <code>{}</code>、ss 看不到 docker-proxy；一行 <code>docker network connect</code> 之后，两个字段全部填满、docker-proxy 出现、curl 直接 200。</em></p>
+<hr>
+<h2 id="五qa">五、Q&amp;A</h2>
+<h3 id="q1-怎么一眼区分容器进程死了和端口没暴露这两种情况">Q1. 怎么一眼区分&quot;容器进程死了&quot;和&quot;端口没暴露&quot;这两种情况？</h3>
+<p><strong>答</strong>：在 host 上直接 <code>curl 容器名:端口</code> 是行不通的——<code>docker network</code> 看不见 host 网络。<strong>最干净的一招是进容器自己 curl 一下</strong>：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>docker exec &lt;ctr&gt; curl -sf 127.0.0.1:&lt;port&gt; <span style="color:#f92672">&amp;&amp;</span> echo OK <span style="color:#f92672">||</span> echo DEAD
+</span></span></code></pre></div><ul>
+<li><code>OK</code> → 进程没事，怀疑 host 侧（按本文继续）；</li>
+<li><code>DEAD</code> → 进程自己挂了，去看 <code>docker logs &lt;ctr&gt;</code>，与端口映射无关。</li>
+</ul>
+<h3 id="q2-docker-restart-能不能修好">Q2. <code>docker restart</code> 能不能修好？</h3>
+<p><strong>答</strong>：能，但不一定。我实测下来，如果 host IP 这时候已经 ready（系统跑了一段时间），<code>docker restart</code> 顺带会重新走一遍 sandbox 创建流程，端口可能就回来了。但如果 host IP 还没起，restart 也不会让它&quot;等一会儿再 attach&rdquo;——它会<strong>以同样的失败方式再次进入半残状态</strong>。所以 <code>restart</code> 是&quot;碰运气&quot;方案，<code>docker network connect</code> 才是&quot;定向治疗&quot;。</p>
+<h3 id="q3-为什么-docker-port-ctr-也看不出来">Q3. 为什么 <code>docker port &lt;ctr&gt;</code> 也看不出来？</h3>
+<p><strong>答</strong>：<code>docker port</code> 命令读的是**<code>NetworkSettings.Ports</code>** 这个字段。但这个字段在这次故障里<strong>本身就是空的</strong>——<code>docker port</code> 显示为空是&quot;症状&quot;的一部分，不是诊断手段。要看&quot;意图&quot;，得用 <code>docker inspect &lt;ctr&gt; --format '{{json .HostConfig.PortBindings}}'</code>。</p>
+<h3 id="q4-三个容器同时出问题是不是只能一个个重连">Q4. 三个容器同时出问题，是不是只能一个个重连？</h3>
+<p><strong>答</strong>：是的，每个容器只能单独 <code>docker network connect</code>，没有批量子命令。但实际操作上 3 个命令 30 秒不到就完了。要再省事，写个 for 循环就行：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#66d9ef">for</span> c in new-api dockhand headroom; <span style="color:#66d9ef">do</span>
+</span></span><span style="display:flex;"><span>  net<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>docker inspect <span style="color:#e6db74">&#34;</span>$c<span style="color:#e6db74">&#34;</span> --format <span style="color:#e6db74">&#39;{{.HostConfig.NetworkMode}}&#39;</span><span style="color:#66d9ef">)</span>
+</span></span><span style="display:flex;"><span>  docker network connect <span style="color:#e6db74">&#34;</span>$net<span style="color:#e6db74">&#34;</span> <span style="color:#e6db74">&#34;</span>$c<span style="color:#e6db74">&#34;</span> <span style="color:#f92672">||</span> true
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">done</span>
+</span></span></code></pre></div><h3 id="q5-治本方案-a-里network-onlinetarget-真的够用吗">Q5. 治本方案 A 里，<code>network-online.target</code> 真的够用吗？</h3>
+<p><strong>答</strong>：默认的 <code>network-online.target</code> 只在 systemd-networkd 或 NetworkManager 视角下&quot;主线&quot;网络起来时就触发，<strong>对用户态 TUN/WireGuard 这类接口不会自动感知</strong>。生产里推荐写一个 1-2 行的小 systemd unit，自己 <code>ip -4 addr show | grep &lt;vpn-ip&gt;</code> 轮询，成功后再 <code>systemctl start docker.service</code>。这比依赖 <code>network-online.target</code> 靠谱得多。</p>
+<h3 id="q6-还有没有别的情况下会出现这种半残">Q6. 还有没有别的情况下会出现这种&quot;半残&quot;？</h3>
+<p><strong>答</strong>：有，但**入口都是&quot;host IP 当时不可达&quot;**这一类：</p>
+<ul>
+<li>浮动 IP（floating IP / elastic IP）漂移之后，docker 没感知到；</li>
+<li>bond 网卡切换 master、IP 跟着走时老 master 已经被释放；</li>
+<li>DHCP 续约失败、IP 临时被收回再下发；</li>
+<li>compose 文件里 <code>network_mode: host</code> 和 <code>-p</code> 同时用，旧版本 docker 行为不一致。</li>
+</ul>
+<p>排查思路都一样：先看 <code>HostConfig</code> 是不是&quot;想这样&quot;，再看 <code>NetworkSettings</code> 是不是&quot;已经这样&quot;，<strong>两者不一致 = libnetwork 的局部回滚留下的痕迹</strong>。</p>
+<h3 id="q7-那-docker-28-之后会不会修好这个-bug">Q7. 那 docker 28 之后会不会&quot;修好&quot;这个 bug？</h3>
+<p><strong>答</strong>：截至本文写作时间，Moby issue tracker 上有 <strong>#51758 &ldquo;PortBindings shows binding but NetworkSettings.Ports is empty&rdquo;</strong>（<a href="https://github.com/moby/moby/issues/51758">issue 链接</a>）这种近期的同类报告仍在被打开，配套修复 PR 是 #52480 但也还在等合入主分支。也就是说，<strong>这是个长期遗留的边角问题</strong>——理解它，比等它修好更现实。</p>
+<hr>
+<h2 id="六总结">六、总结</h2>
+<p>这次故障的复盘路径，核心其实就三件事：</p>
+<ol>
+<li><strong><code>docker inspect</code> 的两个字段要分开看</strong>——<code>HostConfig</code> 是&quot;我打算做什么&quot;，<code>NetworkSettings</code> 是&quot;我真的做到了什么&quot;；两者不一致 = 半残；</li>
+<li><strong>用 <code>ss</code> 和 <code>iptables</code> 反向验证</strong>——没有 docker-proxy 进程 + 没有 DNAT 规则 = 100% 命中本次场景；</li>
+<li><strong><code>docker network connect</code> 是治标的最小动作</strong>，治本要去改开机顺序，让 docker 跑在用户态 TUN 后面。</li>
+</ol>
+<p>把 <code>ss -tlnp</code> 和 <code>iptables -t nat -L DOCKER</code> 这两条命令刻进肌肉记忆，下次遇到&quot;容器活着、端口死了&quot;的诡异问题，<strong>30 秒就能定位、3 个命令就能救火</strong>。</p>
+<hr>
+<h2 id="参考资料">参考资料</h2>
+<ul>
+<li><a href="https://github.com/moby/moby/blob/master/daemon/libnetwork/portmapper/proxy_linux.go">Moby 源码 · daemon/libnetwork/portmapper/proxy_linux.go</a> —— <code>StartProxy</code> 直接以 <code>-host-ip</code> 形式把 HostIP 传给 docker-proxy</li>
+<li><a href="https://github.com/moby/moby/blob/master/daemon/libnetwork/portmappers/nat/mapper_linux.go">Moby 源码 · daemon/libnetwork/portmappers/nat/mapper_linux.go</a> —— <code>setChildHostIP</code> 在 rootless 之外的判定逻辑</li>
+<li><a href="https://github.com/moby/moby/blob/master/daemon/libnetwork/portmapperapi/api.go">Moby 源码 · daemon/libnetwork/portmapperapi/api.go</a> —— <code>PortBinding</code>/<code>StopProxy</code> 的结构与生命周期</li>
+<li><a href="https://github.com/moby/moby/issues/9818">moby/moby #9818 — Container port not expose; neither iptables rules added nor userland proxy started</a> —— 2014 年起的同症状工单</li>
+<li><a href="https://github.com/moby/moby/issues/39559">moby/moby #39559 — Container does not start (&ndash;restart always) at boot if port bind fails</a> —— 跟 TUN/WireGuard 场景最接近的工单</li>
+<li><a href="https://github.com/moby/moby/issues/44137">moby/moby #44137 — docker network connect removes/resets dynamically published/exposed ports</a> —— 端口映射在某些条件下被 <code>network connect</code> 重置</li>
+<li><a href="https://github.com/moby/moby/issues/51758">moby/moby #51758 — PortBindings shows binding but NetworkSettings.Ports is empty</a> —— 2025 年仍在报告的同类问题</li>
+<li><a href="https://github.com/moby/moby/pull/52480">moby/moby #52480 — connectToNetwork: keep Networks on failure</a> —— 同问题修复 PR</li>
+<li><a href="https://docs.docker.com/engine/network/">Docker Docs — Networking overview (engine/network)</a> —— <code>-p</code> 创建防火墙规则的官方描述</li>
+<li><a href="https://docs.docker.com/engine/network/firewall-iptables/">Docker Docs — Docker with iptables (engine/network/firewall-iptables)</a> —— iptables <code>DOCKER</code> 链的权威定义</li>
+<li><a href="https://docs.docker.com/engine/network/port-publishing/">Docker Docs — Port publishing and mapping</a> —— <code>HostIP</code> 形式 <code>-p</code> 的细节</li>
+<li><a href="https://docs.docker.com/reference/cli/docker/network/connect/">Docker Docs — docker network connect reference</a> —— &ldquo;把容器连到网络上&quot;的官方命令</li>
+<li><a href="https://www.docker.com/blog/docker-engine-28-hardening-container-networking-by-default/">Docker Blog — Docker Engine v28: Hardening Container Networking by Default</a> —— 理解 v28 之后容器网络行为变化</li>
+<li><a href="https://www.freedesktop.org/software/systemd/man/systemd.unit.html">systemd 文档 — systemd.unit(5), After=/Wants= 关系</a></li>
+</ul>
+        </div>
+    </article>
+
+    
+  
+
+
+  
+    
+  
+
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk/dist/gitalk.css">
+<script src="https://cdn.jsdelivr.net/npm/gitalk/dist/gitalk.min.js"></script>
+<div id="gitalk-container" style="margin-top:40px"></div>
+<script>
+  (function(){
+    var gitalk = new Gitalk({
+      clientID: '3181fd94e501cc5db0ad',
+      clientSecret: 'af1dab79dae02c69296e6615bfcecf47fc8615ee',
+      repo: 'margropcomment.margrop.io',
+      owner: 'margrop',
+      admin: ["margrop"],
+      
+      id: '\/post\/docker-port-bind-half-silent\/',
+      
+      distractionFreeMode: false
+    });
+    gitalk.render('gitalk-container');
+  })();
+</script>
+  
+
+
+
+
+    
+    <script type="text/javascript" src="https://js.users.51.la/21044367.js"></script>
+    <script charset="UTF-8" id="LA_COLLECT" src="//sdk.51.la/js-sdk-pro.min.js"></script>
+    <script>LA.init({id: "1vVTUWl7zoRjnKXi",ck: "1vVTUWl7zoRjnKXi"})</script>
+    <script src="https://sdk.51.la/perf/js-sdk-perf.min.js" crossorigin="anonymous"></script>
+    <script>
+      new LingQue.Monitor().init({id:"202teQt8THXwqyve"});
+    </script>
+</body>
+</html>
