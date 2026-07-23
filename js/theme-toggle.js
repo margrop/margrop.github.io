@@ -16,7 +16,7 @@
     var button = document.querySelector('[data-theme-toggle]');
     if (!button) return;
     var dark = isDark();
-    button.textContent = dark ? '☀️ 普通模式' : '🌙 暗黑模式';
+    button.textContent = dark ? '☀️' : '🌙';
     button.setAttribute('aria-label', dark ? '切换到普通模式' : '切换到暗黑模式');
     button.setAttribute('aria-pressed', dark ? 'true' : 'false');
   }
