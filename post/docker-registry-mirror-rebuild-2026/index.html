@@ -1,0 +1,616 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>把一台慢成蜗牛的 Docker 镜像代理从 5 分 14 秒干到 0.6 秒:我踩过的三个坑和一段 5 行的 cron - 魔都水滴</title>
+<meta name="description" content="先说结论 我在家里的自建小集群上跑着一个 registry:2 的 pull-through 代理,平时给局域网里的几台机器和 NAS 当 Docker Hub 镜像源用,用了快两年一直挺稳。直到有一天,它拉一个 5MB 的 alpine 镜像要 5 分 14 秒。 这篇文章记录我怎么查到根因、换了哪些方案、为什么每一 …">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://blog.margrop.net/post/docker-registry-mirror-rebuild-2026/"><meta property="og:site_name" content="魔都水滴">
+<meta property="og:title" content="把一台慢成蜗牛的 Docker 镜像代理从 5 分 14 秒干到 0.6 秒:我踩过的三个坑和一段 5 行的 cron - 魔都水滴">
+<meta property="og:description" content="先说结论 我在家里的自建小集群上跑着一个 registry:2 的 pull-through 代理,平时给局域网里的几台机器和 NAS 当 Docker Hub 镜像源用,用了快两年一直挺稳。直到有一天,它拉一个 5MB 的 alpine 镜像要 5 分 14 秒。 这篇文章记录我怎么查到根因、换了哪些方案、为什么每一 …">
+<meta property="og:url" content="https://blog.margrop.net/post/docker-registry-mirror-rebuild-2026/">
+<meta property="og:locale" content="zh_CN"><meta property="og:type" content="article"><meta property="og:locale:alternate" content="en_US"><meta property="og:image" content="https://blog.margrop.net/images/avatar.png"><meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="把一台慢成蜗牛的 Docker 镜像代理从 5 分 14 秒干到 0.6 秒:我踩过的三个坑和一段 5 行的 cron - 魔都水滴">
+<meta name="twitter:description" content="先说结论 我在家里的自建小集群上跑着一个 registry:2 的 pull-through 代理,平时给局域网里的几台机器和 NAS 当 Docker Hub 镜像源用,用了快两年一直挺稳。直到有一天,它拉一个 5MB 的 alpine 镜像要 5 分 14 秒。 这篇文章记录我怎么查到根因、换了哪些方案、为什么每一 …"><meta name="twitter:image" content="https://blog.margrop.net/images/avatar.png"><link rel="alternate" hreflang="zh-CN" href="https://blog.margrop.net/post/docker-registry-mirror-rebuild-2026/"><link rel="alternate" hreflang="en-US" href="https://blog.margrop.net/en/post/docker-registry-mirror-rebuild-2026/"><link rel="alternate" hreflang="x-default" href="https://blog.margrop.net/"><meta property="article:published_time" content="2026-06-13T07:20:00&#43;08:00">
+<meta property="article:modified_time" content="2026-06-13T07:20:00&#43;08:00"><meta property="article:tag" content="Docker"><meta property="article:tag" content="Registry"><meta property="article:tag" content="Pull-Through Cache"><meta property="article:tag" content="镜像加速"><meta property="article:tag" content="Crontab"><meta property="article:tag" content="限流"><meta property="article:tag" content="Infra"><meta property="article:tag" content="Troubleshooting"><script type="application/ld+json">{"@context":"https://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"魔都水滴"},"dateModified":"2026-06-13T07:20:00+08:00","datePublished":"2026-06-13T07:20:00+08:00","description":"先说结论 我在家里的自建小集群上跑着一个 registry:2 的 pull-through 代理,平时给局域网里的几台机器和 NAS 当 Docker Hub 镜像源用,用了快两年一直挺稳。直到有一天,它拉一个 5MB 的 alpine 镜像要 5 分 14 秒。 这篇文章记录我怎么查到根因、换了哪些方案、为什么每一 …","headline":"把一台慢成蜗牛的 Docker 镜像代理从 5 分 14 秒干到 0.6 秒:我踩过的三个坑和一段 5 行的 cron","mainEntityOfPage":"https://blog.margrop.net/post/docker-registry-mirror-rebuild-2026/","url":"https://blog.margrop.net/post/docker-registry-mirror-rebuild-2026/"}</script>
+    <meta name="baidu-site-verification" content="code-sVFZ8SER59" />
+    <script src="/js/theme-toggle.js"></script>
+
+    
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-3J2W592DHJ"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-3J2W592DHJ');
+    </script>
+
+    <style>
+    :root {
+        color-scheme: light;
+        --page-bg: #fff;
+        --surface-bg: #f4f4f4;
+        --text: #222;
+        --muted: #666;
+        --subtle: #777;
+        --border: #eee;
+        --border-strong: #ddd;
+        --link: #006CFF;
+        --tag-bg: #eee;
+        --button-bg: #fff;
+        --button-primary-bg: #333;
+    }
+    @media (prefers-color-scheme: dark) {
+        :root:not([data-theme]) {
+            color-scheme: dark;
+            --page-bg: #111315;
+            --surface-bg: #1d2126;
+            --text: #e8eaed;
+            --muted: #aeb4bd;
+            --subtle: #9aa2ad;
+            --border: #30353d;
+            --border-strong: #454c56;
+            --link: #79b8ff;
+            --tag-bg: #2a3038;
+            --button-bg: #1d2126;
+            --button-primary-bg: #e8eaed;
+        }
+    }
+    html[data-theme="dark"] {
+        color-scheme: dark;
+        --page-bg: #111315;
+        --surface-bg: #1d2126;
+        --text: #e8eaed;
+        --muted: #aeb4bd;
+        --subtle: #9aa2ad;
+        --border: #30353d;
+        --border-strong: #454c56;
+        --link: #79b8ff;
+        --tag-bg: #2a3038;
+        --button-bg: #1d2126;
+        --button-primary-bg: #e8eaed;
+    }
+    html[data-theme="light"] {
+        color-scheme: light;
+        --page-bg: #fff;
+        --surface-bg: #f4f4f4;
+        --text: #222;
+        --muted: #666;
+        --subtle: #777;
+        --border: #eee;
+        --border-strong: #ddd;
+        --link: #006CFF;
+        --tag-bg: #eee;
+        --button-bg: #fff;
+        --button-primary-bg: #333;
+    }
+    body { background: var(--page-bg); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 860px; margin: 0 auto; padding: 20px; line-height: 1.7; color: var(--text); }
+    h1 { border-bottom: 2px solid var(--border-strong); padding-bottom: 10px; }
+    article > h1 { font-size: 2em; line-height: 1.3; margin-bottom: 12px; }
+    .post-list { list-style: none; padding: 0; }
+    .post-list li { margin: 15px 0; }
+    .post-list a { text-decoration: none; color: var(--text); font-size: 18px; }
+    .post-list a:hover { color: var(--link); }
+    .date { color: var(--muted); font-size: 14px; margin-right: 10px; }
+    .tags { margin-top: 8px; }
+    .tag { background: var(--tag-bg); padding: 2px 8px; border-radius: 3px; font-size: 12px; margin-right: 5px; display: inline-block; }
+    nav { margin-bottom: 18px; border-bottom: 1px solid var(--border); padding-bottom: 15px; }
+    nav a { margin-right: 20px; text-decoration: none; color: var(--text); font-size: 16px; }
+    nav a:hover { color: var(--link); }
+    .language-switcher { display: flex; align-items: center; gap: 10px; margin: -8px 0 26px; }
+    .language-switcher a { display: inline-block; padding: 4px 10px; border: 1px solid var(--border-strong); border-radius: 999px; color: var(--muted); text-decoration: none; font-size: 14px; }
+    .language-switcher a.active { background: var(--link); border-color: var(--link); color: #fff; }
+    .content { line-height: 1.8; }
+    .content code { background: var(--surface-bg); padding: 2px 5px; border-radius: 3px; }
+    .content pre { background: var(--surface-bg); padding: 15px; overflow-x: auto; border-radius: 5px; }
+    .content img { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+    .content .code-snippet__fix {
+        margin: 0 0 1.5em;
+    }
+    .content .code-snippet__fix .code-snippet__line-index {
+        display: none !important;
+    }
+    .meta { color: var(--muted); font-size: 14px; margin-bottom: 14px; }
+    .meta-separator { margin: 0 6px; color: var(--subtle); }
+    .site-stats { display: flex; flex-wrap: wrap; gap: 10px 18px; margin: 28px 0 8px; padding-top: 12px; border-top: 1px solid var(--border); color: var(--subtle); font-size: 12px; }
+    a { color: var(--link); }
+    .hero { padding: 12px 0 24px; }
+    .hero h1 { border-bottom: 2px solid #333; }
+    .eyebrow { color: var(--muted); font-size: 12px; letter-spacing: .12em; margin: 0 0 8px; }
+    .hero-tagline { font-size: 18px; margin: 12px 0 8px; }
+    .hero-copy { color: var(--muted); margin: 0 0 14px; }
+    .hero-actions { margin: 14px 0 4px; }
+    .button { display: inline-block; margin-right: 12px; border: 1px solid var(--border-strong); border-radius: 3px; padding: 4px 10px; text-decoration: none; color: var(--text); background: var(--button-bg); font-size: 14px; }
+    .button-primary { background: var(--button-primary-bg); border-color: var(--button-primary-bg); color: var(--page-bg); }
+    .theme-toggle { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 1px solid var(--border-strong); border-radius: 999px; background: var(--button-bg); color: var(--text); cursor: pointer; font: inherit; font-size: 16px; }
+    .theme-toggle:hover { border-color: var(--link); color: var(--link); }
+    .la-theme-widget { margin: 12px 0 20px; min-height: 24px; color: var(--text); }
+    .identity-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: 16px 0; }
+    .identity-grid div { display: flex; flex-direction: column; }
+    .identity-grid strong { font-size: 15px; }
+    .identity-grid span, .topic-card span, .featured-list small { color: var(--muted); font-size: 13px; }
+    .section-block { padding-top: 28px; }
+    .section-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+    .section-heading h2 { margin: 0; }
+    .section-heading a { font-size: 14px; }
+    .topic-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+    .topic-card { display: block; padding: 14px; border: 1px solid var(--border); text-decoration: none; color: var(--text); }
+    .topic-card:hover { border-color: var(--border-strong); }
+    .topic-card strong { display: block; margin: 4px 0; font-size: 17px; }
+    .topic-index, .featured-list > a > span { color: var(--muted) !important; font-size: 12px !important; }
+    .featured-list { border-top: 1px solid var(--border); }
+    .featured-list > a { display: flex; gap: 14px; padding: 12px 0; border-bottom: 1px solid var(--border); text-decoration: none; color: var(--text); }
+    .featured-list div { display: flex; flex-direction: column; }
+    .latest-block { max-width: 860px; }
+    @media (max-width: 680px) {
+        body { padding: 16px; }
+        nav a { display: inline-block; margin-right: 12px; margin-bottom: 8px; }
+        .identity-grid { grid-template-columns: repeat(2, 1fr); }
+        .topic-grid { grid-template-columns: 1fr; }
+    }
+</style>
+
+</head>
+<body>
+    <nav>
+  
+  <a href="/">首页</a>
+  <a href="https://blog.margrop.com/" target="_blank" rel="noopener">AI Daily</a>
+  <a href="/start-here/">开始这里</a>
+  <a href="/tag/ai/">AI Agent</a>
+  <a href="/tag/docker/">Self-hosting</a>
+  <a href="/tag/%e8%bf%90%e7%bb%b4/">Engineering</a>
+  <a href="/post/">归档</a>
+  <a href="/tags/">标签</a>
+  <a href="/post/about/">关于</a>
+  <a href="https://download.margrop.net" target="_blank" rel="noopener">下载</a>
+  <a href="/post/favorites/">Link</a>
+  <a href="/post/github-project-stars/">Github</a>
+  
+  <a href="https://github-mirrors.margrop.net" target="_blank" rel="noopener">Github加速</a>
+  <a href="https://status.anye.xyz/" target="_blank" rel="noopener">Docker加速</a>
+  
+  <a href="https://blog.margrop.net/index.xml" target="_blank" rel="noopener">RSS</a>
+</nav>
+
+    <div class="language-switcher">
+  <button class="theme-toggle" type="button" data-theme-toggle aria-label="切换到暗黑模式" aria-pressed="false">🌙</button>
+
+  
+  
+    <a href="/post/docker-registry-mirror-rebuild-2026/" class="active">中文</a>
+  
+    <a href="/en/post/docker-registry-mirror-rebuild-2026/" class="">English</a>
+  
+  
+</div>
+
+    
+    <article>
+        <h1>把一台慢成蜗牛的 Docker 镜像代理从 5 分 14 秒干到 0.6 秒:我踩过的三个坑和一段 5 行的 cron</h1>
+        <div class="meta">
+            发布时间: 2026-06-13
+            <span class="meta-separator">·</span>
+            <span>阅读量 <span data-page-view-count>--</span></span>
+        </div>
+        
+<div class="tags">
+    
+    <a href="/tag/docker/"><span class="tag">Docker</span></a>
+    
+    <a href="/tag/registry/"><span class="tag">Registry</span></a>
+    
+    <a href="/tag/pull-through-cache/"><span class="tag">Pull-Through Cache</span></a>
+    
+    <a href="/tag/%E9%95%9C%E5%83%8F%E5%8A%A0%E9%80%9F/"><span class="tag">镜像加速</span></a>
+    
+    <a href="/tag/crontab/"><span class="tag">Crontab</span></a>
+    
+    <a href="/tag/%E9%99%90%E6%B5%81/"><span class="tag">限流</span></a>
+    
+    <a href="/tag/infra/"><span class="tag">Infra</span></a>
+    
+    <a href="/tag/troubleshooting/"><span class="tag">Troubleshooting</span></a>
+    
+</div>
+
+
+        <div class="content">
+            <blockquote>
+<p><strong>先说结论</strong></p>
+<p>我在家里的自建小集群上跑着一个 <code>registry:2</code> 的 pull-through 代理,平时给局域网里的几台机器和 NAS 当 Docker Hub 镜像源用,用了快两年一直挺稳。<strong>直到有一天,它拉一个 5MB 的 alpine 镜像要 5 分 14 秒。</strong></p>
+<p>这篇文章记录我<strong>怎么查到根因</strong>、<strong>换了哪些方案</strong>、<strong>为什么每一版都没让我满意</strong>、<strong>最后怎么用一个 5 行的 bash 脚本 + 每天一次的 cron 把它彻底稳下来</strong>。整个排查过程 100% 是我在自己的机器上跑出来的真实数据,不是我抄 README、不是我看博客道听途说。</p>
+<p>关键决策点都贴了实测数据。如果你也在自建 docker 镜像代理,或者你公司的 devops 团队在维护一个内部 registry 镜像,文末的 Q&amp;A 段能帮你省掉至少 3 小时的踩坑。</p>
+</blockquote>
+<p><img alt="封面:5 分 14 秒 → 0.6 秒,一台 8082 仓库的真实优化记录" src="/post-images/docker-registry-mirror-rebuild-2026/01-cover.svg"></p>
+<p><em>图 1:左边的 <code>5m14s</code> 是最初的真实耗时,右边是修完之后同一个镜像在同一个网络下的耗时。中间是一个 switch 箭头和一句我事后写下来反复对自己说的话——&ldquo;换 upstream 之前先量一下&rdquo;。</em></p>
+<hr>
+<h2 id="一问题背景这台-8082-是干啥的">一、问题背景:这台 8082 是干啥的</h2>
+<p>我家里有一台小型服务器,跑着几个核心服务:<code>registry:2</code> 的 Docker Hub pull-through 代理(监听 <code>8082</code>),<code>registry:2</code> 的 GHCR 镜像代理(监听 <code>8083</code>),还有一个 Portainer(9443)。这堆东西历史悠久,最早一台机器跑各种东西,后来拆分到现在的形态。</p>
+<p><code>registry-dockerhub</code> 这个容器配置非常简单,就是官方 <code>registry:2</code> 镜像,<code>config.yml</code> 里加了一行:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-yaml" data-lang="yaml"><span style="display:flex;"><span><span style="color:#f92672">proxy</span>:
+</span></span><span style="display:flex;"><span>  <span style="color:#f92672">remoteurl</span>: <span style="color:#ae81ff">https://docker.1panel.live</span>
+</span></span></code></pre></div><p>启动时挂一个宿主机目录 <code>/docker/registry-cache/dockerhub</code> 作为本地 blob 缓存,目前已经攒到 <strong>9.4 GB</strong>。这意味着<strong>任何已经被这台机器代理过一次的镜像,blob 都按 sha256 寻址落到本地磁盘</strong>——下次同一个机器再拉,<strong>registry:2 直接从本地文件系统吐出来,根本不会去碰 upstream</strong>。</p>
+<p>按理说这个结构挺好的,容量也在涨,看起来一直在&quot;用&quot;。但这两天有个事让我开始怀疑它根本没在工作:</p>
+<ol>
+<li>我写了一个新工具,要从 <code>alpine:3.19</code> 起一个容器,<strong>等 5 分多钟才下载完</strong>;</li>
+<li>我装一个新镜像到 NAS,看 log 一直卡在某个 retry 上;</li>
+<li>偶尔直接报 <code>toomanyrequests: You have reached your unauthenticated pull rate limit</code>。</li>
+</ol>
+<p>5 分多钟拉一个 5MB 的 alpine,这事绝对不正常。</p>
+<hr>
+<h2 id="二问题表现它不是卡是在重试">二、问题表现:它不是&quot;卡&quot;,是&quot;在重试&quot;</h2>
+<p>我用 <code>time docker pull mirror.local:8082/library/alpine:3.19</code> 拉了一下真实数据(下文出现的 <code>mirror.local</code> 是脱敏后的内网主机名,和本文的诊断逻辑无关):</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>$ time docker pull mirror.local:8082/library/alpine:3.19
+</span></span><span style="display:flex;"><span>3.19: Pulling from library/alpine
+</span></span><span style="display:flex;"><span>Digest: sha256:6baf43584bcb78f2e5847d1de515f23499913ac9f12bdf834811a3145eb11ca1
+</span></span><span style="display:flex;"><span>Status: Downloaded newer image for mirror.local:8082/library/alpine:3.19
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>real    5m14.467s
+</span></span><span style="display:flex;"><span>user    0m0.012s
+</span></span><span style="display:flex;"><span>sys     0m0.036s
+</span></span></code></pre></div><p>5 分 14 秒。一个 5MB 的镜像。</p>
+<p><strong>更怪的是,这段 <code>5m14s</code> 里 registry 的日志是干净的(只有一个连接事件),<code>tcpdump</code> 也看不到什么异常流量</strong>。这意味着:</p>
+<ul>
+<li>客户端到 8082:正常</li>
+<li>8082 内部处理:正常(没重试、没错误)</li>
+<li>8082 到 upstream <code>docker.1panel.live</code>:<strong>卡在了&quot;等到响应&quot;上</strong></li>
+</ul>
+<p>这才是 <code>docker.1panel.live</code> 慢的真相——它不是<strong>返回错误</strong>,它是<strong>等很久才返回</strong>。我后来发现这跟它本身的限速策略有关,但那是后面的事。</p>
+<p>我先在脑子里列了一个<strong>先验假设清单</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>假设</th>
+<th>验证方式</th>
+<th>结论</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>8082 容器本身 CPU/IO 满了?</td>
+<td><code>docker stats registry-dockerhub</code></td>
+<td>❌ 0.3% CPU,0 MB/s IO</td>
+</tr>
+<tr>
+<td>宿主机 8082 端口被劫持?</td>
+<td><code>ss -tlnp | grep 8082</code></td>
+<td>❌ 正常监听</td>
+</tr>
+<tr>
+<td>本地 9.4G 缓存被清空了?</td>
+<td><code>du -sh /docker/registry-cache/dockerhub</code></td>
+<td>❌ 9.4G 还在,blob 都对得上</td>
+</tr>
+<tr>
+<td>走的 upstream 1panel.live 本身慢?</td>
+<td>直接 curl 测</td>
+<td>✅ <strong>命中,后面重点查</strong></td>
+</tr>
+</tbody>
+</table>
+<p>所以根因在 <strong>upstream 慢</strong>。但光知道&quot;upstream 慢&quot;还不够,我要搞清楚<strong>为什么慢</strong>、<strong>还有没有更快的可选项</strong>、<strong>怎么样让这台机器自己知道 upstream 挂了然后切走</strong>。</p>
+<p><img alt="三个坑的时间线:从 docker.io 直连 → dockerproxy 限流 → 最终 hub1.nat.tf" src="/post-images/docker-registry-mirror-rebuild-2026/02-timeline.svg"></p>
+<p><em>图 2:整篇文章其实是按这张时间线走的——我先后踩了 3 个&quot;看起来都挺合理&quot;的方案,每个都试了真实数据,最后第 3 个才稳。我把&quot;自以为对&quot;的方案用虚线连起来,把&quot;实测有效&quot;的用实线画出来。</em></p>
+<hr>
+<h2 id="三问题根因不是-1panel-慢是我家这台机器根本走不到-dockerio-官方">三、问题根因:不是 1panel 慢,是我家这台机器<strong>根本走不到 docker.io 官方</strong></h2>
+<p>为了找更快的 upstream,我想先确认:<strong>我能不能直接打到 <code>registry-1.docker.io</code> 官方?</strong> 如果能,我就根本不需要任何中转。</p>
+<p>结果:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>$ nc -zv -w 5 registry-1.docker.io 443
+</span></span><span style="display:flex;"><span>nc: connect to registry-1.docker.io (199.59.148.7) port 443 (tcp) failed: Connection refused
+</span></span><span style="display:flex;"><span>nc: connect to registry-1.docker.io (2a03:2880:f134:183:face:b00c:0:25de) port 443 (tcp) timed out
+</span></span><span style="display:flex;"><span>nc: connect to registry-1.docker.io (2a03:2880:f12c:183:face:b00c:0:25de) port 443 (tcp) timed out
+</span></span><span style="display:flex;"><span>[... 6 个 IPv6 地址全部 timed out ...]
+</span></span></code></pre></div><p><strong><code>registry-1.docker.io</code> 的 IPv4 在我家是 <code>Connection refused</code>,IPv6 全部黑洞</strong>。<code>2a03:2880::/32</code> 是 Meta(Facebook 母公司)的地址段,<strong>国内防火墙常态封禁</strong>,这条路由在骨干网上就是直接丢包。</p>
+<p>这意味着:</p>
+<ul>
+<li>我这台机器<strong>走不通 docker.io 官方</strong>;</li>
+<li>我之前给这台机器配的 docker hub 账号(用来解除 100/6h 限流)——<strong>在我这台机器上完全没机会用上</strong>;</li>
+<li>我必须<strong>用某个国内中转源</strong>,这个源它要么是 docker.io 的直透代理,要么是 docker.io 内容的独立缓存。</li>
+</ul>
+<p><img alt="为什么 100/6h 限流会&quot;莫名其妙&quot;咬到自建 mirror" src="/post-images/docker-registry-mirror-rebuild-2026/06-rate-limit.svg"></p>
+<p><em>图 3:Docker Hub 的限流是按<strong>你的公网 IPv4</strong>算的,不是按&quot;你用的代理&quot;的 IP。自建 mirror 的客户端请记住:dockerproxy.net 这类透传代理,server 端看到的还是你自己的 IP。</em></p>
+<p>同时,我在测的时候还撞到了一个<strong>第二个独立问题</strong>——<strong>Docker Hub 对未登录 IP 的 100 pulls / 6h 限流</strong>:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>$ curl https://dockerproxy.net/v2/library/busybox/manifests/1.36
+</span></span><span style="display:flex;"><span>{&#34;errors&#34;:[{&#34;code&#34;:&#34;UNKNOWN&#34;,&#34;message&#34;:&#34;unknown error&#34;,
+</span></span><span style="display:flex;"><span>&#34;detail&#34;:{&#34;errors&#34;:[{&#34;code&#34;:&#34;TOOMANYREQUESTS&#34;,
+</span></span><span style="display:flex;"><span>&#34;message&#34;:&#34;You have reached your unauthenticated pull rate limit.
+</span></span><span style="display:flex;"><span>https://www.docker.com/increase-rate-limit&#34;}]}}]}
+</span></span></code></pre></div><p>注意这里:即使是 dockerproxy.net 这种&quot;看起来自带代理&quot;的源,<strong>Docker Hub 服务端看到的还是我自己家 NAT 的公网 IPv4</strong>。这条限流是按 IP 算的,<strong>和我用没用代理完全无关</strong>。dockerproxy.net 是个直透代理,它自己不缓存,所有流量原样转给 docker.io,docker.io 就按&quot;你这个 IP 最近 6 小时拉了多少个 manifest&quot;算账。</p>
+<p>我家里这台机器的 IP 之前肯定被其他邻居(可能共享 NAT,可能别的机器)用过,<strong>早被 docker.io 标记成&quot;已限流 IP&quot;</strong>。所以哪怕我把 upstream 换到 dockerproxy.net,任何<strong>本地缓存里没有</strong>的镜像,只要去 upstream 拉,就会撞 429 → docker daemon 看到 4xx → &ldquo;manifest unknown&rdquo;。</p>
+<p><strong>到这里,我面对的问题变成一个 2 维矩阵</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>维度 / 选项</th>
+<th>docker.io 官方(走不通)</th>
+<th>透传代理(dockerproxy.net)</th>
+<th>独立缓存(1panel.live / sparkcr / hub1.nat.tf / &hellip;)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>能不能连通</td>
+<td>❌ 我这台 IP 被封</td>
+<td>✅</td>
+<td>✅</td>
+</tr>
+<tr>
+<td>是不是有限流</td>
+<td>—</td>
+<td>⚠️ 撞我公网 IP 的 100/6h</td>
+<td>✅ 不限流(走自建 cache)</td>
+</tr>
+<tr>
+<td>速度</td>
+<td>—</td>
+<td>快(1.5s)</td>
+<td>看具体源</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="四解决问题实测-8-个候选源选一个能通--不限流--速度也快的">四、解决问题:实测 8 个候选源,选一个&quot;能通 + 不限流 + 速度也快&quot;的</h2>
+<p>我意识到<strong>单看源的名气和&quot;社区评价&quot;完全没用</strong>——我之前 1panel.live 配了一直慢,根本不是我配错了,就是它在我这台机器、这个时间点,<strong>确实慢</strong>。每个源<strong>对不同网络的出口、不同时间的限速策略、是否启用 CDN</strong> 都不同,只有在我<strong>自己的机器上、同一时间</strong> 跑出来的数据,才是真数据。</p>
+<p>我做了一个非常简单的<strong>真·基准测试</strong>:每一条源都跑 <code>time docker pull $src/library/alpine:3.19</code>,<strong>因为 alpine 只有 3MB 左右,纯网络耗时,不受本地缓存污染</strong>。</p>
+<p>下表是当时的实测结果(同一台机器、同一时间、相同命令):</p>
+<table>
+<thead>
+<tr>
+<th>源</th>
+<th>实际耗时</th>
+<th>状态</th>
+<th>备注</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong><code>hub1.nat.tf</code></strong></td>
+<td><strong>~1.4s</strong></td>
+<td>✅ 健康</td>
+<td><strong>金牌,选了它</strong></td>
+</tr>
+<tr>
+<td><code>hub.1panel.dev</code></td>
+<td>2.4s</td>
+<td>✅ 健康</td>
+<td>1Panel 三方源</td>
+</tr>
+<tr>
+<td><code>docker.367231.xyz</code></td>
+<td>2.4s</td>
+<td>✅ 健康</td>
+<td>1Panel 核心用户 GXL 驱动</td>
+</tr>
+<tr>
+<td><code>dockerproxy.cool</code></td>
+<td>2.4s</td>
+<td>✅ 健康</td>
+<td>EdgeOne CDN</td>
+</tr>
+<tr>
+<td><code>docker-registry.nmqu.com</code></td>
+<td>3.0s</td>
+<td>✅ 健康</td>
+<td>奶昔论坛</td>
+</tr>
+<tr>
+<td><code>dockerproxy.net</code></td>
+<td>1.5s</td>
+<td>⚠️ <strong>撞 100/6h 限流</strong></td>
+<td>跟限流 IP 撞到一起</td>
+</tr>
+<tr>
+<td><code>docker.sparkcr.cn</code></td>
+<td>15.3s</td>
+<td>✅ 健康但慢</td>
+<td>ESA + 广东 BGP</td>
+</tr>
+<tr>
+<td><code>hub3.nat.tf</code></td>
+<td>4.3s</td>
+<td>⚠️ 不稳(偶发 500)</td>
+<td>棉花云 东京节点</td>
+</tr>
+<tr>
+<td><code>docker.hlmirror.com</code></td>
+<td>4.7s</td>
+<td>❌ 跳登录墙</td>
+<td>厚浪云,需要扫码登录</td>
+</tr>
+<tr>
+<td><code>docker.1panel.live</code></td>
+<td>4.7s</td>
+<td>❌ &ldquo;only support mainland China&rdquo;</td>
+<td>撞 C-class-private 出口 IP</td>
+</tr>
+<tr>
+<td><code>docker.1ms.run</code></td>
+<td>—</td>
+<td>❌ 假源</td>
+<td>返回 nginx 的假 manifest,不是真源</td>
+</tr>
+<tr>
+<td><code>hub.rat.dev</code></td>
+<td>—</td>
+<td>❌ 跳 1ms.run</td>
+<td>同上</td>
+</tr>
+</tbody>
+</table>
+<p><strong>赢家</strong>:<strong><code>hub1.nat.tf</code></strong>(棉花云美西节点),<strong>1.4 秒</strong> 拉完一个 alpine,而且<strong>走的是独立缓存后端,不在 docker.io 限流名单里</strong>。</p>
+<p><img alt="8 个候选源的实测耗时条形图" src="/post-images/docker-registry-mirror-rebuild-2026/03-bench.svg"></p>
+<p><em>图 4:同样的 alpine:3.19、同样的机器、同样的命令,只有源不同。条形按耗时从短到长,绿色 = 选中的金牌,蓝色 = OK,黄色 = 慢或受限,红色 = 不能用。</em></p>
+<p>切换本身不复杂,就一行 <code>config.yml</code> 改一下 + restart 容器:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-yaml" data-lang="yaml"><span style="display:flex;"><span><span style="color:#f92672">proxy</span>:
+</span></span><span style="display:flex;"><span>  <span style="color:#f92672">remoteurl</span>: <span style="color:#ae81ff">https://hub1.nat.tf</span>
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>docker restart registry-dockerhub
+</span></span></code></pre></div><p><strong>关键事实</strong>:9.4G 的本地缓存<strong>完全保留</strong>,因为 blob 是按 sha256 寻址的,换 upstream 不影响已经在本地的内容。切换后拉 <code>alpine:3.19</code>、<code>nginx:1.27-alpine</code>、<code>redis:7-alpine</code>、<code>golang:1.22-alpine</code> 全部 <strong>1 秒级命中</strong>。</p>
+<p><strong>到这里,我以为问题已经解决了。</strong></p>
+<hr>
+<h2 id="五问题没解决完hub1nattf-这种民间小源它会不会哪天突然挂掉">五、问题没解决完:hub1.nat.tf 这种&quot;民间小源&quot;它<strong>会不会哪天突然挂掉?</strong></h2>
+<p>切换到 hub1.nat.tf 之后,体感确实快了。但我心里一直有根刺——这是一个<strong>民间小源</strong>,运营方是棉花云(1ms.run 旗下的一个子站),<strong>没有任何 SLA 承诺</strong>。它比 dockerproxy.net 这种&quot;看起来稳&quot;的大站要脆弱得多:</p>
+<ul>
+<li>它跑在 Cloudflare Worker + 自建后端上;</li>
+<li>它<strong>自己拉一次</strong> docker.io 的内容再缓存;</li>
+<li>它的<strong>资金来源不明、运营方不知名</strong>。</li>
+</ul>
+<p>如果它<strong>某天突然挂掉</strong>(从民间源的运营历史看,<strong>这事一定会发生,只是时间早晚</strong>),我的 8082 就会瞬间回到 &ldquo;5 分 14 秒拉 alpine&rdquo; 的状态,而且我<strong>可能几个礼拜之后才发现</strong>,因为平时没人在意 registry 是不是 100% 健康。</p>
+<p><strong>我必须做两件事:</strong></p>
+<ol>
+<li><strong>每天自动测一次 hub1.nat.tf 的健康</strong>;</li>
+<li><strong>挂了自动切到一个保底的源</strong>(慢也行,只要不挂)。</li>
+</ol>
+<p>而且我必须<strong>接受双源架构的代价</strong>:registry:2 的 <code>proxy.remoteurl</code> <strong>只能写一个 upstream</strong>,不像 nginx 那种可以写 <code>upstream</code> 块做 round-robin。要做&quot;双源 + 自动切换&quot;,必须<strong>自己写一个 sidecar / 调度器</strong>。</p>
+<p>但我<strong>不想再写一个 30 行的 nginx sidecar</strong>(我前面试过,踩了 v2 auth challenge 的坑,半小时没搞定),<strong>就想写一个 5 行的 bash</strong>。</p>
+<p><strong>答案是:用一个每天跑一次的 cron,直接 <code>sed</code> 改 <code>config.yml</code> + <code>docker restart</code></strong>。</p>
+<p><img alt="最终架构图:一个 registry、一个 upstream、一个 cron watchdog" src="/post-images/docker-registry-mirror-rebuild-2026/04-architecture.svg"></p>
+<p><em>图 5:这是最终生产环境,1 个客户端、1 个 registry:2 容器、1 个 primary upstream、1 个 fallback upstream(平时不碰)、1 个 cron 调度器。结构简单到我能在脑子里记住。</em></p>
+<hr>
+<h2 id="六最终方案5-行-cron--1-段验证脚本">六、最终方案:5 行 cron + 1 段验证脚本</h2>
+<p>整段脚本放在 <code>/usr/local/bin/registry-fallback.sh</code>,<strong>实际 80 行,核心逻辑 5 行</strong>:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e">#!/bin/bash
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>set -u
+</span></span><span style="display:flex;"><span>PRIMARY<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;hub1.nat.tf&#34;</span>
+</span></span><span style="display:flex;"><span>FALLBACK<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;docker.sparkcr.cn&#34;</span>
+</span></span><span style="display:flex;"><span>CONFIG<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;/docker/registry-dockerhub/config.yml&#34;</span>
+</span></span><span style="display:flex;"><span>CONTAINER<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;registry-dockerhub&#34;</span>
+</span></span><span style="display:flex;"><span>LOG<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;/var/log/registry-fallback/cron.log&#34;</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>CURRENT<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>grep -oE <span style="color:#e6db74">&#39;https://[^ ]+&#39;</span> <span style="color:#e6db74">&#34;</span>$CONFIG<span style="color:#e6db74">&#34;</span> | head -1<span style="color:#66d9ef">)</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 核心 5 行: 直接 docker CLI 测 primary, 通就保留, 不通就 sed 改 config + restart</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> timeout <span style="color:#ae81ff">60</span> docker pull --quiet <span style="color:#e6db74">&#34;</span>$PRIMARY<span style="color:#e6db74">/library/alpine:3.19&#34;</span> &gt;/dev/null 2&gt;&amp;1; <span style="color:#66d9ef">then</span>
+</span></span><span style="display:flex;"><span>  <span style="color:#f92672">[</span> <span style="color:#e6db74">&#34;</span>$CURRENT<span style="color:#e6db74">&#34;</span> <span style="color:#f92672">=</span> <span style="color:#e6db74">&#34;https://</span>$PRIMARY<span style="color:#e6db74">&#34;</span> <span style="color:#f92672">]</span> <span style="color:#f92672">||</span> <span style="color:#f92672">{</span> sed -i <span style="color:#e6db74">&#34;s|remoteurl: https://[^ ]*|remoteurl: https://</span>$PRIMARY<span style="color:#e6db74">|&#34;</span> <span style="color:#e6db74">&#34;</span>$CONFIG<span style="color:#e6db74">&#34;</span>; docker restart <span style="color:#e6db74">&#34;</span>$CONTAINER<span style="color:#e6db74">&#34;</span> &gt;/dev/null; <span style="color:#f92672">}</span>
+</span></span><span style="display:flex;"><span>  echo <span style="color:#e6db74">&#34;[</span><span style="color:#66d9ef">$(</span>date <span style="color:#e6db74">&#39;+%F %T&#39;</span><span style="color:#66d9ef">)</span><span style="color:#e6db74">] PRIMARY OK&#34;</span> &gt;&gt; <span style="color:#e6db74">&#34;</span>$LOG<span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">else</span>
+</span></span><span style="display:flex;"><span>  sed -i <span style="color:#e6db74">&#34;s|remoteurl: https://[^ ]*|remoteurl: https://</span>$FALLBACK<span style="color:#e6db74">|&#34;</span> <span style="color:#e6db74">&#34;</span>$CONFIG<span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>  docker restart <span style="color:#e6db74">&#34;</span>$CONTAINER<span style="color:#e6db74">&#34;</span> &gt;/dev/null
+</span></span><span style="display:flex;"><span>  echo <span style="color:#e6db74">&#34;[</span><span style="color:#66d9ef">$(</span>date <span style="color:#e6db74">&#39;+%F %T&#39;</span><span style="color:#66d9ef">)</span><span style="color:#e6db74">] PRIMARY DOWN, switched to FALLBACK (</span>$FALLBACK<span style="color:#e6db74">)&#34;</span> &gt;&gt; <span style="color:#e6db74">&#34;</span>$LOG<span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">fi</span>
+</span></span></code></pre></div><p>挂到 crontab:</p>
+<pre tabindex="0"><code class="language-cron" data-lang="cron">0 8 * * * /usr/local/bin/registry-fallback.sh &gt;&gt; /var/log/registry-fallback/cron.log 2&gt;&amp;1
+</code></pre><p><strong>每天 08:00</strong> 跑一次,测一次 <code>hub1.nat.tf</code> 的 alpine,挂了自动切 <code>docker.sparkcr.cn</code>,恢复后再切回。</p>
+<p><strong>为什么是 alpine:3.19?</strong> 它足够小(3MB),单次 <code>docker pull</code> &lt; 2s 结束,基本不会因为冷启动误判;它又是<strong>所有 docker registry 100% 都会缓存的官方镜像</strong>,不存在&quot;该源没这个 image&quot;的可能。</p>
+<p><strong>为什么是 60s timeout?</strong> 因为 sparkcr 偶尔会 15-40s,但应该不会超过 60s。如果超过 60s,那基本可以判定&quot;该源不可用&quot;,宁可切走也不要让 cron 卡住后面所有调度。</p>
+<p><img alt="核心 5 行逻辑 + cron 配置 + 真实运行日志" src="/post-images/docker-registry-mirror-rebuild-2026/05-cron-script.svg"></p>
+<p><em>图 6:这 5 行就是整个 fallback 的&quot;业务逻辑&quot;,剩下 75 行是日志、状态文件、错误处理。我故意把日志做成&quot;一眼能读&quot;的形式——以后回看的时候不用 grep 半天。</em></p>
+<hr>
+<h2 id="七验证我模拟-primary-挂了-一次看脚本是不是真能切">七、验证:我模拟 &ldquo;primary 挂了&rdquo; 一次,看脚本是不是真能切</h2>
+<p>光写出来不算数,<strong>我手动模拟了 primary 挂掉</strong>:</p>
+<ol>
+<li>把 <code>config.yml</code> 里的 <code>remoteurl</code> 改成 <code>https://nonexistent.test.example</code>(故意让它 fail)</li>
+<li>跑一次 <code>/usr/local/bin/registry-fallback.sh</code></li>
+<li>观察输出和 config</li>
+</ol>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>[2026-06-13 06:56:01] === 启动 fallback 检查 ===
+</span></span><span style="display:flex;"><span>[2026-06-13 06:56:01] 当前 upstream: https://nonexistent.test.example
+</span></span><span style="display:flex;"><span>[2026-06-13 06:56:01] 测 primary hub1.nat.tf ...
+</span></span><span style="display:flex;"><span>[2026-06-13 06:56:02]   OK hub1.nat.tf 健康
+</span></span><span style="display:flex;"><span>[2026-06-13 06:56:02]   当前不是 primary, 切回 primary
+</span></span><span style="display:flex;"><span>[2026-06-13 06:56:02] 切换 upstream: -&gt; hub1.nat.tf (原因: primary 恢复, 从 fallback 切回)
+</span></span><span style="display:flex;"><span>[2026-06-13 06:56:06]   通过 8082 验证...
+</span></span><span style="display:flex;"><span>[2026-06-13 06:56:06]   8082 拉镜像用时: 0s (rc=0)
+</span></span><span style="display:flex;"><span>[2026-06-13 06:56:06] === 检查完成 ===
+</span></span></code></pre></div><p>它<strong>真的把 config 改回了 hub1.nat.tf</strong>,并<strong>真的重启了 registry 容器</strong>(脚本里 <code>docker restart</code> 在状态变化时才会触发)。</p>
+<p>我又模拟了 primary 和 fallback <strong>双挂</strong>的极端情况:脚本不会改 config,只会在 log 里写一条 &ldquo;BOTH DOWN&rdquo; 警告,等下次 cron 跑再试。这是我<strong>有意为之</strong>——crash loop 改 config 只会越改越乱。</p>
+<p><strong>跑完之后 8082 的状态</strong>:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>$ curl -sS -m 5 -w &#34;HTTP=%{http_code} time=%{time_total}s\n&#34; http://127.0.0.1:8082/v2/
+</span></span><span style="display:flex;"><span>{}HTTP=200 time=0.003s
+</span></span><span style="display:flex;"><span>$ docker pull mirror.local:8082/library/alpine:3.19
+</span></span><span style="display:flex;"><span>Status: Image is up to date
+</span></span><span style="display:flex;"><span>real    0m0.6s
+</span></span></code></pre></div><p><strong>0.6 秒</strong>。</p>
+<hr>
+<h2 id="八我学到的几件事">八、我学到的几件事</h2>
+<p>按重要性排序:</p>
+<ol>
+<li><strong>&ldquo;换 upstream 之前先量一下&rdquo;</strong>。我看 status.anye.xyz 这种&quot;国内镜像测速页&quot;的列表时,本以为 1panel.live 这种&quot;1Panel 官方&quot;稳,实测在我的出口 IP、我的时间窗里就是慢。<strong>任何源的&quot;社区评价&quot;都不能替代你在自己机器上的实测</strong>。</li>
+<li><strong>Docker Hub 的 100/6h 限流是按你的公网 IPv4 算的,跟你用没用 docker hub 账号、跟你的私有 mirror 是不是 up 都没关系</strong>。这是 Docker Hub 服务端的事,不是 client 端的事。我家 NAT 的公网 IP 之前肯定被刷过,我<strong>改用 hub1.nat.tf 这种独立缓存的源,本质上就是绕开 docker.io 服务端对我这个 IP 的限流</strong>。</li>
+<li><strong>registry:2 的 blob 缓存是按 sha256 寻址的</strong>,<strong>换 upstream 不会丢任何已缓存的 blob</strong>。这意味着我可以放心地&quot;试错式切换&quot;——把 config 改一下,30 秒内能切回老配置。这事比&quot;建一个 NGINX sidecar 做双 upstream&quot;简单 100 倍。</li>
+<li><strong>不要在 C-class-private 这种小网络里尝试直接走 docker.io 官方</strong>。<code>2a03:2880::/32</code> 黑洞路由,IPv4 也被防火墙拦,这件事在中国大陆的家庭宽带/小机房是<strong>常态</strong>,不是 bug。</li>
+<li><strong>5 行 cron 比 80 行的 Python sidecar 更可读、更可调试、更不容易挂</strong>。我前面花 30 分钟试了 nginx 方案(踩 v2 auth challenge 的坑),最后还是回到最朴素的 bash + sed + docker restart。<strong>简单是复杂的解药</strong>。</li>
+</ol>
+<hr>
+<h2 id="九qa">九、Q&amp;A</h2>
+<p><strong>Q:hub1.nat.tf 这种&quot;民间小源&quot;我直接信任它,把公司所有 docker 流量走它,合规吗?</strong></p>
+<p>A:绝对不要在公司生产环境这么做。<strong>公司应该自建一个 pull-through cache 容器,挂内网,upstream 配你公司买断的 docker hub Business 账号(无限 pulls)</strong>。我这套&quot;民间小源 + cron fallback&quot;只适合<strong>家庭实验室、自建小集群、个人开发机</strong>。要接受它<strong>没有 SLA、没有审计、没有合规</strong>的事实。</p>
+<p><strong>Q:为什么不用 nginx / caddy / traefik 在前面做双 upstream,这种架构不是更标准吗?</strong></p>
+<p>A:我试过。registry:2 用的 v2 auth challenge-response 协议,<strong>你必须在 nginx 透传 <code>WWW-Authenticate</code> 头</strong>(否则 docker daemon 拿不到 token),而且 nginx 默认 <code>location = /v2/ return 200</code> 这种&quot;假健康检查&quot;会把 docker daemon 的探测请求吞掉,导致后续所有 manifest 请求都拿到 401/403。<strong>这条路的坑比写 5 行 bash 深得多</strong>。如果你一定要做双源,推荐 <code>docker://caarlos0/docker-registry-proxy</code> 那种&quot;专做 v2 协议&quot;的代理,<strong>不要自己用 nginx 写</strong>。</p>
+<p><strong>Q:为什么 cron 每天只跑一次?我不会用 systemd timer 每小时跑一次吗?</strong></p>
+<p>A:可以。但<strong>对家用 registry 来说,每天 8:00 足够</strong>——hub1.nat.tf 这种源如果挂掉,通常会挂&quot;几个礼拜&quot;或者&quot;几分钟&quot;,<strong>1 小时一次的检测精度对家用场景不增加价值,只增加 cron 跑失败的风险</strong>。如果你想每 6 小时测一次,把 cron 改成 <code>0 */6 * * *</code> 即可。</p>
+<p><strong>Q:我的本地 9.4G 缓存到底能撑多久?registry:2 不会越攒越大撑爆磁盘吗?</strong></p>
+<p>A:会的,默认 <code>ttl: 168h</code>(7 天)过期。<strong>缓存目录是 <code>filesystem</code> 驱动,blob 存在 <code>&lt;root&gt;/docker/registry/v2/blobs/sha256/&lt;aa&gt;/&lt;bb&gt;/...</code> 路径下</strong>,按内容寻址,重复文件自动 dedup。<strong>清理机制</strong>:registry:2 内置一个 scheduler,定期把 7 天没访问过的 blob 删掉。我跑了 2 年,9.4G 稳定,从来没撑爆过磁盘。如果你担心,<strong>可以加一个 LRU 上限</strong>,或者<strong>写一个 <code>find</code> + <code>du</code> 监控 + <code>docker exec ... rm</code> 的清理脚本</strong>。</p>
+<p><strong>Q:你说你家 NAT 出口 IP 已经被 docker.io 限流了,但 hub1.nat.tf 这种&quot;独立缓存&quot;为什么不会?</strong></p>
+<p>A:因为 hub1.nat.tf 的后端是<strong>它自己的缓存集群</strong>,不是 docker.io。当一个客户端通过 hub1.nat.tf 拉镜像时,流量是:<code>你 → hub1.nat.tf(它的后端,大概率是 Cloudflare Worker 或者自建机房) → 它自己的后端 cache</code>。<strong>只有第一次拉某个新镜像时,它的后端才回去 docker.io 拉一次</strong>,之后所有用户都从它的 cache 拿。<strong>你拉镜像时的 TCP 出口 IP 根本不是 docker.io 看到的那个 IP</strong>——docker.io 看到的是 hub1.nat.tf 后端的 IP,<strong>而那个 IP 走的是&quot;独立缓存&quot;模式的限流策略,通常对</strong>单 IP 的拉取次数不敏感**。</p>
+<p><strong>Q:你前面用 docker.1ms.run 的时候,发现它返回的是假 manifest,这听起来很离谱,能展开说说吗?</strong></p>
+<p>A:我测的时候用 curl 拉 <code>docker.1ms.run/v2/library/nginx/manifests/1.27-alpine</code>,返回的 manifest 里 <code>mediaType</code> 和 <code>digest</code> 是错的——内容里带的是某个完全不相关镜像的 attestation。docker CLI 拿到这个 manifest 后,真正去拉对应 digest 的 blob 时才发现对不上,然后报错。<strong>这意味着 1ms.run 的&quot;v2 endpoint&quot;被某种 fronting 或者反代污染了,不是它自己写的服务</strong>。这事我<strong>没有继续追</strong>,因为我已经选了 hub1.nat.tf。<strong>但这个现象提醒我:不要看&quot;列表上有&quot;就信,实测一次再说</strong>。</p>
+<p><strong>Q:为什么我跟着你做完一遍,在我的机器上 hub1.nat.tf 还是很慢?</strong></p>
+<p>A:<strong>网络出口不一样,结果就不一样</strong>。我在广东电信宽带测的,你是上海/北京/海外,出口 IP、骨干网路由、TCP 重传率全部不一样。<strong>你自己再去 <code>time docker pull hub1.nat.tf/library/alpine:3.19</code> 跑一次,这是唯一权威的数据</strong>。如果确实慢,按本文第四节的方法自己再测 8 个源,选<strong>在你这台机器上最快的</strong>。</p>
+<hr>
+<h2 id="参考资料">参考资料</h2>
+<ol>
+<li><a href="https://docs.docker.com/docker-hub/usage/pulls/">Docker Hub usage and rate limits</a> — Docker 官方关于 100 pulls/6h/IP 限流的说明</li>
+<li><a href="https://distribution.github.io/distribution/about/configuration/">Distribution: Configuring a registry</a> — <code>proxy.remoteurl</code>、<code>username</code>、<code>password</code> 字段的官方文档</li>
+<li><a href="https://distribution.github.io/distribution/recipes/mirror/">Distribution: Registry as a pull through cache</a> — 官方 mirror recipe,包括&quot;目前只支持单一 upstream&quot;的 gotcha</li>
+<li><a href="https://docs.docker.com/docker-hub/usage/pulls/">Docker Hub 限流响应头的含义</a> — <code>ratelimit-limit: 100;w=21600</code> 这个 header 的读法</li>
+<li><a href="https://github.com/containerd/containerd/blob/main/docs/hosts.md">containerd: registry mirror caveats</a> — 跟 daemon.json 配 mirror 相关的边角问题</li>
+</ol>
+<hr>
+<p><strong>最后</strong>:这次问题我最大的感受是 —— <strong>&ldquo;慢&rdquo; 永远不是一个简单的问题</strong>。它可以是 upstream 慢、可以是缓存没命中、可以是客户端限流、可以是网络出口被封、可以是 registry 协议握手失败。<strong>每一层都要分别测一次,才能确认根因</strong>。而一旦根因找对,解决方法往往只是一行 config + 一个 5 行的 cron。</p>
+<p>—— 完 ——</p>
+        </div>
+    </article>
+
+    
+  
+
+
+  
+    
+  
+
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk/dist/gitalk.css">
+<script src="https://cdn.jsdelivr.net/npm/gitalk/dist/gitalk.min.js"></script>
+<div id="gitalk-container" style="margin-top:40px"></div>
+<script>
+  (function(){
+    var gitalk = new Gitalk({
+      clientID: '3181fd94e501cc5db0ad',
+      clientSecret: 'af1dab79dae02c69296e6615bfcecf47fc8615ee',
+      repo: 'margropcomment.margrop.io',
+      owner: 'margrop',
+      admin: ["margrop"],
+      
+      id: '\/post\/docker-registry-mirror-rebuild-2026\/',
+      
+      distractionFreeMode: false
+    });
+    gitalk.render('gitalk-container');
+  })();
+</script>
+  
+
+
+
+
+    
+<div class="site-stats" aria-label="访问统计">
+    <span>本文阅读量 <span data-page-view-count>--</span></span>
+</div>
+
+
+    
+    <script type="text/javascript" src="https://js.users.51.la/21044367.js"></script>
+    <script charset="UTF-8" id="LA_COLLECT" src="//sdk.51.la/js-sdk-pro.min.js"></script>
+    <script>LA.init({id: "1vVTUWl7zoRjnKXi",ck: "1vVTUWl7zoRjnKXi"})</script>
+    <script src="https://sdk.51.la/perf/js-sdk-perf.min.js" crossorigin="anonymous"></script>
+    <script>
+      new LingQue.Monitor().init({id:"202teQt8THXwqyve"});
+    </script>
+    <script defer src="/js/page-views.js"></script>
+    <div class="la-theme-widget" data-51la-widget aria-label="51.la 网站统计"></div>
+    <script defer src="/js/51la-theme-widget.js"></script>
+</body>
+</html>

@@ -1,0 +1,636 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>macOS LaunchAgent 里的 Python 程序连不上外网？一文搞懂 httpx 代理陷阱的完整排查与修复 - 魔都水滴</title>
+<meta name="description" content="先说结论： macOS 的 LaunchAgent 环境下，Python httpx 库会自动读取系统代理设置（scutil --proxy），但 LaunchAgent 进程可能根本无法访问该代理服务器——于是请求静默失败，报错 All connection attempts failed 或 No route to …">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://blog.margrop.net/post/macos-launchagent-python-httpx-proxy-no-route-to-host/"><meta property="og:site_name" content="魔都水滴">
+<meta property="og:title" content="macOS LaunchAgent 里的 Python 程序连不上外网？一文搞懂 httpx 代理陷阱的完整排查与修复 - 魔都水滴">
+<meta property="og:description" content="先说结论： macOS 的 LaunchAgent 环境下，Python httpx 库会自动读取系统代理设置（scutil --proxy），但 LaunchAgent 进程可能根本无法访问该代理服务器——于是请求静默失败，报错 All connection attempts failed 或 No route to …">
+<meta property="og:url" content="https://blog.margrop.net/post/macos-launchagent-python-httpx-proxy-no-route-to-host/">
+<meta property="og:locale" content="zh_CN"><meta property="og:type" content="article"><meta property="og:locale:alternate" content="en_US"><meta property="og:image" content="https://blog.margrop.net/images/avatar.png"><meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="macOS LaunchAgent 里的 Python 程序连不上外网？一文搞懂 httpx 代理陷阱的完整排查与修复 - 魔都水滴">
+<meta name="twitter:description" content="先说结论： macOS 的 LaunchAgent 环境下，Python httpx 库会自动读取系统代理设置（scutil --proxy），但 LaunchAgent 进程可能根本无法访问该代理服务器——于是请求静默失败，报错 All connection attempts failed 或 No route to …"><meta name="twitter:image" content="https://blog.margrop.net/images/avatar.png"><link rel="alternate" hreflang="zh-CN" href="https://blog.margrop.net/post/macos-launchagent-python-httpx-proxy-no-route-to-host/"><link rel="alternate" hreflang="en-US" href="https://blog.margrop.net/en/post/macos-launchagent-python-httpx-proxy-no-route-to-host/"><link rel="alternate" hreflang="x-default" href="https://blog.margrop.net/"><meta property="article:published_time" content="2026-05-30T09:00:00&#43;08:00">
+<meta property="article:modified_time" content="2026-05-30T09:00:00&#43;08:00"><meta property="article:tag" content="macOS"><meta property="article:tag" content="Python"><meta property="article:tag" content="httpx"><meta property="article:tag" content="Proxy"><meta property="article:tag" content="LaunchAgent"><meta property="article:tag" content="Launchctl"><meta property="article:tag" content="Networking"><meta property="article:tag" content="AI Agent"><meta property="article:tag" content="WeCom"><meta property="article:tag" content="Debugging"><meta property="article:tag" content="Sysadmin"><meta property="article:tag" content="AI"><meta property="article:tag" content="DevOps"><script type="application/ld+json">{"@context":"https://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"魔都水滴"},"dateModified":"2026-05-30T09:00:00+08:00","datePublished":"2026-05-30T09:00:00+08:00","description":"先说结论： macOS 的 LaunchAgent 环境下，Python httpx 库会自动读取系统代理设置（scutil --proxy），但 LaunchAgent 进程可能根本无法访问该代理服务器——于是请求静默失败，报错 All connection attempts failed 或 No route to …","headline":"macOS LaunchAgent 里的 Python 程序连不上外网？一文搞懂 httpx 代理陷阱的完整排查与修复","mainEntityOfPage":"https://blog.margrop.net/post/macos-launchagent-python-httpx-proxy-no-route-to-host/","url":"https://blog.margrop.net/post/macos-launchagent-python-httpx-proxy-no-route-to-host/"}</script>
+    <meta name="baidu-site-verification" content="code-sVFZ8SER59" />
+    <script src="/js/theme-toggle.js"></script>
+
+    
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-3J2W592DHJ"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-3J2W592DHJ');
+    </script>
+
+    <style>
+    :root {
+        color-scheme: light;
+        --page-bg: #fff;
+        --surface-bg: #f4f4f4;
+        --text: #222;
+        --muted: #666;
+        --subtle: #777;
+        --border: #eee;
+        --border-strong: #ddd;
+        --link: #006CFF;
+        --tag-bg: #eee;
+        --button-bg: #fff;
+        --button-primary-bg: #333;
+    }
+    @media (prefers-color-scheme: dark) {
+        :root:not([data-theme]) {
+            color-scheme: dark;
+            --page-bg: #111315;
+            --surface-bg: #1d2126;
+            --text: #e8eaed;
+            --muted: #aeb4bd;
+            --subtle: #9aa2ad;
+            --border: #30353d;
+            --border-strong: #454c56;
+            --link: #79b8ff;
+            --tag-bg: #2a3038;
+            --button-bg: #1d2126;
+            --button-primary-bg: #e8eaed;
+        }
+    }
+    html[data-theme="dark"] {
+        color-scheme: dark;
+        --page-bg: #111315;
+        --surface-bg: #1d2126;
+        --text: #e8eaed;
+        --muted: #aeb4bd;
+        --subtle: #9aa2ad;
+        --border: #30353d;
+        --border-strong: #454c56;
+        --link: #79b8ff;
+        --tag-bg: #2a3038;
+        --button-bg: #1d2126;
+        --button-primary-bg: #e8eaed;
+    }
+    html[data-theme="light"] {
+        color-scheme: light;
+        --page-bg: #fff;
+        --surface-bg: #f4f4f4;
+        --text: #222;
+        --muted: #666;
+        --subtle: #777;
+        --border: #eee;
+        --border-strong: #ddd;
+        --link: #006CFF;
+        --tag-bg: #eee;
+        --button-bg: #fff;
+        --button-primary-bg: #333;
+    }
+    body { background: var(--page-bg); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 860px; margin: 0 auto; padding: 20px; line-height: 1.7; color: var(--text); }
+    h1 { border-bottom: 2px solid var(--border-strong); padding-bottom: 10px; }
+    article > h1 { font-size: 2em; line-height: 1.3; margin-bottom: 12px; }
+    .post-list { list-style: none; padding: 0; }
+    .post-list li { margin: 15px 0; }
+    .post-list a { text-decoration: none; color: var(--text); font-size: 18px; }
+    .post-list a:hover { color: var(--link); }
+    .date { color: var(--muted); font-size: 14px; margin-right: 10px; }
+    .tags { margin-top: 8px; }
+    .tag { background: var(--tag-bg); padding: 2px 8px; border-radius: 3px; font-size: 12px; margin-right: 5px; display: inline-block; }
+    nav { margin-bottom: 18px; border-bottom: 1px solid var(--border); padding-bottom: 15px; }
+    nav a { margin-right: 20px; text-decoration: none; color: var(--text); font-size: 16px; }
+    nav a:hover { color: var(--link); }
+    .language-switcher { display: flex; align-items: center; gap: 10px; margin: -8px 0 26px; }
+    .language-switcher a { display: inline-block; padding: 4px 10px; border: 1px solid var(--border-strong); border-radius: 999px; color: var(--muted); text-decoration: none; font-size: 14px; }
+    .language-switcher a.active { background: var(--link); border-color: var(--link); color: #fff; }
+    .content { line-height: 1.8; }
+    .content code { background: var(--surface-bg); padding: 2px 5px; border-radius: 3px; }
+    .content pre { background: var(--surface-bg); padding: 15px; overflow-x: auto; border-radius: 5px; }
+    .content img { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+    .content .code-snippet__fix {
+        margin: 0 0 1.5em;
+    }
+    .content .code-snippet__fix .code-snippet__line-index {
+        display: none !important;
+    }
+    .meta { color: var(--muted); font-size: 14px; margin-bottom: 14px; }
+    .meta-separator { margin: 0 6px; color: var(--subtle); }
+    .site-stats { display: flex; flex-wrap: wrap; gap: 10px 18px; margin: 28px 0 8px; padding-top: 12px; border-top: 1px solid var(--border); color: var(--subtle); font-size: 12px; }
+    a { color: var(--link); }
+    .hero { padding: 12px 0 24px; }
+    .hero h1 { border-bottom: 2px solid #333; }
+    .eyebrow { color: var(--muted); font-size: 12px; letter-spacing: .12em; margin: 0 0 8px; }
+    .hero-tagline { font-size: 18px; margin: 12px 0 8px; }
+    .hero-copy { color: var(--muted); margin: 0 0 14px; }
+    .hero-actions { margin: 14px 0 4px; }
+    .button { display: inline-block; margin-right: 12px; border: 1px solid var(--border-strong); border-radius: 3px; padding: 4px 10px; text-decoration: none; color: var(--text); background: var(--button-bg); font-size: 14px; }
+    .button-primary { background: var(--button-primary-bg); border-color: var(--button-primary-bg); color: var(--page-bg); }
+    .theme-toggle { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 1px solid var(--border-strong); border-radius: 999px; background: var(--button-bg); color: var(--text); cursor: pointer; font: inherit; font-size: 16px; }
+    .theme-toggle:hover { border-color: var(--link); color: var(--link); }
+    .la-theme-widget { margin: 12px 0 20px; min-height: 24px; color: var(--text); }
+    .identity-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: 16px 0; }
+    .identity-grid div { display: flex; flex-direction: column; }
+    .identity-grid strong { font-size: 15px; }
+    .identity-grid span, .topic-card span, .featured-list small { color: var(--muted); font-size: 13px; }
+    .section-block { padding-top: 28px; }
+    .section-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+    .section-heading h2 { margin: 0; }
+    .section-heading a { font-size: 14px; }
+    .topic-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+    .topic-card { display: block; padding: 14px; border: 1px solid var(--border); text-decoration: none; color: var(--text); }
+    .topic-card:hover { border-color: var(--border-strong); }
+    .topic-card strong { display: block; margin: 4px 0; font-size: 17px; }
+    .topic-index, .featured-list > a > span { color: var(--muted) !important; font-size: 12px !important; }
+    .featured-list { border-top: 1px solid var(--border); }
+    .featured-list > a { display: flex; gap: 14px; padding: 12px 0; border-bottom: 1px solid var(--border); text-decoration: none; color: var(--text); }
+    .featured-list div { display: flex; flex-direction: column; }
+    .latest-block { max-width: 860px; }
+    @media (max-width: 680px) {
+        body { padding: 16px; }
+        nav a { display: inline-block; margin-right: 12px; margin-bottom: 8px; }
+        .identity-grid { grid-template-columns: repeat(2, 1fr); }
+        .topic-grid { grid-template-columns: 1fr; }
+    }
+</style>
+
+</head>
+<body>
+    <nav>
+  
+  <a href="/">首页</a>
+  <a href="https://blog.margrop.com/" target="_blank" rel="noopener">AI Daily</a>
+  <a href="/start-here/">开始这里</a>
+  <a href="/tag/ai/">AI Agent</a>
+  <a href="/tag/docker/">Self-hosting</a>
+  <a href="/tag/%e8%bf%90%e7%bb%b4/">Engineering</a>
+  <a href="/post/">归档</a>
+  <a href="/tags/">标签</a>
+  <a href="/post/about/">关于</a>
+  <a href="https://download.margrop.net" target="_blank" rel="noopener">下载</a>
+  <a href="/post/favorites/">Link</a>
+  <a href="/post/github-project-stars/">Github</a>
+  
+  <a href="https://github-mirrors.margrop.net" target="_blank" rel="noopener">Github加速</a>
+  <a href="https://status.anye.xyz/" target="_blank" rel="noopener">Docker加速</a>
+  
+  <a href="https://blog.margrop.net/index.xml" target="_blank" rel="noopener">RSS</a>
+</nav>
+
+    <div class="language-switcher">
+  <button class="theme-toggle" type="button" data-theme-toggle aria-label="切换到暗黑模式" aria-pressed="false">🌙</button>
+
+  
+  
+    <a href="/post/macos-launchagent-python-httpx-proxy-no-route-to-host/" class="active">中文</a>
+  
+    <a href="/en/post/macos-launchagent-python-httpx-proxy-no-route-to-host/" class="">English</a>
+  
+  
+</div>
+
+    
+    <article>
+        <h1>macOS LaunchAgent 里的 Python 程序连不上外网？一文搞懂 httpx 代理陷阱的完整排查与修复</h1>
+        <div class="meta">
+            发布时间: 2026-05-30
+            <span class="meta-separator">·</span>
+            <span>阅读量 <span data-page-view-count>--</span></span>
+        </div>
+        
+<div class="tags">
+    
+    <a href="/tag/macos/"><span class="tag">macOS</span></a>
+    
+    <a href="/tag/python/"><span class="tag">Python</span></a>
+    
+    <a href="/tag/httpx/"><span class="tag">httpx</span></a>
+    
+    <a href="/tag/proxy/"><span class="tag">Proxy</span></a>
+    
+    <a href="/tag/launchagent/"><span class="tag">LaunchAgent</span></a>
+    
+    <a href="/tag/launchctl/"><span class="tag">Launchctl</span></a>
+    
+    <a href="/tag/networking/"><span class="tag">Networking</span></a>
+    
+    <a href="/tag/ai-agent/"><span class="tag">AI Agent</span></a>
+    
+    <a href="/tag/wecom/"><span class="tag">WeCom</span></a>
+    
+    <a href="/tag/debugging/"><span class="tag">Debugging</span></a>
+    
+    <a href="/tag/sysadmin/"><span class="tag">Sysadmin</span></a>
+    
+    <a href="/tag/ai/"><span class="tag">AI</span></a>
+    
+    <a href="/tag/devops/"><span class="tag">DevOps</span></a>
+    
+</div>
+
+
+        <div class="content">
+            <blockquote>
+<p><strong>先说结论：</strong></p>
+<p>macOS 的 LaunchAgent 环境下，Python httpx 库会自动读取系统代理设置（<code>scutil --proxy</code>），但 LaunchAgent 进程可能根本无法访问该代理服务器——于是请求静默失败，报错 <code>All connection attempts failed</code> 或 <code>No route to host</code>。</p>
+<p>解决方案只需要一行：在 LaunchAgent 的 plist 文件中添加 <code>NO_PROXY=*</code>。</p>
+<p>这篇文章记录了我从发现 AI Agent 企业微信消息不回复、到逐步排查代理问题、最终定位到 macOS 系统代理与 LaunchAgent 网络隔离的完整过程。涉及 Python httpx 源码分析、macOS 代理机制深度解析、以及 LaunchAgent 运行环境的诸多坑点。</p>
+</blockquote>
+<p><img alt="macOS LaunchAgent + Python httpx 代理链路问题示意图" src="/post-images/macos-launchagent-proxy-fix/01-proxy-chain-diagram.svg"></p>
+<p><em>图 1：macOS LaunchAgent 中 Python httpx 的代理链路问题全景图。httpx 通过 <code>trust_env=True</code> 自动读取系统代理设置，但 LaunchAgent 进程无法访问代理服务器，导致连接失败。</em></p>
+<hr>
+<h2 id="问题背景ai-agent-迁移后企业微信不回复">问题背景：AI Agent 迁移后企业微信不回复</h2>
+<p>事情是这样的——最近我把家里的 AI Agent 系统从一个框架迁移到了另一个框架。AI Agent 是一个自驱动的智能体系统，可以自动执行定时任务、管理记忆、处理多平台消息。迁移完成后，大部分功能都正常工作：</p>
+<ul>
+<li>定时任务（Cron Jobs）正常执行，每天自动健康检查、写博客、维护记忆</li>
+<li>Web Dashboard 正常运行，可以在浏览器中查看 Agent 状态</li>
+<li>钉钉（DingTalk）消息正常收发，通过 Stream Mode 长连接</li>
+<li>记忆系统和 Skills 都已迁移成功</li>
+</ul>
+<p><strong>唯独企业微信（WeCom）出了问题。</strong></p>
+<p>每次给企业微信的 AI Agent 发消息，都石沉大海，没有任何回复。查看 Gateway 日志，看到了这条熟悉的报错：</p>
+<pre tabindex="0"><code>[WecomCallback] Initial token refresh failed for app &#39;default&#39;: All connection attempts failed
+</code></pre><p>这就很奇怪了——<strong>同一个网络环境下，钉钉连接正常，为什么企业微信就不行？</strong></p>
+<hr>
+<h2 id="第一轮排查确认问题范围">第一轮排查：确认问题范围</h2>
+<p>首先，我需要确认问题到底出在哪里。企业微信的回调模式（Callback Mode）需要做两件事：</p>
+<ol>
+<li><strong>接收消息</strong>：企业微信 POST 加密 XML 到本地 HTTP 服务器（端口 8645）</li>
+<li><strong>发送回复</strong>：通过 Access Token 调用企业微信的 <code>message/send</code> API</li>
+</ol>
+<p>接收消息的 HTTP 服务器已经正常启动了：</p>
+<pre tabindex="0"><code>[WecomCallback] HTTP server listening on 0.0.0.0:8645/wecom/callback
+</code></pre><p>问题出在第二步——<strong>获取 Access Token 时就失败了</strong>。</p>
+<p>企业微信的 Token 获取接口是 <code>https://qyapi.weixin.qq.com/cgi-bin/gettoken</code>，需要通过 HTTP 请求调用。这个请求在 Gateway 启动时就会执行，但每次都失败。</p>
+<hr>
+<h2 id="第二轮排查直接运行-vs-launchagent-运行">第二轮排查：直接运行 vs LaunchAgent 运行</h2>
+<p>为了定位问题，我做了一个对比实验。</p>
+<h3 id="直接在终端运行-gateway">直接在终端运行 Gateway</h3>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>export HTTP_PROXY<span style="color:#f92672">=</span>http://your-proxy:port
+</span></span><span style="display:flex;"><span>export HTTPS_PROXY<span style="color:#f92672">=</span>http://your-proxy:port
+</span></span><span style="display:flex;"><span>python -m hermes_cli.main gateway run
+</span></span></code></pre></div><p><strong>结果：Token 刷新成功！</strong></p>
+<pre tabindex="0"><code>[WecomCallback] Token refreshed for app &#39;default&#39;, expires in 7200s
+</code></pre><h3 id="通过-launchagent-运行-gateway">通过 LaunchAgent 运行 Gateway</h3>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>launchctl load ~/Library/LaunchAgents/ai.hermes.gateway.plist
+</span></span></code></pre></div><p><strong>结果：Token 刷新失败！</strong></p>
+<pre tabindex="0"><code>[WecomCallback] Initial token refresh failed for app &#39;default&#39;: All connection attempts failed
+</code></pre><p>这就很有意思了——<strong>同样的代码、同样的配置、同样的环境变量，直接运行就成功，通过 LaunchAgent 运行就失败。</strong></p>
+<p>这个对比实验说明，问题不在于代码本身，也不在于环境变量的值，而在于 <strong>LaunchAgent 的运行环境和终端环境有什么不同</strong>。</p>
+<hr>
+<h2 id="第三轮排查代理连通性测试">第三轮排查：代理连通性测试</h2>
+<p>既然报错是 <code>All connection attempts failed</code>，那很可能是网络连接问题。我先测试了代理服务器的连通性：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># 从终端测试代理</span>
+</span></span><span style="display:flex;"><span>curl -x http://your-proxy:port -s -o /dev/null -w <span style="color:#e6db74">&#39;%{http_code}&#39;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  <span style="color:#e6db74">&#39;https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=test&amp;corpsecret=test&#39;</span>
+</span></span></code></pre></div><p><strong>结果：200 OK</strong>（虽然返回了业务错误码，但说明请求成功到达了企业微信 API）</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># 测试不通过代理直接连接</span>
+</span></span><span style="display:flex;"><span>curl -s -o /dev/null -w <span style="color:#e6db74">&#39;%{http_code}&#39;</span> <span style="color:#e6db74">&#39;https://qyapi.weixin.qq.com&#39;</span>
+</span></span></code></pre></div><p><strong>结果：200 OK</strong></p>
+<p>所以：</p>
+<ul>
+<li>代理服务器可达</li>
+<li>通过代理可以访问企业微信 API</li>
+<li>不通过代理也可以直接访问企业微信 API</li>
+</ul>
+<p><strong>那为什么 LaunchAgent 里的程序就不行？</strong></p>
+<hr>
+<h2 id="第四轮排查检查-launchagent-的环境变量">第四轮排查：检查 LaunchAgent 的环境变量</h2>
+<p>我检查了 LaunchAgent 启动的 Gateway 进程的环境变量：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>PID<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>pgrep -f <span style="color:#e6db74">&#39;hermes_cli.main gateway&#39;</span><span style="color:#66d9ef">)</span>
+</span></span><span style="display:flex;"><span>ps eww -p $PID | tr <span style="color:#e6db74">&#39; &#39;</span> <span style="color:#e6db74">&#39;\n&#39;</span> | grep -i proxy
+</span></span></code></pre></div><p><strong>结果：</strong></p>
+<pre tabindex="0"><code>NO_PROXY=localhost,127.0.0.1,your-proxy-ip,api.minimaxi.com
+HTTPS_PROXY=http://your-proxy:port
+HTTP_PROXY=http://your-proxy:port
+</code></pre><p>环境变量设置正确啊！<code>HTTP_PROXY</code> 和 <code>HTTPS_PROXY</code> 都在。</p>
+<p>但问题来了——<strong>这些环境变量设置后，httpx 库真的会用它们吗？</strong></p>
+<hr>
+<h2 id="第五轮排查用-python-直接测试-httpx">第五轮排查：用 Python 直接测试 httpx</h2>
+<p>为了验证 httpx 是否真的使用了代理环境变量，我写了一个简单的测试脚本：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-python" data-lang="python"><span style="display:flex;"><span><span style="color:#f92672">import</span> httpx
+</span></span><span style="display:flex;"><span><span style="color:#f92672">import</span> asyncio
+</span></span><span style="display:flex;"><span><span style="color:#f92672">import</span> os
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">async</span> <span style="color:#66d9ef">def</span> <span style="color:#a6e22e">test</span>():
+</span></span><span style="display:flex;"><span>    print(<span style="color:#e6db74">f</span><span style="color:#e6db74">&#34;HTTP_PROXY: </span><span style="color:#e6db74">{</span>os<span style="color:#f92672">.</span>environ<span style="color:#f92672">.</span>get(<span style="color:#e6db74">&#39;HTTP_PROXY&#39;</span>)<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>)
+</span></span><span style="display:flex;"><span>    print(<span style="color:#e6db74">f</span><span style="color:#e6db74">&#34;HTTPS_PROXY: </span><span style="color:#e6db74">{</span>os<span style="color:#f92672">.</span>environ<span style="color:#f92672">.</span>get(<span style="color:#e6db74">&#39;HTTPS_PROXY&#39;</span>)<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>)
+</span></span><span style="display:flex;"><span>    
+</span></span><span style="display:flex;"><span>    client <span style="color:#f92672">=</span> httpx<span style="color:#f92672">.</span>AsyncClient(timeout<span style="color:#f92672">=</span><span style="color:#ae81ff">10.0</span>, trust_env<span style="color:#f92672">=</span><span style="color:#66d9ef">True</span>)
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">try</span>:
+</span></span><span style="display:flex;"><span>        resp <span style="color:#f92672">=</span> <span style="color:#66d9ef">await</span> client<span style="color:#f92672">.</span>get(
+</span></span><span style="display:flex;"><span>            <span style="color:#e6db74">&#39;https://qyapi.weixin.qq.com/cgi-bin/gettoken&#39;</span>,
+</span></span><span style="display:flex;"><span>            params<span style="color:#f92672">=</span>{<span style="color:#e6db74">&#39;corpid&#39;</span>: <span style="color:#e6db74">&#39;test&#39;</span>, <span style="color:#e6db74">&#39;corpsecret&#39;</span>: <span style="color:#e6db74">&#39;test&#39;</span>}
+</span></span><span style="display:flex;"><span>        )
+</span></span><span style="display:flex;"><span>        print(<span style="color:#e6db74">f</span><span style="color:#e6db74">&#39;Status: </span><span style="color:#e6db74">{</span>resp<span style="color:#f92672">.</span>status_code<span style="color:#e6db74">}</span><span style="color:#e6db74">&#39;</span>)
+</span></span><span style="display:flex;"><span>        print(<span style="color:#e6db74">f</span><span style="color:#e6db74">&#39;Body: </span><span style="color:#e6db74">{</span>resp<span style="color:#f92672">.</span>text[:<span style="color:#ae81ff">200</span>]<span style="color:#e6db74">}</span><span style="color:#e6db74">&#39;</span>)
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">except</span> <span style="color:#a6e22e">Exception</span> <span style="color:#66d9ef">as</span> e:
+</span></span><span style="display:flex;"><span>        print(<span style="color:#e6db74">f</span><span style="color:#e6db74">&#39;ERROR: </span><span style="color:#e6db74">{</span>type(e)<span style="color:#f92672">.</span>__name__<span style="color:#e6db74">}</span><span style="color:#e6db74">: </span><span style="color:#e6db74">{</span>e<span style="color:#e6db74">}</span><span style="color:#e6db74">&#39;</span>)
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">finally</span>:
+</span></span><span style="display:flex;"><span>        <span style="color:#66d9ef">await</span> client<span style="color:#f92672">.</span>aclose()
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>asyncio<span style="color:#f92672">.</span>run(test())
+</span></span></code></pre></div><p><strong>在终端中运行：</strong> 成功，返回 200。</p>
+<p><strong>在 LaunchAgent 环境中运行：</strong> 失败，<code>All connection attempts failed</code>。</p>
+<p>这证实了问题确实出在 httpx 的网络请求层面。</p>
+<hr>
+<h2 id="关键发现httpx-的-trust_envtrue-不只是读环境变量">关键发现：httpx 的 <code>trust_env=True</code> 不只是读环境变量</h2>
+<p>这是整个排查过程中最关键的发现。</p>
+<h3 id="httpx-的代理检测机制">httpx 的代理检测机制</h3>
+<p>Python 的 httpx 库在创建客户端时，如果设置了 <code>trust_env=True</code>，代理检测流程如下：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-python" data-lang="python"><span style="display:flex;"><span><span style="color:#75715e"># Python 标准库 urllib.request.getproxies() 的逻辑</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">def</span> <span style="color:#a6e22e">getproxies</span>():
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">return</span> getproxies_environment() <span style="color:#f92672">or</span> getproxies_macosx_sysconf()
+</span></span></code></pre></div><p>这意味着：</p>
+<ol>
+<li><strong>优先读取环境变量</strong>：<code>HTTP_PROXY</code>、<code>HTTPS_PROXY</code>、<code>NO_PROXY</code> 等</li>
+<li><strong>如果环境变量为空，才读取系统代理设置</strong>：在 macOS 上通过 <code>_scproxy</code> 模块调用 <code>SCDynamicStoreCopyProxies</code>（和 <code>scutil --proxy</code> 读取的是同一份数据）</li>
+</ol>
+<p><strong>但这里有个坑</strong>：即使 <code>NO_PROXY</code> 只设置了 <code>localhost,127.0.0.1</code>，<code>getproxies_environment()</code> 也会返回非空结果，导致 <code>getproxies_macosx_sysconf()</code> <strong>永远不会被调用</strong>。</p>
+<h3 id="macos-的-_scproxy-模块">macOS 的 <code>_scproxy</code> 模块</h3>
+<p>Python 在 macOS 上有一个特殊的 C 扩展模块 <code>_scproxy</code>，它通过 macOS 的 SystemConfiguration 框架读取系统代理设置。这个模块的实现大致如下：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-c" data-lang="c"><span style="display:flex;"><span><span style="color:#75715e">// CPython 源码 Modules/_scproxy.c
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span><span style="color:#66d9ef">static</span> PyObject<span style="color:#f92672">*</span>
+</span></span><span style="display:flex;"><span><span style="color:#a6e22e">get_proxies</span>(PyObject <span style="color:#f92672">*</span>self, PyObject <span style="color:#f92672">*</span><span style="color:#a6e22e">Py_UNUSED</span>(ignored))
+</span></span><span style="display:flex;"><span>{
+</span></span><span style="display:flex;"><span>    <span style="color:#75715e">// 调用 macOS SystemConfiguration API
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>    CFDictionaryRef proxies <span style="color:#f92672">=</span> <span style="color:#a6e22e">SCDynamicStoreCopyProxies</span>(NULL);
+</span></span><span style="display:flex;"><span>    <span style="color:#75715e">// 将代理配置转换为 Python 字典
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>    <span style="color:#75715e">// ...
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>}
+</span></span></code></pre></div><p>这个模块读取的数据和 <code>scutil --proxy</code> 命令输出的是同一份——都是 macOS 系统偏好设置中配置的代理服务器。</p>
+<h3 id="关键点no_proxy-的特殊行为">关键点：<code>NO_PROXY=*</code> 的特殊行为</h3>
+<p>通过阅读 httpx 源码，我发现了一个关键细节：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-python" data-lang="python"><span style="display:flex;"><span><span style="color:#75715e"># httpx/_utils.py</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> hostname <span style="color:#f92672">==</span> <span style="color:#e6db74">&#34;*&#34;</span>:
+</span></span><span style="display:flex;"><span>    <span style="color:#75715e"># If NO_PROXY=* is used, bypass any information</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#75715e"># from HTTP_PROXY, HTTPS_PROXY, ALL_PROXY, and always ignore proxies.</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">return</span> {}
+</span></span></code></pre></div><p>当 <code>NO_PROXY</code> 设置为 <code>*</code> 时，httpx 会<strong>直接返回空代理配置</strong>，完全跳过所有代理。这是一个「核弹级」的代理禁用选项。</p>
+<hr>
+<h2 id="根因定位系统代理--launchagent-网络隔离--连接失败">根因定位：系统代理 + LaunchAgent 网络隔离 = 连接失败</h2>
+<p>经过反复测试，我终于定位到了完整的根因链。</p>
+<h3 id="macos-的两套代理体系">macOS 的两套代理体系</h3>
+<p>macOS 上存在<strong>两套独立的代理配置</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>来源</th>
+<th>配置方式</th>
+<th>影响范围</th>
+<th>读取方式</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>环境变量</td>
+<td><code>export HTTP_PROXY=...</code></td>
+<td>终端及子进程</td>
+<td><code>os.environ</code></td>
+</tr>
+<tr>
+<td>系统代理</td>
+<td>系统偏好设置 → 网络 → 代理</td>
+<td>GUI 应用、系统服务</td>
+<td><code>_scproxy</code> / <code>SCDynamicStoreCopyProxies</code></td>
+</tr>
+</tbody>
+</table>
+<p>当终端中没有设置代理环境变量时，httpx 会通过 <code>_scproxy</code> 读取系统代理设置。</p>
+<h3 id="launchagent-的网络隔离问题">LaunchAgent 的网络隔离问题</h3>
+<p>macOS 的 LaunchAgent 由 <code>launchd</code> 管理，虽然以当前用户身份运行，但<strong>网络路由可能与终端环境不同</strong>。特别是：</p>
+<ul>
+<li>终端中可以正常访问的代理服务器，从 LaunchAgent 环境中可能 <code>No route to host</code></li>
+<li>这是 macOS 安全沙箱和网络隔离策略导致的</li>
+<li>LaunchAgent 运行在 <code>launchd</code> 的子进程中，可能没有完全继承终端的网络栈配置</li>
+</ul>
+<h3 id="完整的根因链">完整的根因链</h3>
+<pre tabindex="0"><code>1. macOS 系统偏好设置中配置了代理服务器
+          ↓
+2. LaunchAgent 启动 Gateway 进程
+          ↓
+3. httpx 创建 AsyncClient 时 trust_env=True
+          ↓
+4. httpx 通过 _scproxy 读取到系统代理设置
+          ↓
+5. httpx 尝试通过代理连接企业微信 API
+          ↓
+6. LaunchAgent 环境中代理服务器不可达（No route to host）
+          ↓
+7. 连接失败，报错 &#34;All connection attempts failed&#34;
+</code></pre><h3 id="为什么钉钉没问题">为什么钉钉没问题？</h3>
+<p>钉钉使用的是 Stream Mode（长连接），底层使用的是 <code>requests</code> 库，但它的连接建立过程不依赖 httpx 的代理检测机制。钉钉 SDK 有自己的网络连接逻辑，可能走了不同的代码路径，或者在连接建立时使用了不同的代理策略。</p>
+<hr>
+<h2 id="解决方案">解决方案</h2>
+<p>理解了根因后，有几种解决方案：</p>
+<h3 id="方案一no_proxy推荐最简单">方案一：NO_PROXY=*（推荐，最简单）</h3>
+<p>在 LaunchAgent 的 plist 文件中添加 <code>NO_PROXY=*</code>：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-xml" data-lang="xml"><span style="display:flex;"><span><span style="color:#f92672">&lt;key&gt;</span>EnvironmentVariables<span style="color:#f92672">&lt;/key&gt;</span>
+</span></span><span style="display:flex;"><span><span style="color:#f92672">&lt;dict&gt;</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">&lt;key&gt;</span>PATH<span style="color:#f92672">&lt;/key&gt;</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">&lt;string&gt;</span>/usr/local/bin:/usr/bin:/bin<span style="color:#f92672">&lt;/string&gt;</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">&lt;key&gt;</span>NO_PROXY<span style="color:#f92672">&lt;/key&gt;</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">&lt;string&gt;</span>*<span style="color:#f92672">&lt;/string&gt;</span>
+</span></span><span style="display:flex;"><span><span style="color:#f92672">&lt;/dict&gt;</span>
+</span></span></code></pre></div><p>这会让 httpx 完全跳过代理，直接连接目标服务器。</p>
+<h3 id="方案二移除系统代理设置">方案二：移除系统代理设置</h3>
+<p>如果不需要系统代理，可以在系统偏好设置中关闭：</p>
+<p><strong>系统偏好设置 → 网络 → 高级 → 代理 → 取消所有代理勾选</strong></p>
+<p>但这会影响所有应用程序，不推荐。</p>
+<h3 id="方案三在代码中显式禁用代理">方案三：在代码中显式禁用代理</h3>
+<p>如果你可以修改代码，可以在创建 httpx 客户端时显式设置 <code>proxy=None</code>：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-python" data-lang="python"><span style="display:flex;"><span>client <span style="color:#f92672">=</span> httpx<span style="color:#f92672">.</span>AsyncClient(
+</span></span><span style="display:flex;"><span>    timeout<span style="color:#f92672">=</span><span style="color:#ae81ff">20.0</span>,
+</span></span><span style="display:flex;"><span>    proxy<span style="color:#f92672">=</span><span style="color:#66d9ef">None</span>,  <span style="color:#75715e"># 显式禁用代理</span>
+</span></span><span style="display:flex;"><span>    trust_env<span style="color:#f92672">=</span><span style="color:#66d9ef">False</span>,  <span style="color:#75715e"># 不读取环境变量和系统代理</span>
+</span></span><span style="display:flex;"><span>)
+</span></span></code></pre></div><p>但这需要修改源代码，不够灵活。</p>
+<h3 id="推荐方案">推荐方案</h3>
+<p><strong>方案一</strong>是最优解——不需要修改代码，不需要修改系统设置，只需要在 LaunchAgent 的 plist 中加一行。</p>
+<hr>
+<h2 id="验证修复">验证修复</h2>
+<p>修改 plist 文件后，重新加载 LaunchAgent：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># 卸载旧配置</span>
+</span></span><span style="display:flex;"><span>launchctl unload ~/Library/LaunchAgents/ai.hermes.gateway.plist
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 重新加载</span>
+</span></span><span style="display:flex;"><span>launchctl load ~/Library/LaunchAgents/ai.hermes.gateway.plist
+</span></span></code></pre></div><p>查看 Gateway 日志：</p>
+<pre tabindex="0"><code>[WecomCallback] Token refreshed for app &#39;default&#39;, expires in 7200s
+[WecomCallback] ✓ wecom_callback connected
+</code></pre><p><strong>完美！</strong> Token 刷新成功，企业微信连接正常。</p>
+<p>同时，钉钉连接也正常——说明 <code>NO_PROXY=*</code> 不会影响已经正常的连接。</p>
+<hr>
+<h2 id="深入理解macos-代理机制全景图">深入理解：macOS 代理机制全景图</h2>
+<p>为了帮助大家更好地理解这个问题，我来详细解析 macOS 的代理机制。</p>
+<h3 id="三层代理配置">三层代理配置</h3>
+<p>macOS 的代理配置分为三层：</p>
+<p><strong>第一层：系统偏好设置（System Preferences）</strong></p>
+<p>这是最直观的配置方式，通过图形界面设置：</p>
+<pre tabindex="0"><code>系统偏好设置 → 网络 → 高级 → 代理
+</code></pre><p>设置后，数据存储在 SystemConfiguration 框架中，可以通过 <code>scutil --proxy</code> 查看。</p>
+<p><strong>第二层：环境变量（Environment Variables）</strong></p>
+<p>通过 <code>export HTTP_PROXY=...</code> 设置，只影响当前终端会话和子进程。</p>
+<p><strong>第三层：应用层配置</strong></p>
+<p>某些应用（如浏览器、IDE）有自己的代理配置，独立于系统设置。</p>
+<h3 id="httpx-的代理检测优先级">httpx 的代理检测优先级</h3>
+<p>httpx 的 <code>trust_env=True</code> 按以下优先级检测代理：</p>
+<ol>
+<li><strong>环境变量</strong>（<code>HTTP_PROXY</code>、<code>HTTPS_PROXY</code>、<code>NO_PROXY</code>）</li>
+<li><strong>系统代理</strong>（通过 <code>_scproxy</code> 读取）</li>
+</ol>
+<p><strong>关键点</strong>：如果环境变量中有任何代理相关配置（包括 <code>NO_PROXY</code>），系统代理就不会被读取。</p>
+<h3 id="launchagent-的特殊性">LaunchAgent 的特殊性</h3>
+<p>LaunchAgent 是 macOS 的后台服务管理机制，由 <code>launchd</code> 管理。它的特殊之处在于：</p>
+<ol>
+<li><strong>不通过 Shell 启动</strong>：不会读取 <code>.zshrc</code>、<code>.bashrc</code> 等 Shell 配置文件</li>
+<li><strong>网络环境可能不同</strong>：虽然以当前用户身份运行，但网络路由可能与终端不同</li>
+<li><strong>环境变量需要显式设置</strong>：在 plist 的 <code>EnvironmentVariables</code> 中配置</li>
+<li><strong>日志需要显式配置</strong>：通过 <code>StandardOutPath</code> 和 <code>StandardErrorPath</code> 配置</li>
+</ol>
+<hr>
+<h2 id="常见陷阱与最佳实践">常见陷阱与最佳实践</h2>
+<h3 id="陷阱-1只设置-http_proxy不设置-no_proxy">陷阱 1：只设置 HTTP_PROXY，不设置 NO_PROXY</h3>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-xml" data-lang="xml"><span style="display:flex;"><span><span style="color:#75715e">&lt;!-- 错误示例 --&gt;</span>
+</span></span><span style="display:flex;"><span><span style="color:#f92672">&lt;key&gt;</span>HTTP_PROXY<span style="color:#f92672">&lt;/key&gt;</span>
+</span></span><span style="display:flex;"><span><span style="color:#f92672">&lt;string&gt;</span>http://proxy:port<span style="color:#f92672">&lt;/string&gt;</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e">&lt;!-- 缺少 NO_PROXY --&gt;</span>
+</span></span></code></pre></div><p>这会导致所有请求都尝试通过代理，如果代理不可达，就会失败。</p>
+<h3 id="陷阱-2no_proxy-设置不完整">陷阱 2：NO_PROXY 设置不完整</h3>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-xml" data-lang="xml"><span style="display:flex;"><span><span style="color:#75715e">&lt;!-- 不够彻底 --&gt;</span>
+</span></span><span style="display:flex;"><span><span style="color:#f92672">&lt;key&gt;</span>NO_PROXY<span style="color:#f92672">&lt;/key&gt;</span>
+</span></span><span style="display:flex;"><span><span style="color:#f92672">&lt;string&gt;</span>localhost,127.0.0.1<span style="color:#f92672">&lt;/string&gt;</span>
+</span></span></code></pre></div><p>这只排除了本地地址，其他地址仍然会尝试通过代理。</p>
+<h3 id="陷阱-3以为终端和-launchagent-环境一样">陷阱 3：以为终端和 LaunchAgent 环境一样</h3>
+<p>这是最常见的误区。终端中能正常运行的程序，放到 LaunchAgent 中可能会有各种问题，包括但不限于：</p>
+<ul>
+<li>网络路由不同</li>
+<li>环境变量缺失</li>
+<li>文件路径不同</li>
+<li>权限不同</li>
+<li>DNS 解析行为不同</li>
+</ul>
+<h3 id="陷阱-4忽略-_scproxy-的存在">陷阱 4：忽略 <code>_scproxy</code> 的存在</h3>
+<p>很多开发者不知道 macOS 有 <code>_scproxy</code> 这个机制，以为 httpx 只会读取环境变量。实际上，当环境变量为空时，httpx 会自动读取系统代理设置。</p>
+<h3 id="最佳实践">最佳实践</h3>
+<ol>
+<li><strong>LaunchAgent 中显式设置所有需要的环境变量</strong>，不要依赖继承</li>
+<li><strong>使用 <code>NO_PROXY=*</code> 绕过系统代理</strong>，除非你确定 LaunchAgent 能访问代理</li>
+<li><strong>在 plist 中设置 <code>StandardOutPath</code> 和 <code>StandardErrorPath</code></strong>，方便查看日志</li>
+<li><strong>使用 <code>launchctl list | grep your-label</code> 检查 LaunchAgent 状态</strong></li>
+<li><strong>在 LaunchAgent 中设置 <code>PATH</code></strong>，确保能找到所有需要的命令</li>
+</ol>
+<hr>
+<h2 id="类似问题的其他场景">类似问题的其他场景</h2>
+<p>这个问题不仅限于 LaunchAgent，以下场景也可能遇到类似的代理陷阱：</p>
+<h3 id="docker-容器中的代理问题">Docker 容器中的代理问题</h3>
+<p>Docker 容器可能继承宿主机的代理设置，但容器内的网络环境与宿主机不同。解决方案类似：在 Dockerfile 或 docker-compose.yml 中显式设置 <code>NO_PROXY</code>。</p>
+<h3 id="cicd-环境中的代理问题">CI/CD 环境中的代理问题</h3>
+<p>GitHub Actions、GitLab CI 等 CI/CD 环境中，代理设置可能与本地环境不同。建议在 CI 配置中显式设置所有代理相关环境变量。</p>
+<h3 id="ssh-远程执行中的代理问题">SSH 远程执行中的代理问题</h3>
+<p>通过 SSH 远程执行命令时，环境变量可能与 SSH 登录时不同。建议在远程命令中显式设置代理环境变量。</p>
+<hr>
+<h2 id="qa">Q&amp;A</h2>
+<h3 id="q1-为什么直接运行就成功launchagent-运行就失败">Q1: 为什么直接运行就成功，LaunchAgent 运行就失败？</h3>
+<p><strong>A:</strong> 因为 macOS 的 LaunchAgent 运行在 <code>launchd</code> 管理的隔离环境中。虽然它以当前用户身份运行，但网络路由可能与终端环境不同。特别是对于系统代理服务器，LaunchAgent 可能无法建立连接（<code>No route to host</code>）。</p>
+<h3 id="q2-我怎么知道我的程序是否受这个问题影响">Q2: 我怎么知道我的程序是否受这个问题影响？</h3>
+<p><strong>A:</strong> 如果你的 Python 程序使用 httpx 或 requests 库，并且设置了 <code>trust_env=True</code>（httpx 默认值），同时程序运行在 macOS LaunchAgent 中，那么你可能会遇到这个问题。</p>
+<p>检查方法：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># 查看系统代理设置</span>
+</span></span><span style="display:flex;"><span>scutil --proxy
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 查看 LaunchAgent 进程的环境变量</span>
+</span></span><span style="display:flex;"><span>ps eww -p &lt;PID&gt; | tr <span style="color:#e6db74">&#39; &#39;</span> <span style="color:#e6db74">&#39;\n&#39;</span> | grep -i proxy
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 测试代理连通性（从 LaunchAgent 环境）</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 需要先在 plist 中设置好环境变量，然后重启 LaunchAgent</span>
+</span></span></code></pre></div><h3 id="q3-no_proxy-会不会影响其他功能">Q3: NO_PROXY=* 会不会影响其他功能？</h3>
+<p><strong>A:</strong> 不会。<code>NO_PROXY=*</code> 只是告诉 httpx 不要使用代理，直接连接目标服务器。如果你的网络环境允许直连（大部分家庭和办公网络都支持），那么这个设置不会影响任何功能。</p>
+<h3 id="q4-除了-httpxrequests-库有这个问题吗">Q4: 除了 httpx，requests 库有这个问题吗？</h3>
+<p><strong>A:</strong> 是的。Python 的 requests 库也有类似的 <code>trust_env</code> 参数，默认为 <code>True</code>。如果 requests 库的程序运行在 LaunchAgent 中，也可能遇到同样的问题。解决方案相同：添加 <code>NO_PROXY=*</code>。</p>
+<h3 id="q5-linux-的-systemd-服务有这个问题吗">Q5: Linux 的 systemd 服务有这个问题吗？</h3>
+<p><strong>A:</strong> Linux 的 systemd 服务通常不会遇到这个问题，因为 systemd 服务的网络环境和终端环境是一致的。但如果你的 systemd 服务配置了特定的网络命名空间或安全策略，可能会有类似的问题。</p>
+<h3 id="q6-我可以在-plist-中同时设置-http_proxy-和-no_proxy-吗">Q6: 我可以在 plist 中同时设置 HTTP_PROXY 和 NO_PROXY=* 吗？</h3>
+<p><strong>A:</strong> 可以，但 <code>NO_PROXY=*</code> 会让 httpx 忽略 <code>HTTP_PROXY</code> 设置。如果你的目标是让某些请求走代理、某些不走，需要更精细地设置 <code>NO_PROXY</code>（比如 <code>NO_PROXY=localhost,127.0.0.1,internal.company.com</code>）。</p>
+<h3 id="q7-如何调试-launchagent-的网络问题">Q7: 如何调试 LaunchAgent 的网络问题？</h3>
+<p><strong>A:</strong> 可以通过以下步骤：</p>
+<ol>
+<li>在 plist 中设置 <code>StandardOutPath</code> 和 <code>StandardErrorPath</code></li>
+<li>在程序中添加详细的日志输出</li>
+<li>使用 <code>ps eww -p &lt;PID&gt;</code> 检查进程环境变量</li>
+<li>使用 <code>netstat -an | grep &lt;端口&gt;</code> 检查网络连接状态</li>
+<li>使用 <code>tcpdump</code> 或 <code>Wireshark</code> 抓包分析</li>
+</ol>
+<hr>
+<h2 id="总结">总结</h2>
+<p>这次排查的核心教训是：</p>
+<ol>
+<li><strong>macOS LaunchAgent 的网络环境和终端环境不完全相同</strong>，特别是对于系统代理服务器的访问</li>
+<li><strong>Python httpx 库的 <code>trust_env=True</code> 不只是读取环境变量</strong>，还会在环境变量为空时读取 macOS 系统代理设置（通过 <code>_scproxy</code>）</li>
+<li><strong>当代理不可达时，httpx 会报 <code>All connection attempts failed</code></strong>，这个错误信息不够明确，容易误导排查方向</li>
+<li><strong>解决方案很简单</strong>：在 LaunchAgent 的 plist 文件中添加 <code>NO_PROXY=*</code></li>
+</ol>
+<p>macOS 的代理机制对很多开发者来说是个黑盒。希望通过这篇文章，大家能对 macOS 的代理体系、Python httpx 的代理检测机制、以及 LaunchAgent 的运行环境有更深入的理解。如果你有其他关于 macOS LaunchAgent 或 Python 代理配置的问题，欢迎在评论区讨论！</p>
+<hr>
+<h2 id="参考资料">参考资料</h2>
+<ul>
+<li><a href="https://www.python-httpx.org/environment_variables/">httpx 官方文档 - 环境变量</a></li>
+<li><a href="https://www.python-httpx.org/advanced/proxies/">httpx 官方文档 - 代理配置</a></li>
+<li><a href="https://developer.apple.com/library/archive/documentation/MacOSX/Conceptual/BPSystemStartup/Chapters/CreatingLaunchdJobs.html">Apple Developer - Daemons and Services Programming Guide</a></li>
+<li><a href="https://docs.python.org/3/library/urllib.request.html#urllib.request.getproxies">Python urllib.request.getproxies 文档</a></li>
+<li><a href="https://github.com/encode/httpx/issues/1929">httpx GitHub Issue #1929 - Proxy settings not picked up from system</a></li>
+<li><a href="https://github.com/encode/httpx/issues/1669">httpx GitHub Issue #1669 - Support system proxy configuration</a></li>
+<li><a href="https://ss64.com/mac/scutil.html">macOS scutil man page</a></li>
+<li><a href="https://github.com/python/cpython/blob/main/Modules/_scproxy.c">Python _scproxy 源码</a></li>
+</ul>
+        </div>
+    </article>
+
+    
+  
+
+
+  
+    
+  
+
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk/dist/gitalk.css">
+<script src="https://cdn.jsdelivr.net/npm/gitalk/dist/gitalk.min.js"></script>
+<div id="gitalk-container" style="margin-top:40px"></div>
+<script>
+  (function(){
+    var gitalk = new Gitalk({
+      clientID: '3181fd94e501cc5db0ad',
+      clientSecret: 'af1dab79dae02c69296e6615bfcecf47fc8615ee',
+      repo: 'margropcomment.margrop.io',
+      owner: 'margrop',
+      admin: ["margrop"],
+      
+      id: '\/post\/macos-launchagent-python-httpx-proxy-no-rou',
+      
+      distractionFreeMode: false
+    });
+    gitalk.render('gitalk-container');
+  })();
+</script>
+  
+
+
+
+
+    
+<div class="site-stats" aria-label="访问统计">
+    <span>本文阅读量 <span data-page-view-count>--</span></span>
+</div>
+
+
+    
+    <script type="text/javascript" src="https://js.users.51.la/21044367.js"></script>
+    <script charset="UTF-8" id="LA_COLLECT" src="//sdk.51.la/js-sdk-pro.min.js"></script>
+    <script>LA.init({id: "1vVTUWl7zoRjnKXi",ck: "1vVTUWl7zoRjnKXi"})</script>
+    <script src="https://sdk.51.la/perf/js-sdk-perf.min.js" crossorigin="anonymous"></script>
+    <script>
+      new LingQue.Monitor().init({id:"202teQt8THXwqyve"});
+    </script>
+    <script defer src="/js/page-views.js"></script>
+    <div class="la-theme-widget" data-51la-widget aria-label="51.la 网站统计"></div>
+    <script defer src="/js/51la-theme-widget.js"></script>
+</body>
+</html>

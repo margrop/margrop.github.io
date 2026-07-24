@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="en-US">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Double-Consumed Streaming: Debugging a NewAPI v1.0.0-rc.10 MiniMax Proxy Bug - Margrop Blog</title>
+<meta name="description" content="TL;DR An AI Agent was producing duplicated replies in DingTalk — not two separate messages, but a single message whose content appeared twice. The root cause …">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://blog.margrop.net/en/post/newapi-streaming-duplicate-content-debugging/"><meta property="og:site_name" content="Margrop Blog">
+<meta property="og:title" content="Double-Consumed Streaming: Debugging a NewAPI v1.0.0-rc.10 MiniMax Proxy Bug - Margrop Blog">
+<meta property="og:description" content="TL;DR An AI Agent was producing duplicated replies in DingTalk — not two separate messages, but a single message whose content appeared twice. The root cause …">
+<meta property="og:url" content="https://blog.margrop.net/en/post/newapi-streaming-duplicate-content-debugging/">
+<meta property="og:locale" content="en_US"><meta property="og:type" content="article"><meta property="og:locale:alternate" content="zh_CN"><meta property="og:image" content="https://blog.margrop.net/images/avatar.png"><meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Double-Consumed Streaming: Debugging a NewAPI v1.0.0-rc.10 MiniMax Proxy Bug - Margrop Blog">
+<meta name="twitter:description" content="TL;DR An AI Agent was producing duplicated replies in DingTalk — not two separate messages, but a single message whose content appeared twice. The root cause …"><meta name="twitter:image" content="https://blog.margrop.net/images/avatar.png"><link rel="alternate" hreflang="zh-CN" href="https://blog.margrop.net/post/newapi-streaming-duplicate-content-debugging/"><link rel="alternate" hreflang="en-US" href="https://blog.margrop.net/en/post/newapi-streaming-duplicate-content-debugging/"><link rel="alternate" hreflang="x-default" href="https://blog.margrop.net/"><meta property="article:published_time" content="2026-05-31T18:00:00&#43;08:00">
+<meta property="article:modified_time" content="2026-05-31T18:00:00&#43;08:00"><meta property="article:tag" content="NewAPI"><meta property="article:tag" content="OneAPI"><meta property="article:tag" content="MiniMax"><meta property="article:tag" content="Streaming"><meta property="article:tag" content="AI Agent"><meta property="article:tag" content="Debugging"><meta property="article:tag" content="OpenAI Compatible API"><meta property="article:tag" content="Engineering"><script type="application/ld+json">{"@context":"https://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"Margrop"},"dateModified":"2026-05-31T18:00:00+08:00","datePublished":"2026-05-31T18:00:00+08:00","description":"TL;DR An AI Agent was producing duplicated replies in DingTalk — not two separate messages, but a single message whose content appeared twice. The root cause …","headline":"Double-Consumed Streaming: Debugging a NewAPI v1.0.0-rc.10 MiniMax Proxy Bug","mainEntityOfPage":"https://blog.margrop.net/en/post/newapi-streaming-duplicate-content-debugging/","url":"https://blog.margrop.net/en/post/newapi-streaming-duplicate-content-debugging/"}</script>
+    <meta name="baidu-site-verification" content="code-sVFZ8SER59" />
+    <script src="/js/theme-toggle.js"></script>
+
+    
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-3J2W592DHJ"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-3J2W592DHJ');
+    </script>
+
+    <style>
+    :root {
+        color-scheme: light;
+        --page-bg: #fff;
+        --surface-bg: #f4f4f4;
+        --text: #222;
+        --muted: #666;
+        --subtle: #777;
+        --border: #eee;
+        --border-strong: #ddd;
+        --link: #006CFF;
+        --tag-bg: #eee;
+        --button-bg: #fff;
+        --button-primary-bg: #333;
+    }
+    @media (prefers-color-scheme: dark) {
+        :root:not([data-theme]) {
+            color-scheme: dark;
+            --page-bg: #111315;
+            --surface-bg: #1d2126;
+            --text: #e8eaed;
+            --muted: #aeb4bd;
+            --subtle: #9aa2ad;
+            --border: #30353d;
+            --border-strong: #454c56;
+            --link: #79b8ff;
+            --tag-bg: #2a3038;
+            --button-bg: #1d2126;
+            --button-primary-bg: #e8eaed;
+        }
+    }
+    html[data-theme="dark"] {
+        color-scheme: dark;
+        --page-bg: #111315;
+        --surface-bg: #1d2126;
+        --text: #e8eaed;
+        --muted: #aeb4bd;
+        --subtle: #9aa2ad;
+        --border: #30353d;
+        --border-strong: #454c56;
+        --link: #79b8ff;
+        --tag-bg: #2a3038;
+        --button-bg: #1d2126;
+        --button-primary-bg: #e8eaed;
+    }
+    html[data-theme="light"] {
+        color-scheme: light;
+        --page-bg: #fff;
+        --surface-bg: #f4f4f4;
+        --text: #222;
+        --muted: #666;
+        --subtle: #777;
+        --border: #eee;
+        --border-strong: #ddd;
+        --link: #006CFF;
+        --tag-bg: #eee;
+        --button-bg: #fff;
+        --button-primary-bg: #333;
+    }
+    body { background: var(--page-bg); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 860px; margin: 0 auto; padding: 20px; line-height: 1.7; color: var(--text); }
+    h1 { border-bottom: 2px solid var(--border-strong); padding-bottom: 10px; }
+    article > h1 { font-size: 2em; line-height: 1.3; margin-bottom: 12px; }
+    .post-list { list-style: none; padding: 0; }
+    .post-list li { margin: 15px 0; }
+    .post-list a { text-decoration: none; color: var(--text); font-size: 18px; }
+    .post-list a:hover { color: var(--link); }
+    .date { color: var(--muted); font-size: 14px; margin-right: 10px; }
+    .tags { margin-top: 8px; }
+    .tag { background: var(--tag-bg); padding: 2px 8px; border-radius: 3px; font-size: 12px; margin-right: 5px; display: inline-block; }
+    nav { margin-bottom: 18px; border-bottom: 1px solid var(--border); padding-bottom: 15px; }
+    nav a { margin-right: 20px; text-decoration: none; color: var(--text); font-size: 16px; }
+    nav a:hover { color: var(--link); }
+    .language-switcher { display: flex; align-items: center; gap: 10px; margin: -8px 0 26px; }
+    .language-switcher a { display: inline-block; padding: 4px 10px; border: 1px solid var(--border-strong); border-radius: 999px; color: var(--muted); text-decoration: none; font-size: 14px; }
+    .language-switcher a.active { background: var(--link); border-color: var(--link); color: #fff; }
+    .content { line-height: 1.8; }
+    .content code { background: var(--surface-bg); padding: 2px 5px; border-radius: 3px; }
+    .content pre { background: var(--surface-bg); padding: 15px; overflow-x: auto; border-radius: 5px; }
+    .content img { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+    .content .code-snippet__fix {
+        margin: 0 0 1.5em;
+    }
+    .content .code-snippet__fix .code-snippet__line-index {
+        display: none !important;
+    }
+    .meta { color: var(--muted); font-size: 14px; margin-bottom: 14px; }
+    .meta-separator { margin: 0 6px; color: var(--subtle); }
+    .site-stats { display: flex; flex-wrap: wrap; gap: 10px 18px; margin: 28px 0 8px; padding-top: 12px; border-top: 1px solid var(--border); color: var(--subtle); font-size: 12px; }
+    a { color: var(--link); }
+    .hero { padding: 12px 0 24px; }
+    .hero h1 { border-bottom: 2px solid #333; }
+    .eyebrow { color: var(--muted); font-size: 12px; letter-spacing: .12em; margin: 0 0 8px; }
+    .hero-tagline { font-size: 18px; margin: 12px 0 8px; }
+    .hero-copy { color: var(--muted); margin: 0 0 14px; }
+    .hero-actions { margin: 14px 0 4px; }
+    .button { display: inline-block; margin-right: 12px; border: 1px solid var(--border-strong); border-radius: 3px; padding: 4px 10px; text-decoration: none; color: var(--text); background: var(--button-bg); font-size: 14px; }
+    .button-primary { background: var(--button-primary-bg); border-color: var(--button-primary-bg); color: var(--page-bg); }
+    .theme-toggle { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 1px solid var(--border-strong); border-radius: 999px; background: var(--button-bg); color: var(--text); cursor: pointer; font: inherit; font-size: 16px; }
+    .theme-toggle:hover { border-color: var(--link); color: var(--link); }
+    .la-theme-widget { margin: 12px 0 20px; min-height: 24px; color: var(--text); }
+    .identity-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: 16px 0; }
+    .identity-grid div { display: flex; flex-direction: column; }
+    .identity-grid strong { font-size: 15px; }
+    .identity-grid span, .topic-card span, .featured-list small { color: var(--muted); font-size: 13px; }
+    .section-block { padding-top: 28px; }
+    .section-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+    .section-heading h2 { margin: 0; }
+    .section-heading a { font-size: 14px; }
+    .topic-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+    .topic-card { display: block; padding: 14px; border: 1px solid var(--border); text-decoration: none; color: var(--text); }
+    .topic-card:hover { border-color: var(--border-strong); }
+    .topic-card strong { display: block; margin: 4px 0; font-size: 17px; }
+    .topic-index, .featured-list > a > span { color: var(--muted) !important; font-size: 12px !important; }
+    .featured-list { border-top: 1px solid var(--border); }
+    .featured-list > a { display: flex; gap: 14px; padding: 12px 0; border-bottom: 1px solid var(--border); text-decoration: none; color: var(--text); }
+    .featured-list div { display: flex; flex-direction: column; }
+    .latest-block { max-width: 860px; }
+    @media (max-width: 680px) {
+        body { padding: 16px; }
+        nav a { display: inline-block; margin-right: 12px; margin-bottom: 8px; }
+        .identity-grid { grid-template-columns: repeat(2, 1fr); }
+        .topic-grid { grid-template-columns: 1fr; }
+    }
+</style>
+
+</head>
+<body>
+    <nav>
+  
+  <a href="/en/">Home</a>
+  <a href="https://blog.margrop.com/" target="_blank" rel="noopener">AI Daily</a>
+  <a href="/en/start-here/">Start Here</a>
+  <a href="/en/tag/ai/">AI Agent</a>
+  <a href="/en/tag/docker/">Self-hosting</a>
+  <a href="/en/tag/%e8%bf%90%e7%bb%b4/">Engineering</a>
+  <a href="/en/post/">Archive</a>
+  <a href="/en/tags/">Tags</a>
+  <a href="/en/post/about/">About</a>
+  <a href="https://download.margrop.net" target="_blank" rel="noopener">Download</a>
+  <a href="/en/post/favorites/">Links</a>
+  <a href="/en/post/github-project-stars/">Github</a>
+  
+  <a href="https://blog.margrop.net/en/index.xml" target="_blank" rel="noopener">RSS</a>
+</nav>
+
+    <div class="language-switcher">
+  <button class="theme-toggle" type="button" data-theme-toggle aria-label="切换到暗黑模式" aria-pressed="false">🌙</button>
+
+  
+  
+    <a href="/post/newapi-streaming-duplicate-content-debugging/" class="">中文</a>
+  
+    <a href="/en/post/newapi-streaming-duplicate-content-debugging/" class="active">English</a>
+  
+  
+</div>
+
+    
+    <article>
+        <h1>Double-Consumed Streaming: Debugging a NewAPI v1.0.0-rc.10 MiniMax Proxy Bug</h1>
+        <div class="meta">
+            Published: 2026-05-31
+            <span class="meta-separator">·</span>
+            <span>阅读量 <span data-page-view-count>--</span></span>
+        </div>
+        
+<div class="tags">
+    
+    <a href="/en/tag/newapi/"><span class="tag">NewAPI</span></a>
+    
+    <a href="/en/tag/oneapi/"><span class="tag">OneAPI</span></a>
+    
+    <a href="/en/tag/minimax/"><span class="tag">MiniMax</span></a>
+    
+    <a href="/en/tag/streaming/"><span class="tag">Streaming</span></a>
+    
+    <a href="/en/tag/ai-agent/"><span class="tag">AI Agent</span></a>
+    
+    <a href="/en/tag/debugging/"><span class="tag">Debugging</span></a>
+    
+    <a href="/en/tag/openai-compatible-api/"><span class="tag">OpenAI Compatible API</span></a>
+    
+    <a href="/en/tag/engineering/"><span class="tag">Engineering</span></a>
+    
+</div>
+
+
+        <div class="content">
+            <blockquote>
+<p><strong>TL;DR</strong></p>
+<p>An AI Agent was producing duplicated replies in DingTalk — not two separate messages, but a single message whose content appeared twice. The root cause traced back to a streaming bug in NewAPI (the QuantumNous fork of OneAPI) v1.0.0-rc.10: when proxying MiniMax through the OpenAI Chat Completions protocol, the finish chunk contained <strong>both <code>delta.content</code> and <code>message.content</code></strong> with identical values. The Agent&rsquo;s stream handler consumed both as &ldquo;visible text,&rdquo; concatenating the content twice. The fix was straightforward: switch the OpenClaw provider protocol from <code>openai-completions</code> to <code>anthropic-messages</code>, which OneAPI natively supports and where streaming behaves correctly.</p>
+<p>No internal IPs, tokens, model IDs, or private paths appear in this article. All configuration snippets have been sanitized.</p>
+</blockquote>
+<p><img alt="Streaming duplicate analysis diagram" src="/post-images/newapi-duplicate-content/flow-architecture.svg"></p>
+<p><em>Figure 1: Self-made analysis diagram showing the complete request flow from user to duplicate reply, with the streaming chunk that causes the issue.</em></p>
+<h2 id="1-background-when-ai-agents-meet-im-every-anomaly-becomes-visible">1. Background: When AI Agents Meet IM, Every Anomaly Becomes Visible</h2>
+<p>Connecting AI Agents to instant messaging tools — DingTalk, WeChat, Lark, Slack — has become a common practice. The benefits over terminal-based interaction are obvious: no need to remember dashboard URLs or SSH into a server. Just send a message, and the Agent executes scripts, queries status, analyzes data, or summarizes documents.</p>
+<p>But this convenience also amplifies problems. Extra output in a terminal is mildly annoying; the same output in DingTalk or WeChat becomes a visible defect. More importantly, an IM integration typically involves a long chain: message receipt → deduplication → session routing → model selection → Agent execution → streaming assembly → text normalization → send API. Any layer in this chain can introduce issues, and the user only sees the final defective message.</p>
+<p>In this case, the user chatted with an OpenClaw Agent via DingTalk. Every query produced a reply with duplicated content — not two messages, but one message with two copies of the same text. This distinction is critical: it determines whether debugging starts at the send layer or the model layer.</p>
+<h2 id="2-symptoms-one-message-two-copies">2. Symptoms: One Message, Two Copies</h2>
+<p>The problem can be stated in one line:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>User says: hi
+</span></span><span style="display:flex;"><span>Expected: Hello! How can I help you today?
+</span></span><span style="display:flex;"><span>Actual: Hello! How can I help you today? Hello! How can I help you today?
+</span></span></code></pre></div><p>Evidence from OpenClaw session logs confirmed this. With the <code>custom/DIY-123</code> model (routed through the OneAPI gateway), the Agent recorded:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-json" data-lang="json"><span style="display:flex;"><span>{
+</span></span><span style="display:flex;"><span>  <span style="color:#f92672">&#34;provider&#34;</span>: <span style="color:#e6db74">&#34;custom&#34;</span>,
+</span></span><span style="display:flex;"><span>  <span style="color:#f92672">&#34;model&#34;</span>: <span style="color:#e6db74">&#34;DIY-123&#34;</span>,
+</span></span><span style="display:flex;"><span>  <span style="color:#f92672">&#34;finalText&#34;</span>: <span style="color:#e6db74">&#34;Hello! How can I help you today? Hello! How can I help you today?&#34;</span>
+</span></span><span style="display:flex;"><span>}
+</span></span></code></pre></div><p>But with a native MiniMax provider, the same prompt produced clean output:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-json" data-lang="json"><span style="display:flex;"><span>{
+</span></span><span style="display:flex;"><span>  <span style="color:#f92672">&#34;provider&#34;</span>: <span style="color:#e6db74">&#34;minimax&#34;</span>,
+</span></span><span style="display:flex;"><span>  <span style="color:#f92672">&#34;model&#34;</span>: <span style="color:#e6db74">&#34;MiniMax-M2.7&#34;</span>,
+</span></span><span style="display:flex;"><span>  <span style="color:#f92672">&#34;finalText&#34;</span>: <span style="color:#e6db74">&#34;Hello! How can I help you today?&#34;</span>
+</span></span><span style="display:flex;"><span>}
+</span></span></code></pre></div><p>The comparison was unambiguous: <strong>the same model produced different quality through different provider protocol paths.</strong> The compatible gateway path generated duplicates; the native path worked perfectly.</p>
+<p><img alt="Provider comparison diagram" src="/post-images/newapi-duplicate-content/debug-comparison.svg"></p>
+<p><em>Figure 2: Same prompt, different provider. The red path (openai-completions protocol) produces duplicates; the green path (anthropic-messages) is clean.</em></p>
+<h2 id="3-debugging-backward-tracing-layer-by-layer">3. Debugging: Backward Tracing, Layer by Layer</h2>
+<p>My approach was to avoid assumptions and instead use minimal reproducible samples to eliminate layers one at a time — essentially a backward trace from the visible symptom.</p>
+<h3 id="31-layer-1-was-the-dingtalk-send-layer-sending-twice">3.1 Layer 1: Was the DingTalk Send Layer Sending Twice?</h3>
+<p>Many IM integration issues start at the send layer. IM platforms typically have retry, callback, ack, and deduplication mechanisms. If the send API was called twice, the fix would be in the send layer.</p>
+<p>But the key clue was: <strong>the user saw one message with duplicated content, not two messages.</strong> This strongly suggested the send layer was called once with already-duplicated text.</p>
+<p>I verified by examining the DingTalk plugin&rsquo;s send path. The send layer constructs a single text item — it doesn&rsquo;t naturally loop. The real question was whether the Agent&rsquo;s final output text was already duplicated.</p>
+<h3 id="32-layer-2-agent-execution-trace">3.2 Layer 2: Agent Execution Trace</h3>
+<p>OpenClaw session logs record key fields for every turn:</p>
+<ul>
+<li><code>provider</code>: the actual provider used</li>
+<li><code>model</code>: the actual model used</li>
+<li><code>finalText</code>: the Agent&rsquo;s assembled visible text</li>
+</ul>
+<p>The logs showed the <code>custom/DIY-123</code> provider&rsquo;s <code>finalText</code> already contained duplicated content. This proved the duplication happened before the DingTalk send layer. The send layer just faithfully delivered already-corrupted text.</p>
+<p>Now the focus shifted to the model routing and provider layer. Why did the OneAPI gateway path produce duplicated content?</p>
+<h3 id="33-layer-3-direct-oneapi-streaming-test">3.3 Layer 3: Direct OneAPI Streaming Test</h3>
+<p>This was the turning point. Instead of guessing at the code level, I sent a direct curl request to the OneAPI endpoint to observe the raw streaming output:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>curl -s -X POST <span style="color:#e6db74">&#34;https://&lt;ONEAPI_ENDPOINT&gt;/v1/chat/completions&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  -H <span style="color:#e6db74">&#34;Authorization: Bearer &lt;TOKEN&gt;&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  -H <span style="color:#e6db74">&#34;Content-Type: application/json&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  -d <span style="color:#e6db74">&#39;{&#34;model&#34;:&#34;&lt;MODEL_ID&gt;&#34;,&#34;messages&#34;:[{&#34;role&#34;:&#34;user&#34;,&#34;content&#34;:&#34;hi&#34;}],&#34;stream&#34;:true,&#34;max_tokens&#34;:500}&#39;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  | python3 -c <span style="color:#e6db74">&#39;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">import sys, json
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">for line in sys.stdin:
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    line = line.strip()
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    if not line or line == &#34;data: [DONE]&#34;: continue
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    if line.startswith(&#34;data: &#34;):
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        d = json.loads(line[6:])
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        for c in d.get(&#34;choices&#34;,[]):
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">            delta = c.get(&#34;delta&#34;,{})
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">            finish = c.get(&#34;finish_reason&#34;,&#34;&#34;)
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">            msg = c.get(&#34;message&#34;,{})
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">            if &#34;content&#34; in delta and delta[&#34;content&#34;]:
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">                print(&#34;DELTA content:&#34;, repr(delta[&#34;content&#34;]))
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">            if finish:
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">                if &#34;content&#34; in msg and msg[&#34;content&#34;]:
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">                    print(&#34;FINAL message.content:&#34;, repr(msg[&#34;content&#34;]))
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">                print(&#34;FINISH:&#34;, finish)
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">&#39;</span>
+</span></span></code></pre></div><p>Output:</p>
+<pre tabindex="0"><code>DELTA content: &#39;Hello! How can I help you today?&#39;
+FINISH: stop
+FINAL message.content: &#39;Hello! How can I help you today?&#39;
+FINISH: stop
+</code></pre><p><strong>Bug confirmed.</strong> The same text appeared twice: once via <code>delta.content</code> (normal streaming event) and once via <code>message.content</code> inside the finish chunk (redundant).</p>
+<p><img alt="Curl verification output" src="/post-images/newapi-duplicate-content/curl-verify-output.png"></p>
+<p><em>Figure 3: Direct curl verification — the finish chunk contains both delta.content and message.content with identical text.</em></p>
+<h2 id="4-root-cause-oneapis-finish-chunk-includes-redundant-messagecontent">4. Root Cause: OneAPI&rsquo;s Finish Chunk Includes Redundant message.content</h2>
+<h3 id="41-openai-chat-completions-protocol-standard">4.1 OpenAI Chat Completions Protocol Standard</h3>
+<p>In the OpenAI Chat Completions streaming protocol, each chunk (except the final one) carries only the <code>delta</code> field — no <code>message</code> field. The final chunk (where <code>finish_reason</code> is not null) <em>may</em> include <code>message</code>, but a correct implementation <strong>never sets both <code>delta.content</code> and <code>message.content</code> to non-empty values simultaneously</strong>.</p>
+<p>A standard finish chunk looks like:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-json" data-lang="json"><span style="display:flex;"><span>{
+</span></span><span style="display:flex;"><span>  <span style="color:#f92672">&#34;choices&#34;</span>: [{
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">&#34;delta&#34;</span>: {},
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">&#34;message&#34;</span>: {<span style="color:#f92672">&#34;content&#34;</span>: <span style="color:#e6db74">&#34;Hello!&#34;</span>},
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">&#34;finish_reason&#34;</span>: <span style="color:#e6db74">&#34;stop&#34;</span>
+</span></span><span style="display:flex;"><span>  }]
+</span></span><span style="display:flex;"><span>}
+</span></span></code></pre></div><p>Or simply:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-json" data-lang="json"><span style="display:flex;"><span>{
+</span></span><span style="display:flex;"><span>  <span style="color:#f92672">&#34;choices&#34;</span>: [{
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">&#34;delta&#34;</span>: {},
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">&#34;finish_reason&#34;</span>: <span style="color:#e6db74">&#34;stop&#34;</span>
+</span></span><span style="display:flex;"><span>  }]
+</span></span><span style="display:flex;"><span>}
+</span></span></code></pre></div><h3 id="42-oneapi-v100-rc10-actual-behavior">4.2 OneAPI v1.0.0-rc.10 Actual Behavior</h3>
+<p>But OneAPI v1.0.0-rc.10 (QuantumNous fork), when proxying MiniMax responses, produces a finish chunk like this:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-json" data-lang="json"><span style="display:flex;"><span>{
+</span></span><span style="display:flex;"><span>  <span style="color:#f92672">&#34;choices&#34;</span>: [{
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">&#34;delta&#34;</span>: {<span style="color:#f92672">&#34;content&#34;</span>: <span style="color:#e6db74">&#34;Hello! How can I help you today?&#34;</span>},
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">&#34;message&#34;</span>: {<span style="color:#f92672">&#34;content&#34;</span>: <span style="color:#e6db74">&#34;Hello! How can I help you today?&#34;</span>},
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">&#34;finish_reason&#34;</span>: <span style="color:#e6db74">&#34;stop&#34;</span>
+</span></span><span style="display:flex;"><span>  }]
+</span></span><span style="display:flex;"><span>}
+</span></span></code></pre></div><p>Note that <strong><code>delta</code> and <code>message</code> both contain the identical <code>content</code>.</strong> Depending on the client&rsquo;s streaming handler strategy:</p>
+<ol>
+<li><strong>Consume only <code>delta.content</code>, ignore <code>message.content</code></strong> — clients using this strategy would not trigger this bug</li>
+<li><strong>Consume both</strong> — OpenClaw&rsquo;s stream handler treats both as &ldquo;visible text&rdquo; and concatenates them</li>
+</ol>
+<p>OpenClaw uses strategy 2, which works correctly with most compatible gateways. But OneAPI&rsquo;s dual-output finish chunk exposes a difference that other gateways handle gracefully.</p>
+<h3 id="43-why-minimax-specifically">4.3 Why MiniMax Specifically?</h3>
+<p>This relates to OneAPI&rsquo;s MiniMax channel adapter implementation. OneAPI&rsquo;s MiniMax adapter (channel type 35), when mapping MiniMax native responses to the OpenAI-compatible format, adds <code>message.content</code> in the finish chunk alongside <code>delta.content</code>. Other model channels (like the native OpenAI channel) may not exhibit this issue because their finish chunk generation logic is different.</p>
+<h2 id="5-fix-switch-to-the-anthropic-messages-protocol">5. Fix: Switch to the anthropic-messages Protocol</h2>
+<h3 id="51-options-considered">5.1 Options Considered</h3>
+<p>Once the root cause was identified, several fix paths were possible:</p>
+<ol>
+<li><strong>Modify OpenClaw&rsquo;s stream handler</strong> to ignore <code>delta.content</code> in finish chunks. But this is a global change that could affect other providers.</li>
+<li><strong>Patch OneAPI&rsquo;s source code</strong> to fix the finish chunk logic. But OneAPI is an upstream project — fixes depend on release cycles.</li>
+<li><strong>Switch protocol channels</strong>: OneAPI natively supports both <code>/v1/chat/completions</code> (OpenAI) and <code>/v1/messages</code> (Anthropic) endpoints. The <code>anthropic-messages</code> protocol path produces clean streaming output.</li>
+</ol>
+<p>Option 3 offered the lowest cost and highest reward. OneAPI has built-in support for the Anthropic Messages protocol, and OpenClaw includes <code>anthropic-messages</code> in its <code>GENERIC_PROVIDER_APIS</code>.</p>
+<h3 id="52-configuration-change">5.2 Configuration Change</h3>
+<p>In the OpenClaw configuration, change the provider&rsquo;s <code>api</code> type from <code>openai-completions</code> to <code>anthropic-messages</code>:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-json" data-lang="json"><span style="display:flex;"><span>{
+</span></span><span style="display:flex;"><span>  <span style="color:#f92672">&#34;providers&#34;</span>: [
+</span></span><span style="display:flex;"><span>    {
+</span></span><span style="display:flex;"><span>      <span style="color:#f92672">&#34;name&#34;</span>: <span style="color:#e6db74">&#34;custom&#34;</span>,
+</span></span><span style="display:flex;"><span>      <span style="color:#f92672">&#34;api&#34;</span>: <span style="color:#e6db74">&#34;anthropic-messages&#34;</span>,
+</span></span><span style="display:flex;"><span>      <span style="color:#f92672">&#34;baseUrl&#34;</span>: <span style="color:#e6db74">&#34;https://&lt;ONEAPI_ENDPOINT&gt;&#34;</span>,
+</span></span><span style="display:flex;"><span>      <span style="color:#f92672">&#34;apiKey&#34;</span>: <span style="color:#e6db74">&#34;&lt;TOKEN&gt;&#34;</span>,
+</span></span><span style="display:flex;"><span>      <span style="color:#f92672">&#34;models&#34;</span>: [
+</span></span><span style="display:flex;"><span>        {<span style="color:#f92672">&#34;model&#34;</span>: <span style="color:#e6db74">&#34;DIY-123&#34;</span>, <span style="color:#f92672">&#34;reasoning&#34;</span>: <span style="color:#66d9ef">true</span>}
+</span></span><span style="display:flex;"><span>      ]
+</span></span><span style="display:flex;"><span>    }
+</span></span><span style="display:flex;"><span>  ]
+</span></span><span style="display:flex;"><span>}
+</span></span></code></pre></div><p>Note: the <code>anthropic-messages</code> protocol automatically appends <code>/v1/messages</code> to the base URL. So only the base address is needed without the <code>/v1</code> suffix.</p>
+<h3 id="53-verification">5.3 Verification</h3>
+<p>After switching protocols, a direct curl test of the <code>/v1/messages</code> endpoint showed clean streaming:</p>
+<pre tabindex="0"><code>data: {&#34;type&#34;:&#34;content_block_delta&#34;,&#34;delta&#34;:{&#34;text&#34;:&#34;Hello!&#34;}}
+data: {&#34;type&#34;:&#34;message_stop&#34;}
+</code></pre><p>No duplicates. No redundant <code>message.content</code>. The Agent&rsquo;s actual conversations returned to normal:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>User: hi
+</span></span><span style="display:flex;"><span>Agent: Hello! How can I help you today?
+</span></span></code></pre></div><h2 id="6-why-not-patch-openclaws-stream-handler">6. Why Not Patch OpenClaw&rsquo;s Stream Handler?</h2>
+<p>You might ask: if OpenClaw consumes both <code>delta.content</code> and <code>message.content</code>, isn&rsquo;t that OpenClaw&rsquo;s bug?</p>
+<p>That&rsquo;s a fair question. In a strict sense, OpenClaw&rsquo;s stream handler could be more defensive. But from a protocol compatibility perspective, OpenClaw&rsquo;s behavior is normal with the vast majority of OpenAI-compatible gateways. Most gateways either leave <code>delta</code> empty in the finish chunk or don&rsquo;t set <code>message</code> alongside a non-empty <code>delta</code>. The issue is specific to OneAPI&rsquo;s implementation.</p>
+<p>Furthermore, modifying OpenClaw&rsquo;s stream handler would be a global change. If some future provider needs to carry extra information via <code>delta.content</code> in the finish chunk (for example, tool call result fragments), a global ignore could introduce new bugs. The protocol switch is a precise, reversible fix that doesn&rsquo;t affect other providers.</p>
+<h2 id="7-takeaways-a-reusable-debugging-approach">7. Takeaways: A Reusable Debugging Approach</h2>
+<p>The most valuable outcome of this debugging session isn&rsquo;t the config change — it&rsquo;s the repeatable methodology:</p>
+<p><strong>1. Classify the duplicate type first</strong></p>
+<ul>
+<li>Multiple duplicate messages → check the send layer: webhook retries, queue consumption, deduplication</li>
+<li>One message with duplicated text → check the model layer: provider output, streaming assembly, final text</li>
+</ul>
+<p><strong>2. Reproduce with a minimal prompt</strong></p>
+<pre tabindex="0"><code>Only reply with these two words: Hello
+</code></pre><p>Don&rsquo;t start with long prompts. A minimal prompt eliminates context noise and exposes the shortest path to the issue.</p>
+<p><strong>3. Verify raw responses directly</strong>
+Don&rsquo;t rely on log inference alone. Use curl to test the target endpoint&rsquo;s raw output. A self-describing Python filter that extracts only key fields makes the judgment obvious.</p>
+<p><strong>4. Run provider comparison experiments</strong>
+If your system has multiple providers or protocol paths, run the same prompt through each. This quickly distinguishes &ldquo;model-intrinsic issues&rdquo; from &ldquo;protocol-path issues.&rdquo;</p>
+<p><strong>5. Track the final visible text</strong>
+In Agent environments, don&rsquo;t just check whether the model API returned 200. Examine the Agent&rsquo;s assembled <code>finalText</code>, because streaming processing, tool calls, reasoning, and fallbacks can all affect the final output.</p>
+<h2 id="8-qa">8. Q&amp;A</h2>
+<h3 id="q1-has-this-bug-been-reported-to-the-oneapi-repository">Q1: Has this bug been reported to the OneAPI repository?</h3>
+<p>QuantumNous/new-api has limited reported issues about the MiniMax channel. This bug may not have been sufficiently documented. Affected users are encouraged to file an issue or PR. The fix direction would be: in the MiniMax channel&rsquo;s finish chunk generation logic, ensure that <code>delta.content</code> and <code>message.content</code> are not both set simultaneously.</p>
+<h3 id="q2-would-upgrading-oneapi-fix-this">Q2: Would upgrading OneAPI fix this?</h3>
+<p>It depends. This bug exists in v1.0.0-rc.10. If a later version has fixed the MiniMax channel&rsquo;s finish chunk logic, upgrading would resolve it. Until then, the protocol switch is a safe workaround.</p>
+<h3 id="q3-whats-the-difference-between-anthropic-messages-and-openai-completions-protocols">Q3: What&rsquo;s the difference between anthropic-messages and openai-completions protocols?</h3>
+<p>Both are natively supported by OneAPI but use different data formats:</p>
+<ul>
+<li><code>openai-completions</code> (<code>/v1/chat/completions</code>): streams content via <code>choices[].delta</code></li>
+<li><code>anthropic-messages</code> (<code>/v1/messages</code>): streams content via <code>type: content_block_delta</code> events</li>
+</ul>
+<p>OneAPI receives the MiniMax native response and converts it to each format. The bug only manifests in the former; the latter works correctly.</p>
+<h3 id="q4-would-this-happen-with-non-streaming-requests">Q4: Would this happen with non-streaming requests?</h3>
+<p>No. Non-streaming requests return a single complete response body with no streaming event assembly. This bug is streaming-specific.</p>
+<h3 id="q5-would-other-models-non-minimax-trigger-the-same-issue">Q5: Would other models (non-MiniMax) trigger the same issue?</h3>
+<p>It depends on the channel type implementation in OneAPI. Different model channels (OpenAI, Azure, Google, MiniMax, etc.) have independent response conversion logic. This issue is confirmed in the MiniMax channel (type 35). If other channels have similar dual-output logic in their finish chunks, they could exhibit the same problem.</p>
+<h3 id="q6-would-this-issue-also-appear-in-wechat-or-other-im-channels">Q6: Would this issue also appear in WeChat or other IM channels?</h3>
+<p>Yes. This is not an IM-channel-specific issue — it&rsquo;s a model-layer output problem. Whether the backend is DingTalk, WeChat, or another IM channel, as long as the Agent uses the same provider path and protocol, it will produce the same duplicated text. This is precisely why fixing the root cause is better than patching each IM channel separately.</p>
+<h2 id="references">References</h2>
+<ul>
+<li>OpenAI Chat Completions API Documentation: <code>https://platform.openai.com/docs/api-reference/chat/create</code></li>
+<li>Anthropic Messages Streaming Documentation: <code>https://docs.anthropic.com/en/api/messages-streaming</code></li>
+<li>QuantumNous/new-api on GitHub: <code>https://github.com/QuantumNous/new-api</code></li>
+<li>OpenClaw Documentation: <code>https://docs.openclaw.ai</code></li>
+</ul>
+        </div>
+    </article>
+
+    
+  
+
+
+  
+    
+  
+
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk/dist/gitalk.css">
+<script src="https://cdn.jsdelivr.net/npm/gitalk/dist/gitalk.min.js"></script>
+<div id="gitalk-container" style="margin-top:40px"></div>
+<script>
+  (function(){
+    var gitalk = new Gitalk({
+      clientID: '3181fd94e501cc5db0ad',
+      clientSecret: 'af1dab79dae02c69296e6615bfcecf47fc8615ee',
+      repo: 'margropcomment.margrop.io',
+      owner: 'margrop',
+      admin: ["margrop"],
+      
+      id: '\/post\/newapi-streaming-duplicate-content-debuggin',
+      
+      distractionFreeMode: false
+    });
+    gitalk.render('gitalk-container');
+  })();
+</script>
+  
+
+
+
+
+    
+<div class="site-stats" aria-label="访问统计">
+    <span>本文阅读量 <span data-page-view-count>--</span></span>
+</div>
+
+
+    
+    <script type="text/javascript" src="https://js.users.51.la/21044367.js"></script>
+    <script charset="UTF-8" id="LA_COLLECT" src="//sdk.51.la/js-sdk-pro.min.js"></script>
+    <script>LA.init({id: "1vVTUWl7zoRjnKXi",ck: "1vVTUWl7zoRjnKXi"})</script>
+    <script src="https://sdk.51.la/perf/js-sdk-perf.min.js" crossorigin="anonymous"></script>
+    <script>
+      new LingQue.Monitor().init({id:"202teQt8THXwqyve"});
+    </script>
+    <script defer src="/js/page-views.js"></script>
+    <div class="la-theme-widget" data-51la-widget aria-label="51.la 网站统计"></div>
+    <script defer src="/js/51la-theme-widget.js"></script>
+</body>
+</html>

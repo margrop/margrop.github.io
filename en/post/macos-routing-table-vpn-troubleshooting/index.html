@@ -1,0 +1,596 @@
+<!DOCTYPE html>
+<html lang="en-US">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>VPN Connected, But Internal Hostnames Won&#39;t Resolve? A Complete macOS Routing Table Walkthrough - Margrop Blog</title>
+<meta name="description" content="TL;DR: When two VPNs run side-by-side on macOS (e.g. utun0 and utun15), an aggregate 10.0.0.0/8 route pushed by one of them can silently “swallow” every address …">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://blog.margrop.net/en/post/macos-routing-table-vpn-troubleshooting/"><meta property="og:site_name" content="Margrop Blog">
+<meta property="og:title" content="VPN Connected, But Internal Hostnames Won&#39;t Resolve? A Complete macOS Routing Table Walkthrough - Margrop Blog">
+<meta property="og:description" content="TL;DR: When two VPNs run side-by-side on macOS (e.g. utun0 and utun15), an aggregate 10.0.0.0/8 route pushed by one of them can silently “swallow” every address …">
+<meta property="og:url" content="https://blog.margrop.net/en/post/macos-routing-table-vpn-troubleshooting/">
+<meta property="og:locale" content="en_US"><meta property="og:type" content="article"><meta property="og:locale:alternate" content="zh_CN"><meta property="og:image" content="https://blog.margrop.net/images/avatar.png"><meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="VPN Connected, But Internal Hostnames Won&#39;t Resolve? A Complete macOS Routing Table Walkthrough - Margrop Blog">
+<meta name="twitter:description" content="TL;DR: When two VPNs run side-by-side on macOS (e.g. utun0 and utun15), an aggregate 10.0.0.0/8 route pushed by one of them can silently “swallow” every address …"><meta name="twitter:image" content="https://blog.margrop.net/images/avatar.png"><link rel="alternate" hreflang="zh-CN" href="https://blog.margrop.net/post/macos-routing-table-vpn-troubleshooting/"><link rel="alternate" hreflang="en-US" href="https://blog.margrop.net/en/post/macos-routing-table-vpn-troubleshooting/"><link rel="alternate" hreflang="x-default" href="https://blog.margrop.net/"><meta property="article:published_time" content="2026-06-01T18:00:00&#43;08:00">
+<meta property="article:modified_time" content="2026-06-01T18:00:00&#43;08:00"><meta property="article:tag" content="macOS"><meta property="article:tag" content="Network"><meta property="article:tag" content="VPN"><meta property="article:tag" content="Routing"><meta property="article:tag" content="Route"><meta property="article:tag" content="Troubleshooting"><meta property="article:tag" content="Sysadmin"><meta property="article:tag" content="Networking"><script type="application/ld+json">{"@context":"https://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"Margrop"},"dateModified":"2026-06-01T18:00:00+08:00","datePublished":"2026-06-01T18:00:00+08:00","description":"TL;DR: When two VPNs run side-by-side on macOS (e.g. utun0 and utun15), an aggregate 10.0.0.0/8 route pushed by one of them can silently “swallow” every address …","headline":"VPN Connected, But Internal Hostnames Won't Resolve? A Complete macOS Routing Table Walkthrough","mainEntityOfPage":"https://blog.margrop.net/en/post/macos-routing-table-vpn-troubleshooting/","url":"https://blog.margrop.net/en/post/macos-routing-table-vpn-troubleshooting/"}</script>
+    <meta name="baidu-site-verification" content="code-sVFZ8SER59" />
+    <script src="/js/theme-toggle.js"></script>
+
+    
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-3J2W592DHJ"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-3J2W592DHJ');
+    </script>
+
+    <style>
+    :root {
+        color-scheme: light;
+        --page-bg: #fff;
+        --surface-bg: #f4f4f4;
+        --text: #222;
+        --muted: #666;
+        --subtle: #777;
+        --border: #eee;
+        --border-strong: #ddd;
+        --link: #006CFF;
+        --tag-bg: #eee;
+        --button-bg: #fff;
+        --button-primary-bg: #333;
+    }
+    @media (prefers-color-scheme: dark) {
+        :root:not([data-theme]) {
+            color-scheme: dark;
+            --page-bg: #111315;
+            --surface-bg: #1d2126;
+            --text: #e8eaed;
+            --muted: #aeb4bd;
+            --subtle: #9aa2ad;
+            --border: #30353d;
+            --border-strong: #454c56;
+            --link: #79b8ff;
+            --tag-bg: #2a3038;
+            --button-bg: #1d2126;
+            --button-primary-bg: #e8eaed;
+        }
+    }
+    html[data-theme="dark"] {
+        color-scheme: dark;
+        --page-bg: #111315;
+        --surface-bg: #1d2126;
+        --text: #e8eaed;
+        --muted: #aeb4bd;
+        --subtle: #9aa2ad;
+        --border: #30353d;
+        --border-strong: #454c56;
+        --link: #79b8ff;
+        --tag-bg: #2a3038;
+        --button-bg: #1d2126;
+        --button-primary-bg: #e8eaed;
+    }
+    html[data-theme="light"] {
+        color-scheme: light;
+        --page-bg: #fff;
+        --surface-bg: #f4f4f4;
+        --text: #222;
+        --muted: #666;
+        --subtle: #777;
+        --border: #eee;
+        --border-strong: #ddd;
+        --link: #006CFF;
+        --tag-bg: #eee;
+        --button-bg: #fff;
+        --button-primary-bg: #333;
+    }
+    body { background: var(--page-bg); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 860px; margin: 0 auto; padding: 20px; line-height: 1.7; color: var(--text); }
+    h1 { border-bottom: 2px solid var(--border-strong); padding-bottom: 10px; }
+    article > h1 { font-size: 2em; line-height: 1.3; margin-bottom: 12px; }
+    .post-list { list-style: none; padding: 0; }
+    .post-list li { margin: 15px 0; }
+    .post-list a { text-decoration: none; color: var(--text); font-size: 18px; }
+    .post-list a:hover { color: var(--link); }
+    .date { color: var(--muted); font-size: 14px; margin-right: 10px; }
+    .tags { margin-top: 8px; }
+    .tag { background: var(--tag-bg); padding: 2px 8px; border-radius: 3px; font-size: 12px; margin-right: 5px; display: inline-block; }
+    nav { margin-bottom: 18px; border-bottom: 1px solid var(--border); padding-bottom: 15px; }
+    nav a { margin-right: 20px; text-decoration: none; color: var(--text); font-size: 16px; }
+    nav a:hover { color: var(--link); }
+    .language-switcher { display: flex; align-items: center; gap: 10px; margin: -8px 0 26px; }
+    .language-switcher a { display: inline-block; padding: 4px 10px; border: 1px solid var(--border-strong); border-radius: 999px; color: var(--muted); text-decoration: none; font-size: 14px; }
+    .language-switcher a.active { background: var(--link); border-color: var(--link); color: #fff; }
+    .content { line-height: 1.8; }
+    .content code { background: var(--surface-bg); padding: 2px 5px; border-radius: 3px; }
+    .content pre { background: var(--surface-bg); padding: 15px; overflow-x: auto; border-radius: 5px; }
+    .content img { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+    .content .code-snippet__fix {
+        margin: 0 0 1.5em;
+    }
+    .content .code-snippet__fix .code-snippet__line-index {
+        display: none !important;
+    }
+    .meta { color: var(--muted); font-size: 14px; margin-bottom: 14px; }
+    .meta-separator { margin: 0 6px; color: var(--subtle); }
+    .site-stats { display: flex; flex-wrap: wrap; gap: 10px 18px; margin: 28px 0 8px; padding-top: 12px; border-top: 1px solid var(--border); color: var(--subtle); font-size: 12px; }
+    a { color: var(--link); }
+    .hero { padding: 12px 0 24px; }
+    .hero h1 { border-bottom: 2px solid #333; }
+    .eyebrow { color: var(--muted); font-size: 12px; letter-spacing: .12em; margin: 0 0 8px; }
+    .hero-tagline { font-size: 18px; margin: 12px 0 8px; }
+    .hero-copy { color: var(--muted); margin: 0 0 14px; }
+    .hero-actions { margin: 14px 0 4px; }
+    .button { display: inline-block; margin-right: 12px; border: 1px solid var(--border-strong); border-radius: 3px; padding: 4px 10px; text-decoration: none; color: var(--text); background: var(--button-bg); font-size: 14px; }
+    .button-primary { background: var(--button-primary-bg); border-color: var(--button-primary-bg); color: var(--page-bg); }
+    .theme-toggle { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 1px solid var(--border-strong); border-radius: 999px; background: var(--button-bg); color: var(--text); cursor: pointer; font: inherit; font-size: 16px; }
+    .theme-toggle:hover { border-color: var(--link); color: var(--link); }
+    .la-theme-widget { margin: 12px 0 20px; min-height: 24px; color: var(--text); }
+    .identity-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: 16px 0; }
+    .identity-grid div { display: flex; flex-direction: column; }
+    .identity-grid strong { font-size: 15px; }
+    .identity-grid span, .topic-card span, .featured-list small { color: var(--muted); font-size: 13px; }
+    .section-block { padding-top: 28px; }
+    .section-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+    .section-heading h2 { margin: 0; }
+    .section-heading a { font-size: 14px; }
+    .topic-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+    .topic-card { display: block; padding: 14px; border: 1px solid var(--border); text-decoration: none; color: var(--text); }
+    .topic-card:hover { border-color: var(--border-strong); }
+    .topic-card strong { display: block; margin: 4px 0; font-size: 17px; }
+    .topic-index, .featured-list > a > span { color: var(--muted) !important; font-size: 12px !important; }
+    .featured-list { border-top: 1px solid var(--border); }
+    .featured-list > a { display: flex; gap: 14px; padding: 12px 0; border-bottom: 1px solid var(--border); text-decoration: none; color: var(--text); }
+    .featured-list div { display: flex; flex-direction: column; }
+    .latest-block { max-width: 860px; }
+    @media (max-width: 680px) {
+        body { padding: 16px; }
+        nav a { display: inline-block; margin-right: 12px; margin-bottom: 8px; }
+        .identity-grid { grid-template-columns: repeat(2, 1fr); }
+        .topic-grid { grid-template-columns: 1fr; }
+    }
+</style>
+
+</head>
+<body>
+    <nav>
+  
+  <a href="/en/">Home</a>
+  <a href="https://blog.margrop.com/" target="_blank" rel="noopener">AI Daily</a>
+  <a href="/en/start-here/">Start Here</a>
+  <a href="/en/tag/ai/">AI Agent</a>
+  <a href="/en/tag/docker/">Self-hosting</a>
+  <a href="/en/tag/%e8%bf%90%e7%bb%b4/">Engineering</a>
+  <a href="/en/post/">Archive</a>
+  <a href="/en/tags/">Tags</a>
+  <a href="/en/post/about/">About</a>
+  <a href="https://download.margrop.net" target="_blank" rel="noopener">Download</a>
+  <a href="/en/post/favorites/">Links</a>
+  <a href="/en/post/github-project-stars/">Github</a>
+  
+  <a href="https://blog.margrop.net/en/index.xml" target="_blank" rel="noopener">RSS</a>
+</nav>
+
+    <div class="language-switcher">
+  <button class="theme-toggle" type="button" data-theme-toggle aria-label="切换到暗黑模式" aria-pressed="false">🌙</button>
+
+  
+  
+    <a href="/post/macos-routing-table-vpn-troubleshooting/" class="">中文</a>
+  
+    <a href="/en/post/macos-routing-table-vpn-troubleshooting/" class="active">English</a>
+  
+  
+</div>
+
+    
+    <article>
+        <h1>VPN Connected, But Internal Hostnames Won&#39;t Resolve? A Complete macOS Routing Table Walkthrough</h1>
+        <div class="meta">
+            Published: 2026-06-01
+            <span class="meta-separator">·</span>
+            <span>阅读量 <span data-page-view-count>--</span></span>
+        </div>
+        
+<div class="tags">
+    
+    <a href="/en/tag/macos/"><span class="tag">macOS</span></a>
+    
+    <a href="/en/tag/network/"><span class="tag">Network</span></a>
+    
+    <a href="/en/tag/vpn/"><span class="tag">VPN</span></a>
+    
+    <a href="/en/tag/routing/"><span class="tag">Routing</span></a>
+    
+    <a href="/en/tag/route/"><span class="tag">Route</span></a>
+    
+    <a href="/en/tag/troubleshooting/"><span class="tag">Troubleshooting</span></a>
+    
+    <a href="/en/tag/sysadmin/"><span class="tag">Sysadmin</span></a>
+    
+    <a href="/en/tag/networking/"><span class="tag">Networking</span></a>
+    
+</div>
+
+
+        <div class="content">
+            <blockquote>
+<p><strong>TL;DR:</strong></p>
+<p>When two VPNs run side-by-side on macOS (e.g. <code>utun0</code> and <code>utun15</code>), an aggregate <code>10.0.0.0/8</code> route pushed by one of them can silently &ldquo;swallow&rdquo; every address in the 10.x.x.x range — including the one you actually wanted to reach on the other VPN. DNS resolves fine; TCP/ICMP just hangs. <strong><code>route -n get</code> is the first knife you should reach for.</strong></p>
+</blockquote>
+<p><img alt="macOS Routing Lookup: Longest Prefix Match Flow" src="/post-images/macos-routing-table-vpn-troubleshooting/01-routing-flow.svg"></p>
+<p><em>Figure 1: macOS kernel route lookup flow. An application sends a packet toward a destination IP. The kernel walks the routing table by &ldquo;longest prefix match&rdquo; — a match on <code>10.0.0.0/8</code> selects <code>utun0</code>, while a more specific /32 host route selects <code>utun15</code>.</em></p>
+<hr>
+<h2 id="background-vpn-is-up-but-internal-hostnames-are-dead">Background: VPN Is Up, but Internal Hostnames Are Dead</h2>
+<p>Picture this: on a remote macOS workstation I&rsquo;m connected to over SSH, two VPNs are running concurrently:</p>
+<ul>
+<li><strong>VPN-A</strong> (system layer, <code>utun0</code>): covers the entire <code>10.0.0.0/8</code> block; this is my daily-driver tunnel</li>
+<li><strong>VPN-B</strong> (assigned <code>utun15</code>): dialed up by a client, the local address sits in <code>10.255.255.0/24</code>, the remote side is the corporate intranet</li>
+</ul>
+<p>Once VPN-B finished dialing, <code>ifconfig utun15</code> reported a valid IP and the routing table gained a <code>default → 10.255.255.1 utun15</code> fallback route.</p>
+<p>So far so good — but when I open a browser and try to reach a couple of internal hostnames, things go sideways:</p>
+<ul>
+<li><code>curl http://internal-nas.example.corp/</code> — hangs and eventually times out</li>
+<li><code>curl http://internal-nas.example.corp/</code> (FQDN) — same thing</li>
+<li><code>nslookup internal-nas.example.corp</code> — returns an IP just fine, e.g. <code>10.99.99.99</code></li>
+</ul>
+<p><strong>DNS works perfectly; the packets simply never arrive.</strong> Clearly this is an L3 (routing) problem, not an L7 (application) problem.</p>
+<p>To make it weirder, <code>ping</code> to the resolved IP also fails:</p>
+<pre tabindex="0"><code>PING 10.99.99.99 (10.99.99.99): 56 data bytes
+Request timeout for icmp_seq 0
+Request timeout for icmp_seq 1
+--- 10.99.99.99 ping statistics ---
+2 packets transmitted, 0 packets received, 100% packet loss
+</code></pre><p>But on the same machine, other internal IPs (10.19.x, 10.20.x, 10.127.x) are reachable without any issue.</p>
+<p><strong>Why does 10.99.99.99 fail in particular?</strong></p>
+<hr>
+<h2 id="investigation-looking-through-the-routing-table">Investigation: Looking Through the Routing Table</h2>
+<p>When in doubt, dump the routing table. SSH into the box and run:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>netstat -rn
+</span></span></code></pre></div><p>Truncated output (the lines that matter):</p>
+<pre tabindex="0"><code>Internet:
+Destination        Gateway            Flags     Netif
+default            10.255.255.1      UGScg     utun15
+10                 utun0             USc       utun0
+10.255.255.1/32    127.0.0.1         UGSc      lo0
+...
+</code></pre><p>Pay attention to the first highlighted line: <code>10 utun0 USc</code> — this means <strong>every packet whose destination falls within 10.0.0.0/8 (i.e. 10.0.0.0 ~ 10.255.255.255) is routed to utun0</strong>.</p>
+<p>Meanwhile, <code>utun15</code> only has <code>default</code> plus a handful of /32 host routes (DNS servers, etc.). <strong>There is no route covering 10.99.0.0/16 or anything close.</strong></p>
+<p>So:</p>
+<ul>
+<li>10.19.180.31 (DNS) has a /32 host route → goes to utun15 ✅</li>
+<li>10.99.99.99 (NAS) has no /32 → matches utun0&rsquo;s /8 aggregate → goes to utun0 ❌</li>
+</ul>
+<p><strong>There&rsquo;s the problem.</strong></p>
+<p>But &ldquo;going to utun0&rdquo; alone shouldn&rsquo;t break things. Why doesn&rsquo;t it work? Two reasons:</p>
+<ol>
+<li>The remote gateway of <code>utun0</code> (VPN-A) has no idea where 10.99.99.99 actually is — that address sits on a different intranet segment</li>
+<li>Even if VPN-A could forward the packet, the return path from 10.99.99.99 may not come back to my machine, because the destination&rsquo;s own routing table is consulted on the way back</li>
+</ol>
+<p>Either way, <strong>the packet goes out and never comes back</strong>, or it&rsquo;s dropped at the far end.</p>
+<hr>
+<h2 id="root-cause-the-longest-prefix-match-trap">Root Cause: The &ldquo;Longest Prefix Match&rdquo; Trap</h2>
+<p>The macOS kernel (like every BSD/Linux kernel) uses <strong>Longest Prefix Match (LPM)</strong> for route lookup:</p>
+<blockquote>
+<p>The kernel picks the route with the <strong>longest prefix length</strong> as the winning decision. If multiple routes tie on prefix length, the one with the lower metric wins.</p>
+</blockquote>
+<p>There are two layers of foot-guns here:</p>
+<h3 id="pitfall-1-aggregate-routes-are-too-greedy">Pitfall 1: Aggregate Routes Are &ldquo;Too Greedy&rdquo;</h3>
+<p><code>utun0</code>&rsquo;s <code>10 utun0 USc</code> represents <code>10.0.0.0/8</code>, a prefix length of just 8. It &ldquo;covers&rdquo; 16,777,216 addresses — 10.99.99.99 naturally falls in that range.</p>
+<p>As long as no more-specific route exists, <strong>the /8 route intercepts it</strong>.</p>
+<h3 id="pitfall-2-silent-override-by-vpn-client-pushed-routes">Pitfall 2: &ldquo;Silent Override&rdquo; by VPN Client Pushed Routes</h3>
+<p><code>utun0</code> is established at the system level and automatically pushes that /8 aggregate into the routing table every time it connects — the user is never informed.</p>
+<p>Meanwhile, <code>utun15</code> is dialed on demand, and the routes it pushes simply don&rsquo;t include the 10.99.0.0/16 segment. <strong>The client does not auto-fill the gap.</strong></p>
+<p>Stack the two together, and the destination IP is quietly hijacked by utun0.</p>
+<p><img alt="Dual-VPN Routing Conflict: utun0 pushes /8 aggregate, utun15 lacks /16 subnet route, 10.99.99.99 hits the wrong interface" src="/post-images/macos-routing-table-vpn-troubleshooting/02-dual-vpn-topology.svg"></p>
+<p><em>Figure 2: Routing conflict when two VPNs coexist. utun0 pushes a <code>10.0.0.0/8</code> aggregate that shadows the entire range; utun15 has no <code>10.99.0.0/16</code> route. Result: 10.99.99.99 ends up on utun0 instead of utun15.</em></p>
+<hr>
+<h2 id="verification-route--n-get-is-the-most-direct-diagnostic">Verification: <code>route -n get</code> Is the Most Direct Diagnostic</h2>
+<p>When you suspect routing is wrong, don&rsquo;t guess. Let the kernel tell you with <code>route -n get &lt;target&gt;</code>:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>$ route -n get 10.99.99.99
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>   route to: 10.99.99.99
+</span></span><span style="display:flex;"><span>destination: 10.99.99.99
+</span></span><span style="display:flex;"><span>  interface: utun0        ← THIS is the line to look at
+</span></span><span style="display:flex;"><span>      flags: &lt;UP,HOST,DONE,WASCLONED,IFSCOPE,IFREF&gt;
+</span></span></code></pre></div><p>If the <code>interface</code> here is not what you expected (we wanted <code>utun15</code>), you&rsquo;ve confirmed the routing went to the wrong place.</p>
+<p>Then cross-check the table to see why utun0 matched:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>$ netstat -rn | grep -E <span style="color:#e6db74">&#34;^10 |utun15|default&#34;</span>
+</span></span><span style="display:flex;"><span>default            10.255.255.1      UGScg     utun15
+</span></span><span style="display:flex;"><span><span style="color:#ae81ff">10</span>                 utun0             USc       utun0
+</span></span><span style="display:flex;"><span>10.19.180.31/32    10.255.255.1      UGHS      utun15
+</span></span></code></pre></div><p>You can see utun15 only has a few /32s and no 10.99.x route at all — the /8 aggregate &ldquo;wins&rdquo; in LPM.</p>
+<hr>
+<h2 id="the-fix-add-a-more-specific-route">The Fix: Add a More-Specific Route</h2>
+<p><strong>The idea:</strong> give the kernel a route for 10.99.99.99 with a prefix length longer than /8 (even a /32 will do) so it outranks utun0&rsquo;s aggregate.</p>
+<p>macOS uses <code>route -n add</code> to add a static route:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># A single IP via utun15</span>
+</span></span><span style="display:flex;"><span>sudo route -n add -host 10.99.99.99 -interface utun15
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># The whole 10.99.0.0/16 subnet via utun15</span>
+</span></span><span style="display:flex;"><span>sudo route -n add -net 10.99.0.0/16 -interface utun15
+</span></span></code></pre></div><p>A few syntax points worth remembering:</p>
+<ul>
+<li><code>-host</code> is equivalent to <code>-net 10.99.99.99/32</code> — adds a /32 host route</li>
+<li><code>-interface utun15</code> binds directly to the interface. <strong>No gateway is required</strong>, because point-to-point interfaces are their own gateway</li>
+<li>The <code>-n</code> flag means &ldquo;do not resolve names.&rdquo; It affects display only, not behavior</li>
+</ul>
+<p>After running the command, verify again:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>$ route -n get 10.99.99.99
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>   route to: 10.99.99.99
+</span></span><span style="display:flex;"><span>destination: 10.99.99.99
+</span></span><span style="display:flex;"><span>  interface: utun15        ← now correct
+</span></span><span style="display:flex;"><span>      flags: &lt;UP,HOST,DONE,WASCLONED,IFSCOPE,IFREF&gt;
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>$ ping -c <span style="color:#ae81ff">3</span> 10.99.99.99
+</span></span><span style="display:flex;"><span>PING 10.99.99.99 <span style="color:#f92672">(</span>10.99.99.99<span style="color:#f92672">)</span>: <span style="color:#ae81ff">56</span> data bytes
+</span></span><span style="display:flex;"><span><span style="color:#ae81ff">64</span> bytes from 10.99.99.99: icmp_seq<span style="color:#f92672">=</span><span style="color:#ae81ff">0</span> ttl<span style="color:#f92672">=</span><span style="color:#ae81ff">63</span> time<span style="color:#f92672">=</span>12.4 ms
+</span></span><span style="display:flex;"><span><span style="color:#ae81ff">64</span> bytes from 10.99.99.99: icmp_seq<span style="color:#f92672">=</span><span style="color:#ae81ff">1</span> ttl<span style="color:#f92672">=</span><span style="color:#ae81ff">63</span> time<span style="color:#f92672">=</span>11.8 ms
+</span></span><span style="display:flex;"><span><span style="color:#ae81ff">64</span> bytes from 10.99.99.99: icmp_seq<span style="color:#f92672">=</span><span style="color:#ae81ff">2</span> ttl<span style="color:#f92672">=</span><span style="color:#ae81ff">63</span> time<span style="color:#f92672">=</span>12.1 ms
+</span></span><span style="display:flex;"><span>--- 10.99.99.99 ping statistics ---
+</span></span><span style="display:flex;"><span><span style="color:#ae81ff">3</span> packets transmitted, <span style="color:#ae81ff">3</span> received, 0% packet loss
+</span></span></code></pre></div><p>It works.</p>
+<p><img alt="Before-and-After Routing Table and Ping Comparison: left in red / right in green" src="/post-images/macos-routing-table-vpn-troubleshooting/03-route-fix-compare.svg"></p>
+<p><em>Figure 3: Side-by-side comparison of <code>route -n get</code> and <code>ping</code> output before and after the fix. Left: packets are sent to utun0, 100% packet loss. Right: after adding the /32 host route, packets successfully reach the destination through utun15.</em></p>
+<hr>
+<h2 id="making-it-permanent-launchd-startup-items">Making It Permanent: launchd Startup Items</h2>
+<p><code>route -n add</code> is session-scoped — it lives only in the current kernel routing table. <strong>A reboot, a network event, or a VPN reconnect will wipe it.</strong> To rebuild the route automatically at startup, you have several options.</p>
+<h3 id="option-1-a-launchd-task-recommended">Option 1: A launchd Task (Recommended)</h3>
+<p>The most reliable approach on macOS is to drop a launchd plist into <code>/Library/LaunchDaemons/</code>:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>sudo tee /Library/LaunchDaemons/com.local.vpn-route-fix.plist <span style="color:#e6db74">&lt;&lt;&#39;PLIST&#39;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">&lt;?xml version=&#34;1.0&#34; encoding=&#34;UTF-8&#34;?&gt;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">&lt;!DOCTYPE plist PUBLIC &#34;-//Apple//DTD PLIST</span> 1.0//EN<span style="color:#e6db74">&#34; &#34;</span>http://www.apple.com/DTDs/PropertyList-1.0.dtd<span style="color:#e6db74">&#34;&gt;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">&lt;plist version=&#34;</span>1.0<span style="color:#e6db74">&#34;&gt;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">&lt;dict&gt;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    &lt;key&gt;Label&lt;/key&gt;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    &lt;string&gt;com.local.vpn-route-fix&lt;/string&gt;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    &lt;key&gt;ProgramArguments&lt;/key&gt;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    &lt;array&gt;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        &lt;string&gt;/sbin/route&lt;/string&gt;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        &lt;string&gt;-n&lt;/string&gt;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        &lt;string&gt;add&lt;/string&gt;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        &lt;string&gt;-host&lt;/string&gt;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        &lt;string&gt;10.99.99.99&lt;/string&gt;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        &lt;string&gt;-interface&lt;/string&gt;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        &lt;string&gt;utun15&lt;/string&gt;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    &lt;/array&gt;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    &lt;key&gt;RunAtLoad&lt;/key&gt;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    &lt;true/&gt;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    &lt;key&gt;KeepAlive&lt;/key&gt;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    &lt;false/&gt;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    &lt;key&gt;UserName&lt;/key&gt;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    &lt;string&gt;root&lt;/string&gt;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">&lt;/dict&gt;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">&lt;/plist&gt;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">PLIST
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">sudo chmod 644 /Library/LaunchDaemons/com.local.vpn-route-fix.plist
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">sudo launchctl load -w /Library/LaunchDaemons/com.local.vpn-route-fix.plist
+</span></span></span></code></pre></div><p><code>RunAtLoad</code> set to <code>true</code> makes the task run as soon as launchd loads it. <code>UserName</code> is <code>root</code> because <code>route</code> needs sudo.</p>
+<blockquote>
+<p><strong>Caveat:</strong> launchd runs the task at system boot — but utun15 may not be up yet. A more robust pattern is to wrap the command in a shell script that waits for the interface to appear.</p>
+</blockquote>
+<p>A more resilient version with a wrapper script:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># /usr/local/bin/vpn-route-fix.sh</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e">#!/bin/sh</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># Wait up to 30s for utun15 to come up</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">for</span> i in <span style="color:#66d9ef">$(</span>seq <span style="color:#ae81ff">1</span> 30<span style="color:#66d9ef">)</span>; <span style="color:#66d9ef">do</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">if</span> ifconfig utun15 &gt;/dev/null 2&gt;&amp;1; <span style="color:#66d9ef">then</span>
+</span></span><span style="display:flex;"><span>        break
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">fi</span>
+</span></span><span style="display:flex;"><span>    sleep <span style="color:#ae81ff">1</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">done</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># If the interface exists, add the route</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> ifconfig utun15 &gt;/dev/null 2&gt;&amp;1; <span style="color:#66d9ef">then</span>
+</span></span><span style="display:flex;"><span>    /sbin/route -n add -host 10.99.99.99 -interface utun15
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">fi</span>
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>sudo chmod +x /usr/local/bin/vpn-route-fix.sh
+</span></span></code></pre></div><p>Then update the plist&rsquo;s <code>ProgramArguments</code> to call this script.</p>
+<h3 id="option-2-rclocal--startupitem">Option 2: rc.local / StartupItem</h3>
+<p>The legacy approach. <code>/etc/rc.local</code> is deprecated on modern macOS — not recommended.</p>
+<h3 id="option-3-hand-it-off-to-the-vpn-client">Option 3: Hand It Off to the VPN Client</h3>
+<p>If your VPN-B client supports a &ldquo;Connect Script&rdquo; or &ldquo;Post-Connect Hook&rdquo; (OpenConnect, Viscosity, Cloudflare WARP, and most others do), drop the <code>route -n add</code> line straight in. The route is added the moment the VPN comes up — no startup-order concerns.</p>
+<h3 id="option-4-strongly-recommended-push-it-from-the-vpn-server">Option 4 (Strongly Recommended): Push It From the VPN Server</h3>
+<p>The most thorough fix is to ask the VPN-B administrator to push the <code>10.99.0.0/16</code> route from the <strong>server side</strong>. Benefits:</p>
+<ul>
+<li>Zero configuration on the client</li>
+<li>The route auto-restores after every VPN reconnect</li>
+<li>Every other teammate gets the same fix, not just your machine</li>
+</ul>
+<p>Keep adding entries for every internal segment your team needs, until nobody has to touch the routing table by hand.</p>
+<hr>
+<h2 id="macos-routing-table-command-cheat-sheet">macOS Routing Table Command Cheat-Sheet</h2>
+<p>A quick reference of the commands you&rsquo;ll reach for the most:</p>
+<h3 id="inspect-the-routing-table">Inspect the Routing Table</h3>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># Default format (IPv4 + IPv6; flags as letters, more readable)</span>
+</span></span><span style="display:flex;"><span>netstat -rn
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># Numeric form, no DNS resolution</span>
+</span></span><span style="display:flex;"><span>netstat -rn -f inet
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># Look at the default route</span>
+</span></span><span style="display:flex;"><span>netstat -rn -f inet | grep <span style="color:#e6db74">&#34;^default&#34;</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># See which exit a specific destination uses</span>
+</span></span><span style="display:flex;"><span>route -n get 8.8.8.8
+</span></span></code></pre></div><h3 id="add--delete--change-routes">Add / Delete / Change Routes</h3>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># Add a /32 host route</span>
+</span></span><span style="display:flex;"><span>sudo route -n add -host 10.99.99.99 -interface utun15
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># Add a /24 subnet route (with explicit gateway)</span>
+</span></span><span style="display:flex;"><span>sudo route -n add -net 10.99.0.0/24 10.255.255.1
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># Add a default route (usually unnecessary; the system manages it)</span>
+</span></span><span style="display:flex;"><span>sudo route -n add default 10.255.255.1
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># Delete a route</span>
+</span></span><span style="display:flex;"><span>sudo route -n delete -host 10.99.99.99 -interface utun15
+</span></span><span style="display:flex;"><span>sudo route -n delete -net 10.99.0.0/24 10.255.255.1
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># &#34;Change&#34; a route (effectively delete + add)</span>
+</span></span><span style="display:flex;"><span>sudo route -n change -host 10.99.99.99 -interface utun0
+</span></span></code></pre></div><h3 id="temporarily-disable-an-interface">Temporarily Disable an Interface</h3>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># Bring utun0 down so all 10.x falls through to utun15</span>
+</span></span><span style="display:flex;"><span>sudo ifconfig utun0 down
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># Bring it back up</span>
+</span></span><span style="display:flex;"><span>sudo ifconfig utun0 up
+</span></span></code></pre></div><h3 id="watch-routing-changes-live">Watch Routing Changes Live</h3>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># Refresh the table once a second (handy when debugging VPN route pushes)</span>
+</span></span><span style="display:flex;"><span>watch -n <span style="color:#ae81ff">1</span> <span style="color:#e6db74">&#39;netstat -rn -f inet&#39;</span>
+</span></span></code></pre></div><h3 id="clear-all-manually-added-routes">Clear All Manually-Added Routes</h3>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># Safest: just reboot. The system rebuilds the table from scratch.</span>
+</span></span><span style="display:flex;"><span>sudo reboot
+</span></span></code></pre></div><hr>
+<h2 id="qa">Q&amp;A</h2>
+<h3 id="q1-can-i-just-delete-utun0s-100008-route">Q1: Can I just delete utun0&rsquo;s <code>10.0.0.0/8</code> route?</h3>
+<p>Technically yes:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>sudo route -n delete -net 10.0.0.0/8 -interface utun0
+</span></span></code></pre></div><p>But <strong>this is usually a bad idea</strong>, because:</p>
+<ul>
+<li>Other normally-reachable IPs (10.19.x, 10.20.x, 10.127.x) will lose their route</li>
+<li>VPN-A re-connects and <strong>silently re-pushes the /8 route</strong> — your delete was temporary</li>
+<li>If utun15 dies for any reason, you&rsquo;ll have no path to 10.x at all</li>
+</ul>
+<p><strong>Prefer adding precise /32 host routes</strong> over brutally deleting an aggregate.</p>
+<h3 id="q2-i-added-a-route-and-it-still-doesnt-work-what-now">Q2: I added a route and it still doesn&rsquo;t work. What now?</h3>
+<p>Walk down this list:</p>
+<ol>
+<li><strong>Is the interface name correct?</strong> Run <code>ifconfig | grep utun</code> to confirm</li>
+<li><strong>Is the VPN itself up?</strong> <code>ping 10.255.255.1</code> (the remote gateway) as a sanity check</li>
+<li><strong>Is DNS pointing at the right IP?</strong> <code>dig &lt;hostname&gt;</code> or <code>nslookup &lt;hostname&gt;</code> to confirm</li>
+<li><strong>Is the remote firewall / ACL permitting the traffic?</strong> Ask the VPN-B admin whether 10.99.99.99 is reachable from inside the intranet</li>
+<li><strong>Is the TCP/UDP port blocked?</strong> Try <code>telnet 10.99.99.99 80</code> or <code>nc -zv 10.99.99.99 80</code></li>
+</ol>
+<h3 id="q3-whats-the-difference-between-route--n-add-and-route-add">Q3: What&rsquo;s the difference between <code>route -n add</code> and <code>route add</code>?</h3>
+<ul>
+<li><code>route -n add</code> skips name resolution (does not reverse-resolve IPs to hostnames, and does not forward-resolve hostnames in arguments)</li>
+<li><code>route add</code> will try to resolve arguments, and <strong>can misbehave when DNS is broken</strong></li>
+</ul>
+<p>Behavior is identical otherwise. <strong>Always use <code>-n</code> in scripts</strong> to avoid surprises.</p>
+<h3 id="q4-can-i-add-a-permanent-route-through-the-gui">Q4: Can I add a permanent route through the GUI?</h3>
+<p>System Preferences → Network → the interface you want → Advanced → Routes lets you add IPv4 routes.</p>
+<p>But it <strong>only takes effect on physical interfaces</strong>, and it doesn&rsquo;t play well with dynamic utun VPN interfaces (the number changes on every reconnect). <strong>The CLI + launchd path is far more reliable.</strong></p>
+<h3 id="q5-how-do-i-see-which-routes-the-vpn-b-client-is-pushing">Q5: How do I see which routes the VPN-B client is pushing?</h3>
+<p>Most VPN clients log the pushed routes at connect time — OpenConnect looks like:</p>
+<pre tabindex="0"><code>ESP detected: using UDP
+Connected as 10.255.255.x
+Pushed routes:
+  0.0.0.0/0
+  10.0.0.0/8 via 10.255.255.1
+  ...
+</code></pre><p>You can also diff the routing table before/after the connection. For continuous visibility, use:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>sudo route -n monitor
+</span></span></code></pre></div><p>This prints every change to the kernel routing table in real time — extremely useful when debugging a flaky VPN client.</p>
+<h3 id="q6-why-are-utun-numbers-dynamic">Q6: Why are <code>utun</code> numbers dynamic?</h3>
+<p>macOS assigns a fresh <code>utun&lt;N&gt;</code> number every time a new tunnel/VPN comes up. <strong>The number is not stable.</strong> Today it might be utun15; tomorrow after connecting a different VPN it could be utun16.</p>
+<p><strong>Never hard-code a utun number in a script.</strong> Identify the right interface by:</p>
+<ul>
+<li>Its IP (grep <code>ifconfig</code> output)</li>
+<li>Its description (the <code>interface-id</code> line in <code>ifconfig</code> output)</li>
+<li>The interface that owns your <code>default</code> route in <code>netstat -rn</code></li>
+</ul>
+<h3 id="q7-does-route--n-add-survive-a-reboot">Q7: Does <code>route -n add</code> survive a reboot?</h3>
+<p><strong>No.</strong> <code>route -n add</code> inserts an entry into the kernel&rsquo;s in-memory routing table. Reboot, or a routing daemon (e.g. <code>routed</code>) reloading its config, will erase it.</p>
+<p>For persistence, use the launchd approach above, or add it inside the VPN client&rsquo;s hook script.</p>
+<h3 id="q8-can-i-just-put-route-commands-in-zshrc">Q8: Can I just put <code>route</code> commands in <code>~/.zshrc</code>?</h3>
+<p><strong>Strongly discouraged.</strong> Reasons:</p>
+<ul>
+<li><code>~/.zshrc</code> runs every time a new shell opens; running <code>route -n add</code> on an already-present route will throw &ldquo;File exists&rdquo;</li>
+<li>User shells aren&rsquo;t always zsh — iTerm2, SSH logins, and launchd-spawned processes may not read zshrc at all</li>
+<li>Putting a sudo-required command in a user login script is a code smell</li>
+</ul>
+<p><strong>Just write a launchd plist.</strong></p>
+<h3 id="q9-whats-metric-and-how-does-it-affect-route-selection">Q9: What&rsquo;s &ldquo;metric&rdquo; and how does it affect route selection?</h3>
+<p>Metric is a &ldquo;cost&rdquo; assigned to a route — lower is better. You can see it (and <code>rtt,msec</code>, <code>hopcount</code>, etc.) in <code>route -n get</code> output:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>$ route -n get 8.8.8.8
+</span></span><span style="display:flex;"><span>...
+</span></span><span style="display:flex;"><span>      flags: &lt;UP,GATEWAY,IFSCOPE&gt;
+</span></span><span style="display:flex;"><span>   recvpipe  sendpipe  ssthresh  rtt,msec    rttvar  hopcount
+</span></span><span style="display:flex;"><span>        <span style="color:#ae81ff">0</span>         <span style="color:#ae81ff">0</span>         <span style="color:#ae81ff">0</span>         <span style="color:#ae81ff">0</span>         <span style="color:#ae81ff">0</span>         <span style="color:#ae81ff">0</span>
+</span></span></code></pre></div><p>When two routes have <strong>the same prefix length</strong>, the one with the lower metric wins. The trailing letters in the <code>Flags</code> column (e.g. <code>S</code> for static, <code>D</code> for dynamic) just identify where the route came from; they don&rsquo;t influence the metric.</p>
+<h3 id="q10-do-i-need-to-look-at-the-ipv6-routing-table-separately">Q10: Do I need to look at the IPv6 routing table separately?</h3>
+<p>Yes. <code>netstat -rn</code> mixes IPv4 and IPv6 by default. Filter with <code>-f</code>:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>netstat -rn -f inet     <span style="color:#75715e"># IPv4 only</span>
+</span></span><span style="display:flex;"><span>netstat -rn -f inet6    <span style="color:#75715e"># IPv6 only</span>
+</span></span></code></pre></div><p>If your services are pure IPv4, you can usually ignore IPv6. But if your intranet is dual-stack, a wrong IPv6 route can also manifest as &ldquo;webpages don&rsquo;t open&rdquo; — same root cause, different family.</p>
+<hr>
+<h2 id="summary">Summary</h2>
+<p>Walking through the whole investigation, the core of the fix boils down to three things:</p>
+<ol>
+<li><strong><code>netstat -rn</code></strong> — get the full picture of the routing table</li>
+<li><strong><code>route -n get &lt;target&gt;</code></strong> — verify exactly which exit a specific IP uses</li>
+<li><strong>Add a /32 host route or /16 subnet route</strong> — outrank the bad aggregate via longest prefix match</li>
+</ol>
+<p>The hard part of VPN routing issues isn&rsquo;t the commands — it&rsquo;s the <strong>invisibility</strong>:</p>
+<ul>
+<li>The routing table is an abstract list; VPN clients push routes transparently</li>
+<li>When DNS works, people often wrongly assume the network is fine</li>
+<li>Aggregate routes like <code>10.0.0.0/8</code> silently take over vast address ranges</li>
+</ul>
+<p>Burn <strong><code>route -n get</code></strong> into muscle memory, and the next time you hit &ldquo;VPN is connected, but that one internal segment is unreachable,&rdquo; you&rsquo;ll be able to localize it in seconds.</p>
+<hr>
+<h2 id="references">References</h2>
+<ul>
+<li><a href="https://developer.apple.com/library/archive/documentation/Darwin/Reference/ManPages/man8/route.8.html">Apple Developer - route(8) man page</a></li>
+<li><a href="https://developer.apple.com/library/archive/documentation/Darwin/Reference/ManPages/man1/netstat.1.html">Apple Developer - netstat(1) man page</a></li>
+<li><a href="https://developer.apple.com/library/archive/documentation/Darwin/Reference/ManPages/man5/launchd.plist.5.html">Apple Developer - launchd.plist(5) man page</a></li>
+<li><a href="https://en.wikipedia.org/wiki/Longest_prefix_match">Wikipedia - Longest prefix match</a></li>
+<li><a href="https://tools.ietf.org/html/rfc4191">RFC 4191 - Default Router Preferences and More-Specific Routes</a></li>
+<li><a href="https://developer.apple.com/library/archive/documentation/MacOSX/Conceptual/BPSystemStartup/Chapters/CreatingLaunchdJobs.html">macOS Deployment Reference - Creating Launch Daemons and Agents</a></li>
+</ul>
+        </div>
+    </article>
+
+    
+  
+
+
+  
+    
+  
+
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk/dist/gitalk.css">
+<script src="https://cdn.jsdelivr.net/npm/gitalk/dist/gitalk.min.js"></script>
+<div id="gitalk-container" style="margin-top:40px"></div>
+<script>
+  (function(){
+    var gitalk = new Gitalk({
+      clientID: '3181fd94e501cc5db0ad',
+      clientSecret: 'af1dab79dae02c69296e6615bfcecf47fc8615ee',
+      repo: 'margropcomment.margrop.io',
+      owner: 'margrop',
+      admin: ["margrop"],
+      
+      id: '\/post\/macos-routing-table-vpn-troubleshooting\/',
+      
+      distractionFreeMode: false
+    });
+    gitalk.render('gitalk-container');
+  })();
+</script>
+  
+
+
+
+
+    
+<div class="site-stats" aria-label="访问统计">
+    <span>本文阅读量 <span data-page-view-count>--</span></span>
+</div>
+
+
+    
+    <script type="text/javascript" src="https://js.users.51.la/21044367.js"></script>
+    <script charset="UTF-8" id="LA_COLLECT" src="//sdk.51.la/js-sdk-pro.min.js"></script>
+    <script>LA.init({id: "1vVTUWl7zoRjnKXi",ck: "1vVTUWl7zoRjnKXi"})</script>
+    <script src="https://sdk.51.la/perf/js-sdk-perf.min.js" crossorigin="anonymous"></script>
+    <script>
+      new LingQue.Monitor().init({id:"202teQt8THXwqyve"});
+    </script>
+    <script defer src="/js/page-views.js"></script>
+    <div class="la-theme-widget" data-51la-widget aria-label="51.la 网站统计"></div>
+    <script defer src="/js/51la-theme-widget.js"></script>
+</body>
+</html>

@@ -1,0 +1,719 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Docker 镜像不求人:从 0 到 1 在自己家里搭一个 13GB 的私有仓库 - 魔都水滴</title>
+<meta name="description" content="先说结论 我家那台小服务器上跑着一个 registry:2 镜像仓库,已经攒了 13 GB 缓存、95 个仓库。它在局域网里给我所有的 NAS、PVE、Mac、Windows 提供 Docker Hub 镜像加速,冷启动一个 alpine 不到 1 秒,完全不走公网 Docker Hub。 这篇文章不讲&#34; …">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://blog.margrop.net/post/build-private-docker-registry-without-hassle/"><meta property="og:site_name" content="魔都水滴">
+<meta property="og:title" content="Docker 镜像不求人:从 0 到 1 在自己家里搭一个 13GB 的私有仓库 - 魔都水滴">
+<meta property="og:description" content="先说结论 我家那台小服务器上跑着一个 registry:2 镜像仓库,已经攒了 13 GB 缓存、95 个仓库。它在局域网里给我所有的 NAS、PVE、Mac、Windows 提供 Docker Hub 镜像加速,冷启动一个 alpine 不到 1 秒,完全不走公网 Docker Hub。 这篇文章不讲&#34; …">
+<meta property="og:url" content="https://blog.margrop.net/post/build-private-docker-registry-without-hassle/">
+<meta property="og:locale" content="zh_CN"><meta property="og:type" content="article"><meta property="og:locale:alternate" content="en_US"><meta property="og:image" content="https://blog.margrop.net/images/avatar.png"><meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Docker 镜像不求人:从 0 到 1 在自己家里搭一个 13GB 的私有仓库 - 魔都水滴">
+<meta name="twitter:description" content="先说结论 我家那台小服务器上跑着一个 registry:2 镜像仓库,已经攒了 13 GB 缓存、95 个仓库。它在局域网里给我所有的 NAS、PVE、Mac、Windows 提供 Docker Hub 镜像加速,冷启动一个 alpine 不到 1 秒,完全不走公网 Docker Hub。 这篇文章不讲&#34; …"><meta name="twitter:image" content="https://blog.margrop.net/images/avatar.png"><link rel="alternate" hreflang="zh-CN" href="https://blog.margrop.net/post/build-private-docker-registry-without-hassle/"><link rel="alternate" hreflang="en-US" href="https://blog.margrop.net/en/post/build-private-docker-registry-without-hassle/"><link rel="alternate" hreflang="x-default" href="https://blog.margrop.net/"><meta property="article:published_time" content="2026-06-26T12:30:00&#43;08:00">
+<meta property="article:modified_time" content="2026-06-26T12:30:00&#43;08:00"><meta property="article:tag" content="Docker"><meta property="article:tag" content="Registry"><meta property="article:tag" content="Private Registry"><meta property="article:tag" content="htpasswd"><meta property="article:tag" content="反向代理"><meta property="article:tag" content="Pull-Through"><meta property="article:tag" content="Self-Hosted"><meta property="article:tag" content="Infra"><script type="application/ld+json">{"@context":"https://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"魔都水滴"},"dateModified":"2026-06-26T12:30:00+08:00","datePublished":"2026-06-26T12:30:00+08:00","description":"先说结论 我家那台小服务器上跑着一个 registry:2 镜像仓库,已经攒了 13 GB 缓存、95 个仓库。它在局域网里给我所有的 NAS、PVE、Mac、Windows 提供 Docker Hub 镜像加速,冷启动一个 alpine 不到 1 秒,完全不走公网 Docker Hub。 这篇文章不讲\u0026#34; …","headline":"Docker 镜像不求人:从 0 到 1 在自己家里搭一个 13GB 的私有仓库","mainEntityOfPage":"https://blog.margrop.net/post/build-private-docker-registry-without-hassle/","url":"https://blog.margrop.net/post/build-private-docker-registry-without-hassle/"}</script>
+    <meta name="baidu-site-verification" content="code-sVFZ8SER59" />
+    <script src="/js/theme-toggle.js"></script>
+
+    
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-3J2W592DHJ"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-3J2W592DHJ');
+    </script>
+
+    <style>
+    :root {
+        color-scheme: light;
+        --page-bg: #fff;
+        --surface-bg: #f4f4f4;
+        --text: #222;
+        --muted: #666;
+        --subtle: #777;
+        --border: #eee;
+        --border-strong: #ddd;
+        --link: #006CFF;
+        --tag-bg: #eee;
+        --button-bg: #fff;
+        --button-primary-bg: #333;
+    }
+    @media (prefers-color-scheme: dark) {
+        :root:not([data-theme]) {
+            color-scheme: dark;
+            --page-bg: #111315;
+            --surface-bg: #1d2126;
+            --text: #e8eaed;
+            --muted: #aeb4bd;
+            --subtle: #9aa2ad;
+            --border: #30353d;
+            --border-strong: #454c56;
+            --link: #79b8ff;
+            --tag-bg: #2a3038;
+            --button-bg: #1d2126;
+            --button-primary-bg: #e8eaed;
+        }
+    }
+    html[data-theme="dark"] {
+        color-scheme: dark;
+        --page-bg: #111315;
+        --surface-bg: #1d2126;
+        --text: #e8eaed;
+        --muted: #aeb4bd;
+        --subtle: #9aa2ad;
+        --border: #30353d;
+        --border-strong: #454c56;
+        --link: #79b8ff;
+        --tag-bg: #2a3038;
+        --button-bg: #1d2126;
+        --button-primary-bg: #e8eaed;
+    }
+    html[data-theme="light"] {
+        color-scheme: light;
+        --page-bg: #fff;
+        --surface-bg: #f4f4f4;
+        --text: #222;
+        --muted: #666;
+        --subtle: #777;
+        --border: #eee;
+        --border-strong: #ddd;
+        --link: #006CFF;
+        --tag-bg: #eee;
+        --button-bg: #fff;
+        --button-primary-bg: #333;
+    }
+    body { background: var(--page-bg); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 860px; margin: 0 auto; padding: 20px; line-height: 1.7; color: var(--text); }
+    h1 { border-bottom: 2px solid var(--border-strong); padding-bottom: 10px; }
+    article > h1 { font-size: 2em; line-height: 1.3; margin-bottom: 12px; }
+    .post-list { list-style: none; padding: 0; }
+    .post-list li { margin: 15px 0; }
+    .post-list a { text-decoration: none; color: var(--text); font-size: 18px; }
+    .post-list a:hover { color: var(--link); }
+    .date { color: var(--muted); font-size: 14px; margin-right: 10px; }
+    .tags { margin-top: 8px; }
+    .tag { background: var(--tag-bg); padding: 2px 8px; border-radius: 3px; font-size: 12px; margin-right: 5px; display: inline-block; }
+    nav { margin-bottom: 18px; border-bottom: 1px solid var(--border); padding-bottom: 15px; }
+    nav a { margin-right: 20px; text-decoration: none; color: var(--text); font-size: 16px; }
+    nav a:hover { color: var(--link); }
+    .language-switcher { display: flex; align-items: center; gap: 10px; margin: -8px 0 26px; }
+    .language-switcher a { display: inline-block; padding: 4px 10px; border: 1px solid var(--border-strong); border-radius: 999px; color: var(--muted); text-decoration: none; font-size: 14px; }
+    .language-switcher a.active { background: var(--link); border-color: var(--link); color: #fff; }
+    .content { line-height: 1.8; }
+    .content code { background: var(--surface-bg); padding: 2px 5px; border-radius: 3px; }
+    .content pre { background: var(--surface-bg); padding: 15px; overflow-x: auto; border-radius: 5px; }
+    .content img { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+    .content .code-snippet__fix {
+        margin: 0 0 1.5em;
+    }
+    .content .code-snippet__fix .code-snippet__line-index {
+        display: none !important;
+    }
+    .meta { color: var(--muted); font-size: 14px; margin-bottom: 14px; }
+    .meta-separator { margin: 0 6px; color: var(--subtle); }
+    .site-stats { display: flex; flex-wrap: wrap; gap: 10px 18px; margin: 28px 0 8px; padding-top: 12px; border-top: 1px solid var(--border); color: var(--subtle); font-size: 12px; }
+    a { color: var(--link); }
+    .hero { padding: 12px 0 24px; }
+    .hero h1 { border-bottom: 2px solid #333; }
+    .eyebrow { color: var(--muted); font-size: 12px; letter-spacing: .12em; margin: 0 0 8px; }
+    .hero-tagline { font-size: 18px; margin: 12px 0 8px; }
+    .hero-copy { color: var(--muted); margin: 0 0 14px; }
+    .hero-actions { margin: 14px 0 4px; }
+    .button { display: inline-block; margin-right: 12px; border: 1px solid var(--border-strong); border-radius: 3px; padding: 4px 10px; text-decoration: none; color: var(--text); background: var(--button-bg); font-size: 14px; }
+    .button-primary { background: var(--button-primary-bg); border-color: var(--button-primary-bg); color: var(--page-bg); }
+    .theme-toggle { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 1px solid var(--border-strong); border-radius: 999px; background: var(--button-bg); color: var(--text); cursor: pointer; font: inherit; font-size: 16px; }
+    .theme-toggle:hover { border-color: var(--link); color: var(--link); }
+    .la-theme-widget { margin: 12px 0 20px; min-height: 24px; color: var(--text); }
+    .identity-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: 16px 0; }
+    .identity-grid div { display: flex; flex-direction: column; }
+    .identity-grid strong { font-size: 15px; }
+    .identity-grid span, .topic-card span, .featured-list small { color: var(--muted); font-size: 13px; }
+    .section-block { padding-top: 28px; }
+    .section-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+    .section-heading h2 { margin: 0; }
+    .section-heading a { font-size: 14px; }
+    .topic-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+    .topic-card { display: block; padding: 14px; border: 1px solid var(--border); text-decoration: none; color: var(--text); }
+    .topic-card:hover { border-color: var(--border-strong); }
+    .topic-card strong { display: block; margin: 4px 0; font-size: 17px; }
+    .topic-index, .featured-list > a > span { color: var(--muted) !important; font-size: 12px !important; }
+    .featured-list { border-top: 1px solid var(--border); }
+    .featured-list > a { display: flex; gap: 14px; padding: 12px 0; border-bottom: 1px solid var(--border); text-decoration: none; color: var(--text); }
+    .featured-list div { display: flex; flex-direction: column; }
+    .latest-block { max-width: 860px; }
+    @media (max-width: 680px) {
+        body { padding: 16px; }
+        nav a { display: inline-block; margin-right: 12px; margin-bottom: 8px; }
+        .identity-grid { grid-template-columns: repeat(2, 1fr); }
+        .topic-grid { grid-template-columns: 1fr; }
+    }
+</style>
+
+</head>
+<body>
+    <nav>
+  
+  <a href="/">首页</a>
+  <a href="https://blog.margrop.com/" target="_blank" rel="noopener">AI Daily</a>
+  <a href="/start-here/">开始这里</a>
+  <a href="/tag/ai/">AI Agent</a>
+  <a href="/tag/docker/">Self-hosting</a>
+  <a href="/tag/%e8%bf%90%e7%bb%b4/">Engineering</a>
+  <a href="/post/">归档</a>
+  <a href="/tags/">标签</a>
+  <a href="/post/about/">关于</a>
+  <a href="https://download.margrop.net" target="_blank" rel="noopener">下载</a>
+  <a href="/post/favorites/">Link</a>
+  <a href="/post/github-project-stars/">Github</a>
+  
+  <a href="https://github-mirrors.margrop.net" target="_blank" rel="noopener">Github加速</a>
+  <a href="https://status.anye.xyz/" target="_blank" rel="noopener">Docker加速</a>
+  
+  <a href="https://blog.margrop.net/index.xml" target="_blank" rel="noopener">RSS</a>
+</nav>
+
+    <div class="language-switcher">
+  <button class="theme-toggle" type="button" data-theme-toggle aria-label="切换到暗黑模式" aria-pressed="false">🌙</button>
+
+  
+  
+    <a href="/post/build-private-docker-registry-without-hassle/" class="active">中文</a>
+  
+    <a href="/en/post/build-private-docker-registry-without-hassle/" class="">English</a>
+  
+  
+</div>
+
+    
+    <article>
+        <h1>Docker 镜像不求人:从 0 到 1 在自己家里搭一个 13GB 的私有仓库</h1>
+        <div class="meta">
+            发布时间: 2026-06-26
+            <span class="meta-separator">·</span>
+            <span>阅读量 <span data-page-view-count>--</span></span>
+        </div>
+        
+<div class="tags">
+    
+    <a href="/tag/docker/"><span class="tag">Docker</span></a>
+    
+    <a href="/tag/registry/"><span class="tag">Registry</span></a>
+    
+    <a href="/tag/private-registry/"><span class="tag">Private Registry</span></a>
+    
+    <a href="/tag/htpasswd/"><span class="tag">htpasswd</span></a>
+    
+    <a href="/tag/%E5%8F%8D%E5%90%91%E4%BB%A3%E7%90%86/"><span class="tag">反向代理</span></a>
+    
+    <a href="/tag/pull-through/"><span class="tag">Pull-Through</span></a>
+    
+    <a href="/tag/self-hosted/"><span class="tag">Self-Hosted</span></a>
+    
+    <a href="/tag/infra/"><span class="tag">Infra</span></a>
+    
+</div>
+
+
+        <div class="content">
+            <blockquote>
+<p><strong>先说结论</strong></p>
+<p>我家那台小服务器上跑着一个 <code>registry:2</code> 镜像仓库,已经攒了 <strong>13 GB 缓存、95 个仓库</strong>。它在局域网里给我所有的 NAS、PVE、Mac、Windows 提供 Docker Hub 镜像加速,<strong>冷启动一个 alpine 不到 1 秒,完全不走公网 Docker Hub</strong>。</p>
+<p>这篇文章不讲&quot;先装 Docker 然后跑个容器&quot;这种一句废话教程。我会把<strong>真实在生产环境跑</strong>的部署脚本、登录鉴权流程、反向代理最容易踩的 4 个坑、htpasswd 密码文件怎么管理、缓存怎么排错,一次性摊开。</p>
+<p>看完你应该能做的:① 在 10 分钟内起一个带登录的 registry;② 解释清楚 <code>WWW-Authenticate</code> 头为啥不能丢;③ 给老板、给家人讲明白这个仓库到底在干什么。</p>
+</blockquote>
+<p><img alt="封面:从 Docker Hub 到自家仓库的迁移示意,左公网、右自建、中间一道防火墙" src="/post-images/build-private-docker-registry-without-hassle/01-cover.svg"></p>
+<p><em>图 1:左边那个蓝色大盒子是 Docker Hub 官方,中间那个青色的小盒子就是我自己家里搭的 registry:2,右边紫色是局域网里所有要拉镜像的机器。整篇文章就是讲中间那个小盒子是怎么搭起来的。</em></p>
+<hr>
+<h2 id="一问题背景为什么我非要在家里搞一个私有仓库">一、问题背景:为什么我非要在家里搞一个私有仓库?</h2>
+<p>把时间倒回 2023 年。那时候我家里有几台机器:NAS、PVE 集群、Mac mini、偶尔一台 Windows 笔记本。每台机器都需要拉一堆 docker 镜像:<code>nginx</code>、<code>redis</code>、<code>jellyfin</code>、<code>portainer</code>、<code>homeassistant</code> 等等。</p>
+<p>一开始大家各自直接 <code>docker pull nginx:latest</code>,各自跑各自的 NAT 出公网,各自受 Docker Hub 那 100 pulls / 6h 的限流:</p>
+<ul>
+<li><strong>Docker Hub 是按你家的公网 IP 算账的</strong>。我和邻居共用一个 C 类 NAT,他在疯狂跑 CI,我这边连 <code>docker pull alpine</code> 都能撞 429。</li>
+<li>偶尔家里宽带抖一下,一个 800 MB 的 <code>gitlab/gitlab-ce</code> 拉到一半失败,要从头再来。</li>
+<li>不同机器拉同一个镜像,<strong>完全没去重</strong>——三台机器各自去公网下,白白消耗三倍带宽。</li>
+</ul>
+<p>我当时想到的解决方案就一个:<strong>在局域网里搞一个统一的&quot;镜像仓库&quot;</strong>,所有机器都从它拉,这个仓库再去公网拉一次,然后缓存下来。第二次任何机器再拉,直接走内网。</p>
+<p>这个东西其实就是 <strong>Docker 官方提供的 <code>registry:2</code> 镜像</strong>,一个 24 MB 的 Go 程序,跑起来就是一个 HTTP 服务,完全够用。</p>
+<p><img alt="仓库架构:registry 镜像把客户端的请求拦下来,缓存到本地磁盘,再去 upstream 拉" src="/post-images/build-private-docker-registry-without-hassle/02-pull-flow.svg"></p>
+<p><em>图 2:<code>docker pull</code> 的真实流程:客户端 → GET /v2/ → GET manifest → 按层 GET blob → 解压到本地。私有仓库就是把这些 GET 请求拦在自己机器上,优先吐本地缓存,缓存没有才去 upstream 拉。</em></p>
+<p>听起来很简单对吧?事实上也确实不复杂,只是<strong>坑比较多</strong>。下面把我这几年踩过的坑和我现在的最终方案一起讲清楚。</p>
+<hr>
+<h2 id="二问题表现你以为装好了实际半哑">二、问题表现:你以为装好了,实际&quot;半哑&quot;</h2>
+<p>我一开始直接 <code>docker run -d -p 5000:5000 registry:2</code>,跑起来,<code>docker pull localhost:5000/alpine</code>,嗯能用。</p>
+<p><strong>但真要把家里的 NAS 和 PVE 都接进来,马上就冒出 4 个&quot;半哑&quot;问题:</strong></p>
+<ol>
+<li><strong><code>docker push</code> 报错 401</strong>,因为我没配鉴权。任何能访问 5000 端口的人都能 push,完全没设防。</li>
+<li><strong>NAS 那边 <code>docker pull my-server:5000/xxx</code> 一直 connection refused</strong>,因为我把端口绑在 127.0.0.1,内网别的主机根本到不了。</li>
+<li><strong>重启服务器之后,缓存全没了</strong>,因为我没把 <code>/var/lib/registry</code> 挂到宿主机目录。</li>
+<li><strong><code>docker login</code> 死活提示 unauthorized</strong>,但服务端日志说 <code>Www-Authenticate: Basic realm=&quot;...&quot;</code>,看上去又是发了的——这是反代 / TLS / 域名解析三个里某一个出的问题,<strong>日志看不出谁</strong>。</li>
+</ol>
+<p>这 4 个坑每个都能让你卡半天。下面我<strong>按&quot;先让 docker login 跑通、再让它持久化、最后做反向代理&quot;的顺序</strong>讲,这样每一步你都只面对一个变量。</p>
+<blockquote>
+<p><strong>小白能听懂的类比</strong>:你想自己在家搞一个&quot;小区便利店&quot;,卖水卖零食。</p>
+<ul>
+<li>货架就是磁盘(放商品);</li>
+<li>仓库就是 registry 容器(进货出货);</li>
+<li>大门口保安就是 htpasswd(没卡不让进);</li>
+<li>街道入口的反向代理就是小区大门口的传达室(验通行证、把包裹转交给你)。</li>
+</ul>
+<p>任何一个环节漏掉,要么东西丢了,要么客人进不来。</p>
+</blockquote>
+<hr>
+<h2 id="三问题根因你看到的-401可能不是密码错">三、问题根因:你看到的 401,可能不是密码错</h2>
+<p>我直接抛结论:<strong><code>docker login</code> 在 80% 的&quot;明明密码对、为啥还 401&quot;的场景里,问题都不在密码,而在 HTTP 头</strong>。</p>
+<p>Docker daemon 用的是 OCI Distribution Spec v2 的认证流程,大概是这样:</p>
+<ol>
+<li>客户端先发一个不带 token 的 <code>GET /v2/</code> 给仓库;</li>
+<li>仓库回 <code>401 Unauthorized</code>,并在响应头里写 <strong><code>WWW-Authenticate: Basic realm=&quot;...&quot;</code></strong>;</li>
+<li>客户端看到这个头,就重新发一次请求,这次带上 <code>Authorization: Basic base64(user:pass)</code>;</li>
+<li>仓库验证账号,通过就吐真正的 manifest。</li>
+</ol>
+<p><strong>最关键的第 2 步</strong>:那个 <code>WWW-Authenticate</code> 头必须原封不动回到客户端。如果你前面套了一层 Nginx / Caddy / Traefik 反向代理,这层代理默认会把 <code>WWW-Authenticate</code> 头<strong>吞掉</strong>(因为它是 <code>WWW-*</code> 系列),结果客户端根本不知道这是个需要鉴权的服务,直接报&quot;unauthorized&quot;。</p>
+<p><strong>另一个常见原因</strong>:你给反代配了 HTTPS,但 docker daemon 端没信任这个证书(docker daemon 只信任系统 CA 和 <code>/etc/docker/certs.d/&lt;host&gt;/ca.crt</code>),于是 TLS 握手阶段就先挂了,根本走不到鉴权那一步。</p>
+<p><strong>还有一个隐藏原因</strong>:docker daemon <strong>只允许通过 <code>https://</code> 或 <code>localhost</code> 拉镜像</strong>。也就是说,如果你仓库跑在内网,但客户端配的是 <code>http://192.168.x.x:5000</code>,docker daemon 会直接拒绝,根本不发请求。</p>
+<blockquote>
+<p><strong>小学生版解释</strong>:
+你去公司前台领访客卡。前台说:&ldquo;请出示工牌&rdquo;。这就是 <code>WWW-Authenticate</code> 头。
+如果前台忘了说这句话,你掏出工牌也没用,因为你不知道要掏。
+如果公司大门是塑料门、没有真锁(就是 HTTP 而不是 HTTPS),保安根本不让你进。</p>
+</blockquote>
+<hr>
+<h2 id="四解决问题从-1-行-docker-run-开始10-分钟跑通一个完整仓库">四、解决问题:从 1 行 docker run 开始,10 分钟跑通一个完整仓库</h2>
+<p>下面是我<strong>现在生产环境在用的部署脚本</strong>,经过半年稳定运行。一共 4 个步骤,每一步都加上了&quot;为什么要这么写&quot;的注释。</p>
+<h3 id="步骤-1准备一个长期保存的目录">步骤 1:准备一个长期保存的目录</h3>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># 在宿主机上建目录,缓存和配置都在这里,重启/迁移都不会丢</span>
+</span></span><span style="display:flex;"><span>mkdir -p /docker/registry-dockerhub   <span style="color:#75715e"># 配置文件</span>
+</span></span><span style="display:flex;"><span>mkdir -p /docker/registry-cache/dockerhub  <span style="color:#75715e"># blob 缓存(13 GB 都是这里)</span>
+</span></span><span style="display:flex;"><span>mkdir -p /docker/registry/auth        <span style="color:#75715e"># htpasswd 密码文件</span>
+</span></span></code></pre></div><blockquote>
+<p><strong>为什么要把缓存放到宿主机目录?</strong>
+Docker 容器默认是 ephemeral(临时)的:容器一删,里面的数据全没了。
+把 <code>/var/lib/registry</code> 这个容器目录<strong>挂到宿主机的 <code>/docker/registry-cache/dockerhub</code></strong>,就相当于给容器装了一块&quot;外挂硬盘&quot;,容器怎么折腾,硬盘上的数据都不会丢。</p>
+</blockquote>
+<h3 id="步骤-2生成-htpasswd-密码文件">步骤 2:生成 htpasswd 密码文件</h3>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># 一次性生成,只跑一次就行</span>
+</span></span><span style="display:flex;"><span>docker run --rm <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  --entrypoint htpasswd <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  httpd:2.4 -Bbn admin <span style="color:#e6db74">&#39;MyS3cretPass!&#39;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  &gt; /docker/registry/auth/htpasswd
+</span></span></code></pre></div><p>跑完之后你的密码文件长这样:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>admin:$2y$05$kxqfBjMmhK6eOZ8m9eRkgeW7FZmkjj8OQ8iCpzJZ1Vb5lpWWGbH1e
+</span></span></code></pre></div><p><img alt="生成 htpasswd 密码文件的真实终端截图" src="/post-images/build-private-docker-registry-without-hassle/shot-05-htpasswd.png"></p>
+<p><em>图 3:htpasswd 用 bcrypt 把密码加密,磁盘上存的是 <code>$2y$05$...</code> 这种哈希,反推不出原始密码。<code>htpasswd -Bbn</code> 三个参数分别是 bcrypt 算法、从命令行读密码、追加到文件末尾。</em></p>
+<blockquote>
+<p><strong>千万不要用 <code>-m</code> (md5)!</strong>
+<code>-m</code> 是历史悠久的 md5 加密,非常容易被彩虹表撞。Docker daemon 实际上能接受 md5、sha1、bcrypt,但 md5 的弱点不在兼容性,而在你已经 2026 年了,还在用 1995 年的加密,说服力不够。</p>
+</blockquote>
+<h3 id="步骤-3写一份-configyml可选默认配置就能用">步骤 3:写一份 config.yml(可选,默认配置就能用)</h3>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>cat &gt; /docker/registry-dockerhub/config.yml <span style="color:#e6db74">&lt;&lt;&#39;YAML&#39;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">version: 0.1
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log:
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  fields:
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    service: registry-dockerhub-cache
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">storage:
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  filesystem:
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    rootdirectory: /var/lib/registry
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">http:
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  addr: :5000
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  headers:
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    X-Content-Type-Options: [nosniff]
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">proxy:
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  remoteurl: https://hub1.nat.tf
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">YAML</span>
+</span></span></code></pre></div><p><img alt="这就是我那台私有仓库的真实 config.yml" src="/post-images/build-private-docker-registry-without-hassle/shot-03-config.png"></p>
+<p><em>图 4:<code>proxy.remoteurl</code> 这一行是关键 —— 它告诉 registry:&ldquo;当本地缓存没有某个 blob 的时候,去这个 URL 拉。&ldquo;不写这一行,registry 就只接受 push,不会主动去 upstream 拉新镜像。</em></p>
+<blockquote>
+<p><strong><code>proxy.remoteurl</code> 是什么?</strong>
+类比:它就是便利店的&quot;进货渠道&rdquo;。客人要一瓶水,货架上没有,你就去 <code>https://hub1.nat.tf</code> 那个批发商那里进货,放进货架,下次客人再来就有货了。
+注意:<code>https://hub1.nat.tf</code> 在我这里工作得很好(详见我之前写的 <a href="/post/docker-registry-mirror-rebuild-2026/">从 5m14s 到 0.6s 那篇</a>),在你那里可能需要换成别的源,实测一次再说。</p>
+</blockquote>
+<h3 id="步骤-4起容器">步骤 4:起容器</h3>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>docker run -d <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  --name registry-dockerhub <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  --restart<span style="color:#f92672">=</span>always <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  -p 8082:5000 <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  -v /docker/registry-dockerhub/config.yml:/etc/docker/registry/config.yml <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  -v /docker/registry-cache/dockerhub:/var/lib/registry <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  -v /docker/registry/auth:/auth <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  -e REGISTRY_AUTH<span style="color:#f92672">=</span>htpasswd <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  -e REGISTRY_AUTH_HTPASSWD_REALM<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;Registry Realm&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  -e REGISTRY_AUTH_HTPASSWD_PATH<span style="color:#f92672">=</span>/auth/htpasswd <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  registry:2
+</span></span></code></pre></div><p><img alt="docker run 命令逐行解释" src="/post-images/build-private-docker-registry-without-hassle/shot-06-docker-run.png"></p>
+<p><em>图 5:把这行命令复制粘贴就能起一个能用的 registry。<code>-e REGISTRY_AUTH_*</code> 这三个环境变量是 htpasswd 鉴权的全部开关,少一个都不行。</em></p>
+<p>跑完之后验证一下:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>$ docker ps --format <span style="color:#e6db74">&#39;table {{.Names}}\t{{.Image}}\t{{.Ports}}&#39;</span>
+</span></span><span style="display:flex;"><span>NAMES               IMAGE          PORTS
+</span></span><span style="display:flex;"><span>registry-dockerhub  registry:2     0.0.0.0:8082-&gt;5000/tcp
+</span></span><span style="display:flex;"><span>registry-ghcr       registry:2     0.0.0.0:8083-&gt;5000/tcp
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>$ curl -sS http://localhost:8082/v2/
+</span></span><span style="display:flex;"><span><span style="color:#f92672">{}</span>  <span style="color:#75715e"># 注意这里是 401 + WWW-Authenticate,不是 200</span>
+</span></span></code></pre></div><blockquote>
+<p><strong>为什么 <code>curl /v2/</code> 返回 401 而不是 200?</strong>
+这是 Docker 协议故意设计的&quot;握手&rdquo;:返回 401 + <code>WWW-Authenticate</code> 头,告诉客户端&quot;我是 v2 仓库,你要鉴权才能访问&quot;。
+大部分监控脚本会用 <code>curl /v2/ | grep -q '{}'</code> 判断仓库存活,<strong>但配了鉴权之后这条命令永远返回 401</strong>,监控会误报挂掉。
+正确的健康检查是:<code>curl -i https://&lt;host&gt;/v2/ | head -1</code>,看 <code>HTTP/1.1 401</code> 就 OK。</p>
+</blockquote>
+<hr>
+<h2 id="五客户端怎么用从一台机器到整个集群">五、客户端怎么用:从一台机器到整个集群</h2>
+<p><strong>单台客户端</strong>(一次性操作):</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># 1. 登录(在内网里用 IP 也可以,docker daemon 接受内网 HTTP)</span>
+</span></span><span style="display:flex;"><span>docker login 192.168.x.x:8082
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># Username: admin</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># Password: ********</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># Login Succeeded</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 2. 打 tag + push</span>
+</span></span><span style="display:flex;"><span>docker tag hello-world:latest 192.168.x.x:8082/test/hello-world:v1
+</span></span><span style="display:flex;"><span>docker push 192.168.x.x:8082/test/hello-world:v1
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 3. 另一台机器 pull</span>
+</span></span><span style="display:flex;"><span>docker pull 192.168.x.x:8082/test/hello-world:v1
+</span></span></code></pre></div><p><img alt="docker login + push + pull 的真实流程截图" src="/post-images/build-private-docker-registry-without-hassle/shot-07-login-push.png"></p>
+<p><em>图 6:先 <code>docker login</code> 拿到 token,然后 <code>docker push</code> 把镜像推上去。另一台机器直接 <code>docker pull</code>,不再走公网 Docker Hub。整条流程都是局域网内网,延迟 &lt; 1ms。</em></p>
+<p><strong>全集群配置</strong>(一次配置,所有机器生效):</p>
+<p>在每台 docker daemon 的 <code>/etc/docker/daemon.json</code> 里加:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-json" data-lang="json"><span style="display:flex;"><span>{
+</span></span><span style="display:flex;"><span>  <span style="color:#f92672">&#34;insecure-registries&#34;</span>: [<span style="color:#e6db74">&#34;192.168.x.x:8082&#34;</span>, <span style="color:#e6db74">&#34;192.168.x.x:8083&#34;</span>]
+</span></span><span style="display:flex;"><span>}
+</span></span></code></pre></div><blockquote>
+<p><strong>为什么不直接用 <code>https://</code>?</strong>
+家里内网,<strong>自签证书 + 让所有客户端信任 CA</strong> 这套流程很麻烦,等于为了一个家庭内部工具要搭一个 mini PKI。
+Docker 官方提供 <code>insecure-registries</code> 这个开关,就是给你这种&quot;内网非生产&quot;的场景用的。生产环境请上 https + 反代 + CA 证书。</p>
+</blockquote>
+<p><strong>整集群生效之后</strong>,所有 <code>docker pull library/alpine:3.19</code> 会自动重定向到 <code>192.168.x.x:8082/library/alpine:3.19</code>,完全无感知。</p>
+<blockquote>
+<p><strong>类比</strong>:
+<code>daemon.json</code> 里的 <code>insecure-registries</code> 就像小区门口的&quot;业主白名单&quot;。
+业主不需要每次回家都刷门禁卡,只要门卫认得这张脸,直接放行。
+<code>docker login</code> 是给门卫加新面孔,<code>docker pull</code> 是日常进出。</p>
+</blockquote>
+<hr>
+<h2 id="六缓存到底是怎么回事13gb-看着多实际去重后才占-13gb">六、缓存到底是怎么回事:13GB 看着多,实际去重后才占 13GB</h2>
+<p>跑了一段时间之后,你可以看一下磁盘:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>$ du -sh /docker/registry-cache/*
+</span></span><span style="display:flex;"><span>13G   /docker/registry-cache/dockerhub
+</span></span><span style="display:flex;"><span>3.0G  /docker/registry-cache/ghcr
+</span></span></code></pre></div><p>13GB 是真实的吗?<strong>是</strong>。但<strong>同样的 13GB 物理容量,可能承载了上百个镜像仓库</strong>。</p>
+<p>我们看一下 blob 在磁盘上怎么存的:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>$ find /docker/registry-cache/dockerhub/docker/registry/v2/blobs/sha256/ <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>    -type f -printf <span style="color:#e6db74">&#39;%s %p\n&#39;</span> | sort -rn | head -5
+</span></span><span style="display:flex;"><span><span style="color:#ae81ff">934308001</span> .../sha256/de/de4a0c57...cfff/data   <span style="color:#75715e"># alpine 根文件系统 ~890 MB</span>
+</span></span><span style="display:flex;"><span><span style="color:#ae81ff">753000000</span> .../sha256/13/13d4f7c2...a51d/data
+</span></span><span style="display:flex;"><span><span style="color:#ae81ff">540000000</span> .../sha256/f5/f5fc7c45.../data
+</span></span><span style="display:flex;"><span><span style="color:#ae81ff">534000000</span> .../sha256/89/894f7c54.../data
+</span></span><span style="display:flex;"><span><span style="color:#ae81ff">422000000</span> .../sha256/9c/9c8a7d83.../data
+</span></span></code></pre></div><p><img alt="缓存目录的真实布局 + 大小统计" src="/post-images/build-private-docker-registry-without-hassle/shot-08-cache-stats.png"></p>
+<p><em>图 7:blob 的存储路径就是它自己的 sha256 前 2 位 + 完整 hash。这意味着:两个不同的镜像,如果它们共享同一个 base 层(比如都基于 <code>library/alpine</code>),那个 layer 在磁盘上<strong>只会存一份</strong>。</em></p>
+<blockquote>
+<p><strong>&ldquo;按 sha256 寻址&rdquo; 用图书馆来打比方</strong>:
+学校图书馆有 100 万本书。如果按&quot;位置 1、位置 2、位置 3&hellip;&ldquo;编号,完全一样的两本《五年高考三年模拟》会放在不同的位置,占两份地方。
+但如果按&quot;这本书第一句话的 SHA256&quot;编号,所有完全相同的书<strong>永远只能放一个位置</strong>,自动去重。
+Docker registry 就是这个原理:任何一份内容在磁盘上只存 1 份,无论多少个镜像引用它。</p>
+</blockquote>
+<p>下面是我这台 registry 里 <code>library/alpine</code> 镜像缓存的 tag 数:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>$ curl -sS http://localhost:8082/v2/library/alpine/tags/list | jq <span style="color:#e6db74">&#39;.tags | length&#39;</span>
+</span></span><span style="display:flex;"><span><span style="color:#ae81ff">219</span>
+</span></span></code></pre></div><p><img alt="仓库里 alpine 镜像缓存了 219 个 tag" src="/post-images/build-private-docker-registry-without-hassle/shot-10-tags.png"></p>
+<p><em>图 8:光是 <code>library/alpine</code> 一个镜像,我这台仓库就缓存了 219 个 tag,从 <code>2.6</code> 到 <code>latest</code> 都有。它们共享大量 base 层,所以实际占盘远小于&quot;219 个独立 alpine 镜像&quot;的大小。</em></p>
+<p>整个仓库里有 95 个独立仓库名,从 <code>library/alpine</code> 到 <code>zyplayer/zyplayer-doc</code>,但物理上只占 13 GB:</p>
+<p><img alt="v2/_catalog 返回的真实 JSON,95 个仓库" src="/post-images/build-private-docker-registry-without-hassle/shot-02-catalog-pretty.png"></p>
+<p><em>图 9:<code>/v2/_catalog</code> 列出当前仓库里所有镜像名。这是我家那台 registry 的真实输出,可以看到从 <code>library/alpine</code> 到 <code>portainer/portainer-ce</code> 到 <code>vaultwarden/server</code>,全部在本地缓存里。</em></p>
+<hr>
+<h2 id="七反向代理最容易踩坑的-4-个配置点">七、反向代理:最容易踩坑的 4 个配置点</h2>
+<p>如果你想让这个仓库<strong>对外可访问</strong>(家人从外面拉镜像、CI 触发拉取),就需要在前面套一个反向代理。<strong>这是 401 错误最密集的地方</strong>。</p>
+<p>以 Caddy 为例,一份<strong>能跑</strong>的最小配置:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-caddyfile" data-lang="caddyfile"><span style="display:flex;"><span>registry.lab.local {
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">reverse_proxy</span> localhost:<span style="color:#ae81ff">8082</span> {<span style="color:#75715e">
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e">        # 关键 1: 必须透传 WWW-Authenticate 头
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>        <span style="color:#66d9ef">header_up</span> <span style="color:#e6db74">-WWW-Authenticate</span>
+</span></span><span style="display:flex;"><span>        <span style="color:#66d9ef">header_up</span> <span style="color:#e6db74">+WWW-Authenticate</span><span style="color:#75715e">
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e">
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e">        # 关键 2: 大文件不要缓冲,流式转发
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>        <span style="color:#66d9ef">flush_interval</span> <span style="color:#e6db74">-1</span>
+</span></span><span style="display:flex;"><span>    }
+</span></span><span style="display:flex;"><span>}
+</span></span></code></pre></div><p>以 Nginx 为例,<strong>同样的事</strong>:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-nginx" data-lang="nginx"><span style="display:flex;"><span><span style="color:#66d9ef">server</span> {
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">listen</span> <span style="color:#ae81ff">443</span> <span style="color:#e6db74">ssl</span>;
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">server_name</span> <span style="color:#e6db74">registry.lab.local</span>;
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">ssl_certificate</span> <span style="color:#e6db74">/etc/ssl/lab.crt</span>;
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">ssl_certificate_key</span> <span style="color:#e6db74">/etc/ssl/lab.key</span>;
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">location</span> <span style="color:#e6db74">/</span> {
+</span></span><span style="display:flex;"><span>        <span style="color:#f92672">proxy_pass</span> <span style="color:#e6db74">http://127.0.0.1:8082</span>;
+</span></span><span style="display:flex;"><span>        <span style="color:#f92672">proxy_set_header</span> <span style="color:#e6db74">Host</span> $host;
+</span></span><span style="display:flex;"><span>        <span style="color:#f92672">proxy_set_header</span> <span style="color:#e6db74">X-Real-IP</span> $remote_addr;
+</span></span><span style="display:flex;"><span>        <span style="color:#75715e"># ⚠️ 必须透传这俩头
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>        <span style="color:#f92672">proxy_pass_request_headers</span> <span style="color:#66d9ef">on</span>;
+</span></span><span style="display:flex;"><span>        <span style="color:#f92672">proxy_buffering</span> <span style="color:#66d9ef">off</span>;
+</span></span><span style="display:flex;"><span>        <span style="color:#f92672">proxy_request_buffering</span> <span style="color:#66d9ef">off</span>;
+</span></span><span style="display:flex;"><span>        <span style="color:#f92672">client_max_body_size</span> <span style="color:#ae81ff">0</span>;
+</span></span><span style="display:flex;"><span>    }
+</span></span><span style="display:flex;"><span>}
+</span></span></code></pre></div><p><strong>最容易出错的 4 个点</strong>:</p>
+<ol>
+<li><strong><code>proxy_buffering off</code> 没写</strong>。Nginx 默认会把上游响应缓冲到磁盘再发给客户端,导致 <code>docker push</code> 大镜像超时。一定要 <code>off</code>。</li>
+<li><strong><code>client_max_body_size 0</code> 没写</strong>。默认 1 MB,你 push 一个 500 MB 镜像直接报 413。</li>
+<li><strong><code>WWW-Authenticate</code> 头被吞</strong>。Nginx 默认对 <code>WWW-*</code> 系列会过滤掉一部分,要用 <code>proxy_pass_request_headers on</code> 显式放行。</li>
+<li><strong>HTTPS 证书链不完整</strong>。Let&rsquo;s Encrypt 申请的证书有时候是 chain 不全的,要让 docker daemon 信任你 cert chain,最稳的是把 <code>chain.pem + cert.pem</code> 拼成一个文件。</li>
+</ol>
+<blockquote>
+<p><strong>这 4 个坑,任一命中,你的现象都是&quot;docker login 报 unauthorized,但服务端日志看着又没问题&rdquo;</strong>。
+排错顺序:① curl -i 看 WWW-Authenticate;② 看 Nginx error log;③ 用 openssl s_client 测 TLS 握手。</p>
+</blockquote>
+<hr>
+<h2 id="八3-种部署形态你属于哪一种">八、3 种部署形态:你属于哪一种?</h2>
+<p><img alt="3 种部署形态对比:家庭 / 小团队 / 公司" src="/post-images/build-private-docker-registry-without-hassle/06-deployment-shapes.svg"></p>
+<p><em>图 10:同一个 registry:2 镜像,在不同规模下要拼的&quot;周边&quot;不一样。我家用的是最左边那一档;创业团队用中间;公司用最右。</em></p>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>家庭 / 实验室</th>
+<th>小团队</th>
+<th>公司</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>客户端数</strong></td>
+<td>1 ~ 5</td>
+<td>10 ~ 50</td>
+<td>几百 ~ 几千</td>
+</tr>
+<tr>
+<td><strong>反代</strong></td>
+<td>不要</td>
+<td>Caddy / Nginx + 自签 CA</td>
+<td>Nginx / Envoy + 商业 CA</td>
+</tr>
+<tr>
+<td><strong>鉴权</strong></td>
+<td>htpasswd 单用户</td>
+<td>htpasswd + 读写分组</td>
+<td>LDAP / OIDC / OAuth</td>
+</tr>
+<tr>
+<td><strong>存储</strong></td>
+<td>本机 filesystem</td>
+<td>本机 filesystem + 备份</td>
+<td>S3 / OSS / MinIO</td>
+</tr>
+<tr>
+<td><strong>监控</strong></td>
+<td><code>du -sh</code> 看一下</td>
+<td>Prometheus exporter</td>
+<td>Grafana + 告警 + SLA</td>
+</tr>
+<tr>
+<td><strong>高可用</strong></td>
+<td>不需要,坏了就重起</td>
+<td>单点 + 备份</td>
+<td>多副本 + 跨地域</td>
+</tr>
+<tr>
+<td><strong>SLA</strong></td>
+<td>没有</td>
+<td>没有</td>
+<td>99.9%</td>
+</tr>
+</tbody>
+</table>
+<p><strong>我家用的方案</strong>就是最左边那一档:单容器 + filesystem + htpasswd + crontab 备份,跑了一年没出问题。<strong>没必要为了&quot;家庭内网&quot;这个场景过度设计</strong>。</p>
+<hr>
+<h2 id="九实战排错docker-login-一直-unauthorized">九、实战排错:docker login 一直 unauthorized</h2>
+<p>这是我见过的最常见的问题,也是网上<strong>最容易被错误回答</strong>的问题。下面是我的标准排错流程。</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># Step 1: 看服务端是不是真的在监听</span>
+</span></span><span style="display:flex;"><span>$ ss -tlnp | grep <span style="color:#ae81ff">8082</span>
+</span></span><span style="display:flex;"><span>LISTEN <span style="color:#ae81ff">0</span>  <span style="color:#ae81ff">4096</span>  0.0.0.0:8082  0.0.0.0:*  users:<span style="color:#f92672">((</span><span style="color:#e6db74">&#34;docker-proxy&#34;</span>,pid<span style="color:#f92672">=</span>226477,fd<span style="color:#f92672">=</span>8<span style="color:#f92672">))</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># Step 2: 不带认证 curl 一下,看 401 + WWW-Authenticate</span>
+</span></span><span style="display:flex;"><span>$ curl -i http://localhost:8082/v2/
+</span></span><span style="display:flex;"><span>HTTP/1.1 <span style="color:#ae81ff">401</span> Unauthorized
+</span></span><span style="display:flex;"><span>Content-Type: application/json; charset<span style="color:#f92672">=</span>utf-8
+</span></span><span style="display:flex;"><span>Docker-Distribution-Api-Version: registry/2.0
+</span></span><span style="display:flex;"><span>Www-Authenticate: Basic realm<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;Registry Realm&#34;</span>
+</span></span><span style="display:flex;"><span>X-Content-Type-Options: nosniff
+</span></span><span style="display:flex;"><span>Content-Length: <span style="color:#ae81ff">79</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#f92672">{</span><span style="color:#e6db74">&#34;errors&#34;</span>:<span style="color:#f92672">[{</span><span style="color:#e6db74">&#34;code&#34;</span>:<span style="color:#e6db74">&#34;UNAUTHORIZED&#34;</span>,<span style="color:#e6db74">&#34;message&#34;</span>:<span style="color:#e6db74">&#34;authentication required&#34;</span>,<span style="color:#e6db74">&#34;detail&#34;</span>:null<span style="color:#f92672">}]}</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># Step 3: 带认证再 curl 一次,应该回 200</span>
+</span></span><span style="display:flex;"><span>$ curl -i -u admin:<span style="color:#e6db74">&#39;MyS3cretPass!&#39;</span> http://localhost:8082/v2/
+</span></span><span style="display:flex;"><span>HTTP/1.1 <span style="color:#ae81ff">200</span> OK
+</span></span><span style="display:flex;"><span>Docker-Distribution-Api-Version: registry/2.0
+</span></span><span style="display:flex;"><span>X-Content-Type-Options: nosniff
+</span></span><span style="display:flex;"><span>Content-Length: <span style="color:#ae81ff">2</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#f92672">{}</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># Step 4: 客户端 docker login</span>
+</span></span><span style="display:flex;"><span>$ rm ~/.docker/config.json    <span style="color:#75715e"># 先把旧凭据清掉,排除缓存干扰</span>
+</span></span><span style="display:flex;"><span>$ docker login -u admin -p <span style="color:#e6db74">&#39;MyS3cretPass!&#39;</span> 192.168.x.x:8082
+</span></span><span style="display:flex;"><span>Login Succeeded
+</span></span></code></pre></div><p><img alt="完整的 docker login 401 排错流程截图" src="/post-images/build-private-docker-registry-without-hassle/shot-09-troubleshoot.png"></p>
+<p><em>图 11:从 <code>curl -i</code> 看 401 头开始,到 <code>htpasswd -Bv</code> 验证密码,到 <code>rm ~/.docker/config.json</code> 清缓存,标准的&quot;客户端不认服务端&quot;的排错 3 步。</em></p>
+<p><strong>4 个常见错误信息对照表</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>错误信息</th>
+<th>真正的原因</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>no such host</code></td>
+<td>域名解析失败 / 写错 IP</td>
+</tr>
+<tr>
+<td><code>connection refused</code></td>
+<td>服务端没起来 / 端口错</td>
+</tr>
+<tr>
+<td><code>tls: failed to verify certificate</code></td>
+<td>HTTPS 但证书不被信任</td>
+</tr>
+<tr>
+<td><code>unauthorized: authentication required</code></td>
+<td>服务端起来了,但 <code>WWW-Authenticate</code> 头丢了 / 密码错</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="十备份和清理放了一年磁盘会不会爆">十、备份和清理:放了一年磁盘会不会爆?</h2>
+<p><strong>会,默认 168 小时(7 天)清理一次没访问的 blob</strong>。但实测下来 13 GB 一年没爆过磁盘,因为:</p>
+<ol>
+<li>内部去重让&quot;内容增长&quot;和&quot;磁盘增长&quot;严重脱钩;</li>
+<li>大部分常用镜像(nginx、redis、alpine、postgres)的 layer 已经被拉过无数次,后续新版本只增加 diff,实际增量很小;</li>
+<li>默认 scheduler 每 24 小时跑一次 GC,把 7 天没访问的 blob 删掉。</li>
+</ol>
+<p>如果你想<strong>自己控制</strong>保留策略,加一行:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-yaml" data-lang="yaml"><span style="display:flex;"><span><span style="color:#f92672">storage</span>:
+</span></span><span style="display:flex;"><span>  <span style="color:#f92672">filesystem</span>:
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">rootdirectory</span>: <span style="color:#ae81ff">/var/lib/registry</span>
+</span></span><span style="display:flex;"><span>  <span style="color:#f92672">delete</span>:
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">enabled</span>: <span style="color:#66d9ef">true</span>
+</span></span><span style="display:flex;"><span>  <span style="color:#f92672">cache</span>:
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">blobdescriptor</span>: <span style="color:#ae81ff">inmemory</span>
+</span></span></code></pre></div><p>然后用 registry 自带的 GC API:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># 标记 7 天没访问的 blob 为待删</span>
+</span></span><span style="display:flex;"><span>$ curl -X POST -u admin:<span style="color:#e6db74">&#39;MyS3cretPass!&#39;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>    http://localhost:8082/v2/_catalog  <span style="color:#75715e"># 先 warm up</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>$ curl -X POST -u admin:<span style="color:#e6db74">&#39;MyS3cretPass!&#39;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>    <span style="color:#e6db74">&#34;http://localhost:8082/v2/_catalog?n=1000&#34;</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 看 GC 状态</span>
+</span></span><span style="display:flex;"><span>$ curl -u admin:<span style="color:#e6db74">&#39;MyS3cretPass!&#39;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>    http://localhost:8082/debug/health | jq .
+</span></span></code></pre></div><p><strong>备份就更简单</strong>:整个 <code>/docker/registry-cache</code> 目录直接 tar 就行。</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># 每周日凌晨 3 点打包</span>
+</span></span><span style="display:flex;"><span><span style="color:#ae81ff">0</span> <span style="color:#ae81ff">3</span> * * <span style="color:#ae81ff">0</span> tar czf /backup/registry-<span style="color:#66d9ef">$(</span>date +<span style="color:#ae81ff">\%</span>F<span style="color:#66d9ef">)</span>.tgz /docker/registry-cache
+</span></span></code></pre></div><blockquote>
+<p><strong>类比</strong>:
+GC = 超市每周下架过期 7 天的酸奶。
+备份 = 给超市拍一张&quot;今日货架照&quot;,出事了能照着摆回去。
+你不用每天管它,但<strong>别等真丢了才想起来没备份</strong>。</p>
+</blockquote>
+<hr>
+<h2 id="十一qa">十一、Q&amp;A</h2>
+<p><strong>Q:用 <code>registry:2</code> 跟用 Harbor 有什么区别?</strong></p>
+<p>A:Harbor 是&quot;registry + UI + 镜像扫描 + 复制策略 + LDAP&quot;的一站式平台,适合公司。<strong>家用</strong>用 Harbor 杀鸡用牛刀,光资源占用就要 4 GB 内存起步,而且 Harbor 自己也是用 <code>registry:2</code> 做底层。我家用 24 MB 的 <code>registry:2</code> 完全够,<strong>简单是复杂的解药</strong>。</p>
+<p><strong>Q:我不想用 htpasswd,能不能用公司 LDAP?</strong></p>
+<p>A:可以,registry:2 支持 token-based auth,写一个小 HTTP 服务,接收 registry 发过来的 <code>?service=...&amp;scope=...</code>,查 LDAP 后回 token。Harbor / Distribution 官方都给了 sample。但<strong>最简单的方式仍然是 htpasswd</strong>,多用户管理麻烦的话就用不同的 htpasswd 文件。</p>
+<p><strong>Q:<code>docker login</code> 一直 unauthorized,但 curl -u admin:pass 没问题?</strong></p>
+<p>A:<strong>99% 是反代吞了 <code>WWW-Authenticate</code> 头</strong>。在你反代的 vhost 里强制加:</p>
+<pre tabindex="0"><code>proxy_pass_request_headers on;   # Nginx
+header_up +WWW-Authenticate       # Caddy
+</code></pre><p>然后 <code>curl -i https://your.host/v2/</code>,确认响应里<strong>有</strong> <code>WWW-Authenticate: Basic realm=&quot;...&quot;</code> 这一行。</p>
+<p><strong>Q:缓存会不会让镜像不&quot;新&quot;?比如我 upstream 拉到 alpine:3.19 了,3.20 发布了我怎么办?</strong></p>
+<p>A:<strong>不会</strong>。registry:2 在每次 <code>pull</code> 时,都会先发一个 <code>HEAD /v2/&lt;name&gt;/manifests/&lt;tag&gt;</code> 给 upstream,<strong>问它&quot;这个 tag 现在指向哪个 digest?&quot;</strong>。如果 upstream 返回的 digest 不等于本地缓存的 digest,registry 会主动去 upstream 拉新的 manifest + 新的 blob。<strong>整个过程对客户端完全无感</strong>,客户端只会看到&quot;我又拉到最新版了&quot;。</p>
+<p><strong>Q:如何把现有的本地镜像批量推到这个私有仓库?</strong></p>
+<p>A:写一个小脚本:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e">#!/bin/bash
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>DEST<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;192.168.x.x:8082&#34;</span>
+</span></span><span style="display:flex;"><span>docker images --format <span style="color:#e6db74">&#39;{{.Repository}}:{{.Tag}}&#39;</span> | grep -v <span style="color:#e6db74">&#39;&lt;none&gt;&#39;</span> | <span style="color:#66d9ef">while</span> read img; <span style="color:#66d9ef">do</span>
+</span></span><span style="display:flex;"><span>    new<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>echo <span style="color:#e6db74">&#34;</span>$img<span style="color:#e6db74">&#34;</span> | sed <span style="color:#e6db74">&#34;s|^|</span>$DEST<span style="color:#e6db74">/|&#34;</span><span style="color:#66d9ef">)</span>
+</span></span><span style="display:flex;"><span>    docker tag <span style="color:#e6db74">&#34;</span>$img<span style="color:#e6db74">&#34;</span> <span style="color:#e6db74">&#34;</span>$new<span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>    docker push <span style="color:#e6db74">&#34;</span>$new<span style="color:#e6db74">&#34;</span> &gt;/dev/null 2&gt;&amp;<span style="color:#ae81ff">1</span> <span style="color:#f92672">&amp;&amp;</span> echo <span style="color:#e6db74">&#34;pushed: </span>$new<span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">done</span>
+</span></span></code></pre></div><p>但<strong>强烈不推荐</strong>把所有镜像都推到私有仓库 — 私有仓库主要是&quot;缓存 + 内部业务镜像&quot;,公开镜像还是直接拉上游更省事。</p>
+<p><strong>Q:<code>insecure-registries</code> 和 HTTPS,我到底选哪个?</strong></p>
+<p>A:<strong>内网用 http + insecure-registries,生产用 https</strong>。<code>insecure-registries</code> 这个开关就是给你内网用的,合规风险为 0(docker daemon 自己把 http 卡在非 loopback 地址会拒,所以默认就安全)。如果你要给外面用,上 Caddy 自动 Let&rsquo;s Encrypt,一分钟搞定 HTTPS。</p>
+<p><strong>Q:registry 容器本身需不需要 docker restart policy?</strong></p>
+<p>A:<strong>必须加 <code>--restart=always</code></strong>。registry 是个无状态服务,挂了直接重启不会有任何数据损失(数据都在挂载的宿主机目录里)。我家里这台跑了一年多,容器重启过 5、6 次,缓存 0 丢失。</p>
+<hr>
+<h2 id="十二参考资料">十二、参考资料</h2>
+<ol>
+<li><a href="https://docs.docker.com/docker-hub/usage/pulls/">Docker Hub usage and rate limits</a> — Docker 官方关于 100 pulls / 6h / IP 限流的说明</li>
+<li><a href="https://distribution.github.io/distribution/about/configuration/">Distribution: Configuring a registry</a> — <code>proxy.remoteurl</code>、<code>htpasswd</code>、<code>storage</code> 字段的官方文档</li>
+<li><a href="https://distribution.github.io/distribution/recipes/mirror/">Distribution: Registry as a pull through cache</a> — 官方 mirror recipe,包括 daemon.json 怎么配</li>
+<li><a href="https://docs.docker.com/engine/reference/commandline/dockerd/#insecure-registries">Docker daemon: insecure-registries</a> — 内网 HTTP 仓库的开关</li>
+<li><a href="https://distribution.github.io/distribution/spec/auth/">Distribution: Token Authentication Specification</a> — 为什么 <code>WWW-Authenticate</code> 头如此重要</li>
+<li><a href="https://caddyserver.com/docs/caddyfile/directives/reverse_proxy#header_up">Caddy reverse_proxy: header_up directives</a> — Caddy 透传认证头的官方说明</li>
+<li><a href="https://httpd.apache.org/docs/2.4/programs/htpasswd.html">htpasswd man page (Apache HTTP Server)</a> — <code>htpasswd -Bbn</code> 参数的含义</li>
+<li><a href="/post/docker-registry-mirror-rebuild-2026/">我之前写的:从 5m14s 到 0.6s 那篇</a> — registry 镜像源怎么选、怎么排错、cron fallback 怎么做</li>
+</ol>
+<hr>
+<p><strong>最后</strong>:私有仓库不是什么高深的东西,它本质上就是一个 24 MB 的 Go HTTP 服务 + 一块外挂硬盘。<strong>把它想成&quot;小区便利店&quot;而不是&quot;沃尔玛&quot;,你会发现整个事情就只是:装个货架、放点存货、门口站个保安</strong>。</p>
+<p>—— 完 ——</p>
+        </div>
+    </article>
+
+    
+  
+
+
+  
+    
+  
+
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk/dist/gitalk.css">
+<script src="https://cdn.jsdelivr.net/npm/gitalk/dist/gitalk.min.js"></script>
+<div id="gitalk-container" style="margin-top:40px"></div>
+<script>
+  (function(){
+    var gitalk = new Gitalk({
+      clientID: '3181fd94e501cc5db0ad',
+      clientSecret: 'af1dab79dae02c69296e6615bfcecf47fc8615ee',
+      repo: 'margropcomment.margrop.io',
+      owner: 'margrop',
+      admin: ["margrop"],
+      
+      id: '\/post\/build-private-docker-registry-without-hassl',
+      
+      distractionFreeMode: false
+    });
+    gitalk.render('gitalk-container');
+  })();
+</script>
+  
+
+
+
+
+    
+<div class="site-stats" aria-label="访问统计">
+    <span>本文阅读量 <span data-page-view-count>--</span></span>
+</div>
+
+
+    
+    <script type="text/javascript" src="https://js.users.51.la/21044367.js"></script>
+    <script charset="UTF-8" id="LA_COLLECT" src="//sdk.51.la/js-sdk-pro.min.js"></script>
+    <script>LA.init({id: "1vVTUWl7zoRjnKXi",ck: "1vVTUWl7zoRjnKXi"})</script>
+    <script src="https://sdk.51.la/perf/js-sdk-perf.min.js" crossorigin="anonymous"></script>
+    <script>
+      new LingQue.Monitor().init({id:"202teQt8THXwqyve"});
+    </script>
+    <script defer src="/js/page-views.js"></script>
+    <div class="la-theme-widget" data-51la-widget aria-label="51.la 网站统计"></div>
+    <script defer src="/js/51la-theme-widget.js"></script>
+</body>
+</html>

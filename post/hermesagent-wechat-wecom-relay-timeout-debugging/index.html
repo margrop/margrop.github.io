@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>HermesAgent 为什么一直不回微信和企业微信？我最后排到的根因居然是本地 relay 的 3 秒超时 - 魔都水滴</title>
+<meta name="description" content="先说结论 这次故障看起来像“模型不行”或者“微信通道坏了”，但真正把消息链路掐断的，是我本地那层 relay 的超时设置。它把整条上游请求的等待窗口限制成了 3 秒，而真实的 WeChat / WeCom 消息 turn 往往需要更久才能从新 API 网关拿到完整回复。结果就是：relay 先断 …">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://blog.margrop.net/post/hermesagent-wechat-wecom-relay-timeout-debugging/"><meta property="og:site_name" content="魔都水滴">
+<meta property="og:title" content="HermesAgent 为什么一直不回微信和企业微信？我最后排到的根因居然是本地 relay 的 3 秒超时 - 魔都水滴">
+<meta property="og:description" content="先说结论 这次故障看起来像“模型不行”或者“微信通道坏了”，但真正把消息链路掐断的，是我本地那层 relay 的超时设置。它把整条上游请求的等待窗口限制成了 3 秒，而真实的 WeChat / WeCom 消息 turn 往往需要更久才能从新 API 网关拿到完整回复。结果就是：relay 先断 …">
+<meta property="og:url" content="https://blog.margrop.net/post/hermesagent-wechat-wecom-relay-timeout-debugging/">
+<meta property="og:locale" content="zh_CN"><meta property="og:type" content="article"><meta property="og:locale:alternate" content="en_US"><meta property="og:image" content="https://blog.margrop.net/images/avatar.png"><meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="HermesAgent 为什么一直不回微信和企业微信？我最后排到的根因居然是本地 relay 的 3 秒超时 - 魔都水滴">
+<meta name="twitter:description" content="先说结论 这次故障看起来像“模型不行”或者“微信通道坏了”，但真正把消息链路掐断的，是我本地那层 relay 的超时设置。它把整条上游请求的等待窗口限制成了 3 秒，而真实的 WeChat / WeCom 消息 turn 往往需要更久才能从新 API 网关拿到完整回复。结果就是：relay 先断 …"><meta name="twitter:image" content="https://blog.margrop.net/images/avatar.png"><link rel="alternate" hreflang="zh-CN" href="https://blog.margrop.net/post/hermesagent-wechat-wecom-relay-timeout-debugging/"><link rel="alternate" hreflang="en-US" href="https://blog.margrop.net/en/post/hermesagent-wechat-wecom-relay-timeout-debugging/"><link rel="alternate" hreflang="x-default" href="https://blog.margrop.net/"><meta property="article:published_time" content="2026-05-31T08:00:00&#43;08:00">
+<meta property="article:modified_time" content="2026-05-31T08:00:00&#43;08:00"><meta property="article:tag" content="HermesAgent"><meta property="article:tag" content="微信"><meta property="article:tag" content="企业微信"><meta property="article:tag" content="relay"><meta property="article:tag" content="调试"><meta property="article:tag" content="AI"><meta property="article:tag" content="运维"><meta property="article:tag" content="NewAPI"><script type="application/ld+json">{"@context":"https://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"魔都水滴"},"dateModified":"2026-05-31T08:00:00+08:00","datePublished":"2026-05-31T08:00:00+08:00","description":"先说结论 这次故障看起来像“模型不行”或者“微信通道坏了”，但真正把消息链路掐断的，是我本地那层 relay 的超时设置。它把整条上游请求的等待窗口限制成了 3 秒，而真实的 WeChat / WeCom 消息 turn 往往需要更久才能从新 API 网关拿到完整回复。结果就是：relay 先断 …","headline":"HermesAgent 为什么一直不回微信和企业微信？我最后排到的根因居然是本地 relay 的 3 秒超时","mainEntityOfPage":"https://blog.margrop.net/post/hermesagent-wechat-wecom-relay-timeout-debugging/","url":"https://blog.margrop.net/post/hermesagent-wechat-wecom-relay-timeout-debugging/"}</script>
+    <meta name="baidu-site-verification" content="code-sVFZ8SER59" />
+    <script src="/js/theme-toggle.js"></script>
+
+    
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-3J2W592DHJ"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-3J2W592DHJ');
+    </script>
+
+    <style>
+    :root {
+        color-scheme: light;
+        --page-bg: #fff;
+        --surface-bg: #f4f4f4;
+        --text: #222;
+        --muted: #666;
+        --subtle: #777;
+        --border: #eee;
+        --border-strong: #ddd;
+        --link: #006CFF;
+        --tag-bg: #eee;
+        --button-bg: #fff;
+        --button-primary-bg: #333;
+    }
+    @media (prefers-color-scheme: dark) {
+        :root:not([data-theme]) {
+            color-scheme: dark;
+            --page-bg: #111315;
+            --surface-bg: #1d2126;
+            --text: #e8eaed;
+            --muted: #aeb4bd;
+            --subtle: #9aa2ad;
+            --border: #30353d;
+            --border-strong: #454c56;
+            --link: #79b8ff;
+            --tag-bg: #2a3038;
+            --button-bg: #1d2126;
+            --button-primary-bg: #e8eaed;
+        }
+    }
+    html[data-theme="dark"] {
+        color-scheme: dark;
+        --page-bg: #111315;
+        --surface-bg: #1d2126;
+        --text: #e8eaed;
+        --muted: #aeb4bd;
+        --subtle: #9aa2ad;
+        --border: #30353d;
+        --border-strong: #454c56;
+        --link: #79b8ff;
+        --tag-bg: #2a3038;
+        --button-bg: #1d2126;
+        --button-primary-bg: #e8eaed;
+    }
+    html[data-theme="light"] {
+        color-scheme: light;
+        --page-bg: #fff;
+        --surface-bg: #f4f4f4;
+        --text: #222;
+        --muted: #666;
+        --subtle: #777;
+        --border: #eee;
+        --border-strong: #ddd;
+        --link: #006CFF;
+        --tag-bg: #eee;
+        --button-bg: #fff;
+        --button-primary-bg: #333;
+    }
+    body { background: var(--page-bg); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 860px; margin: 0 auto; padding: 20px; line-height: 1.7; color: var(--text); }
+    h1 { border-bottom: 2px solid var(--border-strong); padding-bottom: 10px; }
+    article > h1 { font-size: 2em; line-height: 1.3; margin-bottom: 12px; }
+    .post-list { list-style: none; padding: 0; }
+    .post-list li { margin: 15px 0; }
+    .post-list a { text-decoration: none; color: var(--text); font-size: 18px; }
+    .post-list a:hover { color: var(--link); }
+    .date { color: var(--muted); font-size: 14px; margin-right: 10px; }
+    .tags { margin-top: 8px; }
+    .tag { background: var(--tag-bg); padding: 2px 8px; border-radius: 3px; font-size: 12px; margin-right: 5px; display: inline-block; }
+    nav { margin-bottom: 18px; border-bottom: 1px solid var(--border); padding-bottom: 15px; }
+    nav a { margin-right: 20px; text-decoration: none; color: var(--text); font-size: 16px; }
+    nav a:hover { color: var(--link); }
+    .language-switcher { display: flex; align-items: center; gap: 10px; margin: -8px 0 26px; }
+    .language-switcher a { display: inline-block; padding: 4px 10px; border: 1px solid var(--border-strong); border-radius: 999px; color: var(--muted); text-decoration: none; font-size: 14px; }
+    .language-switcher a.active { background: var(--link); border-color: var(--link); color: #fff; }
+    .content { line-height: 1.8; }
+    .content code { background: var(--surface-bg); padding: 2px 5px; border-radius: 3px; }
+    .content pre { background: var(--surface-bg); padding: 15px; overflow-x: auto; border-radius: 5px; }
+    .content img { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+    .content .code-snippet__fix {
+        margin: 0 0 1.5em;
+    }
+    .content .code-snippet__fix .code-snippet__line-index {
+        display: none !important;
+    }
+    .meta { color: var(--muted); font-size: 14px; margin-bottom: 14px; }
+    .meta-separator { margin: 0 6px; color: var(--subtle); }
+    .site-stats { display: flex; flex-wrap: wrap; gap: 10px 18px; margin: 28px 0 8px; padding-top: 12px; border-top: 1px solid var(--border); color: var(--subtle); font-size: 12px; }
+    a { color: var(--link); }
+    .hero { padding: 12px 0 24px; }
+    .hero h1 { border-bottom: 2px solid #333; }
+    .eyebrow { color: var(--muted); font-size: 12px; letter-spacing: .12em; margin: 0 0 8px; }
+    .hero-tagline { font-size: 18px; margin: 12px 0 8px; }
+    .hero-copy { color: var(--muted); margin: 0 0 14px; }
+    .hero-actions { margin: 14px 0 4px; }
+    .button { display: inline-block; margin-right: 12px; border: 1px solid var(--border-strong); border-radius: 3px; padding: 4px 10px; text-decoration: none; color: var(--text); background: var(--button-bg); font-size: 14px; }
+    .button-primary { background: var(--button-primary-bg); border-color: var(--button-primary-bg); color: var(--page-bg); }
+    .theme-toggle { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 1px solid var(--border-strong); border-radius: 999px; background: var(--button-bg); color: var(--text); cursor: pointer; font: inherit; font-size: 16px; }
+    .theme-toggle:hover { border-color: var(--link); color: var(--link); }
+    .la-theme-widget { margin: 12px 0 20px; min-height: 24px; color: var(--text); }
+    .identity-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: 16px 0; }
+    .identity-grid div { display: flex; flex-direction: column; }
+    .identity-grid strong { font-size: 15px; }
+    .identity-grid span, .topic-card span, .featured-list small { color: var(--muted); font-size: 13px; }
+    .section-block { padding-top: 28px; }
+    .section-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+    .section-heading h2 { margin: 0; }
+    .section-heading a { font-size: 14px; }
+    .topic-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+    .topic-card { display: block; padding: 14px; border: 1px solid var(--border); text-decoration: none; color: var(--text); }
+    .topic-card:hover { border-color: var(--border-strong); }
+    .topic-card strong { display: block; margin: 4px 0; font-size: 17px; }
+    .topic-index, .featured-list > a > span { color: var(--muted) !important; font-size: 12px !important; }
+    .featured-list { border-top: 1px solid var(--border); }
+    .featured-list > a { display: flex; gap: 14px; padding: 12px 0; border-bottom: 1px solid var(--border); text-decoration: none; color: var(--text); }
+    .featured-list div { display: flex; flex-direction: column; }
+    .latest-block { max-width: 860px; }
+    @media (max-width: 680px) {
+        body { padding: 16px; }
+        nav a { display: inline-block; margin-right: 12px; margin-bottom: 8px; }
+        .identity-grid { grid-template-columns: repeat(2, 1fr); }
+        .topic-grid { grid-template-columns: 1fr; }
+    }
+</style>
+
+</head>
+<body>
+    <nav>
+  
+  <a href="/">首页</a>
+  <a href="https://blog.margrop.com/" target="_blank" rel="noopener">AI Daily</a>
+  <a href="/start-here/">开始这里</a>
+  <a href="/tag/ai/">AI Agent</a>
+  <a href="/tag/docker/">Self-hosting</a>
+  <a href="/tag/%e8%bf%90%e7%bb%b4/">Engineering</a>
+  <a href="/post/">归档</a>
+  <a href="/tags/">标签</a>
+  <a href="/post/about/">关于</a>
+  <a href="https://download.margrop.net" target="_blank" rel="noopener">下载</a>
+  <a href="/post/favorites/">Link</a>
+  <a href="/post/github-project-stars/">Github</a>
+  
+  <a href="https://github-mirrors.margrop.net" target="_blank" rel="noopener">Github加速</a>
+  <a href="https://status.anye.xyz/" target="_blank" rel="noopener">Docker加速</a>
+  
+  <a href="https://blog.margrop.net/index.xml" target="_blank" rel="noopener">RSS</a>
+</nav>
+
+    <div class="language-switcher">
+  <button class="theme-toggle" type="button" data-theme-toggle aria-label="切换到暗黑模式" aria-pressed="false">🌙</button>
+
+  
+  
+    <a href="/post/hermesagent-wechat-wecom-relay-timeout-debugging/" class="active">中文</a>
+  
+    <a href="/en/post/hermesagent-wechat-wecom-relay-timeout-debugging/" class="">English</a>
+  
+  
+</div>
+
+    
+    <article>
+        <h1>HermesAgent 为什么一直不回微信和企业微信？我最后排到的根因居然是本地 relay 的 3 秒超时</h1>
+        <div class="meta">
+            发布时间: 2026-05-31
+            <span class="meta-separator">·</span>
+            <span>阅读量 <span data-page-view-count>--</span></span>
+        </div>
+        
+<div class="tags">
+    
+    <a href="/tag/hermesagent/"><span class="tag">HermesAgent</span></a>
+    
+    <a href="/tag/%E5%BE%AE%E4%BF%A1/"><span class="tag">微信</span></a>
+    
+    <a href="/tag/%E4%BC%81%E4%B8%9A%E5%BE%AE%E4%BF%A1/"><span class="tag">企业微信</span></a>
+    
+    <a href="/tag/relay/"><span class="tag">relay</span></a>
+    
+    <a href="/tag/%E8%B0%83%E8%AF%95/"><span class="tag">调试</span></a>
+    
+    <a href="/tag/ai/"><span class="tag">AI</span></a>
+    
+    <a href="/tag/%E8%BF%90%E7%BB%B4/"><span class="tag">运维</span></a>
+    
+    <a href="/tag/newapi/"><span class="tag">NewAPI</span></a>
+    
+</div>
+
+
+        <div class="content">
+            <h2 id="先说结论">先说结论</h2>
+<p>这次故障看起来像“模型不行”或者“微信通道坏了”，但真正把消息链路掐断的，是我本地那层 <code>relay</code> 的超时设置。它把整条上游请求的等待窗口限制成了 3 秒，而真实的 WeChat / WeCom 消息 turn 往往需要更久才能从新 API 网关拿到完整回复。结果就是：relay 先断开，HermesAgent 只能看到 <code>Connection error</code>、<code>RemoteProtocolError</code>，然后主模型和 fallback 一起被耗尽。</p>
+<p>更准确地说，这不是 HermesAgent 核心代码的问题，也不是模型名的问题，而是一个本地外置组件的连接策略问题。把 <code>connect timeout</code> 和 <code>response wait</code> 混成同一个超时，等于给长请求做了一个错误的截止时间。修复方式也不复杂：连接阶段保留短超时，连接成功后把 socket 切回阻塞等待；同时把 relay 做成独立、可持续启动的服务，不再把它绑死在临时 shell 里。</p>
+<p><img alt="HermesAgent relay 调试封面" src="/post-images/hermesagent-wechat-wecom-relay-timeout-debugging/cover.png"></p>
+<h2 id="问题背景">问题背景</h2>
+<p>HermesAgent 这条链路不是单机脚本，而是一条完整的消息生产线。用户从微信或企业微信发出一句话，消息会先进入 Hermes 的通道层，再进入 Gateway，接着经过本地 relay 转发到自建的 NewAPI 网关，最后才到模型服务。模型回来的内容还要经过 Hermes 的消息整理、工具调用处理、最终拼接，再发回原始通道。</p>
+<p>这种结构的好处是灵活，坏处也很现实：任何一层都可能制造“看起来像模型故障”的表象。你看到的是“没有回复”或者“Connection error”，但根因可能在更外层的 relay、socket、超时、代理或者会话路由里。</p>
+<p>这次我一开始也走了老路，先怀疑模型配置。因为从表象看，主模型和 fallback 都失败了，日志里反复出现：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>Primary model failed
+</span></span><span style="display:flex;"><span>switching to fallback
+</span></span><span style="display:flex;"><span>API failed after 1 retries
+</span></span><span style="display:flex;"><span>Connection error
+</span></span><span style="display:flex;"><span>Max retries exhausted
+</span></span></code></pre></div><p>如果你只看这一段，很容易得出“模型端不稳定”的结论。但这类结论通常太早。因为同一批模型在别的入口上是能正常工作的，<code>/v1/models</code> 也能返回，简单的 health check 也没有异常。真正出问题的是“真实消息 turn”。</p>
+<h2 id="问题表现">问题表现</h2>
+<p>故障的表现很统一：不管是微信还是企业微信，只要通过 HermesAgent 发起一次真实对话，请求就会在链路中断掉。表面上看是模型连不上，但更贴近真实情况的描述是：消息已经进入 Hermes 了，路也选对了，最后一层 relay 却在等待完整响应之前把连接掐掉了。</p>
+<p>这种中断会带来几个副作用：</p>
+<ol>
+<li>主模型先报错。</li>
+<li>fallback 接着被尝试。</li>
+<li>fallback 也报错。</li>
+<li>Hermes 最后只剩下一个泛化后的 <code>Connection error</code>。</li>
+</ol>
+<p>如果你在这个阶段只盯着模型名，就会忽略一个关键事实：错误发生在请求生命周期里，而不是“模型不可用”的那种静态失败。也就是说，模型可能是健康的，只是你的 relay 没有等到它把话说完。</p>
+<p><img alt="分层排障路径" src="/post-images/hermesagent-wechat-wecom-relay-timeout-debugging/01-layered-diagnosis.png"></p>
+<h2 id="我先排除了哪些假设">我先排除了哪些假设</h2>
+<h3 id="1-不是模型列表问题">1. 不是模型列表问题</h3>
+<p>先看模型列表和最小请求，是为了确认上游是不是已经挂掉。这个步骤很重要，因为很多“回复不上”的问题其实只是模型配置错了、鉴权错了、或 provider 名称写错了。但这里 <code>/v1/models</code> 正常，最小 <code>Reply exactly: OK</code> 也能成功。说明模型层面并没有完全失联。</p>
+<h3 id="2-不是通道重复发送">2. 不是通道重复发送</h3>
+<p>故障不是“微信发了两次”或者“企业微信重复回调”。如果是这个问题，你通常会看到多条重复消息，或者队列消费两次。这里不是。这里是单次消息 turn 直接失败，说明要重点看 <code>response path</code> 而不是 <code>send path</code>。</p>
+<h3 id="3-不是纯粹的-fallback-选择错误">3. 不是纯粹的 fallback 选择错误</h3>
+<p>fallback 本身也不是根因。因为我测到的问题不是“某个备用模型不好用”，而是只要走这条 relay，长一点的真实 turn 就会失败。换句话说，fallback 只是被同一个底层故障一起拖下水了。</p>
+<h3 id="4-不是-hermes-核心需要补丁">4. 不是 Hermes 核心需要补丁</h3>
+<p>这是一个很重要的边界。HermesAgent 核心本身可以继续正常升级；这次问题发生在外部 relay，而不是框架内核。也就是说，不需要为了修这次故障去改 Hermes 的核心源码，更不需要把这类连通性问题硬塞到 agent 主仓里。</p>
+<h2 id="分层排障问题到底卡在哪一层">分层排障：问题到底卡在哪一层</h2>
+<p>这类问题最好像排生产链路一样拆层看。</p>
+<h3 id="第一层通道层">第一层：通道层</h3>
+<p>通道层负责接收消息、组织消息上下文、把用户输入交给 Hermes。这里的关键不是“有没有收到消息”，而是“收到以后有没有把它送到下游”。</p>
+<h3 id="第二层gateway-层">第二层：Gateway 层</h3>
+<p>Gateway 层负责模型路由、会话管理、fallback 和最终响应调度。如果这里出问题，日志通常会出现 provider 切换、重试耗尽、或者最终输出异常。</p>
+<h3 id="第三层relay-层">第三层：relay 层</h3>
+<p>relay 层负责把 Hermes 的请求转发到自建 NewAPI 网关。它看起来只是一层薄代理，但实际上它决定了请求连接的生死。如果 relay 把等待响应的时间窗口设错，前两层都只是“看起来正常”。</p>
+<h3 id="第四层上游网关和模型层">第四层：上游网关和模型层</h3>
+<p>这层负责最终的模型响应。它们本身是健康的，但如果上层在 3 秒内就断开连接，模型再健康也没机会把结果完整返回。</p>
+<p>我真正确认问题的方式，不是只看 Hermes 里那条外层错误，而是把同一份真实请求重放到 relay，上游直接返回大约 8 秒的正常响应。这个对照非常关键。它说明模型不是立刻失败，而是“有点慢，但能工作”；失败的是 relay 这层的等待方式。</p>
+<p><img alt="修复前后对比" src="/post-images/hermesagent-wechat-wecom-relay-timeout-debugging/02-before-after.png"></p>
+<h2 id="真正根因把连接超时当成了整条请求超时">真正根因：把连接超时当成了整条请求超时</h2>
+<p>这次问题最核心的一句工程结论是：</p>
+<blockquote>
+<p>relay 的 <code>timeout=3</code> 被错误地放大成了整条请求的生存时间，而真实的消息 turn 需要更长的等待窗口。</p>
+</blockquote>
+<p>我后来把 relay 的行为拆开后，问题就非常清楚了。正确的做法不是“所有 socket 都只等 3 秒”，而是：</p>
+<ol>
+<li>连接阶段可以保持一个较短的超时，用来快速发现上游不可达。</li>
+<li>一旦连接建立成功，就应该把 socket 切回不带超时的等待状态，允许模型完整返回。</li>
+<li>客户端侧也不要因为连接成功就提前认定请求该结束。</li>
+</ol>
+<p>如果把这三步混在一起，relay 就会在上游还在正常生成内容的时候主动断开。Hermes 看到的自然就是一个断掉的连接，而不是一个完整的 <code>200 OK</code>。</p>
+<p>我最后把代码调整成了这种逻辑：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-python" data-lang="python"><span style="display:flex;"><span>upstream <span style="color:#f92672">=</span> socket<span style="color:#f92672">.</span>create_connection((UPSTREAM_HOST, UPSTREAM_PORT), timeout<span style="color:#f92672">=</span><span style="color:#ae81ff">3</span>)
+</span></span><span style="display:flex;"><span>upstream<span style="color:#f92672">.</span>settimeout(<span style="color:#66d9ef">None</span>)
+</span></span><span style="display:flex;"><span>client<span style="color:#f92672">.</span>settimeout(<span style="color:#66d9ef">None</span>)
+</span></span></code></pre></div><p>重点不是这几行代码本身，而是它表达的边界：<strong>连接阶段短超时，数据阶段无限等待</strong>。对这种会产生真实生成时长的消息代理来说，这个边界是必须明确的。</p>
+<h2 id="我为什么还把-relay-独立成常驻服务">我为什么还把 relay 独立成常驻服务</h2>
+<p>如果 relay 只是临时 shell 里跑着，那它总有一天会因为退出、环境变化、窗口关闭或者会话清理而中断。对一个要处理微信和企业微信消息的入口来说，这种运行方式不够稳定。</p>
+<p>所以我把 relay 独立成了一个长期常驻的进程，让它的生命周期和 Hermes 核心分开。这样做有两个直接好处：</p>
+<ol>
+<li>Hermes 升级的时候，不会把 relay 一起带崩。</li>
+<li>relay 的环境变量、超时和日志都能单独看，定位问题更干净。</li>
+</ol>
+<p>这也是为什么我不建议把这类修复硬塞进 Hermes 核心。核心保持干净，外置兼容层和转发层单独维护，后续升级会轻松很多。</p>
+<h2 id="怎么验证修复是真的生效">怎么验证修复是真的生效</h2>
+<p>我不是只看“没有报错”就结束，而是按下面几步验证：</p>
+<ol>
+<li>先确认上游网关正常返回模型列表。</li>
+<li>再用最小 prompt 验证简单请求可以返回。</li>
+<li>再把真实的微信 / 企业微信消息 turn 重放到 relay。</li>
+<li>观察响应是否能够完整等待到模型返回。</li>
+<li>看 Hermes 里是否还会出现 <code>Connection error</code>、<code>RemoteProtocolError</code> 或 fallback 耗尽。</li>
+</ol>
+<p>修复后，真实消息 turn 不再在 3 秒时被截断，而是可以稳定等到上游返回。也就是说，失败不再出现在 relay 层，Hermes 也终于能正常把回复发回微信和企业微信。</p>
+<p><img alt="排障清单" src="/post-images/hermesagent-wechat-wecom-relay-timeout-debugging/03-checklist.png"></p>
+<h2 id="一个实用的排障清单">一个实用的排障清单</h2>
+<p>如果你也遇到类似问题，我建议按这个顺序查：</p>
+<ol>
+<li>先区分“多条重复消息”和“一条消息没回复”。</li>
+<li>先看最小请求是否成功，再看真实消息 turn。</li>
+<li>记录 winner provider、model、重试次数和最终错误。</li>
+<li>把真实请求重放到 relay 或网关，确认是连接失败还是响应等待失败。</li>
+<li>看 socket 的 timeout 是不是只应该作用在 connect，而不是整个 response 生命周期。</li>
+<li>确认 relay 是不是一个真正独立、可持续运行的服务。</li>
+<li>最后再决定要不要碰 Hermes 核心代码。</li>
+</ol>
+<p>这个顺序的价值在于，它能让你尽快区分“模型问题”和“链路问题”。在 Agent 系统里，这个区分很重要，因为很多问题看起来像模型，实际上都不是模型。</p>
+<h2 id="qa">Q&amp;A</h2>
+<h3 id="q1这次问题是-hermesagent-核心-bug-吗">Q1：这次问题是 HermesAgent 核心 bug 吗？</h3>
+<p>不是。根因在本地 relay 的连接策略，而不是 Hermes 核心本身。Hermes 只是把底层错误向上包装了出来。</p>
+<h3 id="q2那我以后升级-hermes会不会把修复冲掉">Q2：那我以后升级 Hermes，会不会把修复冲掉？</h3>
+<p>如果你的修复也只是外置 relay 的配置和运行方式，那 Hermes 核心升级不应该影响它。真正要注意的是：升级后别忘了重新确认 relay 的启动方式、环境变量和超时逻辑。</p>
+<h3 id="q3为什么-curl-看起来没问题真实消息却失败">Q3：为什么 curl 看起来没问题，真实消息却失败？</h3>
+<p>因为 curl 往往测的是一个很小的、很短的请求。真实消息 turn 可能带上下文、工具调用和更长的生成时间。短请求能过，不代表长请求也能过。</p>
+<h3 id="q4为什么不直接把-timeout-调大一点就完了">Q4：为什么不直接把 timeout 调大一点就完了？</h3>
+<p>这要分清楚是 connect timeout 还是 response wait timeout。把所有阶段都拉长，可能只是掩盖连接问题；把 connect 超时和响应等待分开，才是更稳的办法。</p>
+<h3 id="q5能不能用-prompt-解决">Q5：能不能用 prompt 解决？</h3>
+<p>不能。prompt 解决不了 socket 提前断开，也解决不了 relay 主动关闭连接。这个问题是链路问题，不是语言问题。</p>
+<h2 id="参考资料">参考资料</h2>
+<ul>
+<li>Apple <code>launchd.plist</code> documentation: <code>https://developer.apple.com/library/archive/documentation/MacOSX/Conceptual/BPSystemStartup/Chapters/CreatingLaunchdJobs.html</code></li>
+<li>HTTPX timeout and exception documentation: <code>https://www.python-httpx.org/advanced/timeouts/</code> and <code>https://www.python-httpx.org/exceptions/</code></li>
+<li>tmux manual: <code>https://man7.org/linux/man-pages/man1/tmux.1.html</code></li>
+</ul>
+
+        </div>
+    </article>
+
+    
+  
+
+
+  
+    
+  
+
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk/dist/gitalk.css">
+<script src="https://cdn.jsdelivr.net/npm/gitalk/dist/gitalk.min.js"></script>
+<div id="gitalk-container" style="margin-top:40px"></div>
+<script>
+  (function(){
+    var gitalk = new Gitalk({
+      clientID: '3181fd94e501cc5db0ad',
+      clientSecret: 'af1dab79dae02c69296e6615bfcecf47fc8615ee',
+      repo: 'margropcomment.margrop.io',
+      owner: 'margrop',
+      admin: ["margrop"],
+      
+      id: '\/post\/hermesagent-wechat-wecom-relay-timeout-debu',
+      
+      distractionFreeMode: false
+    });
+    gitalk.render('gitalk-container');
+  })();
+</script>
+  
+
+
+
+
+    
+<div class="site-stats" aria-label="访问统计">
+    <span>本文阅读量 <span data-page-view-count>--</span></span>
+</div>
+
+
+    
+    <script type="text/javascript" src="https://js.users.51.la/21044367.js"></script>
+    <script charset="UTF-8" id="LA_COLLECT" src="//sdk.51.la/js-sdk-pro.min.js"></script>
+    <script>LA.init({id: "1vVTUWl7zoRjnKXi",ck: "1vVTUWl7zoRjnKXi"})</script>
+    <script src="https://sdk.51.la/perf/js-sdk-perf.min.js" crossorigin="anonymous"></script>
+    <script>
+      new LingQue.Monitor().init({id:"202teQt8THXwqyve"});
+    </script>
+    <script defer src="/js/page-views.js"></script>
+    <div class="la-theme-widget" data-51la-widget aria-label="51.la 网站统计"></div>
+    <script defer src="/js/51la-theme-widget.js"></script>
+</body>
+</html>

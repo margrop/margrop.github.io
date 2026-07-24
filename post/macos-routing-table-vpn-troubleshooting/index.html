@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>VPN 连上了，内网域名却死活访问不了？一次 macOS 路由表排查完整复盘 - 魔都水滴</title>
+<meta name="description" content="一句话总结： macOS 上同时跑了两个 VPN（utun0、utun15），其中 utun0 推送了一条 10.0.0.0/8 的聚合路由，把目标 10.x.x.x 全部&#34;吃&#34;掉了——而我真正想走的是 utun15 对端的内网。DNS 能解析，TCP/ICMP 就是不通。route -n get 是定位这类问题的第一 …">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://blog.margrop.net/post/macos-routing-table-vpn-troubleshooting/"><meta property="og:site_name" content="魔都水滴">
+<meta property="og:title" content="VPN 连上了，内网域名却死活访问不了？一次 macOS 路由表排查完整复盘 - 魔都水滴">
+<meta property="og:description" content="一句话总结： macOS 上同时跑了两个 VPN（utun0、utun15），其中 utun0 推送了一条 10.0.0.0/8 的聚合路由，把目标 10.x.x.x 全部&#34;吃&#34;掉了——而我真正想走的是 utun15 对端的内网。DNS 能解析，TCP/ICMP 就是不通。route -n get 是定位这类问题的第一 …">
+<meta property="og:url" content="https://blog.margrop.net/post/macos-routing-table-vpn-troubleshooting/">
+<meta property="og:locale" content="zh_CN"><meta property="og:type" content="article"><meta property="og:locale:alternate" content="en_US"><meta property="og:image" content="https://blog.margrop.net/images/avatar.png"><meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="VPN 连上了，内网域名却死活访问不了？一次 macOS 路由表排查完整复盘 - 魔都水滴">
+<meta name="twitter:description" content="一句话总结： macOS 上同时跑了两个 VPN（utun0、utun15），其中 utun0 推送了一条 10.0.0.0/8 的聚合路由，把目标 10.x.x.x 全部&#34;吃&#34;掉了——而我真正想走的是 utun15 对端的内网。DNS 能解析，TCP/ICMP 就是不通。route -n get 是定位这类问题的第一 …"><meta name="twitter:image" content="https://blog.margrop.net/images/avatar.png"><link rel="alternate" hreflang="zh-CN" href="https://blog.margrop.net/post/macos-routing-table-vpn-troubleshooting/"><link rel="alternate" hreflang="en-US" href="https://blog.margrop.net/en/post/macos-routing-table-vpn-troubleshooting/"><link rel="alternate" hreflang="x-default" href="https://blog.margrop.net/"><meta property="article:published_time" content="2026-06-01T18:00:00&#43;08:00">
+<meta property="article:modified_time" content="2026-06-01T18:00:00&#43;08:00"><meta property="article:tag" content="macOS"><meta property="article:tag" content="Network"><meta property="article:tag" content="VPN"><meta property="article:tag" content="Routing"><meta property="article:tag" content="Route"><meta property="article:tag" content="Troubleshooting"><meta property="article:tag" content="Sysadmin"><meta property="article:tag" content="Networking"><script type="application/ld+json">{"@context":"https://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"魔都水滴"},"dateModified":"2026-06-01T18:00:00+08:00","datePublished":"2026-06-01T18:00:00+08:00","description":"一句话总结： macOS 上同时跑了两个 VPN（utun0、utun15），其中 utun0 推送了一条 10.0.0.0/8 的聚合路由，把目标 10.x.x.x 全部\u0026#34;吃\u0026#34;掉了——而我真正想走的是 utun15 对端的内网。DNS 能解析，TCP/ICMP 就是不通。route -n get 是定位这类问题的第一 …","headline":"VPN 连上了，内网域名却死活访问不了？一次 macOS 路由表排查完整复盘","mainEntityOfPage":"https://blog.margrop.net/post/macos-routing-table-vpn-troubleshooting/","url":"https://blog.margrop.net/post/macos-routing-table-vpn-troubleshooting/"}</script>
+    <meta name="baidu-site-verification" content="code-sVFZ8SER59" />
+    <script src="/js/theme-toggle.js"></script>
+
+    
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-3J2W592DHJ"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-3J2W592DHJ');
+    </script>
+
+    <style>
+    :root {
+        color-scheme: light;
+        --page-bg: #fff;
+        --surface-bg: #f4f4f4;
+        --text: #222;
+        --muted: #666;
+        --subtle: #777;
+        --border: #eee;
+        --border-strong: #ddd;
+        --link: #006CFF;
+        --tag-bg: #eee;
+        --button-bg: #fff;
+        --button-primary-bg: #333;
+    }
+    @media (prefers-color-scheme: dark) {
+        :root:not([data-theme]) {
+            color-scheme: dark;
+            --page-bg: #111315;
+            --surface-bg: #1d2126;
+            --text: #e8eaed;
+            --muted: #aeb4bd;
+            --subtle: #9aa2ad;
+            --border: #30353d;
+            --border-strong: #454c56;
+            --link: #79b8ff;
+            --tag-bg: #2a3038;
+            --button-bg: #1d2126;
+            --button-primary-bg: #e8eaed;
+        }
+    }
+    html[data-theme="dark"] {
+        color-scheme: dark;
+        --page-bg: #111315;
+        --surface-bg: #1d2126;
+        --text: #e8eaed;
+        --muted: #aeb4bd;
+        --subtle: #9aa2ad;
+        --border: #30353d;
+        --border-strong: #454c56;
+        --link: #79b8ff;
+        --tag-bg: #2a3038;
+        --button-bg: #1d2126;
+        --button-primary-bg: #e8eaed;
+    }
+    html[data-theme="light"] {
+        color-scheme: light;
+        --page-bg: #fff;
+        --surface-bg: #f4f4f4;
+        --text: #222;
+        --muted: #666;
+        --subtle: #777;
+        --border: #eee;
+        --border-strong: #ddd;
+        --link: #006CFF;
+        --tag-bg: #eee;
+        --button-bg: #fff;
+        --button-primary-bg: #333;
+    }
+    body { background: var(--page-bg); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 860px; margin: 0 auto; padding: 20px; line-height: 1.7; color: var(--text); }
+    h1 { border-bottom: 2px solid var(--border-strong); padding-bottom: 10px; }
+    article > h1 { font-size: 2em; line-height: 1.3; margin-bottom: 12px; }
+    .post-list { list-style: none; padding: 0; }
+    .post-list li { margin: 15px 0; }
+    .post-list a { text-decoration: none; color: var(--text); font-size: 18px; }
+    .post-list a:hover { color: var(--link); }
+    .date { color: var(--muted); font-size: 14px; margin-right: 10px; }
+    .tags { margin-top: 8px; }
+    .tag { background: var(--tag-bg); padding: 2px 8px; border-radius: 3px; font-size: 12px; margin-right: 5px; display: inline-block; }
+    nav { margin-bottom: 18px; border-bottom: 1px solid var(--border); padding-bottom: 15px; }
+    nav a { margin-right: 20px; text-decoration: none; color: var(--text); font-size: 16px; }
+    nav a:hover { color: var(--link); }
+    .language-switcher { display: flex; align-items: center; gap: 10px; margin: -8px 0 26px; }
+    .language-switcher a { display: inline-block; padding: 4px 10px; border: 1px solid var(--border-strong); border-radius: 999px; color: var(--muted); text-decoration: none; font-size: 14px; }
+    .language-switcher a.active { background: var(--link); border-color: var(--link); color: #fff; }
+    .content { line-height: 1.8; }
+    .content code { background: var(--surface-bg); padding: 2px 5px; border-radius: 3px; }
+    .content pre { background: var(--surface-bg); padding: 15px; overflow-x: auto; border-radius: 5px; }
+    .content img { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+    .content .code-snippet__fix {
+        margin: 0 0 1.5em;
+    }
+    .content .code-snippet__fix .code-snippet__line-index {
+        display: none !important;
+    }
+    .meta { color: var(--muted); font-size: 14px; margin-bottom: 14px; }
+    .meta-separator { margin: 0 6px; color: var(--subtle); }
+    .site-stats { display: flex; flex-wrap: wrap; gap: 10px 18px; margin: 28px 0 8px; padding-top: 12px; border-top: 1px solid var(--border); color: var(--subtle); font-size: 12px; }
+    a { color: var(--link); }
+    .hero { padding: 12px 0 24px; }
+    .hero h1 { border-bottom: 2px solid #333; }
+    .eyebrow { color: var(--muted); font-size: 12px; letter-spacing: .12em; margin: 0 0 8px; }
+    .hero-tagline { font-size: 18px; margin: 12px 0 8px; }
+    .hero-copy { color: var(--muted); margin: 0 0 14px; }
+    .hero-actions { margin: 14px 0 4px; }
+    .button { display: inline-block; margin-right: 12px; border: 1px solid var(--border-strong); border-radius: 3px; padding: 4px 10px; text-decoration: none; color: var(--text); background: var(--button-bg); font-size: 14px; }
+    .button-primary { background: var(--button-primary-bg); border-color: var(--button-primary-bg); color: var(--page-bg); }
+    .theme-toggle { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 1px solid var(--border-strong); border-radius: 999px; background: var(--button-bg); color: var(--text); cursor: pointer; font: inherit; font-size: 16px; }
+    .theme-toggle:hover { border-color: var(--link); color: var(--link); }
+    .la-theme-widget { margin: 12px 0 20px; min-height: 24px; color: var(--text); }
+    .identity-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: 16px 0; }
+    .identity-grid div { display: flex; flex-direction: column; }
+    .identity-grid strong { font-size: 15px; }
+    .identity-grid span, .topic-card span, .featured-list small { color: var(--muted); font-size: 13px; }
+    .section-block { padding-top: 28px; }
+    .section-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+    .section-heading h2 { margin: 0; }
+    .section-heading a { font-size: 14px; }
+    .topic-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+    .topic-card { display: block; padding: 14px; border: 1px solid var(--border); text-decoration: none; color: var(--text); }
+    .topic-card:hover { border-color: var(--border-strong); }
+    .topic-card strong { display: block; margin: 4px 0; font-size: 17px; }
+    .topic-index, .featured-list > a > span { color: var(--muted) !important; font-size: 12px !important; }
+    .featured-list { border-top: 1px solid var(--border); }
+    .featured-list > a { display: flex; gap: 14px; padding: 12px 0; border-bottom: 1px solid var(--border); text-decoration: none; color: var(--text); }
+    .featured-list div { display: flex; flex-direction: column; }
+    .latest-block { max-width: 860px; }
+    @media (max-width: 680px) {
+        body { padding: 16px; }
+        nav a { display: inline-block; margin-right: 12px; margin-bottom: 8px; }
+        .identity-grid { grid-template-columns: repeat(2, 1fr); }
+        .topic-grid { grid-template-columns: 1fr; }
+    }
+</style>
+
+</head>
+<body>
+    <nav>
+  
+  <a href="/">首页</a>
+  <a href="https://blog.margrop.com/" target="_blank" rel="noopener">AI Daily</a>
+  <a href="/start-here/">开始这里</a>
+  <a href="/tag/ai/">AI Agent</a>
+  <a href="/tag/docker/">Self-hosting</a>
+  <a href="/tag/%e8%bf%90%e7%bb%b4/">Engineering</a>
+  <a href="/post/">归档</a>
+  <a href="/tags/">标签</a>
+  <a href="/post/about/">关于</a>
+  <a href="https://download.margrop.net" target="_blank" rel="noopener">下载</a>
+  <a href="/post/favorites/">Link</a>
+  <a href="/post/github-project-stars/">Github</a>
+  
+  <a href="https://github-mirrors.margrop.net" target="_blank" rel="noopener">Github加速</a>
+  <a href="https://status.anye.xyz/" target="_blank" rel="noopener">Docker加速</a>
+  
+  <a href="https://blog.margrop.net/index.xml" target="_blank" rel="noopener">RSS</a>
+</nav>
+
+    <div class="language-switcher">
+  <button class="theme-toggle" type="button" data-theme-toggle aria-label="切换到暗黑模式" aria-pressed="false">🌙</button>
+
+  
+  
+    <a href="/post/macos-routing-table-vpn-troubleshooting/" class="active">中文</a>
+  
+    <a href="/en/post/macos-routing-table-vpn-troubleshooting/" class="">English</a>
+  
+  
+</div>
+
+    
+    <article>
+        <h1>VPN 连上了，内网域名却死活访问不了？一次 macOS 路由表排查完整复盘</h1>
+        <div class="meta">
+            发布时间: 2026-06-01
+            <span class="meta-separator">·</span>
+            <span>阅读量 <span data-page-view-count>--</span></span>
+        </div>
+        
+<div class="tags">
+    
+    <a href="/tag/macos/"><span class="tag">macOS</span></a>
+    
+    <a href="/tag/network/"><span class="tag">Network</span></a>
+    
+    <a href="/tag/vpn/"><span class="tag">VPN</span></a>
+    
+    <a href="/tag/routing/"><span class="tag">Routing</span></a>
+    
+    <a href="/tag/route/"><span class="tag">Route</span></a>
+    
+    <a href="/tag/troubleshooting/"><span class="tag">Troubleshooting</span></a>
+    
+    <a href="/tag/sysadmin/"><span class="tag">Sysadmin</span></a>
+    
+    <a href="/tag/networking/"><span class="tag">Networking</span></a>
+    
+</div>
+
+
+        <div class="content">
+            <blockquote>
+<p><strong>一句话总结：</strong></p>
+<p>macOS 上同时跑了两个 VPN（<code>utun0</code>、<code>utun15</code>），其中 <code>utun0</code> 推送了一条 <code>10.0.0.0/8</code> 的聚合路由，把目标 <code>10.x.x.x</code> 全部&quot;吃&quot;掉了——而我真正想走的是 <code>utun15</code> 对端的内网。DNS 能解析，TCP/ICMP 就是不通。<strong><code>route -n get</code> 是定位这类问题的第一把刀</strong>。</p>
+</blockquote>
+<p><img alt="macOS 路由表查找：最长前缀匹配流程" src="/post-images/macos-routing-table-vpn-troubleshooting/01-routing-flow.svg"></p>
+<p><em>图 1：macOS 内核路由查找流程。从应用进程发出目的 IP，内核按&quot;最长前缀匹配&quot;在路由表里挑一条，匹配上 <code>10.0.0.0/8</code> 就走 utun0，匹配上更精确的 /32 就走 utun15。</em></p>
+<hr>
+<h2 id="问题背景连上-vpn-后内网域名访问不了">问题背景：连上 VPN 后，内网域名访问不了</h2>
+<p>事情是这样的——我在远程一台 macOS 工作站上同时挂着两个 VPN：</p>
+<ul>
+<li><strong>VPN-A</strong>（系统层 <code>utun0</code>）：覆盖 10.0.0.0/8 大段网，是工作日常用的隧道</li>
+<li><strong>VPN-B</strong>（公司分配 <code>utun15</code>）：客户端拨号建立，IP 段 <code>10.255.255.0/24</code>，对端是公司内网</li>
+</ul>
+<p>VPN-B 拨号成功后，<code>ifconfig utun15</code> 正常拿到 IP，路由表里多了一条 <code>default → 10.255.255.1 utun15</code> 的兜底路由。</p>
+<p>但当我打开浏览器访问几个内网域名时，发现：</p>
+<ul>
+<li><code>curl http://internal-nas.example.corp/</code> — 卡住，最终 timeout</li>
+<li><code>curl http://internal-nas.example.corp/</code>（全限定域名）— 一样卡住</li>
+<li>但是 <code>nslookup internal-nas.example.corp</code> 却能正常返回 IP，比如 <code>10.99.99.99</code></li>
+</ul>
+<p><strong>DNS 解析没问题，但流量根本到不了。</strong> 显然，这是个 L3（路由层）的问题，而不是 L7（应用层）的问题。</p>
+<p>更诡异的是，ping 这个域名对应的 IP 也不通：</p>
+<pre tabindex="0"><code>PING 10.99.99.99 (10.99.99.99): 56 data bytes
+Request timeout for icmp_seq 0
+Request timeout for icmp_seq 1
+--- 10.99.99.99 ping statistics ---
+2 packets transmitted, 0 packets received, 100% packet loss
+</code></pre><p>但同样的机器，访问其他几个内网 IP（10.19.x、10.20.x、10.127.x）却都正常。</p>
+<p><strong>为什么偏偏 10.99.99.99 不行？</strong></p>
+<hr>
+<h2 id="问题分析路由表的视角">问题分析：路由表的视角</h2>
+<p>排查路由问题，最快的办法就是把路由表打印出来。我直接 SSH 到那台机器，跑：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>netstat -rn
+</span></span></code></pre></div><p>输出节选（关键的几条）：</p>
+<pre tabindex="0"><code>Internet:
+Destination        Gateway            Flags     Netif
+default            10.255.255.1      UGScg     utun15
+10                 utun0             USc       utun0
+10.255.255.1/32    127.0.0.1         UGSc      lo0
+...
+</code></pre><p>注意第一条 <code>10 utun0 USc</code>——这表示 <strong>凡是目的地址落在 10.0.0.0/8 范围（即 10.0.0.0 ~ 10.255.255.255）的包，全部走 utun0</strong>。</p>
+<p>而 <code>utun15</code> 这边只推送了 default + 几个具体的 /32 路由（DNS 服务器等），<strong>没有 10.99.0.0/16 这种网段路由</strong>。</p>
+<p>也就是说：</p>
+<ul>
+<li>10.19.180.31（DNS）有 /32 主机路由 → 走 utun15 ✅</li>
+<li>10.99.99.99（NAS）没有 /32，匹配到 utun0 的 /8 聚合 → 走 utun0 ❌</li>
+</ul>
+<p><strong>这就是问题所在。</strong></p>
+<p>但仅仅是&quot;走了 utun0&quot;为什么就不通？两个原因：</p>
+<ol>
+<li><code>utun0</code> 对端的 VPN-A 网关并不知道 10.99.99.99 在哪——它自身只承载部分内网子网</li>
+<li>即使对端能转发，TCP 回程包也未必能回到我的机器（因为 10.99.99.99 回包时，它的路由会先查它自己那侧的路由表）</li>
+</ol>
+<p>无论哪种情况，<strong>包发出去了但回不来</strong>，或者对端直接丢弃。</p>
+<hr>
+<h2 id="问题根因最长前缀匹配的陷阱">问题根因：最长前缀匹配的&quot;陷阱&quot;</h2>
+<p>macOS（以及所有 BSD/Linux）的内核在做路由查找时，使用 <strong>最长前缀匹配（Longest Prefix Match, LPM）</strong> 规则：</p>
+<blockquote>
+<p>在路由表中，挑选<strong>前缀长度最长</strong>的那条路由作为最终决策；如果多条同样长，再看 metric。</p>
+</blockquote>
+<p>这里有两层容易踩坑的地方：</p>
+<h3 id="坑-1聚合路由太贪心">坑 1：聚合路由&quot;太贪心&quot;</h3>
+<p><code>utun0</code> 上的 <code>10 utun0 USc</code> 表示 <code>10.0.0.0/8</code>，前缀长度只有 8。它能&quot;覆盖&quot;的地址范围高达 16,777,216 个 IP，10.99.99.99 自然落在其中。</p>
+<p>只要没有任何更精确的路由覆盖 10.99.99.99，<strong>它就会被这条 /8 路由截胡</strong>。</p>
+<h3 id="坑-2vpn-客户端推送路由的沉默覆盖">坑 2：VPN 客户端推送路由的&quot;沉默覆盖&quot;</h3>
+<p><code>utun0</code> 是系统层自动建立的全路由 VPN，每次连接都会自动塞这条 /8 聚合进路由表；用户毫无感知。</p>
+<p>而 <code>utun15</code> 是按需拨号的，它推送的路由里没包含 10.99.0.0/16 段，<strong>客户端不会自动补全</strong>。</p>
+<p>两者一叠加，目标 IP 就被 utun0 静默接管了。</p>
+<p><img alt="双 VPN 路由冲突拓扑图：utun0 推送 /8 聚合，utun15 缺少 /16 网段路由，10.99.99.99 走错接口" src="/post-images/macos-routing-table-vpn-troubleshooting/02-dual-vpn-topology.svg"></p>
+<p><em>图 2：双 VPN 同时存在时的路由冲突。utun0 推送了覆盖整个 10.0.0.0/8 的聚合路由，utun15 没有 10.99.0.0/16 路由——结果 10.99.99.99 走了 utun0 而不是 utun15。</em></p>
+<hr>
+<h2 id="验证问题route--n-get-是最直接的诊断工具">验证问题：<code>route -n get</code> 是最直接的诊断工具</h2>
+<p>怀疑路由有问题时，不要靠猜，直接用 <code>route -n get &lt;目标IP&gt;</code> 让内核告诉你答案：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>$ route -n get 10.99.99.99
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>   route to: 10.99.99.99
+</span></span><span style="display:flex;"><span>destination: 10.99.99.99
+</span></span><span style="display:flex;"><span>  interface: utun0        ← 关键看这一行
+</span></span><span style="display:flex;"><span>      flags: &lt;UP,HOST,DONE,WASCLONED,IFSCOPE,IFREF&gt;
+</span></span></code></pre></div><p>如果输出的 <code>interface</code> 不是你期望的那个（这里是 <code>utun15</code>），就坐实了&quot;路由选错了&quot;。</p>
+<p>接着对照路由表，看 utun0 上为什么匹配上：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>$ netstat -rn | grep -E <span style="color:#e6db74">&#34;^10 |utun15|default&#34;</span>
+</span></span><span style="display:flex;"><span>default            10.255.255.1      UGScg     utun15
+</span></span><span style="display:flex;"><span><span style="color:#ae81ff">10</span>                 utun0             USc       utun0
+</span></span><span style="display:flex;"><span>10.19.180.31/32    10.255.255.1      UGHS      utun15
+</span></span></code></pre></div><p>可以看到 utun15 这边只有几个 /32，没有 10.99.x 任何路由；于是 /8 聚合在 LPM 中&quot;胜出&quot;。</p>
+<hr>
+<h2 id="解决问题加一条更精确的路由">解决问题：加一条更精确的路由</h2>
+<p><strong>思路</strong>：让内核在为 10.99.99.99 选路时，能找到一条前缀长度比 /8 更长的路由（哪怕只是个 /32），就能压过 utun0 的聚合。</p>
+<p>macOS 加静态路由的命令是 <code>route -n add</code>：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># 单 IP 走 utun15</span>
+</span></span><span style="display:flex;"><span>sudo route -n add -host 10.99.99.99 -interface utun15
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 整个 10.99.0.0/16 网段都走 utun15</span>
+</span></span><span style="display:flex;"><span>sudo route -n add -net 10.99.0.0/16 -interface utun15
+</span></span></code></pre></div><p>注意几个语法点：</p>
+<ul>
+<li><code>-host</code> 等价于 <code>-net 10.99.99.99/32</code>，加 /32 主机路由</li>
+<li><code>-interface utun15</code> 直接绑定到接口，<strong>不需要指定网关</strong>（因为是点对点接口，接口本身就是网关）</li>
+<li>命令的 <code>-n</code> 是&quot;不解析名字&quot;，影响显示，不影响行为</li>
+</ul>
+<p>执行后再次验证：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>$ route -n get 10.99.99.99
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>   route to: 10.99.99.99
+</span></span><span style="display:flex;"><span>destination: 10.99.99.99
+</span></span><span style="display:flex;"><span>  interface: utun15        ← 现在对了
+</span></span><span style="display:flex;"><span>      flags: &lt;UP,HOST,DONE,WASCLONED,IFSCOPE,IFREF&gt;
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>$ ping -c <span style="color:#ae81ff">3</span> 10.99.99.99
+</span></span><span style="display:flex;"><span>PING 10.99.99.99 <span style="color:#f92672">(</span>10.99.99.99<span style="color:#f92672">)</span>: <span style="color:#ae81ff">56</span> data bytes
+</span></span><span style="display:flex;"><span><span style="color:#ae81ff">64</span> bytes from 10.99.99.99: icmp_seq<span style="color:#f92672">=</span><span style="color:#ae81ff">0</span> ttl<span style="color:#f92672">=</span><span style="color:#ae81ff">63</span> time<span style="color:#f92672">=</span>12.4 ms
+</span></span><span style="display:flex;"><span><span style="color:#ae81ff">64</span> bytes from 10.99.99.99: icmp_seq<span style="color:#f92672">=</span><span style="color:#ae81ff">1</span> ttl<span style="color:#f92672">=</span><span style="color:#ae81ff">63</span> time<span style="color:#f92672">=</span>11.8 ms
+</span></span><span style="display:flex;"><span><span style="color:#ae81ff">64</span> bytes from 10.99.99.99: icmp_seq<span style="color:#f92672">=</span><span style="color:#ae81ff">2</span> ttl<span style="color:#f92672">=</span><span style="color:#ae81ff">63</span> time<span style="color:#f92672">=</span>12.1 ms
+</span></span><span style="display:flex;"><span>--- 10.99.99.99 ping statistics ---
+</span></span><span style="display:flex;"><span><span style="color:#ae81ff">3</span> packets transmitted, <span style="color:#ae81ff">3</span> packets received, 0% packet loss
+</span></span></code></pre></div><p>通了。</p>
+<p><img alt="修复前后路由表与 ping 对比：左红 / 右绿" src="/post-images/macos-routing-table-vpn-troubleshooting/03-route-fix-compare.svg"></p>
+<p><em>图 3：修复前后的 <code>route -n get</code> 输出与 ping 结果对比。左边：包被发往 utun0，ping 100% 丢包。右边：手动添加 /32 主机路由后，包从 utun15 顺利到达。</em></p>
+<hr>
+<h2 id="让路由永久生效launchd-启动项">让路由永久生效：launchd 启动项</h2>
+<p><code>route -n add</code> 加的路由只在当前会话有效，<strong>重启或者 VPN 重连后会丢失</strong>。要让路由在系统启动后自动重建，有几种方案。</p>
+<h3 id="方案-1launchd-启动任务推荐">方案 1：launchd 启动任务（推荐）</h3>
+<p>macOS 上最稳妥的方式是写一个 launchd plist 放到 <code>/Library/LaunchDaemons/</code>：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>sudo tee /Library/LaunchDaemons/com.local.vpn-route-fix.plist <span style="color:#e6db74">&lt;&lt;&#39;PLIST&#39;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">&lt;?xml version=&#34;1.0&#34; encoding=&#34;UTF-8&#34;?&gt;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">&lt;!DOCTYPE plist PUBLIC &#34;-//Apple//DTD PLIST</span> 1.0//EN<span style="color:#e6db74">&#34; &#34;</span>http://www.apple.com/DTDs/PropertyList-1.0.dtd<span style="color:#e6db74">&#34;&gt;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">&lt;plist version=&#34;</span>1.0<span style="color:#e6db74">&#34;&gt;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">&lt;dict&gt;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    &lt;key&gt;Label&lt;/key&gt;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    &lt;string&gt;com.local.vpn-route-fix&lt;/string&gt;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    &lt;key&gt;ProgramArguments&lt;/key&gt;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    &lt;array&gt;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        &lt;string&gt;/sbin/route&lt;/string&gt;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        &lt;string&gt;-n&lt;/string&gt;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        &lt;string&gt;add&lt;/string&gt;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        &lt;string&gt;-host&lt;/string&gt;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        &lt;string&gt;10.99.99.99&lt;/string&gt;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        &lt;string&gt;-interface&lt;/string&gt;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        &lt;string&gt;utun15&lt;/string&gt;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    &lt;/array&gt;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    &lt;key&gt;RunAtLoad&lt;/key&gt;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    &lt;true/&gt;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    &lt;key&gt;KeepAlive&lt;/key&gt;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    &lt;false/&gt;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    &lt;key&gt;UserName&lt;/key&gt;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    &lt;string&gt;root&lt;/string&gt;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">&lt;/dict&gt;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">&lt;/plist&gt;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">PLIST
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">sudo chmod 644 /Library/LaunchDaemons/com.local.vpn-route-fix.plist
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">sudo launchctl load -w /Library/LaunchDaemons/com.local.vpn-route-fix.plist
+</span></span></span></code></pre></div><p><code>RunAtLoad</code> 设为 <code>true</code> 表示系统启动时自动执行。<code>UserName</code> 设为 <code>root</code> 是因为 <code>route</code> 命令需要 sudo 权限。</p>
+<blockquote>
+<p><strong>注意</strong>：launchd 任务在系统启动时就会执行，但此时 utun15 还没建立好。所以更稳妥的做法是写个 shell 脚本，先 sleep 等接口出现再加路由。</p>
+</blockquote>
+<p>改进版本——用一个 shell 脚本做包装：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># /usr/local/bin/vpn-route-fix.sh</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e">#!/bin/sh</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 等待 utun15 接口就绪</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">for</span> i in <span style="color:#66d9ef">$(</span>seq <span style="color:#ae81ff">1</span> 30<span style="color:#66d9ef">)</span>; <span style="color:#66d9ef">do</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">if</span> ifconfig utun15 &gt;/dev/null 2&gt;&amp;1; <span style="color:#66d9ef">then</span>
+</span></span><span style="display:flex;"><span>        break
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">fi</span>
+</span></span><span style="display:flex;"><span>    sleep <span style="color:#ae81ff">1</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">done</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 如果接口存在，加路由</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> ifconfig utun15 &gt;/dev/null 2&gt;&amp;1; <span style="color:#66d9ef">then</span>
+</span></span><span style="display:flex;"><span>    /sbin/route -n add -host 10.99.99.99 -interface utun15
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">fi</span>
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>sudo chmod +x /usr/local/bin/vpn-route-fix.sh
+</span></span></code></pre></div><p>然后 plist 里 <code>ProgramArguments</code> 改成执行这个脚本即可。</p>
+<h3 id="方案-2写到-rclocal--startupitem">方案 2：写到 rc.local / StartupItem</h3>
+<p>旧式做法。新版 macOS 已经废弃了 <code>/etc/rc.local</code>，不推荐。</p>
+<h3 id="方案-3交给-vpn-客户端">方案 3：交给 VPN 客户端</h3>
+<p>如果 VPN-B 的客户端支持 &ldquo;Connect Script&rdquo; 或 &ldquo;Post-Connect Hook&rdquo;（OpenConnect、Viscosity、Cloudflare WARP 等大多支持），把上面那段 <code>route -n add</code> 命令填进去最干净，VPN 一连上就立刻生效，不用关心启动顺序。</p>
+<h3 id="方案-4最推荐让-vpn-服务端推送">方案 4（最推荐）：让 VPN 服务端推送</h3>
+<p>最根本的解决办法是联系 VPN-B 的管理员，在<strong>服务端配置</strong>里把 <code>10.99.0.0/16</code> 推送给客户端。这样：</p>
+<ul>
+<li>客户端零配置</li>
+<li>VPN-B 重连后路由自动恢复</li>
+<li>其他同事也都能用，不限于你一台机器</li>
+</ul>
+<p>如果需要支持多个内网段，逐条加就行，直到不再有人工改路由表的需求。</p>
+<hr>
+<h2 id="macos-路由表常用命令速查">macOS 路由表常用命令速查</h2>
+<p>最后整理一份日常会用到的命令清单：</p>
+<h3 id="查看路由表">查看路由表</h3>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># 默认格式（IPv4 + IPv6 全部，flags 字母可读性更好）</span>
+</span></span><span style="display:flex;"><span>netstat -rn
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 数字格式，无 DNS 解析</span>
+</span></span><span style="display:flex;"><span>netstat -rn -f inet
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 看默认路由是哪条</span>
+</span></span><span style="display:flex;"><span>netstat -rn -f inet | grep <span style="color:#e6db74">&#34;^default&#34;</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 看某个目标 IP 走哪条出口</span>
+</span></span><span style="display:flex;"><span>route -n get 8.8.8.8
+</span></span></code></pre></div><h3 id="加--删--改路由">加 / 删 / 改路由</h3>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># 加 /32 主机路由</span>
+</span></span><span style="display:flex;"><span>sudo route -n add -host 10.99.99.99 -interface utun15
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 加 /24 网段路由（指定网关）</span>
+</span></span><span style="display:flex;"><span>sudo route -n add -net 10.99.0.0/24 10.255.255.1
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 加默认路由（一般没必要，会被系统自动覆盖）</span>
+</span></span><span style="display:flex;"><span>sudo route -n add default 10.255.255.1
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 删一条</span>
+</span></span><span style="display:flex;"><span>sudo route -n delete -host 10.99.99.99 -interface utun15
+</span></span><span style="display:flex;"><span>sudo route -n delete -net 10.99.0.0/24 10.255.255.1
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 改一条（先 delete 再 add）</span>
+</span></span><span style="display:flex;"><span>sudo route -n change -host 10.99.99.99 -interface utun0
+</span></span></code></pre></div><h3 id="临时禁用某个接口">临时禁用某个接口</h3>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># 临时关掉 utun0，强制所有 10.x 走 utun15</span>
+</span></span><span style="display:flex;"><span>sudo ifconfig utun0 down
+</span></span><span style="display:flex;"><span>sudo ifconfig utun0 up
+</span></span></code></pre></div><h3 id="监控路由变化">监控路由变化</h3>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># 持续观察路由表变化（调试 VPN 客户端的路由推送）</span>
+</span></span><span style="display:flex;"><span>watch -n <span style="color:#ae81ff">1</span> <span style="color:#e6db74">&#39;netstat -rn -f inet&#39;</span>
+</span></span></code></pre></div><h3 id="清除所有手动加的路由">清除所有手动加的路由</h3>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># 注意：只清你自己加的，不要动 default 和系统路由</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 最稳妥的是重启机器</span>
+</span></span><span style="display:flex;"><span>sudo reboot
+</span></span></code></pre></div><hr>
+<h2 id="qa">Q&amp;A</h2>
+<h3 id="q1能不能直接删掉-utun0-上的-100008-路由">Q1：能不能直接删掉 utun0 上的 <code>10.0.0.0/8</code> 路由？</h3>
+<p>技术上可以：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>sudo route -n delete -net 10.0.0.0/8 -interface utun0
+</span></span></code></pre></div><p>但<strong>通常不建议</strong>，原因：</p>
+<ul>
+<li>utun0 上其他正常工作的 IP（10.19.x、10.20.x、10.127.x）会失去路由</li>
+<li>VPN-A 重连后会<strong>自动重新推送</strong>这条路由，手动删只是临时</li>
+<li>删了之后万一 utun15 挂了，10.x 全断</li>
+</ul>
+<p><strong>更安全的做法是精确加 /32 路由</strong>（只覆盖需要的目标），而不是粗暴删除聚合路由。</p>
+<h3 id="q2加了路由还是不通怎么办">Q2：加了路由还是不通怎么办？</h3>
+<p>按下面的顺序排查：</p>
+<ol>
+<li><strong>接口名字是否写错？</strong> <code>ifconfig | grep utun</code> 确认实际接口名</li>
+<li><strong>VPN 本身是否真的通了？</strong> <code>ping 10.255.255.1</code>（对端网关）测试</li>
+<li><strong>DNS 解析是否对？</strong> <code>dig &lt;hostname&gt;</code> 或 <code>nslookup &lt;hostname&gt;</code> 确认拿到的 IP</li>
+<li><strong>对端防火墙/ACL</strong> 是否放行？联系 VPN-B 管理员确认 10.99.99.99 在内网可达</li>
+<li><strong>TCP/UDP 端口</strong> 是否被中间设备拦截？<code>telnet 10.99.99.99 80</code> 或 <code>nc -zv 10.99.99.99 80</code></li>
+</ol>
+<h3 id="q3route--n-add-和-route-add-有什么区别">Q3：<code>route -n add</code> 和 <code>route add</code> 有什么区别？</h3>
+<ul>
+<li><code>route -n add</code> 表示<strong>不解析名字</strong>（不把 IP 反查成域名、不把 hostname 解析成 IP），适合脚本里写</li>
+<li><code>route add</code> 会尝试解析参数，<strong>可能在 DNS 配置有问题时表现异常</strong></li>
+</ul>
+<p>实际效果一样，<strong>脚本里始终用 <code>-n</code></strong>，避免意外。</p>
+<h3 id="q4能不能在-gui-里加永久路由">Q4：能不能在 GUI 里加永久路由？</h3>
+<p>系统偏好设置 → 网络 → 你要配置的接口 → 高级 → 路由，可以加 IPv4 路由。</p>
+<p>但它<strong>只对那个物理接口生效</strong>，对 utun VPN 接口不友好（每次 VPN 重连 utun 编号会变）。所以<strong>命令行 + launchd 更可靠</strong>。</p>
+<h3 id="q5怎么知道-vpn-b-客户端推送了哪些路由">Q5：怎么知道 VPN-B 客户端推送了哪些路由？</h3>
+<p>一般 VPN 客户端在连接时日志里会打印，比如 OpenConnect 会显示：</p>
+<pre tabindex="0"><code>ESP detected: using UDP
+Connected as 10.255.255.x
+Pushed routes:
+  0.0.0.0/0
+  10.0.0.0/8 via 10.255.255.1
+  ...
+</code></pre><p>也可以连接后立即跑 <code>netstat -rn</code> 对比前后变化。如果不放心，加上 <code>-v</code> 跑：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>sudo route -n monitor
+</span></span></code></pre></div><p>会实时打印路由表变更事件。</p>
+<h3 id="q6utun-编号为什么是动态的">Q6：<code>utun</code> 编号为什么是动态的？</h3>
+<p>macOS 给每个 VPN/tunnel 接口分配一个 utun 编号，<strong>编号不固定</strong>。今天可能是 utun15，明天连另一个 VPN 就变成 utun16。</p>
+<p>所以<strong>任何脚本里都不要硬编码 utun 编号</strong>。可以基于以下信息识别：</p>
+<ul>
+<li>接口的 IP（在 <code>ifconfig</code> 输出里匹配）</li>
+<li>接口的描述（<code>ifconfig</code> 里 <code>interface-id</code> 行）</li>
+<li>路由表里 <code>default</code> 指向哪个 utun</li>
+</ul>
+<h3 id="q7route--n-add-加的路由重启后会消失吗">Q7：route -n add 加的路由，重启后会消失吗？</h3>
+<p><strong>会</strong>。<code>route -n add</code> 是在内核路由表里临时插入条目，系统重启或路由守护进程（如 routed）重新加载配置时都会丢失。</p>
+<p>要持久化必须用上面提到的 launchd 方案，或者在 VPN 客户端的 hook 脚本里加。</p>
+<h3 id="q8能不能在-zshrc-里加-route-命令">Q8：能不能在 <code>~/.zshrc</code> 里加 <code>route</code> 命令？</h3>
+<p><strong>强烈不建议</strong>：</p>
+<ul>
+<li><code>~/.zshrc</code> 在每次开新 shell 都会执行，而 <code>route -n add</code> 已经存在的路由会<strong>报 &ldquo;File exists&rdquo; 错误</strong></li>
+<li>用户的 shell 不一定用 zsh（iTerm2、SSH 远程登录、launchd 起的进程可能都不读 zshrc）</li>
+<li>需要 sudo 的命令放在用户登录脚本里非常诡异</li>
+</ul>
+<p><strong>老老实实写 launchd plist</strong>。</p>
+<h3 id="q9什么是-metric在路由选择里起什么作用">Q9：什么是 &ldquo;metric&rdquo;，在路由选择里起什么作用？</h3>
+<p>metric 是路由的&quot;代价&quot;，数字越小越优先。<code>route -n get</code> 输出里能看到 <code>rtt,msec</code> 和 <code>hopcount</code>，但主要看 metric：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>$ route -n get 8.8.8.8
+</span></span><span style="display:flex;"><span>...
+</span></span><span style="display:flex;"><span>      flags: &lt;UP,GATEWAY,IFSCOPE&gt;
+</span></span><span style="display:flex;"><span>   recvpipe  sendpipe  ssthresh  rtt,msec    rttvar  hopcount
+</span></span><span style="display:flex;"><span>        <span style="color:#ae81ff">0</span>         <span style="color:#ae81ff">0</span>         <span style="color:#ae81ff">0</span>         <span style="color:#ae81ff">0</span>         <span style="color:#ae81ff">0</span>         <span style="color:#ae81ff">0</span>
+</span></span></code></pre></div><p>如果两条路由<strong>前缀长度相同</strong>，metric 小的胜出。<code>netstat -rn</code> 里 flags 后面跟的 <code>S</code>（static）和 <code>D</code>（dynamic）等只是来源标识，不影响 metric。</p>
+<h3 id="q10ipv6-路由表也要单独看吗">Q10：IPv6 路由表也要单独看吗？</h3>
+<p>是的。<code>netstat -rn</code> 默认会混着打印 IPv4 和 IPv6，最好分开：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>netstat -rn -f inet     <span style="color:#75715e"># 仅 IPv4</span>
+</span></span><span style="display:flex;"><span>netstat -rn -f inet6    <span style="color:#75715e"># 仅 IPv6</span>
+</span></span></code></pre></div><p>如果你用的是纯 IPv4 业务，IPv6 路由一般不用管；但如果内网是双栈，IPv6 路由不对也会出现&quot;打不开网页&quot;的现象。</p>
+<hr>
+<h2 id="总结">总结</h2>
+<p>这次排查的整个过程复盘下来，核心其实就三件事：</p>
+<ol>
+<li><strong>看 <code>netstat -rn</code></strong> — 全局掌握当前路由表</li>
+<li><strong>跑 <code>route -n get &lt;目标 IP&gt;</code></strong> — 验证某个目标具体走哪条出口</li>
+<li><strong>加 /32 主机路由或 /16 网段路由</strong> — 用最长前缀匹配压过错误的聚合路由</li>
+</ol>
+<p>VPN 路由问题的难点不在命令本身，而在于：</p>
+<ul>
+<li><strong>看不见</strong>——路由表是个抽象的列表，VPN 客户端的&quot;自动推送&quot;行为对用户透明</li>
+<li><strong>DNS 正常时容易误判</strong>——很多人看到 <code>nslookup</code> 能返回 IP 就以为网络通了，其实 L3 还没走通</li>
+<li><strong>聚合路由的&quot;沉默覆盖&quot;</strong>——<code>10.0.0.0/8</code> 这类大段路由被某个 VPN 推上来时，会无声无息接管一大片地址</li>
+</ul>
+<p>把 <strong><code>route -n get</code></strong> 这个命令刻进肌肉记忆，下次遇到&quot;VPN 通了但某段内网访问不了&quot;的问题时，三秒钟就能定位。</p>
+<hr>
+<h2 id="参考资料">参考资料</h2>
+<ul>
+<li><a href="https://developer.apple.com/library/archive/documentation/Darwin/Reference/ManPages/man8/route.8.html">Apple Developer - route(8) man page</a></li>
+<li><a href="https://developer.apple.com/library/archive/documentation/Darwin/Reference/ManPages/man1/netstat.1.html">Apple Developer - netstat(1) man page</a></li>
+<li><a href="https://developer.apple.com/library/archive/documentation/Darwin/Reference/ManPages/man5/launchd.plist.5.html">Apple Developer - launchd.plist(5) man page</a></li>
+<li><a href="https://en.wikipedia.org/wiki/Longest_prefix_match">Wikipedia - Longest prefix match</a></li>
+<li><a href="https://tools.ietf.org/html/rfc4191">RFC 4191 - Default Router Preferences and More-Specific Routes</a></li>
+<li><a href="https://developer.apple.com/library/archive/documentation/MacOSX/Conceptual/BPSystemStartup/Chapters/CreatingLaunchdJobs.html">macOS Deployment Reference - Creating Launch Daemons and Agents</a></li>
+</ul>
+        </div>
+    </article>
+
+    
+  
+
+
+  
+    
+  
+
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk/dist/gitalk.css">
+<script src="https://cdn.jsdelivr.net/npm/gitalk/dist/gitalk.min.js"></script>
+<div id="gitalk-container" style="margin-top:40px"></div>
+<script>
+  (function(){
+    var gitalk = new Gitalk({
+      clientID: '3181fd94e501cc5db0ad',
+      clientSecret: 'af1dab79dae02c69296e6615bfcecf47fc8615ee',
+      repo: 'margropcomment.margrop.io',
+      owner: 'margrop',
+      admin: ["margrop"],
+      
+      id: '\/post\/macos-routing-table-vpn-troubleshooting\/',
+      
+      distractionFreeMode: false
+    });
+    gitalk.render('gitalk-container');
+  })();
+</script>
+  
+
+
+
+
+    
+<div class="site-stats" aria-label="访问统计">
+    <span>本文阅读量 <span data-page-view-count>--</span></span>
+</div>
+
+
+    
+    <script type="text/javascript" src="https://js.users.51.la/21044367.js"></script>
+    <script charset="UTF-8" id="LA_COLLECT" src="//sdk.51.la/js-sdk-pro.min.js"></script>
+    <script>LA.init({id: "1vVTUWl7zoRjnKXi",ck: "1vVTUWl7zoRjnKXi"})</script>
+    <script src="https://sdk.51.la/perf/js-sdk-perf.min.js" crossorigin="anonymous"></script>
+    <script>
+      new LingQue.Monitor().init({id:"202teQt8THXwqyve"});
+    </script>
+    <script defer src="/js/page-views.js"></script>
+    <div class="la-theme-widget" data-51la-widget aria-label="51.la 网站统计"></div>
+    <script defer src="/js/51la-theme-widget.js"></script>
+</body>
+</html>

@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="en-US">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>The Password Was Right—So Why Did Synology Reject It? Rebuilding DSM’s RSA &#43; AES WebAPI Login - Margrop Blog</title>
+<meta name="description" content="The short version Some Synology WebAPI clients do more than post account and passwd to auth.cgi. The implementation preserved in OpenStack Cinder first calls …">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://blog.margrop.net/en/post/synology-webapi-login-encryption-deep-dive/"><meta property="og:site_name" content="Margrop Blog">
+<meta property="og:title" content="The Password Was Right—So Why Did Synology Reject It? Rebuilding DSM’s RSA &#43; AES WebAPI Login - Margrop Blog">
+<meta property="og:description" content="The short version Some Synology WebAPI clients do more than post account and passwd to auth.cgi. The implementation preserved in OpenStack Cinder first calls …">
+<meta property="og:url" content="https://blog.margrop.net/en/post/synology-webapi-login-encryption-deep-dive/">
+<meta property="og:locale" content="en_US"><meta property="og:type" content="article"><meta property="og:locale:alternate" content="zh_CN"><meta property="og:image" content="https://blog.margrop.net/images/avatar.png"><meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="The Password Was Right—So Why Did Synology Reject It? Rebuilding DSM’s RSA &#43; AES WebAPI Login - Margrop Blog">
+<meta name="twitter:description" content="The short version Some Synology WebAPI clients do more than post account and passwd to auth.cgi. The implementation preserved in OpenStack Cinder first calls …"><meta name="twitter:image" content="https://blog.margrop.net/images/avatar.png"><link rel="alternate" hreflang="zh-CN" href="https://blog.margrop.net/post/synology-webapi-login-encryption-deep-dive/"><link rel="alternate" hreflang="en-US" href="https://blog.margrop.net/en/post/synology-webapi-login-encryption-deep-dive/"><link rel="alternate" hreflang="x-default" href="https://blog.margrop.net/"><meta property="article:published_time" content="2026-07-11T08:30:00&#43;08:00">
+<meta property="article:modified_time" content="2026-07-11T08:30:00&#43;08:00"><meta property="article:tag" content="Synology"><meta property="article:tag" content="DSM"><meta property="article:tag" content="NAS"><meta property="article:tag" content="WebAPI"><meta property="article:tag" content="RSA"><meta property="article:tag" content="AES"><meta property="article:tag" content="Python"><meta property="article:tag" content="Cryptography"><meta property="article:tag" content="Automation"><script type="application/ld+json">{"@context":"https://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"Margrop"},"dateModified":"2026-07-11T08:30:00+08:00","datePublished":"2026-07-11T08:30:00+08:00","description":"The short version Some Synology WebAPI clients do more than post account and passwd to auth.cgi. The implementation preserved in OpenStack Cinder first calls …","headline":"The Password Was Right—So Why Did Synology Reject It? Rebuilding DSM’s RSA + AES WebAPI Login","mainEntityOfPage":"https://blog.margrop.net/en/post/synology-webapi-login-encryption-deep-dive/","url":"https://blog.margrop.net/en/post/synology-webapi-login-encryption-deep-dive/"}</script>
+    <meta name="baidu-site-verification" content="code-sVFZ8SER59" />
+    <script src="/js/theme-toggle.js"></script>
+
+    
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-3J2W592DHJ"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-3J2W592DHJ');
+    </script>
+
+    <style>
+    :root {
+        color-scheme: light;
+        --page-bg: #fff;
+        --surface-bg: #f4f4f4;
+        --text: #222;
+        --muted: #666;
+        --subtle: #777;
+        --border: #eee;
+        --border-strong: #ddd;
+        --link: #006CFF;
+        --tag-bg: #eee;
+        --button-bg: #fff;
+        --button-primary-bg: #333;
+    }
+    @media (prefers-color-scheme: dark) {
+        :root:not([data-theme]) {
+            color-scheme: dark;
+            --page-bg: #111315;
+            --surface-bg: #1d2126;
+            --text: #e8eaed;
+            --muted: #aeb4bd;
+            --subtle: #9aa2ad;
+            --border: #30353d;
+            --border-strong: #454c56;
+            --link: #79b8ff;
+            --tag-bg: #2a3038;
+            --button-bg: #1d2126;
+            --button-primary-bg: #e8eaed;
+        }
+    }
+    html[data-theme="dark"] {
+        color-scheme: dark;
+        --page-bg: #111315;
+        --surface-bg: #1d2126;
+        --text: #e8eaed;
+        --muted: #aeb4bd;
+        --subtle: #9aa2ad;
+        --border: #30353d;
+        --border-strong: #454c56;
+        --link: #79b8ff;
+        --tag-bg: #2a3038;
+        --button-bg: #1d2126;
+        --button-primary-bg: #e8eaed;
+    }
+    html[data-theme="light"] {
+        color-scheme: light;
+        --page-bg: #fff;
+        --surface-bg: #f4f4f4;
+        --text: #222;
+        --muted: #666;
+        --subtle: #777;
+        --border: #eee;
+        --border-strong: #ddd;
+        --link: #006CFF;
+        --tag-bg: #eee;
+        --button-bg: #fff;
+        --button-primary-bg: #333;
+    }
+    body { background: var(--page-bg); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 860px; margin: 0 auto; padding: 20px; line-height: 1.7; color: var(--text); }
+    h1 { border-bottom: 2px solid var(--border-strong); padding-bottom: 10px; }
+    article > h1 { font-size: 2em; line-height: 1.3; margin-bottom: 12px; }
+    .post-list { list-style: none; padding: 0; }
+    .post-list li { margin: 15px 0; }
+    .post-list a { text-decoration: none; color: var(--text); font-size: 18px; }
+    .post-list a:hover { color: var(--link); }
+    .date { color: var(--muted); font-size: 14px; margin-right: 10px; }
+    .tags { margin-top: 8px; }
+    .tag { background: var(--tag-bg); padding: 2px 8px; border-radius: 3px; font-size: 12px; margin-right: 5px; display: inline-block; }
+    nav { margin-bottom: 18px; border-bottom: 1px solid var(--border); padding-bottom: 15px; }
+    nav a { margin-right: 20px; text-decoration: none; color: var(--text); font-size: 16px; }
+    nav a:hover { color: var(--link); }
+    .language-switcher { display: flex; align-items: center; gap: 10px; margin: -8px 0 26px; }
+    .language-switcher a { display: inline-block; padding: 4px 10px; border: 1px solid var(--border-strong); border-radius: 999px; color: var(--muted); text-decoration: none; font-size: 14px; }
+    .language-switcher a.active { background: var(--link); border-color: var(--link); color: #fff; }
+    .content { line-height: 1.8; }
+    .content code { background: var(--surface-bg); padding: 2px 5px; border-radius: 3px; }
+    .content pre { background: var(--surface-bg); padding: 15px; overflow-x: auto; border-radius: 5px; }
+    .content img { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+    .content .code-snippet__fix {
+        margin: 0 0 1.5em;
+    }
+    .content .code-snippet__fix .code-snippet__line-index {
+        display: none !important;
+    }
+    .meta { color: var(--muted); font-size: 14px; margin-bottom: 14px; }
+    .meta-separator { margin: 0 6px; color: var(--subtle); }
+    .site-stats { display: flex; flex-wrap: wrap; gap: 10px 18px; margin: 28px 0 8px; padding-top: 12px; border-top: 1px solid var(--border); color: var(--subtle); font-size: 12px; }
+    a { color: var(--link); }
+    .hero { padding: 12px 0 24px; }
+    .hero h1 { border-bottom: 2px solid #333; }
+    .eyebrow { color: var(--muted); font-size: 12px; letter-spacing: .12em; margin: 0 0 8px; }
+    .hero-tagline { font-size: 18px; margin: 12px 0 8px; }
+    .hero-copy { color: var(--muted); margin: 0 0 14px; }
+    .hero-actions { margin: 14px 0 4px; }
+    .button { display: inline-block; margin-right: 12px; border: 1px solid var(--border-strong); border-radius: 3px; padding: 4px 10px; text-decoration: none; color: var(--text); background: var(--button-bg); font-size: 14px; }
+    .button-primary { background: var(--button-primary-bg); border-color: var(--button-primary-bg); color: var(--page-bg); }
+    .theme-toggle { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 1px solid var(--border-strong); border-radius: 999px; background: var(--button-bg); color: var(--text); cursor: pointer; font: inherit; font-size: 16px; }
+    .theme-toggle:hover { border-color: var(--link); color: var(--link); }
+    .la-theme-widget { margin: 12px 0 20px; min-height: 24px; color: var(--text); }
+    .identity-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: 16px 0; }
+    .identity-grid div { display: flex; flex-direction: column; }
+    .identity-grid strong { font-size: 15px; }
+    .identity-grid span, .topic-card span, .featured-list small { color: var(--muted); font-size: 13px; }
+    .section-block { padding-top: 28px; }
+    .section-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+    .section-heading h2 { margin: 0; }
+    .section-heading a { font-size: 14px; }
+    .topic-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+    .topic-card { display: block; padding: 14px; border: 1px solid var(--border); text-decoration: none; color: var(--text); }
+    .topic-card:hover { border-color: var(--border-strong); }
+    .topic-card strong { display: block; margin: 4px 0; font-size: 17px; }
+    .topic-index, .featured-list > a > span { color: var(--muted) !important; font-size: 12px !important; }
+    .featured-list { border-top: 1px solid var(--border); }
+    .featured-list > a { display: flex; gap: 14px; padding: 12px 0; border-bottom: 1px solid var(--border); text-decoration: none; color: var(--text); }
+    .featured-list div { display: flex; flex-direction: column; }
+    .latest-block { max-width: 860px; }
+    @media (max-width: 680px) {
+        body { padding: 16px; }
+        nav a { display: inline-block; margin-right: 12px; margin-bottom: 8px; }
+        .identity-grid { grid-template-columns: repeat(2, 1fr); }
+        .topic-grid { grid-template-columns: 1fr; }
+    }
+</style>
+
+</head>
+<body>
+    <nav>
+  
+  <a href="/en/">Home</a>
+  <a href="https://blog.margrop.com/" target="_blank" rel="noopener">AI Daily</a>
+  <a href="/en/start-here/">Start Here</a>
+  <a href="/en/tag/ai/">AI Agent</a>
+  <a href="/en/tag/docker/">Self-hosting</a>
+  <a href="/en/tag/%e8%bf%90%e7%bb%b4/">Engineering</a>
+  <a href="/en/post/">Archive</a>
+  <a href="/en/tags/">Tags</a>
+  <a href="/en/post/about/">About</a>
+  <a href="https://download.margrop.net" target="_blank" rel="noopener">Download</a>
+  <a href="/en/post/favorites/">Links</a>
+  <a href="/en/post/github-project-stars/">Github</a>
+  
+  <a href="https://blog.margrop.net/en/index.xml" target="_blank" rel="noopener">RSS</a>
+</nav>
+
+    <div class="language-switcher">
+  <button class="theme-toggle" type="button" data-theme-toggle aria-label="切换到暗黑模式" aria-pressed="false">🌙</button>
+
+  
+  
+    <a href="/post/synology-webapi-login-encryption-deep-dive/" class="">中文</a>
+  
+    <a href="/en/post/synology-webapi-login-encryption-deep-dive/" class="active">English</a>
+  
+  
+</div>
+
+    
+    <article>
+        <h1>The Password Was Right—So Why Did Synology Reject It? Rebuilding DSM’s RSA &#43; AES WebAPI Login</h1>
+        <div class="meta">
+            Published: 2026-07-11
+            <span class="meta-separator">·</span>
+            <span>阅读量 <span data-page-view-count>--</span></span>
+        </div>
+        
+<div class="tags">
+    
+    <a href="/en/tag/synology/"><span class="tag">Synology</span></a>
+    
+    <a href="/en/tag/dsm/"><span class="tag">DSM</span></a>
+    
+    <a href="/en/tag/nas/"><span class="tag">NAS</span></a>
+    
+    <a href="/en/tag/webapi/"><span class="tag">WebAPI</span></a>
+    
+    <a href="/en/tag/rsa/"><span class="tag">RSA</span></a>
+    
+    <a href="/en/tag/aes/"><span class="tag">AES</span></a>
+    
+    <a href="/en/tag/python/"><span class="tag">Python</span></a>
+    
+    <a href="/en/tag/cryptography/"><span class="tag">Cryptography</span></a>
+    
+    <a href="/en/tag/automation/"><span class="tag">Automation</span></a>
+    
+</div>
+
+
+        <div class="content">
+            <blockquote>
+<p><strong>The short version</strong></p>
+<p>Some Synology WebAPI clients do more than post <code>account</code> and <code>passwd</code> to <code>auth.cgi</code>. The implementation preserved in OpenStack Cinder first calls <code>SYNO.API.Encryption.getinfo</code>, receives an RSA public modulus, server time, and two dynamic field names, then generates a one-use passphrase. RSA PKCS#1 v1.5 encrypts that passphrase; an OpenSSL-compatible AES-256-CBC envelope encrypts the URL-encoded login parameters; both Base64 values are finally placed inside the server-provided <code>cipherkey</code> field.</p>
+<p>This is an authorized WebAPI compatibility technique—not a password bypass. A SID for <code>session=DSM</code> is also not automatically the same thing as a complete browser UI login state. Parameter encryption does not replace HTTPS, because TLS still authenticates the server and protects integrity against an active intermediary.</p>
+</blockquote>
+<p><img alt="Original cover: an RSA outer envelope and AES inner envelope protect a NAS login" src="/post-images/synology-webapi-login-encryption-deep-dive/00-cover-original.png"></p>
+<h2 id="why-a-normal-post-can-fail-even-with-the-right-password">Why a normal POST can fail even with the right password</h2>
+<p>The obvious first attempt is to send <code>api=SYNO.API.Auth</code>, <code>method=login</code>, the account, password, session, and SID format directly to <code>/webapi/auth.cgi</code>. Depending on the DSM version and compatibility path, that request may not reproduce the parameter-protection flow expected by the target implementation. The result looks deceptively like a bad password: a generic authentication failure, a missing field, or a request-format error.</p>
+<p>Three tempting “fixes” are usually wrong: resetting the password repeatedly, hard-coding <code>__cIpHeRtExT</code>, or reusing an old <code>server_time</code>. The durable rule is to ask the server for the current encryption metadata before each login attempt.</p>
+<p><img alt="Request timeline" src="/post-images/synology-webapi-login-encryption-deep-dive/06-request-timeline.png"></p>
+<h2 id="the-primary-source-evidence">The primary-source evidence</h2>
+<p>The pinned OpenStack Cinder Synology driver contains an <code>AESCipher</code> class whose output begins with <code>Salted__</code>, followed by an eight-byte random salt and CBC ciphertext. It derives a 32-byte key and a 16-byte IV by chaining MD5 digests, pads the plaintext to a 16-byte boundary, and encrypts it with AES-CBC.</p>
+<p><img alt="Real source screenshot: AES-256-CBC envelope" src="/post-images/synology-webapi-login-encryption-deep-dive/01-source-aes.png"></p>
+<p>Its <code>_encrypt_params</code> method retrieves <code>public_key</code>, <code>cipherkey</code>, <code>ciphertoken</code>, and <code>server_time</code>; creates a 501-byte random passphrase; inserts the server time under the dynamic token name; RSA-encrypts the passphrase; AES-encrypts the URL-encoded parameters; Base64-encodes both values; and returns them under the dynamic cipher field.</p>
+<p><img alt="Real source screenshot: hybrid payload construction" src="/post-images/synology-webapi-login-encryption-deep-dive/02-source-hybrid-payload.png"></p>
+<p>The driver applies this parameter encryption only on its non-HTTPS path. That is a useful warning: the format is compatibility behavior, not a substitute for TLS. A modern integration should still prefer HTTPS with certificate verification enabled.</p>
+<h2 id="the-double-envelope-analogy">The double-envelope analogy</h2>
+<p>Imagine mailing a box containing an account name and password. AES is a small, fast key that can lock the entire box efficiently. The remaining problem is delivering that key without taping it to the outside.</p>
+<p>RSA acts like a special public envelope supplied by the NAS. Anyone can lock something inside it, but only the NAS holding the private key can open it. The client puts the one-use AES passphrase in that RSA envelope and puts all login parameters in the AES box. Both packages travel together.</p>
+<p><img alt="Double-envelope analogy" src="/post-images/synology-webapi-login-encryption-deep-dive/05-double-envelope.png"></p>
+<p>This is hybrid encryption: asymmetric cryptography protects a small secret, while symmetric cryptography handles the larger payload efficiently.</p>
+<h2 id="the-protocol-step-by-step">The protocol step by step</h2>
+<p>The client first posts the following logical fields to <code>/webapi/encryption.cgi</code>:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>api=SYNO.API.Encryption
+</span></span><span style="display:flex;"><span>version=1
+</span></span><span style="display:flex;"><span>method=getinfo
+</span></span><span style="display:flex;"><span>format=module
+</span></span></code></pre></div><p>The response provides four values that should be treated as dynamic:</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>public_key</code></td>
+<td>RSA modulus; the implementation uses exponent 65537</td>
+</tr>
+<tr>
+<td><code>cipherkey</code></td>
+<td>Name of the final encrypted request field</td>
+</tr>
+<tr>
+<td><code>ciphertoken</code></td>
+<td>Name of the time field inside the AES plaintext</td>
+</tr>
+<tr>
+<td><code>server_time</code></td>
+<td>Current value inserted under that token name</td>
+</tr>
+</tbody>
+</table>
+<p>The client then generates a 501-byte passphrase. With a 4096-bit RSA modulus, PKCS#1 v1.5 can encrypt at most 512 minus 11 bytes, which is exactly 501.</p>
+<p>After inserting the dynamic time field, the parameters are URL-encoded. The passphrase and an eight-byte salt are fed into the historical MD5-chain derivation to produce a 32-byte AES key and a 16-byte IV. AES-256-CBC encrypts the padded text, and the final binary value is:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>Salted__ + 8-byte salt + ciphertext
+</span></span></code></pre></div><p>The request ultimately carries a JSON string containing <code>rsa</code> and <code>aes</code> Base64 fields under the server-selected cipher field.</p>
+<p><img alt="Payload anatomy" src="/post-images/synology-webapi-login-encryption-deep-dive/07-payload-anatomy.png"></p>
+<h2 id="hardening-the-sample-implementation">Hardening the sample implementation</h2>
+<p>The downloadable implementation keeps the compatible wire format but improves operational safety. It uses <code>secrets.choice</code> instead of the general-purpose <code>random</code> module, verifies TLS by default, reads the password through hidden input or a temporary environment variable, and does not print the SID unless <code>--show-sid</code> is explicitly requested.</p>
+<p>It also checks for missing <code>getinfo</code> fields, malformed JSON, HTTP failures, authentication failures, and responses that claim success without returning a SID. The command accepts a single explicit <code>--url</code>, avoiding ambiguous combinations of scheme, host, and port.</p>
+<p>Downloads:</p>
+<ul>
+<li><a href="/downloads/synology-webapi-login/synology_login.py">synology_login.py</a></li>
+<li><a href="/downloads/synology-webapi-login/requirements.txt">requirements.txt</a></li>
+<li><a href="/downloads/synology-webapi-login/test_synology_login.py">offline tests</a></li>
+</ul>
+<h2 id="real-offline-verification">Real offline verification</h2>
+<p>The test suite generates a temporary 4096-bit RSA key, verifies that the private key recovers the exact 501-byte passphrase, checks the OpenSSL <code>Salted__</code> prefix, decrypts the AES payload back into URL parameters, confirms insertion of the dynamic time token, and proves that the outer authentication request does not contain a plaintext <code>passwd</code> field.</p>
+<p><img alt="Real test run" src="/post-images/synology-webapi-login-encryption-deep-dive/03-tests-real.png"></p>
+<p>The next screenshot comes from an actual execution that created the encrypted payload. Sensitive values are truncated or replaced, while structural evidence—RSA byte length, AES prefix, dynamic field names, and absence of the plaintext password—remains visible.</p>
+<p><img alt="Real encrypted exchange" src="/post-images/synology-webapi-login-encryption-deep-dive/04-encrypted-exchange-real.png"></p>
+<p>These tests do not promise that every DSM release accepts the same private compatibility path. They do prove that the implementation performs the intended cryptographic construction instead of merely producing plausible-looking JSON.</p>
+<h2 id="one-command-setup-on-three-platforms">One-command setup on three platforms</h2>
+<p>Each launcher creates a local <code>.venv</code>, installs pinned dependencies, prompts for the connection values, and lets Python read the password without echoing it.</p>
+<h3 id="windows-11">Windows 11</h3>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-powershell" data-lang="powershell"><span style="display:flex;"><span>Set-ExecutionPolicy -Scope <span style="color:#66d9ef">Process</span> Bypass
+</span></span><span style="display:flex;"><span>.\install-windows.ps1
+</span></span></code></pre></div><p><a href="/downloads/synology-webapi-login/install-windows.ps1">Download the Windows launcher</a></p>
+<h3 id="ubuntu-2604">Ubuntu 26.04</h3>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>chmod +x install-ubuntu.sh
+</span></span><span style="display:flex;"><span>./install-ubuntu.sh
+</span></span></code></pre></div><p><a href="/downloads/synology-webapi-login/install-ubuntu.sh">Download the Ubuntu launcher</a></p>
+<h3 id="macos-26">macOS 26</h3>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>chmod +x install-macos.sh
+</span></span><span style="display:flex;"><span>./install-macos.sh
+</span></span></code></pre></div><p><a href="/downloads/synology-webapi-login/install-macos.sh">Download the macOS launcher</a></p>
+<p>For self-signed deployments, import the correct CA into the trust chain. Do not normalize long-term use of <code>--insecure</code>.</p>
+<h2 id="manual-execution">Manual execution</h2>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>python3 -m venv .venv
+</span></span><span style="display:flex;"><span>source .venv/bin/activate
+</span></span><span style="display:flex;"><span>python -m pip install -r requirements.txt
+</span></span><span style="display:flex;"><span>python synology_login.py <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  --url <span style="color:#e6db74">&#34;https://nas.example.test:5001&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  --account <span style="color:#e6db74">&#34;reader&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  --session <span style="color:#e6db74">&#34;DSM&#34;</span>
+</span></span></code></pre></div><p>If an unattended job must use <code>SYNOLOGY_PASSWORD</code>, set it only for the process lifetime, clear it afterward, and ensure the environment is never dumped into CI logs or screenshots.</p>
+<h2 id="agent-assisted-setup">Agent-assisted setup</h2>
+<p>Give a local Agent a bounded instruction such as:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>Create an isolated Python virtual environment for the Synology WebAPI login tool.
+</span></span><span style="display:flex;"><span>Use only synology_login.py and requirements.txt from the current directory.
+</span></span><span style="display:flex;"><span>Read the password from SYNOLOGY_PASSWORD without printing the variable, SID, cookies, or full responses.
+</span></span><span style="display:flex;"><span>Run one authorized session=DSM login against the HTTPS URL I provide.
+</span></span><span style="display:flex;"><span>Keep TLS verification enabled. If certificate validation fails, stop and report the chain problem; do not add --insecure.
+</span></span><span style="display:flex;"><span>Report only the HTTP stage, whether a SID was returned, elapsed time, and redacted error codes.
+</span></span></code></pre></div><p>The Agent should automate repetitive setup—not weaken the security model.</p>
+<h2 id="troubleshooting">Troubleshooting</h2>
+<p><img alt="Troubleshooting map" src="/post-images/synology-webapi-login-encryption-deep-dive/08-troubleshooting.png"></p>
+<p>Start with the transport: scheme, port, reverse-proxy path, hostname validation, and CA chain. Then inspect dynamic values: call <code>getinfo</code> for every login, insert <code>ciphertoken=server_time</code> inside the AES plaintext, and do not cache <code>cipherkey</code> indefinitely. Next inspect account policy: lockouts, 2FA, session name, and API permissions. Finally query <code>SYNO.API.Info</code> to select an authentication version the device actually advertises.</p>
+<p>A generic login failure is like a returned parcel. The address, wrapping, label freshness, or recipient details may be wrong; the password is only one possibility.</p>
+<h2 id="security-limits">Security limits</h2>
+<p>AES-CBC does not provide an authentication tag, and this legacy-compatible construction is not a template for designing a new protocol. MD5 is present as a historical key-derivation component; that does not make MD5 appropriate for password storage or signatures.</p>
+<p>Without authenticated HTTPS, an active intermediary could replace the <code>getinfo</code> public key and receive a payload encrypted to the attacker’s key. That is why “the parameters are encrypted, so certificate validation can be disabled” is a dangerous conclusion.</p>
+<p>Treat the resulting SID as a temporary password-equivalent secret and log out when it is no longer required. Use the technique only on systems you own or are explicitly authorized to administer.</p>
+<h2 id="qa">Q&amp;A</h2>
+<h3 id="is-cipherkey-always-__ciphertext">Is <code>cipherkey</code> always <code>__cIpHeRtExT</code>?</h3>
+<p>Do not assume so. The client should consume the field name returned by <code>getinfo</code>.</p>
+<h3 id="does-sessiondsm-log-a-browser-into-the-dsm-ui">Does <code>session=DSM</code> log a browser into the DSM UI?</h3>
+<p>Not by itself. It selects a WebAPI session namespace; browser UI state may additionally involve cookies, CSRF state, device tokens, 2FA, and frontend initialization.</p>
+<h3 id="why-pkcs1-v15-instead-of-oaep">Why PKCS#1 v1.5 instead of OAEP?</h3>
+<p>Compatibility. A client cannot unilaterally change the padding mode and still expect the existing server to decrypt it. New protocol designs would normally prefer modern choices.</p>
+<h3 id="why-exactly-501-bytes">Why exactly 501 bytes?</h3>
+<p>A 4096-bit modulus is 512 bytes, and PKCS#1 v1.5 encryption reserves at least 11 bytes: 512 - 11 = 501.</p>
+<h3 id="what-about-2fa">What about 2FA?</h3>
+<p>Implement the OTP or device-token flow advertised by the specific DSM/API version. This tool deliberately does not pretend to bypass second-factor requirements.</p>
+<h2 id="conclusion">Conclusion</h2>
+<p>The useful lesson is not merely that a Python script can log in. It is the method: obtain the server’s current metadata, follow a primary-source client implementation, and prove each cryptographic layer with reversible tests.</p>
+<p>In one sentence: <strong>RSA protects the one-use AES passphrase, AES protects the URL parameters, and the dynamic <code>cipherkey</code> carries both packages to the server.</strong></p>
+<p>Operationally, add one more sentence: <strong>prefer correctly validated HTTPS, never log passwords or SIDs, and never confuse compatibility encryption with an authorization bypass.</strong></p>
+<h2 id="references">References</h2>
+<ul>
+<li>OpenStack Cinder Synology driver, pinned commit: <a href="https://opendev.org/openstack/cinder/src/commit/efc3217d8b3ce8f4f1a66c7d5b7c940d73a36753/cinder/volume/drivers/synology/synology_common.py">https://opendev.org/openstack/cinder/src/commit/efc3217d8b3ce8f4f1a66c7d5b7c940d73a36753/cinder/volume/drivers/synology/synology_common.py</a></li>
+<li>Python <code>secrets</code>: <a href="https://docs.python.org/3/library/secrets.html">https://docs.python.org/3/library/secrets.html</a></li>
+<li>cryptography symmetric encryption primitives: <a href="https://cryptography.io/en/latest/hazmat/primitives/symmetric-encryption/">https://cryptography.io/en/latest/hazmat/primitives/symmetric-encryption/</a></li>
+</ul>
+        </div>
+    </article>
+
+    
+  
+
+
+  
+    
+  
+
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk/dist/gitalk.css">
+<script src="https://cdn.jsdelivr.net/npm/gitalk/dist/gitalk.min.js"></script>
+<div id="gitalk-container" style="margin-top:40px"></div>
+<script>
+  (function(){
+    var gitalk = new Gitalk({
+      clientID: '3181fd94e501cc5db0ad',
+      clientSecret: 'af1dab79dae02c69296e6615bfcecf47fc8615ee',
+      repo: 'margropcomment.margrop.io',
+      owner: 'margrop',
+      admin: ["margrop"],
+      
+      id: '\/post\/synology-webapi-login-encryption-deep-dive\/',
+      
+      distractionFreeMode: false
+    });
+    gitalk.render('gitalk-container');
+  })();
+</script>
+  
+
+
+
+
+    
+<div class="site-stats" aria-label="访问统计">
+    <span>本文阅读量 <span data-page-view-count>--</span></span>
+</div>
+
+
+    
+    <script type="text/javascript" src="https://js.users.51.la/21044367.js"></script>
+    <script charset="UTF-8" id="LA_COLLECT" src="//sdk.51.la/js-sdk-pro.min.js"></script>
+    <script>LA.init({id: "1vVTUWl7zoRjnKXi",ck: "1vVTUWl7zoRjnKXi"})</script>
+    <script src="https://sdk.51.la/perf/js-sdk-perf.min.js" crossorigin="anonymous"></script>
+    <script>
+      new LingQue.Monitor().init({id:"202teQt8THXwqyve"});
+    </script>
+    <script defer src="/js/page-views.js"></script>
+    <div class="la-theme-widget" data-51la-widget aria-label="51.la 网站统计"></div>
+    <script defer src="/js/51la-theme-widget.js"></script>
+</body>
+</html>

@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>MCP 明明没配错，为什么一启动就挂？一次 Codex MCP 故障的完整拆解 - 魔都水滴</title>
+<meta name="description" content="先说结论 这次故障最容易误判的地方，是表面错误写着 “MCP Client 启动失败”“MCP Server 握手失败”，于是人很自然会去怀疑 MCP 配置、插件开关、网络、Token、JSON 格式、stdio 协议，甚至怀疑 Codex 本身挂了。但真正的根因并不在 MCP 协议层：某个 MCP Server 对应 …">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://blog.margrop.net/post/codex-mcp-startup-swift-runtime-troubleshooting/"><meta property="og:site_name" content="魔都水滴">
+<meta property="og:title" content="MCP 明明没配错，为什么一启动就挂？一次 Codex MCP 故障的完整拆解 - 魔都水滴">
+<meta property="og:description" content="先说结论 这次故障最容易误判的地方，是表面错误写着 “MCP Client 启动失败”“MCP Server 握手失败”，于是人很自然会去怀疑 MCP 配置、插件开关、网络、Token、JSON 格式、stdio 协议，甚至怀疑 Codex 本身挂了。但真正的根因并不在 MCP 协议层：某个 MCP Server 对应 …">
+<meta property="og:url" content="https://blog.margrop.net/post/codex-mcp-startup-swift-runtime-troubleshooting/">
+<meta property="og:locale" content="zh_CN"><meta property="og:type" content="article"><meta property="og:locale:alternate" content="en_US"><meta property="og:image" content="https://blog.margrop.net/images/avatar.png"><meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="MCP 明明没配错，为什么一启动就挂？一次 Codex MCP 故障的完整拆解 - 魔都水滴">
+<meta name="twitter:description" content="先说结论 这次故障最容易误判的地方，是表面错误写着 “MCP Client 启动失败”“MCP Server 握手失败”，于是人很自然会去怀疑 MCP 配置、插件开关、网络、Token、JSON 格式、stdio 协议，甚至怀疑 Codex 本身挂了。但真正的根因并不在 MCP 协议层：某个 MCP Server 对应 …"><meta name="twitter:image" content="https://blog.margrop.net/images/avatar.png"><link rel="alternate" hreflang="zh-CN" href="https://blog.margrop.net/post/codex-mcp-startup-swift-runtime-troubleshooting/"><link rel="alternate" hreflang="en-US" href="https://blog.margrop.net/en/post/codex-mcp-startup-swift-runtime-troubleshooting/"><link rel="alternate" hreflang="x-default" href="https://blog.margrop.net/"><meta property="article:published_time" content="2026-05-23T06:10:00&#43;08:00">
+<meta property="article:modified_time" content="2026-05-23T06:10:00&#43;08:00"><meta property="article:tag" content="MCP"><meta property="article:tag" content="Codex"><meta property="article:tag" content="AI Agent"><meta property="article:tag" content="macOS"><meta property="article:tag" content="Swift"><meta property="article:tag" content="动态链接"><meta property="article:tag" content="故障排查"><meta property="article:tag" content="开发工具"><script type="application/ld+json">{"@context":"https://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"魔都水滴"},"dateModified":"2026-05-23T06:10:00+08:00","datePublished":"2026-05-23T06:10:00+08:00","description":"先说结论 这次故障最容易误判的地方，是表面错误写着 “MCP Client 启动失败”“MCP Server 握手失败”，于是人很自然会去怀疑 MCP 配置、插件开关、网络、Token、JSON 格式、stdio 协议，甚至怀疑 Codex 本身挂了。但真正的根因并不在 MCP 协议层：某个 MCP Server 对应 …","headline":"MCP 明明没配错，为什么一启动就挂？一次 Codex MCP 故障的完整拆解","mainEntityOfPage":"https://blog.margrop.net/post/codex-mcp-startup-swift-runtime-troubleshooting/","url":"https://blog.margrop.net/post/codex-mcp-startup-swift-runtime-troubleshooting/"}</script>
+    <meta name="baidu-site-verification" content="code-sVFZ8SER59" />
+    <script src="/js/theme-toggle.js"></script>
+
+    
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-3J2W592DHJ"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-3J2W592DHJ');
+    </script>
+
+    <style>
+    :root {
+        color-scheme: light;
+        --page-bg: #fff;
+        --surface-bg: #f4f4f4;
+        --text: #222;
+        --muted: #666;
+        --subtle: #777;
+        --border: #eee;
+        --border-strong: #ddd;
+        --link: #006CFF;
+        --tag-bg: #eee;
+        --button-bg: #fff;
+        --button-primary-bg: #333;
+    }
+    @media (prefers-color-scheme: dark) {
+        :root:not([data-theme]) {
+            color-scheme: dark;
+            --page-bg: #111315;
+            --surface-bg: #1d2126;
+            --text: #e8eaed;
+            --muted: #aeb4bd;
+            --subtle: #9aa2ad;
+            --border: #30353d;
+            --border-strong: #454c56;
+            --link: #79b8ff;
+            --tag-bg: #2a3038;
+            --button-bg: #1d2126;
+            --button-primary-bg: #e8eaed;
+        }
+    }
+    html[data-theme="dark"] {
+        color-scheme: dark;
+        --page-bg: #111315;
+        --surface-bg: #1d2126;
+        --text: #e8eaed;
+        --muted: #aeb4bd;
+        --subtle: #9aa2ad;
+        --border: #30353d;
+        --border-strong: #454c56;
+        --link: #79b8ff;
+        --tag-bg: #2a3038;
+        --button-bg: #1d2126;
+        --button-primary-bg: #e8eaed;
+    }
+    html[data-theme="light"] {
+        color-scheme: light;
+        --page-bg: #fff;
+        --surface-bg: #f4f4f4;
+        --text: #222;
+        --muted: #666;
+        --subtle: #777;
+        --border: #eee;
+        --border-strong: #ddd;
+        --link: #006CFF;
+        --tag-bg: #eee;
+        --button-bg: #fff;
+        --button-primary-bg: #333;
+    }
+    body { background: var(--page-bg); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 860px; margin: 0 auto; padding: 20px; line-height: 1.7; color: var(--text); }
+    h1 { border-bottom: 2px solid var(--border-strong); padding-bottom: 10px; }
+    article > h1 { font-size: 2em; line-height: 1.3; margin-bottom: 12px; }
+    .post-list { list-style: none; padding: 0; }
+    .post-list li { margin: 15px 0; }
+    .post-list a { text-decoration: none; color: var(--text); font-size: 18px; }
+    .post-list a:hover { color: var(--link); }
+    .date { color: var(--muted); font-size: 14px; margin-right: 10px; }
+    .tags { margin-top: 8px; }
+    .tag { background: var(--tag-bg); padding: 2px 8px; border-radius: 3px; font-size: 12px; margin-right: 5px; display: inline-block; }
+    nav { margin-bottom: 18px; border-bottom: 1px solid var(--border); padding-bottom: 15px; }
+    nav a { margin-right: 20px; text-decoration: none; color: var(--text); font-size: 16px; }
+    nav a:hover { color: var(--link); }
+    .language-switcher { display: flex; align-items: center; gap: 10px; margin: -8px 0 26px; }
+    .language-switcher a { display: inline-block; padding: 4px 10px; border: 1px solid var(--border-strong); border-radius: 999px; color: var(--muted); text-decoration: none; font-size: 14px; }
+    .language-switcher a.active { background: var(--link); border-color: var(--link); color: #fff; }
+    .content { line-height: 1.8; }
+    .content code { background: var(--surface-bg); padding: 2px 5px; border-radius: 3px; }
+    .content pre { background: var(--surface-bg); padding: 15px; overflow-x: auto; border-radius: 5px; }
+    .content img { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+    .content .code-snippet__fix {
+        margin: 0 0 1.5em;
+    }
+    .content .code-snippet__fix .code-snippet__line-index {
+        display: none !important;
+    }
+    .meta { color: var(--muted); font-size: 14px; margin-bottom: 14px; }
+    .meta-separator { margin: 0 6px; color: var(--subtle); }
+    .site-stats { display: flex; flex-wrap: wrap; gap: 10px 18px; margin: 28px 0 8px; padding-top: 12px; border-top: 1px solid var(--border); color: var(--subtle); font-size: 12px; }
+    a { color: var(--link); }
+    .hero { padding: 12px 0 24px; }
+    .hero h1 { border-bottom: 2px solid #333; }
+    .eyebrow { color: var(--muted); font-size: 12px; letter-spacing: .12em; margin: 0 0 8px; }
+    .hero-tagline { font-size: 18px; margin: 12px 0 8px; }
+    .hero-copy { color: var(--muted); margin: 0 0 14px; }
+    .hero-actions { margin: 14px 0 4px; }
+    .button { display: inline-block; margin-right: 12px; border: 1px solid var(--border-strong); border-radius: 3px; padding: 4px 10px; text-decoration: none; color: var(--text); background: var(--button-bg); font-size: 14px; }
+    .button-primary { background: var(--button-primary-bg); border-color: var(--button-primary-bg); color: var(--page-bg); }
+    .theme-toggle { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 1px solid var(--border-strong); border-radius: 999px; background: var(--button-bg); color: var(--text); cursor: pointer; font: inherit; font-size: 16px; }
+    .theme-toggle:hover { border-color: var(--link); color: var(--link); }
+    .la-theme-widget { margin: 12px 0 20px; min-height: 24px; color: var(--text); }
+    .identity-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: 16px 0; }
+    .identity-grid div { display: flex; flex-direction: column; }
+    .identity-grid strong { font-size: 15px; }
+    .identity-grid span, .topic-card span, .featured-list small { color: var(--muted); font-size: 13px; }
+    .section-block { padding-top: 28px; }
+    .section-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+    .section-heading h2 { margin: 0; }
+    .section-heading a { font-size: 14px; }
+    .topic-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+    .topic-card { display: block; padding: 14px; border: 1px solid var(--border); text-decoration: none; color: var(--text); }
+    .topic-card:hover { border-color: var(--border-strong); }
+    .topic-card strong { display: block; margin: 4px 0; font-size: 17px; }
+    .topic-index, .featured-list > a > span { color: var(--muted) !important; font-size: 12px !important; }
+    .featured-list { border-top: 1px solid var(--border); }
+    .featured-list > a { display: flex; gap: 14px; padding: 12px 0; border-bottom: 1px solid var(--border); text-decoration: none; color: var(--text); }
+    .featured-list div { display: flex; flex-direction: column; }
+    .latest-block { max-width: 860px; }
+    @media (max-width: 680px) {
+        body { padding: 16px; }
+        nav a { display: inline-block; margin-right: 12px; margin-bottom: 8px; }
+        .identity-grid { grid-template-columns: repeat(2, 1fr); }
+        .topic-grid { grid-template-columns: 1fr; }
+    }
+</style>
+
+</head>
+<body>
+    <nav>
+  
+  <a href="/">首页</a>
+  <a href="https://blog.margrop.com/" target="_blank" rel="noopener">AI Daily</a>
+  <a href="/start-here/">开始这里</a>
+  <a href="/tag/ai/">AI Agent</a>
+  <a href="/tag/docker/">Self-hosting</a>
+  <a href="/tag/%e8%bf%90%e7%bb%b4/">Engineering</a>
+  <a href="/post/">归档</a>
+  <a href="/tags/">标签</a>
+  <a href="/post/about/">关于</a>
+  <a href="https://download.margrop.net" target="_blank" rel="noopener">下载</a>
+  <a href="/post/favorites/">Link</a>
+  <a href="/post/github-project-stars/">Github</a>
+  
+  <a href="https://github-mirrors.margrop.net" target="_blank" rel="noopener">Github加速</a>
+  <a href="https://status.anye.xyz/" target="_blank" rel="noopener">Docker加速</a>
+  
+  <a href="https://blog.margrop.net/index.xml" target="_blank" rel="noopener">RSS</a>
+</nav>
+
+    <div class="language-switcher">
+  <button class="theme-toggle" type="button" data-theme-toggle aria-label="切换到暗黑模式" aria-pressed="false">🌙</button>
+
+  
+  
+    <a href="/post/codex-mcp-startup-swift-runtime-troubleshooting/" class="active">中文</a>
+  
+    <a href="/en/post/codex-mcp-startup-swift-runtime-troubleshooting/" class="">English</a>
+  
+  
+</div>
+
+    
+    <article>
+        <h1>MCP 明明没配错，为什么一启动就挂？一次 Codex MCP 故障的完整拆解</h1>
+        <div class="meta">
+            发布时间: 2026-05-23
+            <span class="meta-separator">·</span>
+            <span>阅读量 <span data-page-view-count>--</span></span>
+        </div>
+        
+<div class="tags">
+    
+    <a href="/tag/mcp/"><span class="tag">MCP</span></a>
+    
+    <a href="/tag/codex/"><span class="tag">Codex</span></a>
+    
+    <a href="/tag/ai-agent/"><span class="tag">AI Agent</span></a>
+    
+    <a href="/tag/macos/"><span class="tag">macOS</span></a>
+    
+    <a href="/tag/swift/"><span class="tag">Swift</span></a>
+    
+    <a href="/tag/%E5%8A%A8%E6%80%81%E9%93%BE%E6%8E%A5/"><span class="tag">动态链接</span></a>
+    
+    <a href="/tag/%E6%95%85%E9%9A%9C%E6%8E%92%E6%9F%A5/"><span class="tag">故障排查</span></a>
+    
+    <a href="/tag/%E5%BC%80%E5%8F%91%E5%B7%A5%E5%85%B7/"><span class="tag">开发工具</span></a>
+    
+</div>
+
+
+        <div class="content">
+            <blockquote>
+<p><strong>先说结论</strong></p>
+<p>这次故障最容易误判的地方，是表面错误写着 “MCP Client 启动失败”“MCP Server 握手失败”，于是人很自然会去怀疑 MCP 配置、插件开关、网络、Token、JSON 格式、stdio 协议，甚至怀疑 Codex 本身挂了。但真正的根因并不在 MCP 协议层：某个 MCP Server 对应的本地二进制在启动瞬间就被 macOS 动态链接器杀掉了，根本没有机会完成 <code>initialize</code> 握手。Client 看到的只是连接提前关闭，Server 端真正留下的线索是 <code>dyld: Symbol not found</code>，缺的是 Swift Concurrency runtime 里的一个符号。</p>
+<p>换句话说：MCP 没有来得及失败，Server 进程先死了。</p>
+</blockquote>
+<p>这篇文章记录一次很典型、也很容易绕远路的 Agent 工具链故障：Codex 里 MCP Client / MCP Server 启动异常。它不是一个“修改配置就好”的问题，而是一个从应用层错误一路追到本地二进制、动态链接器、Swift runtime 兼容性的排障过程。</p>
+<p>为了避免泄露任何隐私信息，本文不包含真实内网地址、真实用户名、真实会话 ID、真实本机绝对路径、Token、私有仓库地址或任何业务系统名称。文中路径都使用 <code>~</code>、<code>&lt;USER_HOME&gt;</code>、<code>&lt;PLUGIN_DIR&gt;</code>、<code>&lt;PROJECT&gt;</code> 等占位符表示；命令输出也只保留与判断根因有关的公开技术字段。</p>
+<p><img alt="MCP 故障不一定发生在 MCP 协议层" src="/post-images/codex-mcp-startup-swift-runtime-troubleshooting/01-overview.svg"></p>
+<p><em>图 1：看起来是 MCP 握手失败，真正的问题可能发生在更底层。</em></p>
+<h2 id="1-问题背景mcp-已经变成-agent-的外设总线">1. 问题背景：MCP 已经变成 Agent 的“外设总线”</h2>
+<p>现在很多 AI Agent 工具已经不再是单纯的聊天窗口。它们会读取文件、执行命令、访问浏览器、连接 GitHub、操作日历、调用数据库、控制本地应用。为了让这些能力以统一方式接入，MCP，也就是 Model Context Protocol，逐渐变成一种常见的“外设总线”。</p>
+<p>在一个典型的 Codex 或类似 Agent 环境里，MCP 可能承担几类工作：</p>
+<ol>
+<li>通过本地 stdio server 暴露文件、浏览器、电脑控制、图片处理等能力。</li>
+<li>通过 HTTP 或 streamable HTTP server 暴露远端连接器，例如代码托管、文档系统、协作工具。</li>
+<li>把工具描述、参数 schema 和调用结果交给 Agent，让模型能选择并调用这些工具。</li>
+<li>在会话启动、工具刷新、关闭清理时完成初始化、握手、能力枚举和资源释放。</li>
+</ol>
+<p>这套结构非常灵活，但也带来一个排障难点：当用户看到“某个 MCP 启动失败”时，失败点未必在 MCP 协议本身。它可能是配置文件格式错，也可能是环境变量没传进去，也可能是 Node、Python、uv、npx、动态库、系统权限、网络代理、证书、登录态、系统版本兼容性的问题。</p>
+<p>这次案例就属于最后一种：MCP 层只负责报告“握手失败”，根因在本地二进制启动阶段。</p>
+<h2 id="2-问题表现client-说握手失败server-只留下一行-dyld">2. 问题表现：Client 说握手失败，Server 只留下一行 <code>dyld</code></h2>
+<p>一开始能看到的症状并不复杂。Codex 主程序和 app-server 都在运行，普通对话、终端命令、日志读取也正常。但是某些 MCP 工具无法正常初始化，日志里出现类似下面的警告：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>failed to initialize MCP client during shutdown:
+</span></span><span style="display:flex;"><span>MCP startup failed:
+</span></span><span style="display:flex;"><span>handshaking with MCP server failed:
+</span></span><span style="display:flex;"><span>connection closed: initialize response
+</span></span></code></pre></div><p>另一次工具刷新阶段也能看到类似信息：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>failed to force-refresh tools for MCP server &#39;&lt;server-name&gt;&#39;, using cached/startup tools:
+</span></span><span style="display:flex;"><span>failed to get client:
+</span></span><span style="display:flex;"><span>MCP startup failed:
+</span></span><span style="display:flex;"><span>handshaking with MCP server failed:
+</span></span><span style="display:flex;"><span>Transport channel closed
+</span></span></code></pre></div><p>如果只看这两行，很容易顺着 MCP Client 的方向查：是不是 Client 没连上？是不是 server URL 错了？是不是 JSON-RPC 初始化包格式不对？是不是某个连接器需要重新登录？是不是代理断了？</p>
+<p>但真正关键的日志来自 MCP server 的 stderr。某个本地 server 启动时输出了这样的错误：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>dyld: Symbol not found: _swift_task_addPriorityEscalationHandler
+</span></span><span style="display:flex;"><span>Referenced from: &lt;PLUGIN_DIR&gt;/SkyComputerUseClient
+</span></span><span style="display:flex;"><span>Expected in: /usr/lib/swift/libswift_Concurrency.dylib
+</span></span></code></pre></div><p>这几行信息非常关键。<code>dyld</code> 是 macOS 的动态链接器。它在进程真正运行用户代码之前负责加载二进制、解析动态库、绑定符号。如果它说 <code>Symbol not found</code>，说明程序还没进入 MCP server 的业务逻辑，甚至还没机会读配置、建立 stdio、响应 <code>initialize</code>。它在操作系统装载阶段就失败了。</p>
+<p>所以这个故障从“协议握手失败”变成了“本地可执行文件运行时依赖不满足”。</p>
+<p><img alt="MCP initialize 之前，Server 进程已经退出" src="/post-images/codex-mcp-startup-swift-runtime-troubleshooting/02-handshake.svg"></p>
+<p><em>图 2：Client 等的是 initialize response，但 Server 在发出 response 前已经被系统终止。</em></p>
+<h2 id="3-第一条原则不要看到-mcp-就只查-mcp-配置">3. 第一条原则：不要看到 MCP 就只查 MCP 配置</h2>
+<p>排这种问题时，我最先确认的不是“怎么修”，而是“到底哪一层失败”。因为多组件系统里，报错出现在哪里，不等于根因就在哪里。</p>
+<p>这次链路至少有四层：</p>
+<table>
+<thead>
+<tr>
+<th>层级</th>
+<th>负责什么</th>
+<th>可能的失败</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Codex / Agent Client</td>
+<td>读取可用工具，创建 MCP client，会话中调工具</td>
+<td>配置未加载、工具缓存旧、Client 关闭时竞态</td>
+</tr>
+<tr>
+<td>MCP Transport</td>
+<td>stdio 或 HTTP 通道，发送 <code>initialize</code> 等消息</td>
+<td>通道关闭、代理失败、超时、权限问题</td>
+</tr>
+<tr>
+<td>MCP Server 进程</td>
+<td>真正暴露工具能力的本地或远端服务</td>
+<td>启动命令错、依赖缺失、环境变量缺失</td>
+</tr>
+<tr>
+<td>操作系统 / Runtime</td>
+<td>加载二进制和动态库</td>
+<td>架构不匹配、系统版本不兼容、符号缺失</td>
+</tr>
+</tbody>
+</table>
+<p>如果第一层说“handshaking failed”，我们只能知道 Client 没收到完整握手结果。至于为什么没收到，要继续看 server stderr、进程退出码、系统日志和手动复现结果。</p>
+<p>这也是我建议保留的一条排障习惯：<strong>看到 MCP Client 错误时，必须拿到 MCP Server 的原始 stderr</strong>。如果没有 stderr，就手动运行 server 命令；如果手动运行也秒退，就先不要改 MCP 配置。</p>
+<h2 id="4-实际排查过程从谁没启动到为什么秒退">4. 实际排查过程：从“谁没启动”到“为什么秒退”</h2>
+<p>这次排查可以拆成几个步骤。</p>
+<h3 id="41-先确认-codex-主进程是不是活着">4.1 先确认 Codex 主进程是不是活着</h3>
+<p>如果 Codex 主程序、app-server 或登录态本身已经不正常，那 MCP 失败只是更大问题的一部分。因此第一步是看进程和启动日志。结果显示主程序和 app-server 都在运行，普通工具调用也正常。</p>
+<p>这一步排除了“Codex 整体启动失败”。故障范围收窄到某个 MCP server 或连接器。</p>
+<h3 id="42-再看全局配置里有没有手工-mcp-配置">4.2 再看全局配置里有没有手工 MCP 配置</h3>
+<p>很多 MCP 问题来自手写配置，例如命令名写错、参数数组少引号、环境变量没传、工作目录不存在。检查配置后发现，并没有手工配置的 <code>mcp_servers</code> 段。当前可用 MCP 更多来自插件和连接器。</p>
+<p>这一步说明：不要急着修用户写的 MCP 配置，因为现场没有这类配置可修。</p>
+<h3 id="43-从日志数据库和文本日志里找-mcp-关键词">4.3 从日志数据库和文本日志里找 MCP 关键词</h3>
+<p>接着在 Codex 日志和本地日志库里找 <code>mcp</code>、<code>rmcp_client</code>、<code>stdio_server_launcher</code>、<code>initialize response</code> 等关键字。这里出现了两类信息：</p>
+<p>第一类是 shutdown 阶段的警告：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>failed to initialize MCP client during shutdown
+</span></span><span style="display:flex;"><span>connection closed: initialize response
+</span></span></code></pre></div><p>这一类要谨慎解读。它发生在关闭流程中，周围还有 <code>task cancelled</code>、<code>RunningService dropped</code> 之类的日志。它可能是真问题，也可能是关闭时连接被取消导致的噪声。不能只凭它下结论。</p>
+<p>第二类更关键，是 stdio server launcher 捕获到的 server stderr：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>MCP server stderr (...SkyComputerUseClient): dyld: Symbol not found
+</span></span><span style="display:flex;"><span>MCP server stderr (...SkyComputerUseClient): Referenced from: ...SkyComputerUseClient
+</span></span><span style="display:flex;"><span>MCP server stderr (...SkyComputerUseClient): Expected in: /usr/lib/swift/libswift_Concurrency.dylib
+</span></span></code></pre></div><p>这类日志不是 MCP Client 的二手描述，而是 server 进程自己启动失败时吐出来的原始错误。优先级更高。</p>
+<h3 id="44-手动运行-server-二进制复现">4.4 手动运行 server 二进制复现</h3>
+<p>为了避免“只在 Codex 启动环境里失败”的误判，最小复现就是直接运行同一个可执行文件。结果非常干净：手动启动也立刻失败，并输出同样的 <code>dyld: Symbol not found</code>。</p>
+<p>这一步非常关键。它证明问题不是 Codex Client 传参错，不是 MCP initialize 包错，不是连接器缓存错，也不是会话关闭竞态。这个二进制在当前系统环境下独立运行就失败。</p>
+<h3 id="45-检查二进制构建信息和系统运行环境">4.5 检查二进制构建信息和系统运行环境</h3>
+<p>继续看应用的 <code>Info.plist</code>、文件类型和动态库依赖，可以看到几个信息：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>Mach-O 64-bit executable arm64
+</span></span><span style="display:flex;"><span>DTSDKName: macosx26.x
+</span></span><span style="display:flex;"><span>DTXcode: Xcode 17.x
+</span></span><span style="display:flex;"><span>LSMinimumSystemVersion: 15.0
+</span></span></code></pre></div><p>本机则是 macOS 15.x，系统 Swift runtime 位于：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>/usr/lib/swift/libswift_Concurrency.dylib
+</span></span></code></pre></div><p>错误符号是：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>_swift_task_addPriorityEscalationHandler
+</span></span></code></pre></div><p>这说明该二进制虽然标注最低系统版本可以是 macOS 15，但它在运行时引用了当前系统 Swift Concurrency runtime 中不存在的符号。也就是说，构建时使用的新 SDK / 新 Swift runtime 能看到这个符号，但当前系统自带 runtime 没有提供它。</p>
+<p><img alt="根因不在配置，而在 Swift runtime 符号兼容性" src="/post-images/codex-mcp-startup-swift-runtime-troubleshooting/03-root-cause.svg"></p>
+<p><em>图 3：配置层没有错，进程在动态链接阶段已经失败。</em></p>
+<h2 id="5-根因mcp-server-二进制和当前-macos-swift-runtime-不兼容">5. 根因：MCP Server 二进制和当前 macOS Swift runtime 不兼容</h2>
+<p>最终根因可以表述为：</p>
+<blockquote>
+<p>某个 MCP Server 使用 Swift / macOS 原生二进制实现。该二进制由较新的 Xcode / macOS SDK 构建，启动时引用了当前 macOS 系统 Swift Concurrency runtime 中不存在的符号。macOS 动态链接器 <code>dyld</code> 在装载阶段无法解析该符号，于是直接终止进程。MCP Client 因为收不到 <code>initialize</code> 响应，只能报告握手失败或连接关闭。</p>
+</blockquote>
+<p>这个结论有三个重要细节。</p>
+<p>第一，MCP 配置并不是根因。配置错当然也会导致 MCP 启动失败，但这次配置层没有证据指向错误。直接运行 server 二进制也失败，说明配置不是必要条件。</p>
+<p>第二，MCP Client 的报错是症状，不是根因。Client 只知道“我发起握手，但连接关闭了”。它不知道 server 是因为缺库、权限、崩溃还是主动退出。必须结合 stderr 才能定位。</p>
+<p>第三，系统版本兼容性不能只看 <code>LSMinimumSystemVersion</code>。一个应用可能在 Info.plist 里写最低支持某个系统版本，但实际二进制仍然可能引用了该系统没有的 runtime 符号。真正能说明问题的是运行时的 <code>dyld</code> 错误和 <code>otool</code> / plist / 系统版本的组合证据。</p>
+<h2 id="6-为什么这个问题容易误判">6. 为什么这个问题容易误判</h2>
+<p>这个问题容易误判，主要是因为三种表象都很像“配置问题”。</p>
+<h3 id="61-mcp-的错误太抽象">6.1 MCP 的错误太抽象</h3>
+<p><code>handshaking with MCP server failed</code> 是一个高层错误。它描述的是 Client 视角的失败：握手没完成。可是没完成的原因可以有几十种。配置错、命令不存在、server 输出了非 JSON 内容、server 崩溃、网络断开、HTTP 403、代理失败、证书错误、系统动态库缺失，最后都可能汇总成“握手失败”。</p>
+<p>所以看到这类报错时，不要停在第一行。</p>
+<h3 id="62-插件型-mcp-把启动命令藏起来了">6.2 插件型 MCP 把启动命令藏起来了</h3>
+<p>手写 MCP 配置时，启动命令就在配置文件里，很容易复制出来手动跑。但插件型 MCP 往往由插件 manifest、缓存目录、运行时包装器共同决定。用户看到的是“某个功能不可用”，不一定知道背后具体启动了哪个二进制。</p>
+<p>这次就是从日志里的 <code>stdio_server_launcher</code> 才定位到具体二进制。</p>
+<h3 id="63-macos-原生二进制错误不像-nodepython-错误那么直观">6.3 macOS 原生二进制错误不像 Node/Python 错误那么直观</h3>
+<p>如果是 Node 依赖缺失，通常会看到 <code>Cannot find module</code>。如果是 Python 包缺失，会看到 <code>ModuleNotFoundError</code>。但 Swift 原生二进制在动态链接阶段失败时，错误来自 <code>dyld</code>。它不会告诉你“请升级某个 npm 包”，而是告诉你缺某个符号。</p>
+<p>对不常看 macOS 原生崩溃日志的人来说，<code>Symbol not found</code> 很容易被当成“奇怪的系统噪声”。但在这个案例里，它正是最重要的证据。</p>
+<h2 id="7-如何解决短期绕过长期等兼容构建或升级系统">7. 如何解决：短期绕过，长期等兼容构建或升级系统</h2>
+<p>解决方案要按风险和目的分层。</p>
+<p><img alt="修复选择取决于你是否必须使用该 MCP Server" src="/post-images/codex-mcp-startup-swift-runtime-troubleshooting/04-fix-options.svg"></p>
+<p><em>图 4：先判断是否必须使用这个 server，再决定禁用、升级插件、升级系统或等待兼容版本。</em></p>
+<h3 id="71-短期如果不需要这个工具先禁用对应插件">7.1 短期：如果不需要这个工具，先禁用对应插件</h3>
+<p>如果出问题的是某个可选能力，例如本地电脑控制、浏览器自动化、某个第三方连接器，而当前任务不依赖它，最稳妥的短期处理是禁用对应插件，避免每次启动都报错。</p>
+<p>这种做法的优点是安全、可逆、不会改系统。缺点是该插件提供的工具不可用。对很多纯代码、纯文档、纯博客任务来说，这完全可以接受。</p>
+<h3 id="72-中期更新插件到兼容当前系统的构建">7.2 中期：更新插件到兼容当前系统的构建</h3>
+<p>如果插件方发布了新的构建，并且明确兼容当前 macOS 版本，那么更新插件通常是最干净的解决方式。理想情况下，新构建会避免引用当前系统不存在的 Swift runtime 符号，或者把必要运行库以正确方式打包。</p>
+<p>更新后要做两件验证：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># 1. 手动运行 server 二进制，确认不再被 dyld 秒杀</span>
+</span></span><span style="display:flex;"><span>&lt;PLUGIN_SERVER_BINARY&gt;
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 2. 重启 Agent / 刷新 MCP 工具，确认 initialize 握手成功</span>
+</span></span><span style="display:flex;"><span>codex
+</span></span></code></pre></div><p>不要只看插件安装成功。安装成功不代表二进制能在当前系统启动。</p>
+<h3 id="73-长期升级-macos或等待插件回退兼容">7.3 长期：升级 macOS，或等待插件回退兼容</h3>
+<p>如果该二进制确实依赖更新系统的 Swift runtime，而你又必须使用它，那么系统升级可能是最终路径。但这不应该是第一反应，因为升级系统影响面很大，尤其是开发机器、自动化机器、带有固定工具链的环境。</p>
+<p>更理想的长期方案是插件发布方提供一个兼容当前系统版本的构建。比如使用更保守的 SDK、正确设置 deployment target、避免引用新 runtime 符号，或者在打包中处理 Swift runtime 兼容性。</p>
+<h3 id="74-不建议随便拷贝-swift-动态库进系统目录">7.4 不建议：随便拷贝 Swift 动态库进系统目录</h3>
+<p>看到 <code>Expected in: /usr/lib/swift/libswift_Concurrency.dylib</code> 后，有人可能会想：那我找一个新版 <code>libswift_Concurrency.dylib</code> 拷进去不就好了？不建议这么做。</p>
+<p>macOS 系统目录受 SIP 等机制保护，手动替换系统 Swift runtime 风险很高。即使某次能绕过去，也可能破坏其他程序、系统更新和安全边界。正确方向是换兼容构建、升级系统，或者禁用该插件。</p>
+<h2 id="8-一套可复用的-mcp-启动失败排查清单">8. 一套可复用的 MCP 启动失败排查清单</h2>
+<p>这次故障虽然发生在 Codex 和某个插件上，但方法可以复用到其他 Agent：Claude Desktop、Cursor、Cline、OpenCode、自研 Agent、各种 MCP host 都适用。</p>
+<h3 id="81-先定位失败发生在哪个-server">8.1 先定位失败发生在哪个 server</h3>
+<p>不要只看“某个 MCP 启动失败”。要找出具体 server 名称、启动命令、传输方式和插件来源。常见线索包括：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># 查 MCP / server / initialize 相关日志</span>
+</span></span><span style="display:flex;"><span>rg -n <span style="color:#e6db74">&#34;MCP|mcp|initialize|stdio_server|rmcp|server stderr&#34;</span> &lt;LOG_DIR&gt;
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 查配置里是否有手工 MCP server</span>
+</span></span><span style="display:flex;"><span>rg -n <span style="color:#e6db74">&#34;mcp_servers|mcpServers|server&#34;</span> ~/.config ~/.codex &lt;PROJECT&gt;
+</span></span></code></pre></div><p>如果是插件型工具，注意找插件缓存目录和 manifest。不要假设所有 MCP 都写在一个配置文件里。</p>
+<h3 id="82-拿到-server-原始-stderr">8.2 拿到 server 原始 stderr</h3>
+<p>MCP Client 的错误通常是二手信息。真正能说明问题的是 server stderr。你要找的是类似这些内容：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>command not found
+</span></span><span style="display:flex;"><span>Permission denied
+</span></span><span style="display:flex;"><span>Cannot find module
+</span></span><span style="display:flex;"><span>ModuleNotFoundError
+</span></span><span style="display:flex;"><span>No such file or directory
+</span></span><span style="display:flex;"><span>dyld: Symbol not found
+</span></span><span style="display:flex;"><span>segmentation fault
+</span></span><span style="display:flex;"><span>HTTP 401 / 403
+</span></span><span style="display:flex;"><span>certificate verify failed
+</span></span></code></pre></div><p>不同错误对应完全不同的修复方向。</p>
+<h3 id="83-复制启动命令脱离-agent-手动运行">8.3 复制启动命令，脱离 Agent 手动运行</h3>
+<p>如果 server 是 stdio 模式，尽量复制同一个命令，在同样用户、同样环境变量下运行。手动运行的结果能快速区分两类问题：</p>
+<ol>
+<li><strong>手动运行也失败</strong>：优先查 server 二进制、依赖、权限、系统兼容性。</li>
+<li><strong>手动运行成功，Agent 中失败</strong>：优先查 Agent 传参、工作目录、环境变量、沙箱、stdio 输出污染。</li>
+</ol>
+<p>这一步能避免在错误层级上浪费大量时间。</p>
+<h3 id="84-区分启动失败和关闭噪声">8.4 区分启动失败和关闭噪声</h3>
+<p>有些日志发生在 shutdown 阶段，比如 <code>task cancelled</code>、<code>RunningService dropped</code>、<code>connection closed during shutdown</code>。它们可能反映真实问题，也可能只是关闭时资源释放顺序导致的噪声。</p>
+<p>判断标准很简单：同样错误是否在正常启动或工具刷新时出现？server stderr 是否有独立失败？手动运行是否复现？如果只有 shutdown 有警告，而功能平时可用，优先级就要降低。</p>
+<h3 id="85-对-macos-原生二进制检查这些信息">8.5 对 macOS 原生二进制，检查这些信息</h3>
+<p>如果 stderr 出现 <code>dyld</code>，可以看以下信息：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># 文件架构</span>
+</span></span><span style="display:flex;"><span>file &lt;SERVER_BINARY&gt;
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 动态库依赖</span>
+</span></span><span style="display:flex;"><span>otool -L &lt;SERVER_BINARY&gt;
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># App 元数据</span>
+</span></span><span style="display:flex;"><span>plutil -p &lt;APP&gt;/Contents/Info.plist
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 系统版本</span>
+</span></span><span style="display:flex;"><span>sw_vers
+</span></span><span style="display:flex;"><span>uname -m
+</span></span></code></pre></div><p>重点不是把每个字段都背下来，而是回答几个问题：</p>
+<ol>
+<li>二进制架构是否匹配当前机器？</li>
+<li>它依赖哪些系统库或 Swift runtime？</li>
+<li>它是不是用明显更新的 SDK / Xcode 构建？</li>
+<li>它声明的最低系统版本和实际引用符号是否一致？</li>
+<li>手动运行时是不是在动态链接阶段就失败？</li>
+</ol>
+<p>如果答案指向 runtime 符号缺失，就不要再去改 MCP JSON。</p>
+<h2 id="9-对插件作者的建议">9. 对插件作者的建议</h2>
+<p>这个问题对插件作者也有启发。MCP server 不一定是 JavaScript 或 Python。越来越多插件会包含 Rust、Go、Swift、Kotlin、.NET、C++ 等原生二进制。原生二进制性能好、能力强，但打包和兼容性责任也更重。</p>
+<p>如果你发布 macOS MCP server，建议至少检查：</p>
+<ol>
+<li>deployment target 是否真的覆盖你声称支持的系统版本。</li>
+<li>CI 构建环境是否过新，导致意外引用新 runtime 符号。</li>
+<li>是否在最低支持版本的系统上做过真实启动测试。</li>
+<li>stderr 是否能输出对用户有帮助的错误，而不是只让 Client 看到连接关闭。</li>
+<li>插件 manifest 是否标明系统版本、架构和已知限制。</li>
+<li>是否提供降级版本或兼容构建。</li>
+</ol>
+<p>MCP host 也可以做得更好：当 server 进程 stderr 里出现 <code>dyld: Symbol not found</code>、<code>Cannot find module</code>、<code>Permission denied</code> 这类明确错误时，最好把它们更直接地展示给用户，而不是只显示“握手失败”。</p>
+<h2 id="10-qa">10. Q&amp;A</h2>
+<h3 id="q1看到-handshaking-with-mcp-server-failed是不是一定是-mcp-配置错">Q1：看到 <code>handshaking with MCP server failed</code>，是不是一定是 MCP 配置错？</h3>
+<p>不是。它只说明 Client 没有完成握手。根因可能是配置，也可能是 server 崩溃、依赖缺失、系统动态库不兼容、网络失败、认证失败。必须看 server stderr 和手动复现。</p>
+<h3 id="q2为什么-client-不直接告诉我-dyld-错误">Q2：为什么 Client 不直接告诉我 <code>dyld</code> 错误？</h3>
+<p>Client 只负责通过 transport 和 server 通信。server 如果在启动阶段就被操作系统杀掉，Client 只能观察到连接关闭。是否能展示 stderr，取决于 host 是否捕获并上报 server 进程的 stderr。</p>
+<h3 id="q3dyld-symbol-not-found-是什么">Q3：<code>dyld: Symbol not found</code> 是什么？</h3>
+<p>这是 macOS 动态链接器报告的错误。程序启动时需要解析依赖库里的函数和符号。如果二进制引用了某个符号，但当前系统库里没有这个符号，程序就无法启动。</p>
+<h3 id="q4升级-xcode-或-command-line-tools-能修吗">Q4：升级 Xcode 或 Command Line Tools 能修吗？</h3>
+<p>不一定。这里缺的是系统 <code>/usr/lib/swift</code> 里的 runtime 符号，而不是编译器命令本身。升级命令行工具可能改变开发环境，但不一定改变系统运行时。真正的修复通常是换兼容构建、升级 macOS，或等待插件发布方修复。</p>
+<h3 id="q5能不能手动替换-usrlibswiftlibswift_concurrencydylib">Q5：能不能手动替换 <code>/usr/lib/swift/libswift_Concurrency.dylib</code>？</h3>
+<p>不建议。系统 Swift runtime 属于系统组件，手动替换风险很高，也可能被系统保护机制阻止。不要为了一个插件破坏系统运行库。</p>
+<h3 id="q6为什么同一个-agent-里有些-mcp-能用有些不能">Q6：为什么同一个 Agent 里有些 MCP 能用，有些不能？</h3>
+<p>因为每个 MCP server 的实现和依赖不同。一个可能是 HTTP 远端服务，一个可能是 Node 包，一个可能是 Python 脚本，一个可能是 Swift 原生 app。某个 server 的 runtime 不兼容，不代表整个 MCP 子系统都坏了。</p>
+<h3 id="q7如果工具缓存还能用要不要管这个错误">Q7：如果工具缓存还能用，要不要管这个错误？</h3>
+<p>如果错误只影响可选工具，并且当前任务不依赖它，可以暂时禁用或忽略。但如果你需要该工具，或者每次启动都刷屏，就应该定位具体 server 并处理。缓存可用不等于 server 健康。</p>
+<h3 id="q8这类问题怎么写进团队-runbook">Q8：这类问题怎么写进团队 runbook？</h3>
+<p>可以写成四步：先确定具体 server；再看 server stderr；然后手动运行 server 命令；最后根据错误类型分流到配置、依赖、权限、网络或系统 runtime。不要把所有 MCP 启动失败都归为“重装插件”。</p>
+<h2 id="11-最后总结">11. 最后总结</h2>
+<p>这次故障的教训很简单：MCP 是一层协议和连接机制，不是所有问题的根因所在地。Client 报握手失败，只是说“我没等到对方回答”。真正的问题可能发生在 server 启动命令、依赖、权限、网络，也可能像这次一样，发生在 macOS 动态链接器解析 Swift runtime 符号的瞬间。</p>
+<p>一个高质量排障过程，不是看到错误关键词就改配置，而是沿着证据往下追：Client 日志、server stderr、手动复现、二进制信息、系统 runtime。只要能把失败层级定位清楚，修复方案通常就会变得直接：禁用可选插件、升级插件、等待兼容构建，或者在确实必要时升级系统。</p>
+<p>对 Agent 用户来说，这也是一个提醒：工具越多，链路越长，越需要把“症状”和“根因”分开。MCP 让 Agent 能力更强，但 MCP Server 仍然只是一个普通进程。普通进程会遇到普通问题：命令不存在、依赖缺失、权限不足、动态库不兼容。最终能救你的，仍然是日志、复现和分层分析。</p>
+<h2 id="来源说明">来源说明</h2>
+<p>本文来自一次本地 Codex / MCP 启动故障排查的整理。为保护隐私，文中所有主机地址、用户名、绝对路径、会话 ID、进程号、私有仓库和环境细节均已泛化或省略；保留的只有可公开复用的错误类型、诊断方法和技术结论。</p>
+        </div>
+    </article>
+
+    
+  
+
+
+  
+    
+  
+
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk/dist/gitalk.css">
+<script src="https://cdn.jsdelivr.net/npm/gitalk/dist/gitalk.min.js"></script>
+<div id="gitalk-container" style="margin-top:40px"></div>
+<script>
+  (function(){
+    var gitalk = new Gitalk({
+      clientID: '3181fd94e501cc5db0ad',
+      clientSecret: 'af1dab79dae02c69296e6615bfcecf47fc8615ee',
+      repo: 'margropcomment.margrop.io',
+      owner: 'margrop',
+      admin: ["margrop"],
+      
+      id: '\/post\/codex-mcp-startup-swift-runtime-troubleshoo',
+      
+      distractionFreeMode: false
+    });
+    gitalk.render('gitalk-container');
+  })();
+</script>
+  
+
+
+
+
+    
+<div class="site-stats" aria-label="访问统计">
+    <span>本文阅读量 <span data-page-view-count>--</span></span>
+</div>
+
+
+    
+    <script type="text/javascript" src="https://js.users.51.la/21044367.js"></script>
+    <script charset="UTF-8" id="LA_COLLECT" src="//sdk.51.la/js-sdk-pro.min.js"></script>
+    <script>LA.init({id: "1vVTUWl7zoRjnKXi",ck: "1vVTUWl7zoRjnKXi"})</script>
+    <script src="https://sdk.51.la/perf/js-sdk-perf.min.js" crossorigin="anonymous"></script>
+    <script>
+      new LingQue.Monitor().init({id:"202teQt8THXwqyve"});
+    </script>
+    <script defer src="/js/page-views.js"></script>
+    <div class="la-theme-widget" data-51la-widget aria-label="51.la 网站统计"></div>
+    <script defer src="/js/51la-theme-widget.js"></script>
+</body>
+</html>

@@ -1,0 +1,722 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>把「该睡觉了」搬出客厅：让 mac 的 launchd 每天 22:00 自动停用群晖孩子的账号，08:00 再悄悄启用 - 魔都水滴</title>
+<meta name="description" content="先说结论 群晖 DSM 控制台里其实有一个&#34;停用账号&#34;按钮，但它不会自动按时执行。借助 mac 自带的 launchd 加一段 50 行的 bash 脚本，可以做到：每天 22:00 把孩子的两个本地账号 expired 标志置位，08:00 再恢复。脚本自带&#34;改前查询 → 改 → 改后查询&#34;的三步校验，任何一步对不上 …">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://blog.margrop.net/post/synology-mykid-curfew-launchd/"><meta property="og:site_name" content="魔都水滴">
+<meta property="og:title" content="把「该睡觉了」搬出客厅：让 mac 的 launchd 每天 22:00 自动停用群晖孩子的账号，08:00 再悄悄启用 - 魔都水滴">
+<meta property="og:description" content="先说结论 群晖 DSM 控制台里其实有一个&#34;停用账号&#34;按钮，但它不会自动按时执行。借助 mac 自带的 launchd 加一段 50 行的 bash 脚本，可以做到：每天 22:00 把孩子的两个本地账号 expired 标志置位，08:00 再恢复。脚本自带&#34;改前查询 → 改 → 改后查询&#34;的三步校验，任何一步对不上 …">
+<meta property="og:url" content="https://blog.margrop.net/post/synology-mykid-curfew-launchd/">
+<meta property="og:locale" content="zh_CN"><meta property="og:type" content="article"><meta property="og:locale:alternate" content="en_US"><meta property="og:image" content="https://blog.margrop.net/images/avatar.png"><meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="把「该睡觉了」搬出客厅：让 mac 的 launchd 每天 22:00 自动停用群晖孩子的账号，08:00 再悄悄启用 - 魔都水滴">
+<meta name="twitter:description" content="先说结论 群晖 DSM 控制台里其实有一个&#34;停用账号&#34;按钮，但它不会自动按时执行。借助 mac 自带的 launchd 加一段 50 行的 bash 脚本，可以做到：每天 22:00 把孩子的两个本地账号 expired 标志置位，08:00 再恢复。脚本自带&#34;改前查询 → 改 → 改后查询&#34;的三步校验，任何一步对不上 …"><meta name="twitter:image" content="https://blog.margrop.net/images/avatar.png"><link rel="alternate" hreflang="zh-CN" href="https://blog.margrop.net/post/synology-mykid-curfew-launchd/"><link rel="alternate" hreflang="en-US" href="https://blog.margrop.net/en/post/synology-mykid-curfew-launchd/"><link rel="alternate" hreflang="x-default" href="https://blog.margrop.net/"><meta property="article:published_time" content="2026-06-14T08:20:00&#43;08:00">
+<meta property="article:modified_time" content="2026-06-14T08:20:00&#43;08:00"><meta property="article:tag" content="Synology"><meta property="article:tag" content="DSM"><meta property="article:tag" content="NAS"><meta property="article:tag" content="launchd"><meta property="article:tag" content="macOS"><meta property="article:tag" content="群晖"><meta property="article:tag" content="自动化"><meta property="article:tag" content="家长"><meta property="article:tag" content="SSH"><meta property="article:tag" content="CLI"><script type="application/ld+json">{"@context":"https://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"魔都水滴"},"dateModified":"2026-06-14T08:20:00+08:00","datePublished":"2026-06-14T08:20:00+08:00","description":"先说结论 群晖 DSM 控制台里其实有一个\u0026#34;停用账号\u0026#34;按钮，但它不会自动按时执行。借助 mac 自带的 launchd 加一段 50 行的 bash 脚本，可以做到：每天 22:00 把孩子的两个本地账号 expired 标志置位，08:00 再恢复。脚本自带\u0026#34;改前查询 → 改 → 改后查询\u0026#34;的三步校验，任何一步对不上 …","headline":"把「该睡觉了」搬出客厅：让 mac 的 launchd 每天 22:00 自动停用群晖孩子的账号，08:00 再悄悄启用","mainEntityOfPage":"https://blog.margrop.net/post/synology-mykid-curfew-launchd/","url":"https://blog.margrop.net/post/synology-mykid-curfew-launchd/"}</script>
+    <meta name="baidu-site-verification" content="code-sVFZ8SER59" />
+    <script src="/js/theme-toggle.js"></script>
+
+    
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-3J2W592DHJ"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-3J2W592DHJ');
+    </script>
+
+    <style>
+    :root {
+        color-scheme: light;
+        --page-bg: #fff;
+        --surface-bg: #f4f4f4;
+        --text: #222;
+        --muted: #666;
+        --subtle: #777;
+        --border: #eee;
+        --border-strong: #ddd;
+        --link: #006CFF;
+        --tag-bg: #eee;
+        --button-bg: #fff;
+        --button-primary-bg: #333;
+    }
+    @media (prefers-color-scheme: dark) {
+        :root:not([data-theme]) {
+            color-scheme: dark;
+            --page-bg: #111315;
+            --surface-bg: #1d2126;
+            --text: #e8eaed;
+            --muted: #aeb4bd;
+            --subtle: #9aa2ad;
+            --border: #30353d;
+            --border-strong: #454c56;
+            --link: #79b8ff;
+            --tag-bg: #2a3038;
+            --button-bg: #1d2126;
+            --button-primary-bg: #e8eaed;
+        }
+    }
+    html[data-theme="dark"] {
+        color-scheme: dark;
+        --page-bg: #111315;
+        --surface-bg: #1d2126;
+        --text: #e8eaed;
+        --muted: #aeb4bd;
+        --subtle: #9aa2ad;
+        --border: #30353d;
+        --border-strong: #454c56;
+        --link: #79b8ff;
+        --tag-bg: #2a3038;
+        --button-bg: #1d2126;
+        --button-primary-bg: #e8eaed;
+    }
+    html[data-theme="light"] {
+        color-scheme: light;
+        --page-bg: #fff;
+        --surface-bg: #f4f4f4;
+        --text: #222;
+        --muted: #666;
+        --subtle: #777;
+        --border: #eee;
+        --border-strong: #ddd;
+        --link: #006CFF;
+        --tag-bg: #eee;
+        --button-bg: #fff;
+        --button-primary-bg: #333;
+    }
+    body { background: var(--page-bg); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 860px; margin: 0 auto; padding: 20px; line-height: 1.7; color: var(--text); }
+    h1 { border-bottom: 2px solid var(--border-strong); padding-bottom: 10px; }
+    article > h1 { font-size: 2em; line-height: 1.3; margin-bottom: 12px; }
+    .post-list { list-style: none; padding: 0; }
+    .post-list li { margin: 15px 0; }
+    .post-list a { text-decoration: none; color: var(--text); font-size: 18px; }
+    .post-list a:hover { color: var(--link); }
+    .date { color: var(--muted); font-size: 14px; margin-right: 10px; }
+    .tags { margin-top: 8px; }
+    .tag { background: var(--tag-bg); padding: 2px 8px; border-radius: 3px; font-size: 12px; margin-right: 5px; display: inline-block; }
+    nav { margin-bottom: 18px; border-bottom: 1px solid var(--border); padding-bottom: 15px; }
+    nav a { margin-right: 20px; text-decoration: none; color: var(--text); font-size: 16px; }
+    nav a:hover { color: var(--link); }
+    .language-switcher { display: flex; align-items: center; gap: 10px; margin: -8px 0 26px; }
+    .language-switcher a { display: inline-block; padding: 4px 10px; border: 1px solid var(--border-strong); border-radius: 999px; color: var(--muted); text-decoration: none; font-size: 14px; }
+    .language-switcher a.active { background: var(--link); border-color: var(--link); color: #fff; }
+    .content { line-height: 1.8; }
+    .content code { background: var(--surface-bg); padding: 2px 5px; border-radius: 3px; }
+    .content pre { background: var(--surface-bg); padding: 15px; overflow-x: auto; border-radius: 5px; }
+    .content img { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+    .content .code-snippet__fix {
+        margin: 0 0 1.5em;
+    }
+    .content .code-snippet__fix .code-snippet__line-index {
+        display: none !important;
+    }
+    .meta { color: var(--muted); font-size: 14px; margin-bottom: 14px; }
+    .meta-separator { margin: 0 6px; color: var(--subtle); }
+    .site-stats { display: flex; flex-wrap: wrap; gap: 10px 18px; margin: 28px 0 8px; padding-top: 12px; border-top: 1px solid var(--border); color: var(--subtle); font-size: 12px; }
+    a { color: var(--link); }
+    .hero { padding: 12px 0 24px; }
+    .hero h1 { border-bottom: 2px solid #333; }
+    .eyebrow { color: var(--muted); font-size: 12px; letter-spacing: .12em; margin: 0 0 8px; }
+    .hero-tagline { font-size: 18px; margin: 12px 0 8px; }
+    .hero-copy { color: var(--muted); margin: 0 0 14px; }
+    .hero-actions { margin: 14px 0 4px; }
+    .button { display: inline-block; margin-right: 12px; border: 1px solid var(--border-strong); border-radius: 3px; padding: 4px 10px; text-decoration: none; color: var(--text); background: var(--button-bg); font-size: 14px; }
+    .button-primary { background: var(--button-primary-bg); border-color: var(--button-primary-bg); color: var(--page-bg); }
+    .theme-toggle { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 1px solid var(--border-strong); border-radius: 999px; background: var(--button-bg); color: var(--text); cursor: pointer; font: inherit; font-size: 16px; }
+    .theme-toggle:hover { border-color: var(--link); color: var(--link); }
+    .la-theme-widget { margin: 12px 0 20px; min-height: 24px; color: var(--text); }
+    .identity-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: 16px 0; }
+    .identity-grid div { display: flex; flex-direction: column; }
+    .identity-grid strong { font-size: 15px; }
+    .identity-grid span, .topic-card span, .featured-list small { color: var(--muted); font-size: 13px; }
+    .section-block { padding-top: 28px; }
+    .section-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+    .section-heading h2 { margin: 0; }
+    .section-heading a { font-size: 14px; }
+    .topic-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+    .topic-card { display: block; padding: 14px; border: 1px solid var(--border); text-decoration: none; color: var(--text); }
+    .topic-card:hover { border-color: var(--border-strong); }
+    .topic-card strong { display: block; margin: 4px 0; font-size: 17px; }
+    .topic-index, .featured-list > a > span { color: var(--muted) !important; font-size: 12px !important; }
+    .featured-list { border-top: 1px solid var(--border); }
+    .featured-list > a { display: flex; gap: 14px; padding: 12px 0; border-bottom: 1px solid var(--border); text-decoration: none; color: var(--text); }
+    .featured-list div { display: flex; flex-direction: column; }
+    .latest-block { max-width: 860px; }
+    @media (max-width: 680px) {
+        body { padding: 16px; }
+        nav a { display: inline-block; margin-right: 12px; margin-bottom: 8px; }
+        .identity-grid { grid-template-columns: repeat(2, 1fr); }
+        .topic-grid { grid-template-columns: 1fr; }
+    }
+</style>
+
+</head>
+<body>
+    <nav>
+  
+  <a href="/">首页</a>
+  <a href="https://blog.margrop.com/" target="_blank" rel="noopener">AI Daily</a>
+  <a href="/start-here/">开始这里</a>
+  <a href="/tag/ai/">AI Agent</a>
+  <a href="/tag/docker/">Self-hosting</a>
+  <a href="/tag/%e8%bf%90%e7%bb%b4/">Engineering</a>
+  <a href="/post/">归档</a>
+  <a href="/tags/">标签</a>
+  <a href="/post/about/">关于</a>
+  <a href="https://download.margrop.net" target="_blank" rel="noopener">下载</a>
+  <a href="/post/favorites/">Link</a>
+  <a href="/post/github-project-stars/">Github</a>
+  
+  <a href="https://github-mirrors.margrop.net" target="_blank" rel="noopener">Github加速</a>
+  <a href="https://status.anye.xyz/" target="_blank" rel="noopener">Docker加速</a>
+  
+  <a href="https://blog.margrop.net/index.xml" target="_blank" rel="noopener">RSS</a>
+</nav>
+
+    <div class="language-switcher">
+  <button class="theme-toggle" type="button" data-theme-toggle aria-label="切换到暗黑模式" aria-pressed="false">🌙</button>
+
+  
+  
+    <a href="/post/synology-mykid-curfew-launchd/" class="active">中文</a>
+  
+    <a href="/en/post/synology-mykid-curfew-launchd/" class="">English</a>
+  
+  
+</div>
+
+    
+    <article>
+        <h1>把「该睡觉了」搬出客厅：让 mac 的 launchd 每天 22:00 自动停用群晖孩子的账号，08:00 再悄悄启用</h1>
+        <div class="meta">
+            发布时间: 2026-06-14
+            <span class="meta-separator">·</span>
+            <span>阅读量 <span data-page-view-count>--</span></span>
+        </div>
+        
+<div class="tags">
+    
+    <a href="/tag/synology/"><span class="tag">Synology</span></a>
+    
+    <a href="/tag/dsm/"><span class="tag">DSM</span></a>
+    
+    <a href="/tag/nas/"><span class="tag">NAS</span></a>
+    
+    <a href="/tag/launchd/"><span class="tag">launchd</span></a>
+    
+    <a href="/tag/macos/"><span class="tag">macOS</span></a>
+    
+    <a href="/tag/%E7%BE%A4%E6%99%96/"><span class="tag">群晖</span></a>
+    
+    <a href="/tag/%E8%87%AA%E5%8A%A8%E5%8C%96/"><span class="tag">自动化</span></a>
+    
+    <a href="/tag/%E5%AE%B6%E9%95%BF/"><span class="tag">家长</span></a>
+    
+    <a href="/tag/ssh/"><span class="tag">SSH</span></a>
+    
+    <a href="/tag/cli/"><span class="tag">CLI</span></a>
+    
+</div>
+
+
+        <div class="content">
+            <blockquote>
+<p><strong>先说结论</strong></p>
+<p>群晖 DSM 控制台里其实有一个&quot;停用账号&quot;按钮，但它不会自动按时执行。借助 mac 自带的 <code>launchd</code> 加一段 50 行的 <code>bash</code> 脚本，可以做到：每天 22:00 把孩子的两个本地账号 <code>expired</code> 标志置位，08:00 再恢复。脚本自带&quot;改前查询 → 改 → 改后查询&quot;的三步校验，任何一步对不上号立刻 <code>exit 1</code>，launchd 会把执行日志写进 <code>StandardOutPath/StandardErrorPath</code>。整件事的特别之处是**&ldquo;家长&quot;两个字被从对话里拿掉了**——你不用每天喊&quot;该睡了&rdquo;，机器会准时替你做。</p>
+</blockquote>
+<p>本文不打算讲一个大而全的家庭 NAS 管理方案，只围绕一件具体的事：让一个原本靠&quot;人记得点&quot;的操作，变成&quot;到了点就自动发生&quot;的纯系统级动作。</p>
+<p>如果你只想先看图，第二节那张「晚 10 点断电 / 早 8 点复电」的总览图就够了。</p>
+<p><img alt="晚 10 点准时&quot;断网&quot;，早 8 点自动&quot;复电&quot;" src="/post-images/synology-mykid-curfew-launchd/05-curfew-overview.svg"></p>
+<h2 id="一故事开头每天一次的赶紧关掉对话">一、故事开头：每天一次的&quot;赶紧关掉&quot;对话</h2>
+<p>家里两个孩子一人一个群晖账号：<code>mykid1</code>、<code>mykid2</code>。他们用 NAS 主要是三件事——</p>
+<ol>
+<li>写完作业把照片/文档同步上去给爸妈看；</li>
+<li>晚上看动画片（NAS 上挂着一个家庭相册 + 一些本地下载的视频）；</li>
+<li>周末偶尔用 NAS 上的朋友联机 Minecraft 服务器。</li>
+</ol>
+<p>听起来很合理，问题出在第二件：孩子一打开 SMB 共享里那个&quot;动画&quot;文件夹，就停不下来。22:00 该睡觉的提醒喊三遍、五遍，最后一定是我自己跑过去登录 DSM 控制面板，找到&quot;用户与群组 → mykid1 → 编辑 → 停用此账号&quot;，再重复一遍对 <code>mykid2</code> 的操作。</p>
+<p>如果你也有类似的画面，你应该已经意识到三个问题：</p>
+<ol>
+<li><strong>靠人记得，一定会忘</strong>。忘了第一天，第二天就再也喊不动。</li>
+<li><strong>靠威权喊，会被反弹</strong>。&ldquo;你怎么又自己打开了&quot;这种话，喊多了大家都不开心。</li>
+<li><strong>靠&quot;我陪着你&rdquo;</strong>，代价是每天 30 分钟家庭关系损耗。</li>
+</ol>
+<p>这三件事本质上都不是&quot;管账号&quot;的问题，是&quot;该做的事没有自动发生&quot;的问题。</p>
+<h2 id="二问题表现手动操作的-3-个具体痛点">二、问题表现：手动操作的 3 个具体痛点</h2>
+<p>我把过去两周的&quot;手动管账号&quot;过程列出来，捋清楚到底在烦什么。</p>
+<h3 id="痛点-1dsm-控制台要登-5-次">痛点 1：DSM 控制台要登 5 次</h3>
+<p>打开浏览器 → 输入 <code>nas.example.lan:5000</code> → 输 admin 密码 → 等登录完成 → 找到用户 → 编辑 → 停用 → 保存。<strong>一个用户 5 次点击，两个用户 10 次点击</strong>。第二天早上来一遍反方向。</p>
+<h3 id="痛点-2容易点错">痛点 2：容易点错</h3>
+<p>群晖的&quot;停用&quot;复选框放在第二屏，并且有 60 秒内可以撤销的提示。如果你急着去做饭，很可能**勾了保存、退出、又改了另外一个共享目录的权限，自己都忘了。**这是个非常真实的事故——我曾经在某次手忙脚乱时把孩子的共享权限给改了，结果第二天他所有照片都看不到了。</p>
+<h3 id="痛点-3周末和节假日更乱">痛点 3：周末和节假日更乱</h3>
+<p>周末孩子想看会儿纪录片，账号被停用着；工作日 8 点我已经出门上班了，账号还没恢复。无论是&quot;忘了开&quot;还是&quot;忘了关&quot;，最后都用威权解决：<strong>&ldquo;你去找爸爸解封&rdquo;</strong>。这种话每说一次，系统的可信度就掉一格。</p>
+<h2 id="三问题根因dsm-没有按时间执行的停用功能">三、问题根因：DSM 没有&quot;按时间执行的停用&quot;功能</h2>
+<p>把情绪拿掉，回到技术上。群晖 DSM 在控制面板里提供了：</p>
+<table>
+<thead>
+<tr>
+<th>功能</th>
+<th>是否存在</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>手动停用账号</td>
+<td>✅</td>
+<td>控制面板 → 用户与群组 → 编辑 → 取消勾选&quot;启用此账号&quot;</td>
+</tr>
+<tr>
+<td>定时停用账号</td>
+<td>❌</td>
+<td>没有这个开关</td>
+</tr>
+<tr>
+<td>计划任务里改 <code>synouser</code></td>
+<td>✅ 间接能做</td>
+<td>但 DSM 自带 cron 风格比较弱，调度时间只能到&quot;每天一次&quot;，不能&quot;工作日不开周末开&quot;</td>
+</tr>
+<tr>
+<td>SSH + 命令行 + 外部调度</td>
+<td>✅✅✅</td>
+<td>最灵活，但要写脚本</td>
+</tr>
+</tbody>
+</table>
+<p>也就是说，问题不是群晖不给力，而是<strong>DSM 自带的&quot;计划任务&quot;粒度不够</strong>。它的最小单位是&quot;每天一次&quot;，而我真正想要的是&quot;工作日 22:00 停、8:00 开；周末不停&quot;。</p>
+<p>更关键的点是：<strong>真正按时间帮我跑命令的，是 mac</strong>。mac 24 小时在线的概率比 NAS 还高（我家 NAS 偶尔休眠），<code>launchd</code> 又是 macOS 自己的&quot;计划任务&quot;系统，比 <code>crontab</code> 靠谱（后面会展开）。</p>
+<p>所以最终方案落在：</p>
+<pre tabindex="0"><code>launchd（mac 端）→ 触发脚本 → SSH 到群晖 → synouser --modify → 校验
+</code></pre><h2 id="四解决方案把该睡觉了搬出客厅">四、解决方案：把&quot;该睡觉了&quot;搬出客厅</h2>
+<p>用一句话总结目标：</p>
+<blockquote>
+<p>让孩子<strong>根本不需要和别人确认&quot;现在能不能登录&quot;</strong>——能不能登，由系统时间决定，不由人决定。</p>
+</blockquote>
+<p>具体怎么落地，分四步：</p>
+<ol>
+<li><strong>用脚本把&quot;停用/启用&quot;封装成幂等命令</strong>，可以重复跑。</li>
+<li><strong>在脚本里加改前/改后两次 <code>synouser --get</code> 校验</strong>，避免静默失败。</li>
+<li><strong>用 mac 的 <code>launchd</code> 计划在 22:00 跑 <code>disable</code>、08:00 跑 <code>enable</code></strong>。</li>
+<li><strong>把执行结果写到日志文件</strong>，出问题时家长能一眼看到。</li>
+</ol>
+<p>这三层结构对应三份文件：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>~/scripts/synology-toggle-mykid.sh                       # 脚本（核心）
+</span></span><span style="display:flex;"><span>~/Library/LaunchAgents/local.synology.toggle-mykid.disable.plist  # 22:00 停用
+</span></span><span style="display:flex;"><span>~/Library/LaunchAgents/local.synology.toggle-mykid.enable.plist   # 08:00 启用
+</span></span><span style="display:flex;"><span>~/logs/synology-mykid-toggle.log                         # 脚本自己的日志
+</span></span><span style="display:flex;"><span>~/logs/synology-mykid-toggle.launchd.out.log              # launchd 标准输出
+</span></span><span style="display:flex;"><span>~/logs/synology-mykid-toggle.launchd.err.log              # launchd 错误流
+</span></span></code></pre></div><p>下面分章节拆开讲。</p>
+<h2 id="五为什么选-launchd-而不是-crontab">五、为什么选 launchd 而不是 crontab</h2>
+<p>这是和很多教程不一样的地方。<code>crontab</code> 几乎所有 Linux/Mac 用户都会，但它有几个真实坑：</p>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th><code>crontab -e</code></th>
+<th><code>launchd</code> (LaunchAgent)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>电脑睡眠时漏跑</td>
+<td>⚠️ <strong>会漏</strong></td>
+<td>✅ <code>StartCalendarInterval</code> 唤醒后会补</td>
+</tr>
+<tr>
+<td>半夜里叫醒电脑</td>
+<td>不会</td>
+<td>可选（<code>WakeSystem=YES</code>）</td>
+</tr>
+<tr>
+<td>日志</td>
+<td>自己 redirect</td>
+<td>原生 <code>StandardOutPath</code> / <code>StandardErrorPath</code></td>
+</tr>
+<tr>
+<td>跨重启自动恢复</td>
+<td>❌</td>
+<td>✅ <code>launchctl load</code> 后一直生效</td>
+</tr>
+<tr>
+<td>管理方式</td>
+<td><code>crontab -e</code></td>
+<td><code>launchctl load/unload/start/stop</code></td>
+</tr>
+<tr>
+<td>Apple 官方推荐</td>
+<td>仍然可用</td>
+<td>✅ 自家方案</td>
+</tr>
+</tbody>
+</table>
+<p>最关键的是第一条：<strong>Mac 是笔记本，盖盖子就会睡。<code>crontab</code> 在睡眠期间不执行，醒来也不会补跑</strong>。如果 22:00 你在吃饭、孩子已经睡着了、Mac 盖在桌上，<code>crontab</code> 这条任务会<strong>悄无声息地漏掉</strong>。</p>
+<p><code>launchd</code> 不会。它在 macOS 唤醒后，会立刻把&quot;睡眠期间本来该跑但没跑&quot;的 <code>StartCalendarInterval</code> 任务补一遍。这个差异在生产环境里不算什么，但在家用场景里就是&quot;功能 vs 摆设&quot;。</p>
+<p>我这次明确没开 <code>WakeSystem=YES</code>——不想半夜把 Mac 拉醒。我宁愿让它自然醒后补跑，反正 8 点以后我都在家。</p>
+<h2 id="六脚本实现50-行-bash-解决所有问题">六、脚本实现：50 行 bash 解决所有问题</h2>
+<h3 id="61-脚本完整内容">6.1 脚本完整内容</h3>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e">#!/bin/bash
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span><span style="color:#75715e"># Toggle mykid1 / mykid2 accounts on Synology DSM.</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># Usage:</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e">#   synology-toggle-mykid.sh enable   # un-expire both users</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e">#   synology-toggle-mykid.sh disable  # expire both users</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e">#   synology-toggle-mykid.sh status   # show current expired state</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>set -euo pipefail
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>NAS_HOST<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;nas.example.lan&#34;</span>   <span style="color:#75715e"># 替换成你内网 NAS 的地址</span>
+</span></span><span style="display:flex;"><span>NAS_SSH_USER<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;root&#34;</span>
+</span></span><span style="display:flex;"><span>USERS<span style="color:#f92672">=(</span>mykid1 mykid2<span style="color:#f92672">)</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>LOG_DIR<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>HOME<span style="color:#e6db74">}</span><span style="color:#e6db74">/logs&#34;</span>
+</span></span><span style="display:flex;"><span>LOG_FILE<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>LOG_DIR<span style="color:#e6db74">}</span><span style="color:#e6db74">/synology-mykid-toggle.log&#34;</span>
+</span></span><span style="display:flex;"><span>mkdir -p <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>LOG_DIR<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>log<span style="color:#f92672">()</span> <span style="color:#f92672">{</span>
+</span></span><span style="display:flex;"><span>  printf <span style="color:#e6db74">&#39;[%s] %s\n&#39;</span> <span style="color:#e6db74">&#34;</span><span style="color:#66d9ef">$(</span>date <span style="color:#e6db74">&#39;+%Y-%m-%d %H:%M:%S%z&#39;</span><span style="color:#66d9ef">)</span><span style="color:#e6db74">&#34;</span> <span style="color:#e6db74">&#34;</span>$*<span style="color:#e6db74">&#34;</span> | tee -a <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>LOG_FILE<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span><span style="color:#f92672">}</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>die<span style="color:#f92672">()</span> <span style="color:#f92672">{</span>
+</span></span><span style="display:flex;"><span>  log <span style="color:#e6db74">&#34;ERROR: </span>$*<span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>  exit <span style="color:#ae81ff">1</span>
+</span></span><span style="display:flex;"><span><span style="color:#f92672">}</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>get_expired<span style="color:#f92672">()</span> <span style="color:#f92672">{</span>
+</span></span><span style="display:flex;"><span>  <span style="color:#75715e"># 通过 SSH 远程读 expired 字段。awk 把 [true] / [false] 剥出来。</span>
+</span></span><span style="display:flex;"><span>  ssh -o BatchMode<span style="color:#f92672">=</span>yes -o ConnectTimeout<span style="color:#f92672">=</span><span style="color:#ae81ff">10</span> <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>NAS_SSH_USER<span style="color:#e6db74">}</span><span style="color:#e6db74">@</span><span style="color:#e6db74">${</span>NAS_HOST<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>    <span style="color:#e6db74">&#34;/usr/syno/sbin/synouser --get </span><span style="color:#e6db74">${</span>1<span style="color:#e6db74">}</span><span style="color:#e6db74"> 2&gt;/dev/null | awk -F&#39;[][]&#39; &#39;/^Expired/ {print tolower(\$2); exit}&#39;&#34;</span>
+</span></span><span style="display:flex;"><span><span style="color:#f92672">}</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>set_expired<span style="color:#f92672">()</span> <span style="color:#f92672">{</span>
+</span></span><span style="display:flex;"><span>  <span style="color:#75715e"># 0 = 启用，1 = 停用。中间两个空字符串是 fullname 和 mail 占位。</span>
+</span></span><span style="display:flex;"><span>  ssh -o BatchMode<span style="color:#f92672">=</span>yes -o ConnectTimeout<span style="color:#f92672">=</span><span style="color:#ae81ff">10</span> <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>NAS_SSH_USER<span style="color:#e6db74">}</span><span style="color:#e6db74">@</span><span style="color:#e6db74">${</span>NAS_HOST<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>    <span style="color:#e6db74">&#34;/usr/syno/sbin/synouser --modify </span><span style="color:#e6db74">${</span>1<span style="color:#e6db74">}</span><span style="color:#e6db74"> &#39;&#39; </span><span style="color:#e6db74">${</span>2<span style="color:#e6db74">}</span><span style="color:#e6db74"> &#39;&#39;&#34;</span> &gt;/dev/null
+</span></span><span style="display:flex;"><span><span style="color:#f92672">}</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>action<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>1<span style="color:#66d9ef">:-</span><span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">case</span> <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>action<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span> in
+</span></span><span style="display:flex;"><span>  status<span style="color:#f92672">)</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">for</span> u in <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>USERS[@]<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>; <span style="color:#66d9ef">do</span>
+</span></span><span style="display:flex;"><span>      exp<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#66d9ef">$(</span>get_expired <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>u<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span><span style="color:#66d9ef">)</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>      log <span style="color:#e6db74">&#34;status </span><span style="color:#e6db74">${</span>u<span style="color:#e6db74">}</span><span style="color:#e6db74">: expired=</span><span style="color:#e6db74">${</span>exp<span style="color:#66d9ef">:-</span>&lt;not-found&gt;<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">done</span>
+</span></span><span style="display:flex;"><span>    ;;
+</span></span><span style="display:flex;"><span>  enable|disable<span style="color:#f92672">)</span>
+</span></span><span style="display:flex;"><span>    new_state<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;0&#34;</span>; verb_zh<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;启用&#34;</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">[[</span> <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>action<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span> <span style="color:#f92672">==</span> <span style="color:#e6db74">&#34;disable&#34;</span> <span style="color:#f92672">]]</span> <span style="color:#f92672">&amp;&amp;</span> new_state<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;1&#34;</span> <span style="color:#f92672">&amp;&amp;</span> verb_zh<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;停用&#34;</span>
+</span></span><span style="display:flex;"><span>    action_upper<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>printf <span style="color:#e6db74">&#39;%s&#39;</span> <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>action<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span> | tr <span style="color:#e6db74">&#39;[:lower:]&#39;</span> <span style="color:#e6db74">&#39;[:upper:]&#39;</span><span style="color:#66d9ef">)</span>
+</span></span><span style="display:flex;"><span>    log <span style="color:#e6db74">&#34;===== </span><span style="color:#e6db74">${</span>action_upper<span style="color:#e6db74">}</span><span style="color:#e6db74"> (</span><span style="color:#e6db74">${</span>verb_zh<span style="color:#e6db74">}</span><span style="color:#e6db74">) =====&#34;</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#75715e"># 链路预检：连不上就立刻退出，避免后面静默挂掉</span>
+</span></span><span style="display:flex;"><span>    ssh -o BatchMode<span style="color:#f92672">=</span>yes -o ConnectTimeout<span style="color:#f92672">=</span><span style="color:#ae81ff">10</span> <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>NAS_SSH_USER<span style="color:#e6db74">}</span><span style="color:#e6db74">@</span><span style="color:#e6db74">${</span>NAS_HOST<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span> true <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>      <span style="color:#f92672">||</span> die <span style="color:#e6db74">&#34;无法 SSH 到 </span><span style="color:#e6db74">${</span>NAS_SSH_USER<span style="color:#e6db74">}</span><span style="color:#e6db74">@</span><span style="color:#e6db74">${</span>NAS_HOST<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">for</span> u in <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>USERS[@]<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>; <span style="color:#66d9ef">do</span>
+</span></span><span style="display:flex;"><span>      before<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#66d9ef">$(</span>get_expired <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>u<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span><span style="color:#66d9ef">)</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>      <span style="color:#f92672">[[</span> -z <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>before<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span> <span style="color:#f92672">]]</span> <span style="color:#f92672">&amp;&amp;</span> <span style="color:#f92672">{</span> log <span style="color:#e6db74">&#34;WARN: </span><span style="color:#e6db74">${</span>u<span style="color:#e6db74">}</span><span style="color:#e6db74"> 找不到，跳过&#34;</span>; <span style="color:#66d9ef">continue</span>; <span style="color:#f92672">}</span>
+</span></span><span style="display:flex;"><span>      log <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>u<span style="color:#e6db74">}</span><span style="color:#e6db74">: before expired=</span><span style="color:#e6db74">${</span>before<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>      set_expired <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>u<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span> <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>new_state<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>      after<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#66d9ef">$(</span>get_expired <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>u<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span><span style="color:#66d9ef">)</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>      log <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>u<span style="color:#e6db74">}</span><span style="color:#e6db74">: after  expired=</span><span style="color:#e6db74">${</span>after<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>      <span style="color:#66d9ef">if</span> <span style="color:#f92672">[[</span> <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>action<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span> <span style="color:#f92672">==</span> <span style="color:#e6db74">&#34;enable&#34;</span> <span style="color:#f92672">&amp;&amp;</span> <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>after<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span> !<span style="color:#f92672">=</span> <span style="color:#e6db74">&#34;false&#34;</span> <span style="color:#f92672">]]</span>; <span style="color:#66d9ef">then</span>
+</span></span><span style="display:flex;"><span>        die <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>u<span style="color:#e6db74">}</span><span style="color:#e6db74"> 启用失败 (expired=</span><span style="color:#e6db74">${</span>after<span style="color:#e6db74">}</span><span style="color:#e6db74">)&#34;</span>
+</span></span><span style="display:flex;"><span>      <span style="color:#66d9ef">fi</span>
+</span></span><span style="display:flex;"><span>      <span style="color:#66d9ef">if</span> <span style="color:#f92672">[[</span> <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>action<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span> <span style="color:#f92672">==</span> <span style="color:#e6db74">&#34;disable&#34;</span> <span style="color:#f92672">&amp;&amp;</span> <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>after<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span> !<span style="color:#f92672">=</span> <span style="color:#e6db74">&#34;true&#34;</span> <span style="color:#f92672">]]</span>; <span style="color:#66d9ef">then</span>
+</span></span><span style="display:flex;"><span>        die <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>u<span style="color:#e6db74">}</span><span style="color:#e6db74"> 停用失败 (expired=</span><span style="color:#e6db74">${</span>after<span style="color:#e6db74">}</span><span style="color:#e6db74">)&#34;</span>
+</span></span><span style="display:flex;"><span>      <span style="color:#66d9ef">fi</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">done</span>
+</span></span><span style="display:flex;"><span>    log <span style="color:#e6db74">&#34;===== DONE =====&#34;</span>
+</span></span><span style="display:flex;"><span>    ;;
+</span></span><span style="display:flex;"><span>  *<span style="color:#f92672">)</span>
+</span></span><span style="display:flex;"><span>    echo <span style="color:#e6db74">&#34;Usage: </span>$0<span style="color:#e6db74"> {enable|disable|status}&#34;</span> &gt;&amp;<span style="color:#ae81ff">2</span>
+</span></span><span style="display:flex;"><span>    exit <span style="color:#ae81ff">2</span>
+</span></span><span style="display:flex;"><span>    ;;
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">esac</span>
+</span></span></code></pre></div><p>把它存成 <code>~/scripts/synology-toggle-mykid.sh</code> 并 <code>chmod +x</code>。</p>
+<h3 id="62-关键技术点拆解">6.2 关键技术点拆解</h3>
+<p>这段脚本里其实藏了 4 个值得拿出来讲的点。每个都不复杂，但少了任何一个都会出问题。</p>
+<p><strong>点 1：免密 SSH，而不是每次都输密码。</strong> <code>BatchMode=yes</code> 表示&quot;如果需要密码就直接失败&quot;，避免在 launchd 跑的时候卡在密码提示符上。所以前置条件是：先把本机的 <code>~/.ssh/id_ed25519.pub</code> 加到 NAS 的 <code>/root/.ssh/authorized_keys</code> 里。生成专用密钥而不是复用主密钥，是个值得养成的好习惯：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>ssh-keygen -t ed25519 -f ~/.ssh/nas_curfew_ed25519 -C <span style="color:#e6db74">&#34;nas-curfew-agent&#34;</span>
+</span></span><span style="display:flex;"><span>ssh-copy-id -i ~/.ssh/nas_curfew_ed25519.pub root@nas.example.lan
+</span></span></code></pre></div><p><strong>点 2：<code>expired</code> 才是 DSM 的&quot;停用&quot;语义。</strong> 群晖的&quot;停用此账号&quot;在底层对应的就是 <code>/etc/shadow</code> 里的过期标志位（<code>synouser</code> 的 <code>expired</code> 参数），而不是删除用户、改密码或停用某个服务。这是最干净的&quot;门禁&quot;——账号、密码、家目录、共享权限全部保留，只是登录时被拒绝。改回 <code>0</code> 立刻恢复，不需要重新配任何东西。</p>
+<p><strong>点 3：改前 + 改后两次 <code>synouser --get</code>。</strong> 集群管理软件最大的灾难是&quot;看起来执行成功了，其实什么也没变&quot;——比如网络抖动、参数解析出错、SSH 提前断流。脚本里的 <code>before / after</code> 模式就是为了抓住这种情形：先读一次、改一次、再读一次，如果改完的状态和期望不符，立刻 <code>exit 1</code>，让 launchd 把这条错误写进 <code>err.log</code>，你一眼就能看到。</p>
+<p>这张图把整个校验链画得很清楚：</p>
+<p><img alt="脚本里的&quot;改前 / 改后&quot;双重校验" src="/post-images/synology-mykid-curfew-launchd/06-verification-flow.svg"></p>
+<p><strong>点 4：<code>set -euo pipefail</code> + <code>die()</code> 的失败策略。</strong> <code>set -e</code> 表示任何命令非 0 退出都立刻终止；<code>set -u</code> 防止变量未定义被静默填空；<code>set -o pipefail</code> 让管道里的失败不会因为 <code>tee</code> 成功而被吞掉。<code>die()</code> 在退出前会写一行带 <code>ERROR:</code> 前缀的日志，这样不管脚本被 <code>cron</code>、<code>launchd</code> 还是手动跑，出错时都能在日志里看到清楚的失败点。</p>
+<h3 id="63-真实执行样例">6.3 真实执行样例</h3>
+<p>下面这张图是一次 <code>disable</code> 的真实执行结果（IP 和用户名都已脱敏成 <code>nas.example.lan</code>）：</p>
+<p><img alt="toggle-mykid.sh disable 实际执行日志" src="/post-images/synology-mykid-curfew-launchd/03-disable-execution-log.png"></p>
+<p>可以看到每个用户都打印了 <code>before</code> / <code>after</code> 两行，最终 <code>DONE</code>。如果哪一步不对，结尾会变成 <code>ERROR: mykid2 停用失败 (expired=false)</code> 并退出码 1，launchd 立刻在 <code>err.log</code> 里看到。</p>
+<p><code>synouser --get</code> 的原始输出长这样，可以非常直观地看到 <code>Expired</code> 这一行：</p>
+<p><img alt="synouser &ndash;get mykid1 的原始输出" src="/post-images/synology-mykid-curfew-launchd/02-synouser-get-output.png"></p>
+<h2 id="七launchd-怎么用两个-plist22-点和-8-点各一个">七、launchd 怎么用：两个 plist，22 点和 8 点各一个</h2>
+<p><code>launchd</code> 的所有&quot;任务&quot;都是 <code>.plist</code> 文件，放在 <code>~/Library/LaunchAgents/</code> 下，对当前用户生效。</p>
+<h3 id="71-2200-停用的-plist">7.1 22:00 停用的 plist</h3>
+<p>文件路径：<code>~/Library/LaunchAgents/local.synology.toggle-mykid.disable.plist</code></p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-xml" data-lang="xml"><span style="display:flex;"><span><span style="color:#75715e">&lt;?xml version=&#34;1.0&#34; encoding=&#34;UTF-8&#34;?&gt;</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e">&lt;!DOCTYPE plist PUBLIC &#34;-//Apple//DTD PLIST 1.0//EN&#34; &#34;http://www.apple.com/DTDs/PropertyList-1.0.dtd&#34;&gt;</span>
+</span></span><span style="display:flex;"><span><span style="color:#f92672">&lt;plist</span> <span style="color:#a6e22e">version=</span><span style="color:#e6db74">&#34;1.0&#34;</span><span style="color:#f92672">&gt;</span>
+</span></span><span style="display:flex;"><span><span style="color:#f92672">&lt;dict&gt;</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">&lt;key&gt;</span>Label<span style="color:#f92672">&lt;/key&gt;</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">&lt;string&gt;</span>local.synology.toggle-mykid.disable<span style="color:#f92672">&lt;/string&gt;</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">&lt;key&gt;</span>ProgramArguments<span style="color:#f92672">&lt;/key&gt;</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">&lt;array&gt;</span>
+</span></span><span style="display:flex;"><span>        <span style="color:#f92672">&lt;string&gt;</span>/bin/bash<span style="color:#f92672">&lt;/string&gt;</span>
+</span></span><span style="display:flex;"><span>        <span style="color:#f92672">&lt;string&gt;</span>/Users/margrop/scripts/synology-toggle-mykid.sh<span style="color:#f92672">&lt;/string&gt;</span>
+</span></span><span style="display:flex;"><span>        <span style="color:#f92672">&lt;string&gt;</span>disable<span style="color:#f92672">&lt;/string&gt;</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">&lt;/array&gt;</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">&lt;key&gt;</span>StartCalendarInterval<span style="color:#f92672">&lt;/key&gt;</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">&lt;dict&gt;</span>
+</span></span><span style="display:flex;"><span>        <span style="color:#f92672">&lt;key&gt;</span>Hour<span style="color:#f92672">&lt;/key&gt;</span>   <span style="color:#f92672">&lt;integer&gt;</span>22<span style="color:#f92672">&lt;/integer&gt;</span>
+</span></span><span style="display:flex;"><span>        <span style="color:#f92672">&lt;key&gt;</span>Minute<span style="color:#f92672">&lt;/key&gt;</span> <span style="color:#f92672">&lt;integer&gt;</span>0<span style="color:#f92672">&lt;/integer&gt;</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">&lt;/dict&gt;</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">&lt;key&gt;</span>StandardOutPath<span style="color:#f92672">&lt;/key&gt;</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">&lt;string&gt;</span>/Users/margrop/logs/synology-mykid-toggle.launchd.out.log<span style="color:#f92672">&lt;/string&gt;</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">&lt;key&gt;</span>StandardErrorPath<span style="color:#f92672">&lt;/key&gt;</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">&lt;string&gt;</span>/Users/margrop/logs/synology-mykid-toggle.launchd.err.log<span style="color:#f92672">&lt;/string&gt;</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">&lt;key&gt;</span>RunAtLoad<span style="color:#f92672">&lt;/key&gt;&lt;false/&gt;</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">&lt;key&gt;</span>WakeSystem<span style="color:#f92672">&lt;/key&gt;&lt;false/&gt;</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">&lt;key&gt;</span>ProcessType<span style="color:#f92672">&lt;/key&gt;&lt;string&gt;</span>Background<span style="color:#f92672">&lt;/string&gt;</span>
+</span></span><span style="display:flex;"><span><span style="color:#f92672">&lt;/dict&gt;</span>
+</span></span><span style="display:flex;"><span><span style="color:#f92672">&lt;/plist&gt;</span>
+</span></span></code></pre></div><h3 id="72-0800-启用的-plist">7.2 08:00 启用的 plist</h3>
+<p>文件路径：<code>~/Library/LaunchAgents/local.synology.toggle-mykid.enable.plist</code>，内容完全一样，只把三个地方改一下：</p>
+<ol>
+<li><code>Label</code> 改成 <code>local.synology.toggle-mykid.enable</code>。</li>
+<li><code>ProgramArguments</code> 数组里第三个元素改成 <code>&lt;string&gt;enable&lt;/string&gt;</code>。</li>
+<li><code>StartCalendarInterval</code> 里的 <code>Hour</code> 改成 <code>&lt;integer&gt;8&lt;/integer&gt;</code>。</li>
+</ol>
+<h3 id="73-加载并查看任务">7.3 加载并查看任务</h3>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>launchctl unload ~/Library/LaunchAgents/local.synology.toggle-mykid.disable.plist 2&gt;/dev/null
+</span></span><span style="display:flex;"><span>launchctl unload ~/Library/LaunchAgents/local.synology.toggle-mykid.enable.plist  2&gt;/dev/null
+</span></span><span style="display:flex;"><span>launchctl load   ~/Library/LaunchAgents/local.synology.toggle-mykid.disable.plist
+</span></span><span style="display:flex;"><span>launchctl load   ~/Library/LaunchAgents/local.synology.toggle-mykid.enable.plist
+</span></span><span style="display:flex;"><span>launchctl list | grep synology
+</span></span></code></pre></div><p>正常情况下会看到两行：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>-       0       local.synology.toggle-mykid.disable
+</span></span><span style="display:flex;"><span>-       0       local.synology.toggle-mykid.enable
+</span></span></code></pre></div><p>第一列是 PID（<code>-</code> 表示当前没在跑，这是正常的，因为是定时任务），第二列是上一次退出码（<code>0</code> = 成功），第三列是 Label。</p>
+<p>下面的截图就是当时我本机的 <code>launchctl list</code> + plist 内容（IP 已脱敏）：</p>
+<p><img alt="launchctl list 输出 + plist 内容（占位符版本）" src="/post-images/synology-mykid-curfew-launchd/01-launchctl-and-plist.png"></p>
+<h2 id="八怎么验证它真的在工作">八、怎么验证它真的在工作</h2>
+<p>光加载任务是不够的，必须做一次&quot;我现在就要它跑&quot;的端到端测试。<code>launchctl</code> 的 <code>start</code> 命令会无视时间，立刻执行一次指定 Label：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>launchctl start local.synology.toggle-mykid.disable
+</span></span></code></pre></div><p>3 秒后看两个日志文件：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>tail -20 ~/logs/synology-mykid-toggle.log                  <span style="color:#75715e"># 脚本自己的日志</span>
+</span></span><span style="display:flex;"><span>tail -20 ~/logs/synology-mykid-toggle.launchd.out.log      <span style="color:#75715e"># launchd 标准输出</span>
+</span></span><span style="display:flex;"><span>cat   ~/logs/synology-mykid-toggle.launchd.err.log         <span style="color:#75715e"># 错误流，正常应该为空</span>
+</span></span></code></pre></div><p>下面这张就是 22:00 自动跑到 8:00 之间的某天 <code>enable</code> 任务的日志：</p>
+<p><img alt="toggle-mykid.sh enable 实际执行日志" src="/post-images/synology-mykid-curfew-launchd/04-enable-execution-log.png"></p>
+<p>你会看到非常干净的输出：<code>===== ENABLE (启用) =====</code> → 两个用户的 <code>before / after</code> → <code>===== DONE =====</code>。这种&quot;我什么也没做，它自己跑成功了&quot;的画面，就是自动化的价值。</p>
+<p>最后不要忘了<strong>用脚本的 <code>status</code> 子命令验证一下最终状态</strong>：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>~/scripts/synology-toggle-mykid.sh status
+</span></span></code></pre></div><p>预期输出：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>[2026-06-14 08:13:31+0800] status mykid1: expired=false
+</span></span><span style="display:flex;"><span>[2026-06-14 08:13:31+0800] status mykid2: expired=false
+</span></span></code></pre></div><p><code>expired=false</code> 就代表当前是&quot;启用&quot;。</p>
+<h2 id="九完整使用方式速查">九、完整使用方式速查</h2>
+<table>
+<thead>
+<tr>
+<th>场景</th>
+<th>命令</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>立刻停用</td>
+<td><code>launchctl start local.synology.toggle-mykid.disable</code></td>
+</tr>
+<tr>
+<td>立刻启用</td>
+<td><code>launchctl start local.synology.toggle-mykid.enable</code></td>
+</tr>
+<tr>
+<td>查看当前状态</td>
+<td><code>~/scripts/synology-toggle-mykid.sh status</code></td>
+</tr>
+<tr>
+<td>看执行历史</td>
+<td><code>tail -f ~/logs/synology-mykid-toggle.log</code></td>
+</tr>
+<tr>
+<td>看 launchd 错误</td>
+<td><code>tail -f ~/logs/synology-mykid-toggle.launchd.err.log</code></td>
+</tr>
+<tr>
+<td>重新加载（改完 plist 后）</td>
+<td><code>launchctl unload &lt;plist&gt;; launchctl load &lt;plist&gt;</code></td>
+</tr>
+<tr>
+<td>临时关掉整个流程</td>
+<td><code>launchctl unload ~/Library/LaunchAgents/local.synology.toggle-mykid.*.plist</code></td>
+</tr>
+<tr>
+<td>永久恢复</td>
+<td><code>launchctl load ~/Library/LaunchAgents/local.synology.toggle-mykid.*.plist</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="十可推广的群晖时间门禁模式">十、可推广的&quot;群晖时间门禁&quot;模式</h2>
+<p>把这件事抽出来，本质上是一种&quot;<strong>群晖时间门禁</strong>&ldquo;模式：<strong>对任意本地账号，单独做按时间的启用/停用</strong>。它能直接套到很多其他场景里：</p>
+<table>
+<thead>
+<tr>
+<th>场景</th>
+<th>改什么</th>
+<th>风险</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>客人来家里住三天，给个临时账号</td>
+<td>enable 3 天，disable 退房</td>
+<td>低</td>
+</tr>
+<tr>
+<td>公司里承包商账号</td>
+<td>只能工作日 9-18 登录</td>
+<td>中（需要更细粒度的 cron）</td>
+</tr>
+<tr>
+<td>老人账号白天开、夜里关</td>
+<td>同本文方案</td>
+<td>低</td>
+</tr>
+<tr>
+<td>给孩子周末白天放开</td>
+<td>扩展 cron：周六日单独加 <code>enable</code> 任务</td>
+<td>低</td>
+</tr>
+</tbody>
+</table>
+<p>需要更复杂的&quot;工作日开周末关&quot;时，只要再加两个 plist（周六/日的特殊时间点）就行。<code>launchd</code> 的 <code>StartCalendarInterval</code> 还支持 <code>Weekday</code> 字段（<code>0</code>=周日，<code>1</code>=周一&hellip;），可以做出&quot;周一到周五 8:00 enable + 22:00 disable，周六日全开&quot;这种规则。</p>
+<h2 id="十一隐私哪些东西不能写进公开材料">十一、隐私：哪些东西不能写进公开材料</h2>
+<p>这次脚本里我特意用了 <code>nas.example.lan</code> 作为占位符，而不是真实的内网 IP。这是个非常小的细节，但影响很大：</p>
+<ol>
+<li><strong>不要把 NAS 的真实内网 IP 写进脚本/博客/截图</strong>：内网 IP 一旦和用户名/共享名组合，几乎可以猜出网络结构。</li>
+<li><strong>不要把 SSH 私钥路径写成绝对路径</strong>：<code>/Users/margrop/.ssh/...</code> 这种带用户名的路径也是线索。</li>
+<li><strong>不要把共享文件夹名、孩子的小名写进日志</strong>：<code>mykid1</code> 还可以，<code>alice-2024-photos</code> 就太具体了。</li>
+<li><strong>不要把 token / 强密码写进 plist 或脚本</strong>：脚本里如果以后要加密码，请用环境变量或 macOS Keychain。</li>
+</ol>
+<p>这次写脚本时，输出日志里只有 <code>expired=true/false</code> 和用户名 <code>mykid1/mykid2</code> 这种抽象程度的信息。即使整段日志被贴到网上，也不会暴露家庭拓扑。</p>
+<h2 id="十二qa">十二、Q&amp;A</h2>
+<h3 id="q1dsm-自带的计划任务不能用吗">Q1：DSM 自带的&quot;计划任务&quot;不能用吗？</h3>
+<p>可以，但粒度只到&quot;每天一次&rdquo;，并且要登录 DSM 控制台设置。如果你用 DSM 自己的 Task Scheduler，脚本就变成了：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>Task Scheduler → 用户定义的脚本 → /usr/syno/sbin/synouser --modify mykid1 &#34;&#34; 1 &#34;&#34;
+</span></span></code></pre></div><p>缺点是：</p>
+<ol>
+<li>时区设置和夏令时有时候会让人困惑。</li>
+<li>没法直接写&quot;8:00 和 22:00 各一次&quot;两个时间点。</li>
+<li>错误处理比脚本里写的 <code>die()</code> 简单很多。</li>
+</ol>
+<p>所以我更推荐脚本放 Mac、Mac 用 <code>launchd</code> 调度、远程 SSH 到 NAS。</p>
+<h3 id="q2为什么不用-dsm-自带的账号配额或带宽限制做这件事">Q2：为什么不用 DSM 自带的&quot;账号配额&quot;或&quot;带宽限制&quot;做这件事？</h3>
+<p>DSM 有&quot;服务&quot;维度的开关，但<strong>没有&quot;用户维度 + 时间维度&quot;的开关</strong>。带宽限制只能限制速度，不能限制能不能登。访问列表只能限制来源 IP，不能限制时间。所以最干净的实现还是&quot;停用账号&quot;本身。</p>
+<h3 id="q3脚本里-synouser-居然能改-expired-字段这文档哪里有">Q3：脚本里 <code>synouser</code> 居然能改 expired 字段，这文档哪里有？</h3>
+<p><code>/usr/syno/sbin/synouser --help</code> 直接列了：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>--modify username &#34;full name&#34; expired{0|1} mail
+</span></span></code></pre></div><p>也就是说，<strong><code>--modify</code> 第二个位置参数是 expired</strong>。群晖的 CLI 文档没有专门强调，但只要按顺序传 <code>用户名 &quot;&quot; 0|1 &quot;&quot;</code> 就可以。</p>
+<p>我前一篇《群晖 NAS CLI 管理指南速查》里也整理过 <code>synouser</code> 的可用参数。</p>
+<h3 id="q4会不会影响孩子的密码家目录共享权限">Q4：会不会影响孩子的密码、家目录、共享权限？</h3>
+<p>不会。<code>synouser --modify</code> 改的只有 <code>fullname</code>、<code>expired</code>、<code>mail</code> 这三个字段。<strong>密码、UID、家目录路径、共享权限、群组关系全部保留</strong>。你甚至可以在任意时刻临时改 <code>expired</code> 来&quot;封&quot;账号，也可以在任何时候改回 0 来&quot;解封&quot;，不会丢数据。</p>
+<h3 id="q5launchd-在-2200-那一刻-mac-正好睡眠了会怎样">Q5：<code>launchd</code> 在 22:00 那一刻 Mac 正好睡眠了会怎样？</h3>
+<p>不会漏，但会<strong>延后</strong>。<code>launchd</code> 在系统唤醒后会按 <code>StartCalendarInterval</code> 的语义补跑错过的任务。补跑时间最晚不超过&quot;系统唤醒 + 短暂延迟&quot;，我观察下来 1-2 分钟内一定跑。日志里你会看到 <code>===== DISABLE (停用) =====</code> 的时间戳不是 <code>22:00:00</code> 而是 <code>23:47:15</code>——这其实是正常现象，不算 bug。</p>
+<h3 id="q6能不能用-crontab-实现一样的功能">Q6：能不能用 <code>crontab</code> 实现一样的功能？</h3>
+<p>能。<code>crontab</code> 写法很简单：</p>
+<pre tabindex="0"><code class="language-cron" data-lang="cron">0 8  * * * /Users/margrop/scripts/synology-toggle-mykid.sh enable  &gt;&gt; ~/logs/synology-mykid-toggle.log 2&gt;&amp;1
+0 22 * * * /Users/margrop/scripts/synology-toggle-mykid.sh disable &gt;&gt; ~/logs/synology-mykid-toggle.log 2&gt;&amp;1
+</code></pre><p>但<strong>睡眠会漏</strong>。这是我特意不选 <code>crontab</code> 的原因。如果你的 Mac 是台式机、长期不睡眠，<code>crontab</code> 完全够用。如果你的 Mac 是笔记本，强烈建议 <code>launchd</code>。</p>
+<h3 id="q7这个方案对-dsm-版本有要求吗">Q7：这个方案对 DSM 版本有要求吗？</h3>
+<p>我用 <code>synouser --modify</code> 这个能力在 DSM 6.x 和 7.x 上都验证过。<code>expired</code> 字段在所有现代 DSM 版本都存在。具体命令路径 <code>/usr/syno/sbin/synouser</code> 也是固定的。所以基本上 DSM 6.2 以后的所有版本都可以用。</p>
+<h3 id="q8能不能扩展到非工作时间禁用整个家庭账号">Q8：能不能扩展到非工作时间禁用整个家庭账号？</h3>
+<p>可以。把脚本里的 <code>USERS</code> 数组扩成 <code>(mykid1 mykid2 mywife myown)</code>，再额外写一个 <code>weekday-9to18-disable.plist</code>：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-xml" data-lang="xml"><span style="display:flex;"><span><span style="color:#f92672">&lt;key&gt;</span>StartCalendarInterval<span style="color:#f92672">&lt;/key&gt;</span>
+</span></span><span style="display:flex;"><span><span style="color:#f92672">&lt;dict&gt;</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">&lt;key&gt;</span>Hour<span style="color:#f92672">&lt;/key&gt;</span>     <span style="color:#f92672">&lt;integer&gt;</span>9<span style="color:#f92672">&lt;/integer&gt;</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">&lt;key&gt;</span>Minute<span style="color:#f92672">&lt;/key&gt;</span>   <span style="color:#f92672">&lt;integer&gt;</span>0<span style="color:#f92672">&lt;/integer&gt;</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">&lt;key&gt;</span>Weekday<span style="color:#f92672">&lt;/key&gt;</span>  <span style="color:#f92672">&lt;integer&gt;</span>1<span style="color:#f92672">&lt;/integer&gt;</span>  <span style="color:#75715e">&lt;!-- 周一 9:00 --&gt;</span>
+</span></span><span style="display:flex;"><span><span style="color:#f92672">&lt;/dict&gt;</span>
+</span></span></code></pre></div><p>配合 <code>Weekday=5</code>（周五 18:00 enable）就能做到&quot;工作日 9 点全家禁 NAS、周五 6 点解禁&quot;。但这个粒度就属于真正的运维方案了，建议先从最简版本用起。</p>
+<h2 id="十三为什么这件事值得专门写一篇">十三、为什么这件事值得专门写一篇</h2>
+<p>写到结尾回看一下，其实这次做的事<strong>单看每一行都不复杂</strong>：</p>
+<ul>
+<li><code>synouser --modify</code> 一行命令就能改 expired；</li>
+<li><code>launchd</code> 加个 plist 就能定时；</li>
+<li><code>synouser --get</code> 加个 if 就能做校验。</li>
+</ul>
+<p>复杂的是<strong>把这件事做成&quot;家长可以放心交给系统&quot;的状态</strong>：</p>
+<ol>
+<li>家长不需要每天手动点；</li>
+<li>孩子不需要每天问&quot;我能不能登&quot;；</li>
+<li>出了问题，日志里能立刻看到；</li>
+<li>临时需要手动调整，<code>launchctl start</code> 一下就行；</li>
+<li>整件事不依赖任何第三方服务、不依赖公网、不依赖任何账号系统。</li>
+</ol>
+<p>家庭自动化这件事，最怕的不是做得不够多，而是<strong>做得不够可靠</strong>。一个半自动的方案比&quot;全自动但偶尔出错&quot;的方案更糟糕——前者家长能主动管理，后者会让所有人对系统失去信任。</p>
+<p>把&quot;该睡觉了&quot;这件事从客厅搬到 launchd 里，本质上是在做<strong>一件小小的&quot;系统信任工程&quot;</strong>：让一个 50 行的脚本，承担起一段原本由人承担的责任，并且<strong>用日志、用校验、用退出码，对这件事负全责</strong>。</p>
+<p>如果你家里也有类似的&quot;靠人记得&quot;的小事，这套思路可以直接套用。NAS 时间门禁只是其中一种形态，<strong>任何&quot;按时间执行的开关&quot;都可以用 launchd + 脚本 + 校验这三件套搭出来</strong>。</p>
+<h2 id="来源">来源</h2>
+<ul>
+<li>Synology 官方 CLI 指南：<a href="https://global.download.synology.com/download/Document/Software/DeveloperGuide/Firmware/DSM/All/enu/Synology_DiskStation_Administration_CLI_Guide.pdf">https://global.download.synology.com/download/Document/Software/DeveloperGuide/Firmware/DSM/All/enu/Synology_DiskStation_Administration_CLI_Guide.pdf</a></li>
+<li>Apple 官方 <code>launchd.plist</code> 参考：<a href="https://developer.apple.com/library/archive/documentation/MacOSX/Conceptual/BPSystemStartup/Chapters/ScheduledJobs.html">https://developer.apple.com/library/archive/documentation/MacOSX/Conceptual/BPSystemStartup/Chapters/ScheduledJobs.html</a></li>
+<li>本文作者同系列前置文章：<a href="/post/synology-diskstation-cli-administration-guide/">群晖 NAS CLI 管理指南速查</a>、<a href="/post/synology-ssh-commands/">群晖 SSH 命令详解</a>、<a href="/post/openclaw-hermesagent-synology-skill/">OpenClaw / HermesAgent 集成群晖操作 SKILL</a></li>
+</ul>
+        </div>
+    </article>
+
+    
+  
+
+
+  
+    
+  
+
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk/dist/gitalk.css">
+<script src="https://cdn.jsdelivr.net/npm/gitalk/dist/gitalk.min.js"></script>
+<div id="gitalk-container" style="margin-top:40px"></div>
+<script>
+  (function(){
+    var gitalk = new Gitalk({
+      clientID: '3181fd94e501cc5db0ad',
+      clientSecret: 'af1dab79dae02c69296e6615bfcecf47fc8615ee',
+      repo: 'margropcomment.margrop.io',
+      owner: 'margrop',
+      admin: ["margrop"],
+      
+      id: '\/post\/synology-mykid-curfew-launchd\/',
+      
+      distractionFreeMode: false
+    });
+    gitalk.render('gitalk-container');
+  })();
+</script>
+  
+
+
+
+
+    
+<div class="site-stats" aria-label="访问统计">
+    <span>本文阅读量 <span data-page-view-count>--</span></span>
+</div>
+
+
+    
+    <script type="text/javascript" src="https://js.users.51.la/21044367.js"></script>
+    <script charset="UTF-8" id="LA_COLLECT" src="//sdk.51.la/js-sdk-pro.min.js"></script>
+    <script>LA.init({id: "1vVTUWl7zoRjnKXi",ck: "1vVTUWl7zoRjnKXi"})</script>
+    <script src="https://sdk.51.la/perf/js-sdk-perf.min.js" crossorigin="anonymous"></script>
+    <script>
+      new LingQue.Monitor().init({id:"202teQt8THXwqyve"});
+    </script>
+    <script defer src="/js/page-views.js"></script>
+    <div class="la-theme-widget" data-51la-widget aria-label="51.la 网站统计"></div>
+    <script defer src="/js/51la-theme-widget.js"></script>
+</body>
+</html>
