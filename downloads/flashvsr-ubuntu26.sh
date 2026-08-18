@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -euo pipefail
+INPUT=${1:?usage: $0 INPUT [OUTPUT_DIR] [SCALE]}; OUT=${2:-"$PWD/flashvsr-output"}; SCALE=${3:-2}; ROOT=${FLASHVSR_DIR:-"$PWD/FlashVSR"}; PYTHON=${FLASHVSR_PYTHON:-"$ROOT/.venv/bin/python"}
+[[ -e "$INPUT" ]] || { echo "Input not found" >&2; exit 2; }; command -v nvidia-smi >/dev/null || { echo "nvidia-smi required" >&2; exit 3; }; command -v ffmpeg >/dev/null || { echo "ffmpeg required" >&2; exit 4; }; mkdir -p "$OUT"; [[ "$($PYTHON -c "import torch; print(torch.cuda.is_available())")" == True ]] || { echo "PyTorch CUDA unavailable" >&2; exit 5; }; exec "$PYTHON" "$ROOT/run.py" -i "$INPUT" -s "$SCALE" -m tiny-long --tiled-dit --tiled-vae --tile-size 256 --overlap 24 --unload-dit -a sage -t bf16 -d cuda:0 "$OUT"
