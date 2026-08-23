@@ -214,7 +214,7 @@
 <p>这次问题的表象很简单：本机可以主动 SSH 到远端内网机器，但远端机器反过来 SSH 回本机时，连接直接被拒绝。<code>sshd</code> 明明在监听，路由也没断，最后却卡在“反向访问”这一步。</p>
 <p>真正的根因不是 <code>sshd</code> 挂了，而是 <code>Fail2Ban</code> 把承载反向连接的 <strong>VPN 网关地址</strong> 封掉了。对本机来说，来自远端的连接并不是以“远端机器本身”的地址出现，而是以网关地址出现。于是，错误的封禁对象把整条回程链路一并打断了。</p>
 </blockquote>
-<p><img src="/post-images/reverse-ssh-fail2ban-vpn-gateway/01-cover.svg" alt="reverse ssh cover"></p>
+<p><img alt="reverse ssh cover" src="/post-images/reverse-ssh-fail2ban-vpn-gateway/01-cover.svg"></p>
 <h2 id="1-问题背景单向能通反向却断">1. 问题背景：单向能通，反向却断</h2>
 <p>这类故障非常容易让人陷入第一层直觉：既然我能从本机连到远端，那网络大体应该没问题；既然远端反过来连不上本机，那大概率是本机 <code>sshd</code> 出故障了。</p>
 <p>但真实情况往往更绕。</p>
@@ -227,10 +227,10 @@
 <li>日志里没有明显的服务崩溃。</li>
 </ol>
 <p>如果只看结果，很像是“本机拒绝了远端”。但如果看链路，就会发现真正需要验证的是：<strong>到底是谁在对本机发起连接，源地址又是谁。</strong></p>
-<p><img src="/post-images/reverse-ssh-fail2ban-vpn-gateway/02-path-map.svg" alt="reverse ssh path map"></p>
+<p><img alt="reverse ssh path map" src="/post-images/reverse-ssh-fail2ban-vpn-gateway/02-path-map.svg"></p>
 <h2 id="2-问题表现connection-refused-不是sshd-挂了">2. 问题表现：<code>Connection refused</code> 不是“sshd 挂了”</h2>
 <p>排查初期，我先从最基础的地方开始：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>ss -lntp | grep <span style="color:#e6db74">&#39;:22&#39;</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>ss -lntp | grep <span style="color:#e6db74">&#39;:22&#39;</span>
 </span></span><span style="display:flex;"><span>systemctl status ssh
 </span></span></code></pre></div><p>结果都正常。<code>sshd</code> 在监听，systemd 服务也在运行。于是我又从远端机器做了一个最小化连接测试，得到的不是超时，而是 <code>Connection refused</code>。</p>
 <p>这个细节很重要。</p>
@@ -243,15 +243,15 @@
 <h2 id="3-第一层排查本机-sshd-没问题">3. 第一层排查：本机 <code>sshd</code> 没问题</h2>
 <p>为了不被表象带偏，我继续做了三件事。</p>
 <h3 id="先看监听">先看监听</h3>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>ss -lntp | grep <span style="color:#e6db74">&#39;:22&#39;</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>ss -lntp | grep <span style="color:#e6db74">&#39;:22&#39;</span>
 </span></span></code></pre></div><p>确认 <code>sshd</code> 在 <code>0.0.0.0:22</code> 上监听，没有绑定错地址，也没有只监听回环。</p>
 <h3 id="再看日志">再看日志</h3>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>journalctl -u ssh -n <span style="color:#ae81ff">100</span> --no-pager
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>journalctl -u ssh -n <span style="color:#ae81ff">100</span> --no-pager
 </span></span></code></pre></div><p>日志里能看到大量正常的连接尝试、认证失败和成功记录，说明 SSH 服务链路本身是活的。</p>
 <h3 id="最后看防火墙">最后看防火墙</h3>
 <p>这一步才是关键。</p>
 <p>我检查了 <code>nftables</code> 规则，发现有一张 <code>fail2ban</code> 创建的表，里面 <code>sshd</code> 的封禁集合已经包含了一个我非常熟悉的地址：<strong>VPN 网关地址</strong>。</p>
-<p><img src="/post-images/reverse-ssh-fail2ban-vpn-gateway/03-timeline.svg" alt="debug timeline"></p>
+<p><img alt="debug timeline" src="/post-images/reverse-ssh-fail2ban-vpn-gateway/03-timeline.svg"></p>
 <h2 id="4-问题分析为什么远端机器会变成网关地址">4. 问题分析：为什么“远端机器”会变成“网关地址”</h2>
 <p>这一步是整个问题的核心。</p>
 <p>很多人会默认“远端机器连回来，源地址就应该是远端机器自己的地址”。但在内网、VPN、隧道、网关转发这些场景下，事情不一定这么简单。</p>
@@ -271,7 +271,7 @@
 <p>所以表面上看是“远端不能 SSH 回本机”，实际上是“回程链路的中间地址被封了”。</p>
 <h2 id="5-根因fail2ban-误封了-vpn-网关">5. 根因：<code>Fail2Ban</code> 误封了 VPN 网关</h2>
 <p>最终我在 <code>fail2ban-client</code> 里确认了这一点：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>fail2ban-client status sshd
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>fail2ban-client status sshd
 </span></span></code></pre></div><p>输出里，<code>Banned IP list</code> 就是那个网关地址。</p>
 <p>这意味着：</p>
 <ol>
@@ -284,16 +284,16 @@
 <h2 id="6-如何修复先解封再白名单">6. 如何修复：先解封，再白名单</h2>
 <p>修复策略分两步。</p>
 <h3 id="第一步立刻解封当前网关">第一步：立刻解封当前网关</h3>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>fail2ban-client set sshd unbanip &lt;VPN_GATEWAY_IP&gt;
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>fail2ban-client set sshd unbanip &lt;VPN_GATEWAY_IP&gt;
 </span></span></code></pre></div><p>这一步能让当前反向连接马上恢复。</p>
 <h3 id="第二步把这个网关加入-ignoreip">第二步：把这个网关加入 <code>ignoreip</code></h3>
 <p>我在 <code>/etc/fail2ban/jail.local</code> 里为 <code>sshd</code> 添加了白名单：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-ini" data-lang="ini"><span style="display:flex;"><span><span style="color:#66d9ef">[sshd]</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-ini" data-lang="ini"><span style="display:flex;"><span><span style="color:#66d9ef">[sshd]</span>
 </span></span><span style="display:flex;"><span><span style="color:#a6e22e">ignoreip</span> <span style="color:#f92672">=</span> <span style="color:#e6db74">127.0.0.1/8 ::1 &lt;VPN_GATEWAY_IP&gt;</span>
 </span></span></code></pre></div><p>这不是“关掉防护”，而是把<strong>明确可信的中间层地址</strong>从 SSH 爆破检测中排除出去。</p>
 <p>如果你的环境里有多个稳定入口网关，也可以把它们做成一个受控的白名单；但不要为了图省事把整个大网段一股脑放进去。Fail2Ban 的价值就在于它能替你挡住明显不可信的来源，白名单应当尽量精确。</p>
 <h3 id="之后重载">之后重载</h3>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>fail2ban-client reload
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>fail2ban-client reload
 </span></span></code></pre></div><p>然后再从远端测试，反向 SSH 就恢复了。</p>
 <h2 id="7-为什么这个问题很隐蔽">7. 为什么这个问题很隐蔽</h2>
 <p>它隐蔽在三个地方。</p>

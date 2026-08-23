@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>AI Platform 不是套个聊天框：我故意让模型限流、Worker 崩溃、记忆过期，才看清生产架构 - 魔都水滴</title>
+<meta name="description" content="先说结论 一个能聊天的 Demo 只需要模型、Prompt 和网页；一个敢碰业务系统的 AI Platform，还必须回答身份、权限、审批、任务状态、幂等、记忆、追踪、成本和故障恢复。模型负责提出下一步，平台负责决定这一步能不能做、由谁做、做坏了如何停、重试会不会做两遍、事后能否解释。 为了验证这套边界， …">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://blog.margrop.net/post/ai-platform-production-reference-architecture/"><meta property="og:site_name" content="魔都水滴">
+<meta property="og:title" content="AI Platform 不是套个聊天框：我故意让模型限流、Worker 崩溃、记忆过期，才看清生产架构 - 魔都水滴">
+<meta property="og:description" content="先说结论 一个能聊天的 Demo 只需要模型、Prompt 和网页；一个敢碰业务系统的 AI Platform，还必须回答身份、权限、审批、任务状态、幂等、记忆、追踪、成本和故障恢复。模型负责提出下一步，平台负责决定这一步能不能做、由谁做、做坏了如何停、重试会不会做两遍、事后能否解释。 为了验证这套边界， …">
+<meta property="og:url" content="https://blog.margrop.net/post/ai-platform-production-reference-architecture/">
+<meta property="og:locale" content="zh_CN"><meta property="og:type" content="article"><meta property="og:locale:alternate" content="en_US"><meta property="og:image" content="https://blog.margrop.net/images/avatar.png"><meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="AI Platform 不是套个聊天框：我故意让模型限流、Worker 崩溃、记忆过期，才看清生产架构 - 魔都水滴">
+<meta name="twitter:description" content="先说结论 一个能聊天的 Demo 只需要模型、Prompt 和网页；一个敢碰业务系统的 AI Platform，还必须回答身份、权限、审批、任务状态、幂等、记忆、追踪、成本和故障恢复。模型负责提出下一步，平台负责决定这一步能不能做、由谁做、做坏了如何停、重试会不会做两遍、事后能否解释。 为了验证这套边界， …"><meta name="twitter:image" content="https://blog.margrop.net/images/avatar.png"><link rel="alternate" hreflang="zh-CN" href="https://blog.margrop.net/post/ai-platform-production-reference-architecture/"><link rel="alternate" hreflang="en-US" href="https://blog.margrop.net/en/post/ai-platform-production-reference-architecture/"><link rel="alternate" hreflang="x-default" href="https://blog.margrop.net/"><meta property="article:published_time" content="2026-08-23T17:40:00&#43;08:00">
+<meta property="article:modified_time" content="2026-08-23T17:40:00&#43;08:00"><meta property="article:tag" content="AI Agent"><meta property="article:tag" content="AI"><meta property="article:tag" content="架构"><meta property="article:tag" content="平台工程"><meta property="article:tag" content="可观测性"><meta property="article:tag" content="MCP"><meta property="article:tag" content="模型网关"><meta property="article:tag" content="工程实践"><script type="application/ld+json">{"@context":"https://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"魔都水滴"},"dateModified":"2026-08-23T17:40:00+08:00","datePublished":"2026-08-23T17:40:00+08:00","description":"先说结论 一个能聊天的 Demo 只需要模型、Prompt 和网页；一个敢碰业务系统的 AI Platform，还必须回答身份、权限、审批、任务状态、幂等、记忆、追踪、成本和故障恢复。模型负责提出下一步，平台负责决定这一步能不能做、由谁做、做坏了如何停、重试会不会做两遍、事后能否解释。 为了验证这套边界， …","headline":"AI Platform 不是套个聊天框：我故意让模型限流、Worker 崩溃、记忆过期，才看清生产架构","mainEntityOfPage":"https://blog.margrop.net/post/ai-platform-production-reference-architecture/","url":"https://blog.margrop.net/post/ai-platform-production-reference-architecture/"}</script>
+    <meta name="baidu-site-verification" content="code-sVFZ8SER59" />
+    <script src="/js/theme-toggle.js"></script>
+
+    
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-3J2W592DHJ"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-3J2W592DHJ');
+    </script>
+
+    <style>
+    :root {
+        color-scheme: light;
+        --page-bg: #fff;
+        --surface-bg: #f4f4f4;
+        --text: #222;
+        --muted: #666;
+        --subtle: #777;
+        --border: #eee;
+        --border-strong: #ddd;
+        --link: #006CFF;
+        --tag-bg: #eee;
+        --button-bg: #fff;
+        --button-primary-bg: #333;
+    }
+    @media (prefers-color-scheme: dark) {
+        :root:not([data-theme]) {
+            color-scheme: dark;
+            --page-bg: #111315;
+            --surface-bg: #1d2126;
+            --text: #e8eaed;
+            --muted: #aeb4bd;
+            --subtle: #9aa2ad;
+            --border: #30353d;
+            --border-strong: #454c56;
+            --link: #79b8ff;
+            --tag-bg: #2a3038;
+            --button-bg: #1d2126;
+            --button-primary-bg: #e8eaed;
+        }
+    }
+    html[data-theme="dark"] {
+        color-scheme: dark;
+        --page-bg: #111315;
+        --surface-bg: #1d2126;
+        --text: #e8eaed;
+        --muted: #aeb4bd;
+        --subtle: #9aa2ad;
+        --border: #30353d;
+        --border-strong: #454c56;
+        --link: #79b8ff;
+        --tag-bg: #2a3038;
+        --button-bg: #1d2126;
+        --button-primary-bg: #e8eaed;
+    }
+    html[data-theme="light"] {
+        color-scheme: light;
+        --page-bg: #fff;
+        --surface-bg: #f4f4f4;
+        --text: #222;
+        --muted: #666;
+        --subtle: #777;
+        --border: #eee;
+        --border-strong: #ddd;
+        --link: #006CFF;
+        --tag-bg: #eee;
+        --button-bg: #fff;
+        --button-primary-bg: #333;
+    }
+    body { background: var(--page-bg); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 860px; margin: 0 auto; padding: 20px; line-height: 1.7; color: var(--text); }
+    h1 { border-bottom: 2px solid var(--border-strong); padding-bottom: 10px; }
+    article > h1 { font-size: 2em; line-height: 1.3; margin-bottom: 12px; }
+    .post-list { list-style: none; padding: 0; }
+    .post-list li { margin: 15px 0; }
+    .post-list a { text-decoration: none; color: var(--text); font-size: 18px; }
+    .post-list a:hover { color: var(--link); }
+    .date { color: var(--muted); font-size: 14px; margin-right: 10px; }
+    .tags { margin-top: 8px; }
+    .tag { background: var(--tag-bg); padding: 2px 8px; border-radius: 3px; font-size: 12px; margin-right: 5px; display: inline-block; }
+    nav { margin-bottom: 18px; border-bottom: 1px solid var(--border); padding-bottom: 15px; }
+    nav a { margin-right: 20px; text-decoration: none; color: var(--text); font-size: 16px; }
+    nav a:hover { color: var(--link); }
+    .language-switcher { display: flex; align-items: center; gap: 10px; margin: -8px 0 26px; }
+    .language-switcher a { display: inline-block; padding: 4px 10px; border: 1px solid var(--border-strong); border-radius: 999px; color: var(--muted); text-decoration: none; font-size: 14px; }
+    .language-switcher a.active { background: var(--link); border-color: var(--link); color: #fff; }
+    .content { line-height: 1.8; }
+    .content code { background: var(--surface-bg); padding: 2px 5px; border-radius: 3px; }
+    .content pre { background: var(--surface-bg); padding: 15px; overflow-x: auto; border-radius: 5px; }
+    .content img { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+    .content .code-snippet__fix {
+        margin: 0 0 1.5em;
+    }
+    .content .code-snippet__fix .code-snippet__line-index {
+        display: none !important;
+    }
+    .meta { color: var(--muted); font-size: 14px; margin-bottom: 14px; }
+    .meta-separator { margin: 0 6px; color: var(--subtle); }
+    .site-stats { display: flex; flex-wrap: wrap; gap: 10px 18px; margin: 28px 0 8px; padding-top: 12px; border-top: 1px solid var(--border); color: var(--subtle); font-size: 12px; }
+    a { color: var(--link); }
+    .hero { padding: 12px 0 24px; }
+    .hero h1 { border-bottom: 2px solid #333; }
+    .eyebrow { color: var(--muted); font-size: 12px; letter-spacing: .12em; margin: 0 0 8px; }
+    .hero-tagline { font-size: 18px; margin: 12px 0 8px; }
+    .hero-copy { color: var(--muted); margin: 0 0 14px; }
+    .hero-actions { margin: 14px 0 4px; }
+    .button { display: inline-block; margin-right: 12px; border: 1px solid var(--border-strong); border-radius: 3px; padding: 4px 10px; text-decoration: none; color: var(--text); background: var(--button-bg); font-size: 14px; }
+    .button-primary { background: var(--button-primary-bg); border-color: var(--button-primary-bg); color: var(--page-bg); }
+    .theme-toggle { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 1px solid var(--border-strong); border-radius: 999px; background: var(--button-bg); color: var(--text); cursor: pointer; font: inherit; font-size: 16px; }
+    .theme-toggle:hover { border-color: var(--link); color: var(--link); }
+    .la-theme-widget { margin: 12px 0 20px; min-height: 24px; color: var(--text); }
+    .identity-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: 16px 0; }
+    .identity-grid div { display: flex; flex-direction: column; }
+    .identity-grid strong { font-size: 15px; }
+    .identity-grid span, .topic-card span, .featured-list small { color: var(--muted); font-size: 13px; }
+    .section-block { padding-top: 28px; }
+    .section-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+    .section-heading h2 { margin: 0; }
+    .section-heading a { font-size: 14px; }
+    .topic-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+    .topic-card { display: block; padding: 14px; border: 1px solid var(--border); text-decoration: none; color: var(--text); }
+    .topic-card:hover { border-color: var(--border-strong); }
+    .topic-card strong { display: block; margin: 4px 0; font-size: 17px; }
+    .topic-index, .featured-list > a > span { color: var(--muted) !important; font-size: 12px !important; }
+    .featured-list { border-top: 1px solid var(--border); }
+    .featured-list > a { display: flex; gap: 14px; padding: 12px 0; border-bottom: 1px solid var(--border); text-decoration: none; color: var(--text); }
+    .featured-list div { display: flex; flex-direction: column; }
+    .latest-block { max-width: 860px; }
+    @media (max-width: 680px) {
+        body { padding: 16px; }
+        nav a { display: inline-block; margin-right: 12px; margin-bottom: 8px; }
+        .identity-grid { grid-template-columns: repeat(2, 1fr); }
+        .topic-grid { grid-template-columns: 1fr; }
+    }
+</style>
+
+</head>
+<body>
+    <nav>
+  <a href="/">首页</a>
+  <a href="/start-here/">开始这里</a>
+  <a href="/career/">Portfolio</a>
+  <a href="/tag/ai/">AI Agent</a>
+  <a href="/tag/docker/">Self-hosting</a>
+  <a href="/tag/%e8%bf%90%e7%bb%b4/">Engineering</a>
+  <a href="/post/">归档</a>
+  <a href="/tags/">标签</a>
+  <a href="/about/">关于</a>
+  <a href="https://github.com/margrop" target="_blank" rel="noopener">GitHub</a>
+</nav>
+
+    <div class="language-switcher">
+  <button class="theme-toggle" type="button" data-theme-toggle aria-label="切换到暗黑模式" aria-pressed="false">🌙</button>
+
+  
+  
+    <a href="/post/ai-platform-production-reference-architecture/" class="active">中文</a>
+  
+    <a href="/en/post/ai-platform-production-reference-architecture/" class="">English</a>
+  
+  
+</div>
+
+    
+    <article>
+        <h1>AI Platform 不是套个聊天框：我故意让模型限流、Worker 崩溃、记忆过期，才看清生产架构</h1>
+        <div class="meta">
+            发布时间: 2026-08-23
+            <span class="meta-separator">·</span>
+            <span>阅读量 <span data-page-view-count>--</span></span>
+        </div>
+        
+<div class="tags">
+    
+    <a href="/tag/ai-agent/"><span class="tag">AI Agent</span></a>
+    
+    <a href="/tag/ai/"><span class="tag">AI</span></a>
+    
+    <a href="/tag/%E6%9E%B6%E6%9E%84/"><span class="tag">架构</span></a>
+    
+    <a href="/tag/%E5%B9%B3%E5%8F%B0%E5%B7%A5%E7%A8%8B/"><span class="tag">平台工程</span></a>
+    
+    <a href="/tag/%E5%8F%AF%E8%A7%82%E6%B5%8B%E6%80%A7/"><span class="tag">可观测性</span></a>
+    
+    <a href="/tag/mcp/"><span class="tag">MCP</span></a>
+    
+    <a href="/tag/%E6%A8%A1%E5%9E%8B%E7%BD%91%E5%85%B3/"><span class="tag">模型网关</span></a>
+    
+    <a href="/tag/%E5%B7%A5%E7%A8%8B%E5%AE%9E%E8%B7%B5/"><span class="tag">工程实践</span></a>
+    
+</div>
+
+
+        <div class="content">
+            <blockquote>
+<p><strong>先说结论</strong></p>
+<p>一个能聊天的 Demo 只需要模型、Prompt 和网页；一个敢碰业务系统的 AI Platform，还必须回答身份、权限、审批、任务状态、幂等、记忆、追踪、成本和故障恢复。<strong>模型负责提出下一步，平台负责决定这一步能不能做、由谁做、做坏了如何停、重试会不会做两遍、事后能否解释。</strong> 为了验证这套边界，我写了一个只用 Python 标准库、零网络调用、零真实凭据的故障注入实验：让主模型路由返回合成 429、让高风险重启动作卡在审批门、让提示词注入在模型和工具执行前被拒绝、让 Worker 在副作用完成但检查点未写入时崩溃，再验证恢复不会重复执行；同时让一条记忆过期，确认它不会进入上下文。macOS 与 Linux 两套 Python 环境均通过六项验收。本文给出我认为能称为「旗舰版」的四平面、一条身份脊柱和一套可落地的生产架构。</p>
+</blockquote>
+<p><img alt="原创封面：模型只负责提议，平台负责身份、策略、执行和证据。" src="/post-images/ai-platform-production-reference-architecture/00-cover.svg"></p>
+<p><em>图 1：原创 SVG 封面。标题里的「模型限流」是确定性故障注入，不调用任何真实模型或供应商；它验证的是平台控制逻辑，而不是供应商 SLA。</em></p>
+<h2 id="一问题背景为什么聊天框一进生产就露馅">一、问题背景：为什么聊天框一进生产就「露馅」</h2>
+<p>AI Demo 的路径通常只有三步：用户输入一句话，后端拼 Prompt，模型返回一段字。现场演示很惊艳，因为正常路径像一条笔直公路。但生产环境不是发布会：用户会中途打断，模型会限流，工具会超时，队列会重投，权限会变化，旧记忆会过期，攻击者会把「忽略之前规则」塞进网页或文档，财务还会追问这一轮为什么花了这么多 Token。</p>
+<p>这时很多团队会把每个问题都继续塞回 Prompt：</p>
+<ul>
+<li>用 Prompt 提醒模型「不要泄密」；</li>
+<li>用 Prompt 要求「高风险操作先询问」；</li>
+<li>用 Prompt 告诉模型「失败就换另一个模型」；</li>
+<li>用聊天记录假装任务状态和长期记忆；</li>
+<li>用应用日志猜一次工具到底执行了几遍。</li>
+</ul>
+<p>这相当于让一名很会说话的导游同时兼任机场安检、塔台、机务、会计和事故调查员。导游再聪明，也不应该拥有所有钥匙。<strong>自然语言擅长表达意图，确定性系统擅长执行约束；生产架构必须让两者各做擅长的事。</strong></p>
+<h2 id="二问题表现ai-demo-变成生产系统后的七种怪病">二、问题表现：AI Demo 变成生产系统后的七种怪病</h2>
+<ol>
+<li><strong>身份丢失</strong>：模型知道「有人说要重启」，却不知道租户、用户、设备、角色和会话是否可信。</li>
+<li><strong>降级失控</strong>：任何错误都换模型重试，连 401、欠费、策略拒绝也被掩盖，最后重复计费还查不到根因。</li>
+<li><strong>审批只是聊天文字</strong>：模型问「确定吗」，用户下一句含糊的「行吧」就被当作批准；参数已经改变，旧批准仍有效。</li>
+<li><strong>Worker 重投造成双写</strong>：工具已成功，进程在写完成状态前崩溃；队列重投后再执行一次，重启变两次、转账变两笔。</li>
+<li><strong>记忆越多越危险</strong>：三个月前的服务名仍被召回，模型语气很坚定地操作一个已经退役的目标。</li>
+<li><strong>日志很多，因果链没有</strong>：Web 层、模型网关、工具服务各有一段日志，却没有同一个 trace ID 串起「谁批准了什么」。</li>
+<li><strong>成功率看起来很高</strong>：被策略正确拒绝的危险请求被算作失败；回答完成却没有解决问题的请求被算作成功。</li>
+</ol>
+<p>这些不是再加一句系统 Prompt 就能治好的问题，它们属于平台职责。</p>
+<h2 id="三问题根因把对话状态误当成业务状态">三、问题根因：把「对话状态」误当成「业务状态」</h2>
+<p>聊天消息可以被截断、压缩、重排或重新生成，而业务任务必须有明确状态、版本和所有者。对话里写着「已经执行」不等于数据库里真的只有一次副作用；模型说「用户批准」也不等于有一张不可抵赖、绑定参数且未过期的批准记录。</p>
+<p>最小可行 Demo 把所有事情塞进一条上下文；生产平台要反过来做：<strong>将体验、控制、执行、数据与证据拆成可独立扩缩、独立授权、独立失败的平面，再用身份上下文和 trace 串起来。</strong></p>
+<p><img alt="原创总架构：体验、控制、执行、数据与证据四个平面，由身份脊柱贯穿。" src="/post-images/ai-platform-production-reference-architecture/01-four-planes.svg"></p>
+<p><em>图 2：原创图。这不是按团队名字分盒子，而是按失败边界分责任。某个 Worker 崩溃不应丢掉对话；某个模型限流不应绕过策略；某条记忆过期不应污染执行。</em></p>
+<h2 id="四旗舰架构四平面--一条身份脊柱">四、旗舰架构：四平面 + 一条身份脊柱</h2>
+<h3 id="41-体验平面管理一次轮次而不只是一个-http-请求">4.1 体验平面：管理一次「轮次」，而不只是一个 HTTP 请求</h3>
+<p>体验平面包含 Web/App/语音/IM 等渠道适配器，以及 Turn Manager。它把不同渠道统一成一个带身份、语言、设备、附件、截止时间和取消信号的请求封套；负责流式输出、引用、断线重连、语音打断（Barge-in）和重复消息去重。</p>
+<p>打个小学生也能懂的比方：老师问问题后，小明已经举手说出一半，老师突然说「题目改了」。一个只会 HTTP 请求的系统会让小明继续把旧答案讲完；Turn Manager 会把取消信号一路传给模型流、检索和工具，让旧轮次停下。取消不是前端隐藏气泡，而是一条跨层传播的 <code>context</code>。</p>
+<h3 id="42-控制平面ai-gateway-不是普通反向代理">4.2 控制平面：AI Gateway 不是普通反向代理</h3>
+<p>控制平面包含身份解析、AI Gateway、模型路由、上下文装配、策略引擎、审批、任务编排和预算。普通 API Gateway 关心 URL、认证、限流；AI Gateway 还要理解模型能力、上下文长度、数据分类、Token 预算、供应商地域、流式协议、工具调用和降级资格。</p>
+<p>模型可以输出「建议调用 <code>service.restart</code>」，但策略引擎应根据角色、租户、目标范围、风险等级和当前审批，独立返回 ALLOW、DENY 或 REQUIRE_APPROVAL。模型没有最后决定权。</p>
+<h3 id="43-执行平面把副作用从聊天进程里拿出来">4.3 执行平面：把副作用从聊天进程里拿出来</h3>
+<p>执行平面包含持久任务队列、Worker、沙盒、工具适配器、MCP Client/Server 边界、租约、超时、并发限制和幂等记录。读健康状态和删数据不能共用相同权限的万能 Worker；高风险工具应进入专门队列，使用短期凭据和严格网络出口。</p>
+<p>每次副作用都带 idempotency key。它像快递单号：同一包裹因为网络问题被扫描两次，仓库只能出库一次。没有它，「至少一次投递」的队列会把「至少执行一次」变成「可能执行很多次」。</p>
+<h3 id="44-数据与证据平面记忆不是向量库的同义词">4.4 数据与证据平面：记忆不是向量库的同义词</h3>
+<p>这一平面保存会话记录、结构化记忆、检索文档、任务与审批、工具结果、制品、审计日志、指标、Trace、评测和成本。不同数据有不同保留期和权限：用户偏好可以长期保存，原始语音也许数天删除，批准记录需要按审计要求保留，Secret 不应进入 Prompt 和普通日志。</p>
+<p>结构化记忆至少包含 <code>source</code>、<code>scope</code>、<code>version</code>、<code>expires_at</code>、敏感级别和删除能力。向量相似只回答「像不像」，不能回答「是否仍然有效」。</p>
+<h3 id="45-身份脊柱每一次交接都不能掉身份证">4.5 身份脊柱：每一次交接都不能掉身份证</h3>
+<p>租户、用户、角色、设备、会话和委托链必须从入口传播到模型路由、策略、任务、工具和审计。不要把用户名字拼进 Prompt 后就认为身份已传递；策略判断需要的是经过验证、不可由模型改写的结构化声明。</p>
+<p>实验的正常只读路径把这条链完整打印出来：</p>
+<p><img alt="真实实验输出截图：身份、Prompt 策略、模型路由、工具策略和最终状态在同一请求中。" src="/post-images/ai-platform-production-reference-architecture/01-real-happy-path.webp"></p>
+<p><em>图 3：真实实验输出截图。合成身份经过策略，路由到本地模拟 provider，只读工具被允许，结果先脱敏再进入最终响应，状态为 COMPLETED。实验没有调用真实模型或工具。</em></p>
+<h2 id="五一次请求究竟经过什么像坐飞机一样分工">五、一次请求究竟经过什么：像坐飞机一样分工</h2>
+<p>把「检查存储设备健康并给出建议」作为例子，一次请求应该经历这些交接：</p>
+<ol>
+<li>Channel Adapter 验证渠道签名，生成统一 envelope。</li>
+<li>Turn Manager 建立轮次、截止时间和取消树。</li>
+<li>Context Assembler 只装配该租户、该用途、仍有效的数据。</li>
+<li>AI Gateway 按能力、数据分类、延迟和成本选择模型。</li>
+<li>模型提出计划或工具意图，不直接拿生产凭据。</li>
+<li>Policy Engine 重新检查工具名、参数、作用域和风险。</li>
+<li>需要批准时，任务持久化为 WAITING_APPROVAL，前端展示精确影响。</li>
+<li>Worker 领取租约，在沙盒里用短期凭据执行，写入幂等结果。</li>
+<li>Sanitizer 过滤工具输出；Turn Manager 流式返回。</li>
+<li>Trace、审计、Token、成本和业务结果用同一个请求标识归档。</li>
+</ol>
+<p><img alt="原创时序图：用户请求经过轮次、网关、策略、Worker 和证据平面。" src="/post-images/ai-platform-production-reference-architecture/02-request-sequence.svg"></p>
+<p><em>图 4：原创图。就像坐飞机：售票、安检、登机口、机组和行李追踪是不同岗位。把所有岗位交给「会说话的机长」不会更智能，只会让事故无法隔离。</em></p>
+<p>这里最重要的设计原则是：<strong>每一跳都传递结构化上下文，每一个副作用都重新授权。</strong> 不能因为入口鉴权过一次，就默认模型生成的任意工具参数都可信。</p>
+<h2 id="六故障一模型-429什么可以降级什么必须停">六、故障一：模型 429，什么可以降级，什么必须停</h2>
+<p>平台收到 429 或短暂 5xx 时，可以在有限重试预算内切换兼容模型；收到 401、无效凭据、余额/合规拒绝时应立即暴露根因。把所有错误都包装成 fallback，会让配置错误变成贵而慢的幽灵故障。</p>
+<p><img alt="真实实验输出截图：主 provider 返回合成 429，备用 provider 在一次重试预算内完成。" src="/post-images/ai-platform-production-reference-architecture/02-real-provider-fallback.webp"></p>
+<p><em>图 5：真实实验输出截图。主路由合成返回 429，备用路由返回 200；重试预算 1，明确记录降级原因，并注明认证错误不具备降级资格。</em></p>
+<p><img alt="原创路由图：请求封套、主模型 429、有界降级，以及认证错误必须停止。" src="/post-images/ai-platform-production-reference-architecture/03-routing-failure.svg"></p>
+<p><em>图 6：原创图。路由不能只看「哪个模型在线」，还要看数据能否离开当前区域、目标模型是否支持工具/结构化输出、剩余预算和截止时间。</em></p>
+<p>一个可审计的路由决策至少记录：候选集、被排除原因、最终路由、模型/Prompt 版本、重试次数、每次错误类型、Token 与成本。否则「系统自己换了模型」会成为所有质量波动的万能借口。</p>
+<h2 id="七故障二审批门必须在模型外面">七、故障二：审批门必须在模型外面</h2>
+<p>高风险写操作不能靠模型问一句「你确定吗」。批准记录要绑定具体工具、规范化参数、资源范围、申请人、批准人、过期时间和一次性 nonce；计划参数发生变化时，批准自动失效。</p>
+<p><img alt="真实实验输出截图：高风险 service.restart 进入 WAITING_APPROVAL，副作用计数仍为 0。" src="/post-images/ai-platform-production-reference-architecture/03-real-approval-gate.webp"></p>
+<p><em>图 7：真实实验输出截图。即使合成身份具备平台管理员角色，策略仍返回 REQUIRE_APPROVAL；任务持久化等待，工具没有被调用。角色够高不等于免审批。</em></p>
+<p><img alt="原创权限矩阵：读操作、重启和删除对不同角色分别允许、拒绝或要求审批。" src="/post-images/ai-platform-production-reference-architecture/04-permission-matrix.svg"></p>
+<p><em>图 8：原创图。权限矩阵只是起点；生产还要叠加租户、资源标签、时段、变更窗口、风险分和职责分离。模型只提交申请，确定性策略盖章。</em></p>
+<p>审批 UI 也不能只显示模型总结「将优化服务」。它应展示真正参数差异、影响对象数量、回滚动作、证据链接和超时时间。批准的是一张明确的施工单，不是给模型一张空白授权书。</p>
+<h2 id="八故障三prompt-injection-不是-prompt-能单独解决的">八、故障三：Prompt Injection 不是 Prompt 能单独解决的</h2>
+<p>提示词注入可以来自用户，也可以藏在网页、邮件、PDF、代码注释和工具返回值里。它本质上是「不可信数据试图伪装成控制指令」。只在系统 Prompt 里写「不要听坏人的话」，就像在校门贴一张「坏人不得入内」——有提醒价值，但不是门禁。</p>
+<p><img alt="真实实验输出截图：注入输入在模型和工具调用前被拒绝。" src="/post-images/ai-platform-production-reference-architecture/04-real-injection-denied.webp"></p>
+<p><em>图 9：真实实验输出截图。合成输入同时包含覆盖指令和 Secret 外泄意图，策略返回 DENY；模型未调用、工具未调用、Secret 未写日志。实验中的关键词策略只用于演示控制点，不能冒充完整生产防护。</em></p>
+<p>生产防线应分层：标记内容来源与信任级；把检索文本放进明确的数据边界；工具采用 allowlist 和参数 schema；读取与写入凭据分离；敏感操作要求批准；限制网络出口；对输入、计划、工具结果和最终输出分别扫描；用红队样本持续评测。即使模型被诱导，策略和执行平面仍应让它「说错但做不了错事」。</p>
+<h2 id="九故障四worker-在最危险的一毫秒崩溃">九、故障四：Worker 在最危险的一毫秒崩溃</h2>
+<p>分布式系统最棘手的时刻是：工具已经产生副作用，但 Worker 还没来得及把任务写成 COMPLETED 就崩溃。队列只看见租约超时，于是重新投递。没有幂等记录时，第二个 Worker 会再做一次。</p>
+<p><img alt="真实实验输出截图：Worker 在副作用后崩溃，恢复执行被幂等键去重。" src="/post-images/ai-platform-production-reference-architecture/05-real-worker-resume.webp"></p>
+<p><em>图 10：真实实验输出截图。第一次执行已产生 1 次合成副作用后崩溃；任务从 before_tool 检查点恢复，第二次调用命中幂等记录，最终副作用仍是 1，任务完成。</em></p>
+<p><img alt="原创状态机：PENDING、RUNNING、WAITING_APPROVAL、RECOVERING 和 COMPLETED。" src="/post-images/ai-platform-production-reference-architecture/05-task-state-machine.svg"></p>
+<p><em>图 11：原创图。对话可以关闭，持久任务仍有状态。生产还应有 CANCEL_REQUESTED、DENIED、FAILED、COMPENSATING 等状态，并定义谁能转换、超时如何处理。</em></p>
+<p>幂等键应由「租户 + 业务任务 + 工具 + 规范化参数 + 版本」产生，并和结果原子落库。对于无法天然幂等的外部系统，要使用对方支持的请求键、业务唯一约束或补偿事务。仅在 Worker 内存里放一个 <code>already_done = true</code>，进程死后等于没放。</p>
+<h2 id="十故障五记忆过期比没有记忆更危险">十、故障五：记忆过期，比没有记忆更危险</h2>
+<p>模型忘记用户偏好会让人失望；模型记住已退役服务、旧联系人或过期权限会造成事故。记忆系统必须同时回答：谁说的、对谁有效、哪个版本、何时过期、是否可删除、召回时为何相关。</p>
+<p><img alt="真实实验输出截图：一条有效记忆被召回，一条过期记忆被跳过。" src="/post-images/ai-platform-production-reference-architecture/06-real-memory-freshness.webp"></p>
+<p><em>图 12：真实实验输出截图。有效记忆带来源和版本，过期记忆计数为 1 且没有进入 Prompt；记忆明确可删除。</em></p>
+<p><img alt="原创记忆生命周期：捕获、分类、核验、召回、过期。" src="/post-images/ai-platform-production-reference-architecture/06-memory-lifecycle.svg"></p>
+<p><em>图 13：原创图。记忆像图书馆借书，不是纹身：要有来源卡、借阅范围和归还日期。向量库负责找相似书，策略负责决定这本书现在能不能借。</em></p>
+<p>建议把记忆分为：会话工作记忆、用户确认的长期偏好、从行为推断的低置信信息、组织知识和任务制品。推断内容不能悄悄升级成事实；用户纠正后要生成新版本并压制旧版本；涉及人员、权限和生产资源的记忆应更短、更严格。</p>
+<h2 id="十一可观测性不要只看最终答案要看为什么这样决定">十一、可观测性：不要只看最终答案，要看「为什么这样决定」</h2>
+<p>AI 请求的延迟不是一个数字。TTFT（首 Token 时间）回答「多久开始说话」；完整响应时间回答「多久说完」；工具型任务的 E2E 回答「多久真正完成事情」。就像外卖：骑手接单很快不等于饭送得快，App 显示已送达也不等于你拿到了正确餐品。</p>
+<p>一个 trace 应串起入口、检索、每次模型尝试、策略决定、审批等待、工具执行、重试、流式返回和最终业务结果。Token、成本和模型版本是 span 属性；Prompt/工具内容按数据等级脱敏或只存哈希，不能为了排障制造新的泄密库。</p>
+<p><img alt="真实实验输出截图：同一个 trace 下包含成功、429 错误、降级和工具 span。" src="/post-images/ai-platform-production-reference-architecture/07-real-trace-waterfall.webp"></p>
+<p><em>图 14：真实实验输出截图。故障实验把 <code>ai.request</code>、<code>gen_ai.chat</code> 与 <code>tool.execute</code> 放进同一瀑布；时长很小是因为全部为本地合成逻辑，不代表真实模型延迟。</em></p>
+<p><img alt="原创可观测性图：Trace 瀑布与 TTFT、降级率、审批等待、重复副作用、成本等运营指标。" src="/post-images/ai-platform-production-reference-architecture/07-observability.svg"></p>
+<p><em>图 15：原创图。平台看板至少要同时回答快不快、贵不贵、有没有解决、有没有越权。单独优化 Token 或延迟，会把系统带到错误方向。</em></p>
+<p>推荐指标分四组：</p>
+<ul>
+<li><strong>体验</strong>：TTFT、E2E、取消传播时间、流中断率、用户重试率。</li>
+<li><strong>推理</strong>：模型错误率、fallback 率、上下文大小、输入/输出 Token、结构化输出校验失败。</li>
+<li><strong>行动</strong>：工具成功率、审批等待、重复副作用、超时、补偿成功率。</li>
+<li><strong>结果与风险</strong>：任务解决率、正确拒绝率、人工接管率、每个成功结果成本、注入/越权拦截率。</li>
+</ul>
+<p>「正确拒绝」应该算安全成功，不该污染业务成功率；回答一段漂亮文字却没完成目标，也不能只因 HTTP 200 就算成功。</p>
+<h2 id="十二mcp-的位置协议边界不是权限边界">十二、MCP 的位置：协议边界不是权限边界</h2>
+<p>MCP 让 Host、Client、Server 之间用统一协议暴露 tools、resources 和 prompts，极大降低集成成本。但「能发现工具」不等于「有权调用工具」。MCP Server 描述的是能力，平台仍要在调用前做租户隔离、参数校验、风险分级、批准和网络策略。</p>
+<p>把 MCP 想成统一插座：插头规格统一后，台灯和电钻都能接上；插座不会自动判断小学生能不能拿电钻。权限、漏电保护和施工许可仍是房子的责任。</p>
+<p>高风险 Server 最好单独进程/容器、最小凭据、固定出口，不能把文件系统、Shell、生产控制面和个人数据打包进一个「万能 MCP」。工具清单也要版本化；模型看到的 schema、策略校验的 schema 和 Worker 实际执行的版本必须一致。</p>
+<h2 id="十三部署形态无状态边缘扩容有状态核心明确所有权">十三、部署形态：无状态边缘扩容，有状态核心明确所有权</h2>
+<p><img alt="原创部署图：渠道边缘、控制服务、Worker 池和有状态核心。" src="/post-images/ai-platform-production-reference-architecture/08-deployment-topology.svg"></p>
+<p><em>图 16：原创图。横向扩容不是把每个盒子复制三份；关键是任务只有一个租约持有者、副作用只有一份幂等记录、审批和审计有一个可信事实源。</em></p>
+<p>推荐的物理落地可以是：Channel/Turn/Gateway/Policy/API 保持无状态，多副本部署；任务、审批、幂等键进入事务数据库；队列负责租约和重投；Worker 按工具风险拆池并沙盒化；大制品进对象存储；Memory/RAG 使用带租户过滤和版本元数据的存储；OpenTelemetry Collector 汇聚 traces/metrics/logs，审计流进入更严格的不可变存储。</p>
+<p>早期团队不需要一上来拆成二十个微服务。四平面是<strong>责任边界</strong>，可以先在模块化单体中实现；当扩缩、权限或故障域出现分歧时再拆进程。为了「看起来旗舰」而提前分布式化，只会先收获网络超时和一致性问题。</p>
+<h2 id="十四从-demo-到平台一条现实的-90-天路线">十四、从 Demo 到平台：一条现实的 90 天路线</h2>
+<p><strong>第 1—30 天：先把刹车装上。</strong> 统一身份 envelope；工具 allowlist 与 JSON Schema；读写凭据分离；高风险批准；全链路 trace ID；模型路由记录；建立最小红队集。此阶段宁可少接工具，也不要让模型持有万能 Token。</p>
+<p><strong>第 31—60 天：把任务从对话中剥离。</strong> 建持久状态机、租约、超时和 idempotency；实现取消传播；结构化记忆加来源/版本/TTL；区分可重试错误；按结果而非 HTTP 码定义成功。</p>
+<p><strong>第 61—90 天：用证据运营。</strong> 建黄金任务集和离线评测；上线前 shadow/canary；按租户、模型、工具看成本与质量；演练 provider 429、队列积压、Worker 崩溃、审批超时、Memory Store 不可用和审计链路中断；把恢复结果写进发布闸门。</p>
+<p>每阶段只在有清晰痛点时增加组件。一个 10 人内部工具和面向多租户的企业平台可以共享原则，但不该复制相同部署规模。</p>
+<h2 id="十五可复现实验六个-pass-证明了什么">十五、可复现实验：六个 PASS 证明了什么</h2>
+<p>本文的 <a href="/post-files/ai-platform-production-reference-architecture/ai_platform_fault_lab.py">Python 故障注入脚本</a> 只使用标准库中的 SQLite、哈希、JSON 和计时器；不访问网络、不调用真实模型/工具、不加载 Secret。Windows 11 可运行：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-powershell" data-lang="powershell"><span style="display:flex;"><span>py <span style="color:#ae81ff">-3</span> ai_platform_fault_lab.py --clean
+</span></span></code></pre></div><p>Ubuntu 26.04 与 macOS 26 可运行：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>python3 ai_platform_fault_lab.py --clean
+</span></span></code></pre></div><p>它验证的是控制边界，不是模型质量、生产安全认证或性能跑分。完整说明见 <a href="/post-files/ai-platform-production-reference-architecture/README.md">README</a>，结构化 <a href="/post-files/ai-platform-production-reference-architecture/lab-output/traces.jsonl">traces.jsonl</a> 和 <a href="/post-files/ai-platform-production-reference-architecture/lab-output/metrics.json">metrics.json</a> 也可直接下载检查。</p>
+<p><img alt="真实实验输出截图：AI Platform 故障实验六项验收全部 PASS。" src="/post-images/ai-platform-production-reference-architecture/08-real-acceptance.webp"></p>
+<p><em>图 17：真实实验输出截图。只读身份链、429 有界降级、高风险审批、注入前置拒绝、崩溃续跑去重和过期记忆排除全部通过；成本为 0，因为没有外部调用。60% 的 successful_requests 不含一次正确拒绝和一次等待审批，恰好说明「成功率」必须按状态解释。</em></p>
+<p>相同脚本已在两个不同平台的 Python 环境执行，验收项一致；Trace 的微秒/毫秒值会因运行环境变化，属于预期现象。生产实现需要把这里的玩具关键词策略换成分层控制，把 SQLite 换成可靠共享状态，并把模拟工具换成最小权限适配器。</p>
+<h2 id="十六qa">十六、Q&amp;A</h2>
+<h3 id="q1用了最强模型是否可以少做一些平台控制">Q1：用了最强模型，是否可以少做一些平台控制？</h3>
+<p>不可以。模型能力提高会减少某些推理错误，却不会替你提供事务、身份、审批、幂等和审计。跑得更快的车更需要可靠刹车，而不是更少刹车。</p>
+<h3 id="q2ai-gateway-和普通-api-gateway-到底差在哪">Q2：AI Gateway 和普通 API Gateway 到底差在哪？</h3>
+<p>普通网关主要处理路由、认证、配额和协议；AI Gateway 还处理模型能力与版本、上下文窗口、数据地域、Token/成本预算、流式事件、工具调用、fallback 资格和模型级可观测性。两者可以部署在相邻层，也可以共享基础设施，但责任不同。</p>
+<h3 id="q3为何不让模型直接判断-prompt-injection">Q3：为何不让模型直接判断 Prompt Injection？</h3>
+<p>模型可以作为一个检测信号，但不能成为唯一裁判。攻击内容和正常文档可能高度相似，模型也会被同一上下文影响。确定性 allowlist、参数 schema、权限、沙盒、出口限制和人工审批提供模型之外的硬边界。</p>
+<h3 id="q4所有工具调用都要人工审批吗">Q4：所有工具调用都要人工审批吗？</h3>
+<p>不需要。只读、低风险、可撤销且作用域小的操作可以策略自动允许；高风险、不可逆、跨租户或影响面大的操作才进入审批。审批过多会产生「闭眼点同意」的疲劳，所以风险分级必须准确。</p>
+<h3 id="q5exactly-once-能彻底解决重复副作用吗">Q5：Exactly-once 能彻底解决重复副作用吗？</h3>
+<p>端到端 exactly-once 很难承诺。工程上更现实的是至少一次投递 + 幂等执行 + 唯一约束 + 可审计结果；对无法幂等的动作准备补偿或人工对账。文章中的实验验证的是「重投不重复该副作用」。</p>
+<h3 id="q6rag长期记忆和聊天历史有什么区别">Q6：RAG、长期记忆和聊天历史有什么区别？</h3>
+<p>聊天历史记录本轮发生了什么；RAG 从外部知识源找当前问题的材料；长期记忆保存跨会话仍有价值、带来源和生命周期的信息。三者可以共同进入上下文，但权限、保留期和置信度不同。</p>
+<h3 id="q7mcp-server-自带权限说明平台还要再检查吗">Q7：MCP Server 自带权限说明，平台还要再检查吗？</h3>
+<p>要。Server 的能力描述不能替代调用方的身份和策略；远端 Server 也可能升级或被攻陷。平台应钉住版本、限制工具、验证 schema、设置网络出口和超时，并在每次高风险调用前重新授权。</p>
+<h3 id="q8是否必须上微服务kubernetes-和向量数据库才叫-ai-platform">Q8：是否必须上微服务、Kubernetes 和向量数据库才叫 AI Platform？</h3>
+<p>不必须。旗舰首先是责任与证据完整，不是组件数量。模块化单体 + 事务数据库 + 可靠队列也能实现四平面边界；负载、团队和合规真的需要时再拆。</p>
+<h3 id="q9如何衡量平台是否真的有用">Q9：如何衡量平台是否「真的有用」？</h3>
+<p>用任务结果：一次解决率、人工节省时间、正确拒绝率、事故数、每个成功任务成本和用户复用率。BLEU、模型榜单或 Token 数只能解释局部，不代表业务完成。</p>
+<h3 id="q10这份架构最先应该实现哪三件事">Q10：这份架构最先应该实现哪三件事？</h3>
+<p>身份 envelope、工具前确定性策略、贯穿请求/模型/工具的 trace ID。它们分别回答「谁在做」「能不能做」「到底发生了什么」，是后续审批、幂等、记忆和评测的地基。</p>
+<h2 id="十七参考资料与架构底线">十七、参考资料与架构底线</h2>
+<ul>
+<li><a href="https://www.nist.gov/itl/ai-risk-management-framework">NIST AI Risk Management Framework</a></li>
+<li><a href="https://genai.owasp.org/llm-top-10/">OWASP Top 10 for LLM / GenAI Applications</a></li>
+<li><a href="https://modelcontextprotocol.io/specification/latest/architecture">Model Context Protocol：Architecture</a></li>
+<li><a href="https://github.com/open-telemetry/semantic-conventions-genai">OpenTelemetry Generative AI Semantic Conventions</a></li>
+<li><a href="https://github.com/humanlayer/12-factor-agents">HumanLayer：12-Factor Agents</a></li>
+</ul>
+<p>这套架构可以少组件、可以先做成模块化单体，也可以随着规模演进；但有一条底线不能打折：<strong>模型永远不应同时成为意图解释者、权限批准者、副作用执行者和事故审计者。模型提出建议，平台承担责任。</strong></p>
+        </div>
+    </article>
+
+    
+  
+
+
+
+
+    
+<div class="site-stats" aria-label="访问统计">
+    <span>本文阅读量 <span data-page-view-count>--</span></span>
+</div>
+
+
+    
+    <script type="text/javascript" src="https://js.users.51.la/21044367.js"></script>
+    <script charset="UTF-8" id="LA_COLLECT" src="//sdk.51.la/js-sdk-pro.min.js"></script>
+    <script>LA.init({id: "1vVTUWl7zoRjnKXi",ck: "1vVTUWl7zoRjnKXi"})</script>
+    <script src="https://sdk.51.la/perf/js-sdk-perf.min.js" crossorigin="anonymous"></script>
+    <script>
+      new LingQue.Monitor().init({id:"202teQt8THXwqyve"});
+    </script>
+    <script defer src="/js/page-views.js"></script>
+    <div class="la-theme-widget" data-51la-widget aria-label="51.la 网站统计"></div>
+    <script defer src="/js/51la-theme-widget.js"></script>
+</body>
+</html>

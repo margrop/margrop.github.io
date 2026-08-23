@@ -214,12 +214,12 @@
 <p>把思源笔记从 v3.6.x 升级到 v3.7.0 后，Docker 容器陷入无限重启循环。<code>docker logs</code> 显示 <code>Error: unknown flag: --accessAuthCode</code>。根因是 v3.7.0 引入了 CLI 子命令架构，原来的顶级 flag 现在需要加一个 <code>serve</code> 子命令。修复只需在 docker-compose.yml 的 <code>command</code> 字段最前面加上 <code>'serve'</code>，多 7 个字符，从无限重启到正常运行。</p>
 <p>本文给出完整排查过程、三种操作系统下的一键修复脚本（Windows 11 / Ubuntu 26.04 / macOS 26），以及人工执行和 AI Agent 自动配置两种方法。所有脚本只调用 Docker CLI 和 SSH，不依赖第三方服务。</p>
 </blockquote>
-<p><img src="/post-images/siyuan-v370-docker-restart-loop-fix/00-ai-cover.png" alt="AI 生成封面：Docker 容器无限重启的排查与修复。"></p>
+<p><img alt="AI 生成封面：Docker 容器无限重启的排查与修复。" src="/post-images/siyuan-v370-docker-restart-loop-fix/00-ai-cover.png"></p>
 <p><em>图 1：AI 生成封面。容器重启循环的修复，往往只需要一行改动。</em></p>
 <h2 id="一问题背景思源笔记与-docker-部署">一、问题背景：思源笔记与 Docker 部署</h2>
 <p><a href="https://github.com/siyuan-note/siyuan">思源笔记（SiYuan）</a> 是一款开源的个人知识管理系统，支持 Markdown 编辑、双向链接、数据同步和 Docker 部署。很多用户选择用 Docker 在服务器上运行思源，通过浏览器随时随地访问自己的笔记。</p>
 <p>Docker 部署的典型配置如下：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-yaml" data-lang="yaml"><span style="display:flex;"><span><span style="color:#f92672">version</span>: <span style="color:#e6db74">&#34;3.9&#34;</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-yaml" data-lang="yaml"><span style="display:flex;"><span><span style="color:#f92672">version</span>: <span style="color:#e6db74">&#34;3.9&#34;</span>
 </span></span><span style="display:flex;"><span><span style="color:#f92672">services</span>:
 </span></span><span style="display:flex;"><span>  <span style="color:#f92672">main</span>:
 </span></span><span style="display:flex;"><span>    <span style="color:#f92672">image</span>: <span style="color:#ae81ff">b3log/siyuan:v3.7.0</span>
@@ -244,15 +244,15 @@
 <li><strong>AI 知识库</strong>：思源 Agent 和向量嵌入搜索进入公开测试</li>
 </ul>
 <p>其中第四项 —— <strong>CLI 命令行接口</strong>，就是本文要讨论的&quot;罪魁祸首&quot;。它带来了更强大的自动化能力，但也引入了一个破坏性变更。</p>
-<p><img src="/post-images/siyuan-v370-docker-restart-loop-fix/04-architecture-overview.png" alt="思源 v3.7.0 架构概览。"></p>
+<p><img alt="思源 v3.7.0 架构概览。" src="/post-images/siyuan-v370-docker-restart-loop-fix/04-architecture-overview.png"></p>
 <p><em>图 2：思源 Docker 部署架构。Portainer 管理 Stack，容器内 entrypoint.sh 启动 kernel，kernel 再通过 serve 子命令启动 HTTP 服务。</em></p>
 <h2 id="二问题表现容器无限重启循环">二、问题表现：容器无限重启循环</h2>
 <p>某天，我在 Portainer 中把思源笔记的镜像从 <code>v3.6.1</code> 升级到了 <code>v3.7.0</code>，点击&quot;重新部署&quot;后，发现容器状态不对劲：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>$ docker ps --filter name<span style="color:#f92672">=</span>siyuan
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>$ docker ps --filter name<span style="color:#f92672">=</span>siyuan
 </span></span><span style="display:flex;"><span>NAMES          STATUS
 </span></span><span style="display:flex;"><span>siyuan-qiniu   Restarting <span style="color:#f92672">(</span>1<span style="color:#f92672">)</span> <span style="color:#ae81ff">8</span> seconds ago
 </span></span></code></pre></div><p>容器不断经历 <strong>启动 → 退出（exit code 1）→ Docker 自动重启 → 又退出</strong> 的死循环。从外面看，端口映射存在但无法访问，浏览器打开对应地址一直转圈。</p>
-<p><img src="/post-images/siyuan-v370-docker-restart-loop-fix/shot-01-docker-restarting.png" alt="docker ps 显示容器无限重启。"></p>
+<p><img alt="docker ps 显示容器无限重启。" src="/post-images/siyuan-v370-docker-restart-loop-fix/shot-01-docker-restarting.png"></p>
 <p><em>图 3：真实终端截图 — docker ps 显示 siyuan 容器处于 Restarting 状态。</em></p>
 <p>这就好比你家小区新换了一个门禁系统（升级镜像），结果门禁主机不断重启 —— 刚启动、闪一下屏、然后黑掉、再重启。你站在门口进不去，干着急。</p>
 <h3 id="用生活场景理解容器重启循环">用生活场景理解&quot;容器重启循环&quot;</h3>
@@ -260,7 +260,7 @@
 <p>你换了新发动机（升级镜像），但点火方式不对。每次转动钥匙，发动机&quot;咔&quot;响一声就熄火了。车载电脑自动尝试重新点火（<code>restart: always</code>），于是你听到&quot;咔-咔-咔&quot;不断重复。要修好它，不能只拔电瓶，得看故障码 —— 对容器来说，故障码就是 <code>docker logs</code>。</p>
 <h2 id="三问题分析从-docker-logs-找到第一线索">三、问题分析：从 docker logs 找到第一线索</h2>
 <p>容器出问题，第一反应不是重启、不是回滚、不是重装，而是 <strong>看日志</strong>。</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>$ docker logs --tail <span style="color:#ae81ff">40</span> siyuan-qiniu
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>$ docker logs --tail <span style="color:#ae81ff">40</span> siyuan-qiniu
 </span></span><span style="display:flex;"><span>Error: unknown flag: --accessAuthCode
 </span></span><span style="display:flex;"><span>Usage:
 </span></span><span style="display:flex;"><span>  kernel <span style="color:#f92672">[</span>command<span style="color:#f92672">]</span>
@@ -278,9 +278,9 @@
 </span></span><span style="display:flex;"><span>      --dry-run            dry run mode
 </span></span><span style="display:flex;"><span>  -h, --help               help <span style="color:#66d9ef">for</span> kernel
 </span></span><span style="display:flex;"><span>  -w, --workspace string   workspace path
-</span></span></code></pre></div><p><img src="/post-images/siyuan-v370-docker-restart-loop-fix/shot-06-real-error-log.png" alt="真实错误日志。"></p>
+</span></span></code></pre></div><p><img alt="真实错误日志。" src="/post-images/siyuan-v370-docker-restart-loop-fix/shot-06-real-error-log.png"></p>
 <p><em>图 4：真实截图 — docker logs 显示的 kernel CLI 错误信息。</em></p>
-<p><img src="/post-images/siyuan-v370-docker-restart-loop-fix/shot-05-siyuan-real-login.png" alt="思源笔记 v3.7.0 锁屏登录页面。"></p>
+<p><img alt="思源笔记 v3.7.0 锁屏登录页面。" src="/post-images/siyuan-v370-docker-restart-loop-fix/shot-05-siyuan-real-login.png"></p>
 <p><em>图 5：真实截图 — 修复后思源笔记 v3.7.0 的锁屏登录页面。输入 accessAuthCode 即可访问笔记。</em></p>
 <p>日志非常清楚地告诉我们：<strong><code>--accessAuthCode</code> 是一个未知的 flag</strong>。而且，kernel 列出了它认识的所有<strong>子命令</strong>（<code>serve</code>、<code>asset</code>、<code>block</code> 等），其中 <code>serve</code> 的描述正是 &ldquo;Start kernel HTTP server&rdquo;。</p>
 <p>这个输出本身就是一个巨大的提示：kernel 期望的第一个参数是一个<strong>子命令</strong>，而不是 <code>--workspace</code> 或 <code>--accessAuthCode</code> 这样的 flag。</p>
@@ -293,7 +293,7 @@
 <li>查阅官方 README → 发现 v3.7.0 起必须显式传入 <code>serve</code> 子命令</li>
 <li>定位根因 → compose 文件中 <code>command</code> 缺少 <code>serve</code></li>
 </ol>
-<p><img src="/post-images/siyuan-v370-docker-restart-loop-fix/03-troubleshooting-flow.png" alt="故障排查流程。"></p>
+<p><img alt="故障排查流程。" src="/post-images/siyuan-v370-docker-restart-loop-fix/03-troubleshooting-flow.png"></p>
 <p><em>图 6：Docker 容器故障排查标准流程。docker logs 是第一线索，不要只看 docker ps。</em></p>
 <h2 id="四问题根因v370-cli-子命令架构变更">四、问题根因：v3.7.0 CLI 子命令架构变更</h2>
 <h3 id="打比方--餐厅点餐系统升级">打比方 —— 餐厅点餐系统升级</h3>
@@ -307,9 +307,9 @@
 <pre tabindex="0"><code>kernel serve --workspace=/siyuan/workspace/ --accessAuthCode=xxx
 </code></pre><p>Docker 镜像的 <code>ENTRYPOINT</code> 是 <code>/opt/siyuan/entrypoint.sh</code>，这个脚本负责设置 PUID/PGID 然后调用 <code>kernel</code>。但它本身不会自动加上 <code>serve</code> 子命令 —— 这个责任落在了 <code>CMD</code> 或 compose 的 <code>command</code> 字段上。</p>
 <p>在 docker-compose.yml 中，原来的配置是：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-yaml" data-lang="yaml"><span style="display:flex;"><span><span style="color:#f92672">command</span>: [<span style="color:#e6db74">&#39;--workspace=/siyuan/workspace/&#39;</span>, <span style="color:#e6db74">&#39;--accessAuthCode=xxx&#39;</span>]
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-yaml" data-lang="yaml"><span style="display:flex;"><span><span style="color:#f92672">command</span>: [<span style="color:#e6db74">&#39;--workspace=/siyuan/workspace/&#39;</span>, <span style="color:#e6db74">&#39;--accessAuthCode=xxx&#39;</span>]
 </span></span></code></pre></div><p>这些参数直接传给了 <code>entrypoint.sh</code>，然后传给 <code>kernel</code>。kernel 把 <code>--workspace</code> 当成子命令名来解析，发现不认识，于是报错退出。Docker 的 <code>restart: always</code> 策略又把它拉起来，如此往复。</p>
-<p><img src="/post-images/siyuan-v370-docker-restart-loop-fix/02-cli-breaking-change.png" alt="CLI 破坏性变更对比。"></p>
+<p><img alt="CLI 破坏性变更对比。" src="/post-images/siyuan-v370-docker-restart-loop-fix/02-cli-breaking-change.png"></p>
 <p><em>图 7：v3.6.x vs v3.7.0 CLI 参数结构对比。新增的 serve 子命令是唯一的区别。</em></p>
 <blockquote>
 <p><strong>注意</strong>：官方 README 第 216 行已经明确写了这个变更：
@@ -319,10 +319,10 @@
 <h2 id="五如何解决问题">五、如何解决问题</h2>
 <h3 id="51-修复原理">5.1 修复原理</h3>
 <p>修复极其简单：在 compose 文件的 <code>command</code> 数组最前面加一个 <code>'serve'</code>。</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-diff" data-lang="diff"><span style="display:flex;"><span><span style="color:#f92672">- command: [&#39;--workspace=/siyuan/workspace/&#39;, &#39;--accessAuthCode=xxx&#39;]
-</span></span></span><span style="display:flex;"><span><span style="color:#a6e22e">+ command: [&#39;serve&#39;, &#39;--workspace=/siyuan/workspace/&#39;, &#39;--accessAuthCode=xxx&#39;]
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-diff" data-lang="diff"><span style="display:flex;"><span><span style="color:#f92672">- command: [&#39;--workspace=/siyuan/workspace/&#39;, &#39;--accessAuthCode=xxx&#39;]
+</span></span></span><span style="display:flex;"><span><span style="color:#f92672"></span><span style="color:#a6e22e">+ command: [&#39;serve&#39;, &#39;--workspace=/siyuan/workspace/&#39;, &#39;--accessAuthCode=xxx&#39;]
 </span></span></span></code></pre></div><p>仅 7 个字符的改动，从无限重启到正常运行。</p>
-<p><img src="/post-images/siyuan-v370-docker-restart-loop-fix/05-compose-fix-diff.png" alt="compose 文件修改 diff。"></p>
+<p><img alt="compose 文件修改 diff。" src="/post-images/siyuan-v370-docker-restart-loop-fix/05-compose-fix-diff.png"></p>
 <p><em>图 8：docker-compose.yml 修改内容 —— 只在 command 数组最前面加了 &lsquo;serve&rsquo;。</em></p>
 <h3 id="52-一键修复脚本">5.2 一键修复脚本</h3>
 <p>以下脚本适用于三种操作系统。它们通过 SSH 连接到 Docker 宿主机，自动检测思源容器、备份原配置、修补 command 字段、重建容器。</p>
@@ -330,7 +330,7 @@
 <p><strong>安全提醒</strong>：脚本会自动备份原 docker-compose.yml（带时间戳），不会覆盖数据卷，可安全回滚。</p>
 </blockquote>
 <h4 id="windows-11powershell">Windows 11（PowerShell）</h4>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-powershell" data-lang="powershell"><span style="display:flex;"><span><span style="color:#75715e"># siyuan-fix.ps1 — 思源 v3.7.0 容器修复脚本</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-powershell" data-lang="powershell"><span style="display:flex;"><span><span style="color:#75715e"># siyuan-fix.ps1 — 思源 v3.7.0 容器修复脚本</span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># 用法：.\siyuan-fix.ps1 -ServerHost &lt;docker-host&gt; -ServerUser root -StackName siyuan-note-qiniu</span>
 </span></span><span style="display:flex;"><span><span style="color:#66d9ef">param</span>(
 </span></span><span style="display:flex;"><span>    [Parameter(<span style="color:#a6e22e">Mandatory</span>=$true)][<span style="color:#66d9ef">string</span>]$ServerHost,
@@ -400,8 +400,8 @@
 </span></span><span style="display:flex;"><span>Write-Host <span style="color:#e6db74">&#34;HTTP 状态码: </span>$healthCheck<span style="color:#e6db74"> (401 = 正常，锁屏密码生效)&#34;</span>
 </span></span><span style="display:flex;"><span>Write-Host <span style="color:#e6db74">&#34;</span><span style="color:#ae81ff">`n</span><span style="color:#e6db74">✅ 修复完成！&#34;</span> -ForegroundColor Green
 </span></span></code></pre></div><h4 id="ubuntu-2604--debian">Ubuntu 26.04 / Debian</h4>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e">#!/usr/bin/env bash
-</span></span></span><span style="display:flex;"><span><span style="color:#75715e"># siyuan-fix.sh — 思源 v3.7.0 容器修复脚本</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e">#!/usr/bin/env bash
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span><span style="color:#75715e"># siyuan-fix.sh — 思源 v3.7.0 容器修复脚本</span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># 用法: bash siyuan-fix.sh &lt;docker-host&gt; [ssh-user] [stack-name]</span>
 </span></span><span style="display:flex;"><span>set -euo pipefail
 </span></span><span style="display:flex;"><span>
@@ -462,8 +462,8 @@
 </span></span><span style="display:flex;"><span>echo -e <span style="color:#e6db74">&#34;HTTP 状态码: </span><span style="color:#e6db74">${</span>HTTP_CODE<span style="color:#e6db74">}</span><span style="color:#e6db74"> (401 = 正常，锁屏密码生效)&#34;</span>
 </span></span><span style="display:flex;"><span>echo -e <span style="color:#e6db74">&#34;\n</span><span style="color:#e6db74">${</span>GREEN<span style="color:#e6db74">}</span><span style="color:#e6db74">✅ 修复完成！</span><span style="color:#e6db74">${</span>NC<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
 </span></span></code></pre></div><h4 id="macos-26">macOS 26</h4>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e">#!/usr/bin/env bash
-</span></span></span><span style="display:flex;"><span><span style="color:#75715e"># siyuan-fix-mac.sh — 思源 v3.7.0 容器修复脚本 (macOS)</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e">#!/usr/bin/env bash
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span><span style="color:#75715e"># siyuan-fix-mac.sh — 思源 v3.7.0 容器修复脚本 (macOS)</span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># 用法: bash siyuan-fix-mac.sh &lt;docker-host&gt; [ssh-user] [stack-name]</span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># 前置条件: brew install coreutils (提供 gsed)</span>
 </span></span><span style="display:flex;"><span>
@@ -530,7 +530,7 @@
 </span></span><span style="display:flex;"><span>echo -e <span style="color:#e6db74">&#34;\n</span><span style="color:#e6db74">${</span>GREEN<span style="color:#e6db74">}</span><span style="color:#e6db74">✅ 修复完成！</span><span style="color:#e6db74">${</span>NC<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
 </span></span></code></pre></div><h3 id="53-手动修复步骤无需脚本">5.3 手动修复步骤（无需脚本）</h3>
 <p>如果你不想用脚本，手动修复也很简单：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># 1. SSH 到 Docker 宿主机</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># 1. SSH 到 Docker 宿主机</span>
 </span></span><span style="display:flex;"><span>ssh root@&lt;your-docker-host&gt;
 </span></span><span style="display:flex;"><span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># 2. 找到 compose 文件（通常在 Portainer 数据目录下）</span>
@@ -557,7 +557,7 @@
 </span></span><span style="display:flex;"><span>docker ps --filter name<span style="color:#f92672">=</span>siyuan
 </span></span><span style="display:flex;"><span>curl -o /dev/null -w <span style="color:#e6db74">&#34;%{http_code}\n&#34;</span> http://127.0.0.1:6001/
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># 返回 401 表示锁屏密码生效，服务正常！</span>
-</span></span></code></pre></div><p><img src="/post-images/siyuan-v370-docker-restart-loop-fix/shot-03-compose-up-success.png" alt="docker compose up 成功输出。"></p>
+</span></span></code></pre></div><p><img alt="docker compose up 成功输出。" src="/post-images/siyuan-v370-docker-restart-loop-fix/shot-03-compose-up-success.png"></p>
 <p><em>图 9：真实终端截图 — 重建容器后 Status 变为 Up，curl 返回 401（锁屏密码生效）。</em></p>
 <h2 id="六人工执行-vs-ai-agent-自动配置">六、人工执行 vs AI Agent 自动配置</h2>
 <h3 id="61-人工执行">6.1 人工执行</h3>
@@ -573,7 +573,7 @@
 <p>但实际经验是，大部分时间花在&quot;理解这个错误是什么意思&quot;上。<code>unknown flag</code> 这个提示对于不熟悉 CLI 子命令概念的人来说不够直观。</p>
 <h3 id="62-ai-agent-自动配置">6.2 AI Agent 自动配置</h3>
 <p>如果让 AI Agent 来修复，流程大致如下：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>给 Agent 的提示词：
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>给 Agent 的提示词：
 </span></span><span style="display:flex;"><span>---
 </span></span><span style="display:flex;"><span>我的思源笔记 Docker 容器一直在重启。请帮我排查和修复。
 </span></span><span style="display:flex;"><span>
@@ -593,50 +593,50 @@
 <li>备份 → 修改 compose → 重建容器 → 验证</li>
 </ol>
 <p><strong>实测效果</strong>：从开始排查到修复完成，Agent 用时约 <strong>10 分钟</strong>。如果人工来做，考虑到搜索、阅读文档和理解 CLI 架构变更，通常需要 20-30 分钟。</p>
-<p><img src="/post-images/siyuan-v370-docker-restart-loop-fix/06-agent-workflow.png" alt="AI Agent 修复流程。"></p>
+<p><img alt="AI Agent 修复流程。" src="/post-images/siyuan-v370-docker-restart-loop-fix/06-agent-workflow.png"></p>
 <p><em>图 10：AI Agent 远程修复 Docker 容器故障的完整流程。</em></p>
 <h3 id="63-给-agent-的护栏">6.3 给 Agent 的护栏</h3>
 <p>让 Agent 操作生产环境，以下护栏必不可少：</p>
 <table>
-	<thead>
-			<tr>
-					<th>护栏</th>
-					<th>说明</th>
-			</tr>
-	</thead>
-	<tbody>
-			<tr>
-					<td>备份优先</td>
-					<td>修改任何配置文件前必须先备份</td>
-			</tr>
-			<tr>
-					<td>不执行 OS 升级</td>
-					<td>Agent 只能操作容器层，不能动宿主系统</td>
-			</tr>
-			<tr>
-					<td>不泄露隐私</td>
-					<td>日志、配置、路径中不能包含真实 IP/域名/密钥</td>
-			</tr>
-			<tr>
-					<td>先诊断后动手</td>
-					<td>必须通过 logs/inspect 确认根因后再修改</td>
-			</tr>
-			<tr>
-					<td>验证闭环</td>
-					<td>修复后必须检查容器状态和 HTTP 可达性</td>
-			</tr>
-			<tr>
-					<td>可回滚</td>
-					<td>保留备份文件和回滚命令</td>
-			</tr>
-	</tbody>
+<thead>
+<tr>
+<th>护栏</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>备份优先</td>
+<td>修改任何配置文件前必须先备份</td>
+</tr>
+<tr>
+<td>不执行 OS 升级</td>
+<td>Agent 只能操作容器层，不能动宿主系统</td>
+</tr>
+<tr>
+<td>不泄露隐私</td>
+<td>日志、配置、路径中不能包含真实 IP/域名/密钥</td>
+</tr>
+<tr>
+<td>先诊断后动手</td>
+<td>必须通过 logs/inspect 确认根因后再修改</td>
+</tr>
+<tr>
+<td>验证闭环</td>
+<td>修复后必须检查容器状态和 HTTP 可达性</td>
+</tr>
+<tr>
+<td>可回滚</td>
+<td>保留备份文件和回滚命令</td>
+</tr>
+</tbody>
 </table>
 <h2 id="七修复后的验证">七、修复后的验证</h2>
 <p>修复完成后，思源笔记的服务会正常运行。访问 <code>http://&lt;your-host&gt;:&lt;port&gt;/</code>（本例中端口为 6001），会看到思源的锁屏页面：</p>
-<p><img src="/post-images/siyuan-v370-docker-restart-loop-fix/shot-07-real-siyuan-login-large.png" alt="思源笔记锁屏登录页面。"></p>
+<p><img alt="思源笔记锁屏登录页面。" src="/post-images/siyuan-v370-docker-restart-loop-fix/shot-07-real-siyuan-login-large.png"></p>
 <p><em>图 11：真实截图 — 修复后思源笔记 v3.7.0 锁屏登录页面（大尺寸）。输入 accessAuthCode 即可进入笔记。</em></p>
 <p>输入在 <code>--accessAuthCode</code> 中设置的密码即可进入笔记。如果看到 HTTP 401 响应（用 curl 测试），说明锁屏密码生效，服务完全正常。</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>$ curl -o /dev/null -w <span style="color:#e6db74">&#34;%{http_code}\n&#34;</span> http://&lt;host&gt;:&lt;port&gt;/
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>$ curl -o /dev/null -w <span style="color:#e6db74">&#34;%{http_code}\n&#34;</span> http://&lt;host&gt;:&lt;port&gt;/
 </span></span><span style="display:flex;"><span><span style="color:#ae81ff">401</span>
 </span></span></code></pre></div><p><strong>HTTP 401 在这里不是错误</strong> —— 它表示思源的访问控制正在工作，只有输入正确密码才能进入。</p>
 <h2 id="八qa">八、Q&amp;A</h2>
@@ -652,13 +652,13 @@
 <p>不会。数据存储在 <code>/siyuan/workspace</code>（或你挂载的对应目录）中，修复只改了 compose 文件的 <code>command</code> 字段，不涉及数据卷。而且修复前会自动备份 compose 文件。</p>
 <p><strong>Q6：有没有比改 compose 更简单的方法？</strong></p>
 <p>如果你用 <code>docker run</code> 而不是 compose，只需在命令中加上 <code>serve</code>：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>docker run -d <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span>  -v /siyuan/workspace:/siyuan/workspace <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span>  -p 6806:6806 <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span>  b3log/siyuan <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span>  serve <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span>  --workspace<span style="color:#f92672">=</span>/siyuan/workspace/ <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span>  --accessAuthCode<span style="color:#f92672">=</span>xxx
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>docker run -d <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  -v /siyuan/workspace:/siyuan/workspace <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  -p 6806:6806 <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  b3log/siyuan <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  serve <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  --workspace<span style="color:#f92672">=</span>/siyuan/workspace/ <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  --accessAuthCode<span style="color:#f92672">=</span>xxx
 </span></span></code></pre></div><p><strong>Q7：其他 Docker 镜像也会有这种问题吗？</strong></p>
 <p>任何从&quot;无子命令 CLI&quot;升级到&quot;有子命令 CLI&quot;的软件都可能出现类似问题。升级前看一下 CHANGELOG 中是否有 &ldquo;CLI&rdquo;、&ldquo;command&rdquo;、&ldquo;breaking change&rdquo; 等关键词是个好习惯。</p>
 <h2 id="九总结">九、总结</h2>

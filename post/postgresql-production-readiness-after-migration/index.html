@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>迁完就敢上线？我让 PostgreSQL 扛 150 个连接、制造 18 万条死元组，再亲手恢复一次误删 - 魔都水滴</title>
+<meta name="description" content="先说结论 从 MySQL 迁到 PostgreSQL、数据核对一致、参数也调好了，仍然不能证明它可以上线。真正的生产就绪，至少要亲手撞过四道墙：连接耗尽时业务会怎样、慢 SQL 能否在证据链里被找到、死元组能否被及时回收、误删之后能否恢复到正确时刻。我在一个不发布宿主端口、只放合成数据的 PostgreSQL 18.6 …">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://blog.margrop.net/post/postgresql-production-readiness-after-migration/"><meta property="og:site_name" content="魔都水滴">
+<meta property="og:title" content="迁完就敢上线？我让 PostgreSQL 扛 150 个连接、制造 18 万条死元组，再亲手恢复一次误删 - 魔都水滴">
+<meta property="og:description" content="先说结论 从 MySQL 迁到 PostgreSQL、数据核对一致、参数也调好了，仍然不能证明它可以上线。真正的生产就绪，至少要亲手撞过四道墙：连接耗尽时业务会怎样、慢 SQL 能否在证据链里被找到、死元组能否被及时回收、误删之后能否恢复到正确时刻。我在一个不发布宿主端口、只放合成数据的 PostgreSQL 18.6 …">
+<meta property="og:url" content="https://blog.margrop.net/post/postgresql-production-readiness-after-migration/">
+<meta property="og:locale" content="zh_CN"><meta property="og:type" content="article"><meta property="og:locale:alternate" content="en_US"><meta property="og:image" content="https://blog.margrop.net/images/avatar.png"><meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="迁完就敢上线？我让 PostgreSQL 扛 150 个连接、制造 18 万条死元组，再亲手恢复一次误删 - 魔都水滴">
+<meta name="twitter:description" content="先说结论 从 MySQL 迁到 PostgreSQL、数据核对一致、参数也调好了，仍然不能证明它可以上线。真正的生产就绪，至少要亲手撞过四道墙：连接耗尽时业务会怎样、慢 SQL 能否在证据链里被找到、死元组能否被及时回收、误删之后能否恢复到正确时刻。我在一个不发布宿主端口、只放合成数据的 PostgreSQL 18.6 …"><meta name="twitter:image" content="https://blog.margrop.net/images/avatar.png"><link rel="alternate" hreflang="zh-CN" href="https://blog.margrop.net/post/postgresql-production-readiness-after-migration/"><link rel="alternate" hreflang="en-US" href="https://blog.margrop.net/en/post/postgresql-production-readiness-after-migration/"><link rel="alternate" hreflang="x-default" href="https://blog.margrop.net/"><meta property="article:published_time" content="2026-08-23T17:20:00&#43;08:00">
+<meta property="article:modified_time" content="2026-08-23T17:20:00&#43;08:00"><meta property="article:tag" content="PostgreSQL"><meta property="article:tag" content="MySQL"><meta property="article:tag" content="数据库"><meta property="article:tag" content="database"><meta property="article:tag" content="运维"><meta property="article:tag" content="故障排查"><meta property="article:tag" content="数据迁移"><meta property="article:tag" content="教程"><script type="application/ld+json">{"@context":"https://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"魔都水滴"},"dateModified":"2026-08-23T17:20:00+08:00","datePublished":"2026-08-23T17:20:00+08:00","description":"先说结论 从 MySQL 迁到 PostgreSQL、数据核对一致、参数也调好了，仍然不能证明它可以上线。真正的生产就绪，至少要亲手撞过四道墙：连接耗尽时业务会怎样、慢 SQL 能否在证据链里被找到、死元组能否被及时回收、误删之后能否恢复到正确时刻。我在一个不发布宿主端口、只放合成数据的 PostgreSQL 18.6 …","headline":"迁完就敢上线？我让 PostgreSQL 扛 150 个连接、制造 18 万条死元组，再亲手恢复一次误删","mainEntityOfPage":"https://blog.margrop.net/post/postgresql-production-readiness-after-migration/","url":"https://blog.margrop.net/post/postgresql-production-readiness-after-migration/"}</script>
+    <meta name="baidu-site-verification" content="code-sVFZ8SER59" />
+    <script src="/js/theme-toggle.js"></script>
+
+    
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-3J2W592DHJ"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-3J2W592DHJ');
+    </script>
+
+    <style>
+    :root {
+        color-scheme: light;
+        --page-bg: #fff;
+        --surface-bg: #f4f4f4;
+        --text: #222;
+        --muted: #666;
+        --subtle: #777;
+        --border: #eee;
+        --border-strong: #ddd;
+        --link: #006CFF;
+        --tag-bg: #eee;
+        --button-bg: #fff;
+        --button-primary-bg: #333;
+    }
+    @media (prefers-color-scheme: dark) {
+        :root:not([data-theme]) {
+            color-scheme: dark;
+            --page-bg: #111315;
+            --surface-bg: #1d2126;
+            --text: #e8eaed;
+            --muted: #aeb4bd;
+            --subtle: #9aa2ad;
+            --border: #30353d;
+            --border-strong: #454c56;
+            --link: #79b8ff;
+            --tag-bg: #2a3038;
+            --button-bg: #1d2126;
+            --button-primary-bg: #e8eaed;
+        }
+    }
+    html[data-theme="dark"] {
+        color-scheme: dark;
+        --page-bg: #111315;
+        --surface-bg: #1d2126;
+        --text: #e8eaed;
+        --muted: #aeb4bd;
+        --subtle: #9aa2ad;
+        --border: #30353d;
+        --border-strong: #454c56;
+        --link: #79b8ff;
+        --tag-bg: #2a3038;
+        --button-bg: #1d2126;
+        --button-primary-bg: #e8eaed;
+    }
+    html[data-theme="light"] {
+        color-scheme: light;
+        --page-bg: #fff;
+        --surface-bg: #f4f4f4;
+        --text: #222;
+        --muted: #666;
+        --subtle: #777;
+        --border: #eee;
+        --border-strong: #ddd;
+        --link: #006CFF;
+        --tag-bg: #eee;
+        --button-bg: #fff;
+        --button-primary-bg: #333;
+    }
+    body { background: var(--page-bg); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 860px; margin: 0 auto; padding: 20px; line-height: 1.7; color: var(--text); }
+    h1 { border-bottom: 2px solid var(--border-strong); padding-bottom: 10px; }
+    article > h1 { font-size: 2em; line-height: 1.3; margin-bottom: 12px; }
+    .post-list { list-style: none; padding: 0; }
+    .post-list li { margin: 15px 0; }
+    .post-list a { text-decoration: none; color: var(--text); font-size: 18px; }
+    .post-list a:hover { color: var(--link); }
+    .date { color: var(--muted); font-size: 14px; margin-right: 10px; }
+    .tags { margin-top: 8px; }
+    .tag { background: var(--tag-bg); padding: 2px 8px; border-radius: 3px; font-size: 12px; margin-right: 5px; display: inline-block; }
+    nav { margin-bottom: 18px; border-bottom: 1px solid var(--border); padding-bottom: 15px; }
+    nav a { margin-right: 20px; text-decoration: none; color: var(--text); font-size: 16px; }
+    nav a:hover { color: var(--link); }
+    .language-switcher { display: flex; align-items: center; gap: 10px; margin: -8px 0 26px; }
+    .language-switcher a { display: inline-block; padding: 4px 10px; border: 1px solid var(--border-strong); border-radius: 999px; color: var(--muted); text-decoration: none; font-size: 14px; }
+    .language-switcher a.active { background: var(--link); border-color: var(--link); color: #fff; }
+    .content { line-height: 1.8; }
+    .content code { background: var(--surface-bg); padding: 2px 5px; border-radius: 3px; }
+    .content pre { background: var(--surface-bg); padding: 15px; overflow-x: auto; border-radius: 5px; }
+    .content img { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+    .content .code-snippet__fix {
+        margin: 0 0 1.5em;
+    }
+    .content .code-snippet__fix .code-snippet__line-index {
+        display: none !important;
+    }
+    .meta { color: var(--muted); font-size: 14px; margin-bottom: 14px; }
+    .meta-separator { margin: 0 6px; color: var(--subtle); }
+    .site-stats { display: flex; flex-wrap: wrap; gap: 10px 18px; margin: 28px 0 8px; padding-top: 12px; border-top: 1px solid var(--border); color: var(--subtle); font-size: 12px; }
+    a { color: var(--link); }
+    .hero { padding: 12px 0 24px; }
+    .hero h1 { border-bottom: 2px solid #333; }
+    .eyebrow { color: var(--muted); font-size: 12px; letter-spacing: .12em; margin: 0 0 8px; }
+    .hero-tagline { font-size: 18px; margin: 12px 0 8px; }
+    .hero-copy { color: var(--muted); margin: 0 0 14px; }
+    .hero-actions { margin: 14px 0 4px; }
+    .button { display: inline-block; margin-right: 12px; border: 1px solid var(--border-strong); border-radius: 3px; padding: 4px 10px; text-decoration: none; color: var(--text); background: var(--button-bg); font-size: 14px; }
+    .button-primary { background: var(--button-primary-bg); border-color: var(--button-primary-bg); color: var(--page-bg); }
+    .theme-toggle { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 1px solid var(--border-strong); border-radius: 999px; background: var(--button-bg); color: var(--text); cursor: pointer; font: inherit; font-size: 16px; }
+    .theme-toggle:hover { border-color: var(--link); color: var(--link); }
+    .la-theme-widget { margin: 12px 0 20px; min-height: 24px; color: var(--text); }
+    .identity-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: 16px 0; }
+    .identity-grid div { display: flex; flex-direction: column; }
+    .identity-grid strong { font-size: 15px; }
+    .identity-grid span, .topic-card span, .featured-list small { color: var(--muted); font-size: 13px; }
+    .section-block { padding-top: 28px; }
+    .section-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+    .section-heading h2 { margin: 0; }
+    .section-heading a { font-size: 14px; }
+    .topic-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+    .topic-card { display: block; padding: 14px; border: 1px solid var(--border); text-decoration: none; color: var(--text); }
+    .topic-card:hover { border-color: var(--border-strong); }
+    .topic-card strong { display: block; margin: 4px 0; font-size: 17px; }
+    .topic-index, .featured-list > a > span { color: var(--muted) !important; font-size: 12px !important; }
+    .featured-list { border-top: 1px solid var(--border); }
+    .featured-list > a { display: flex; gap: 14px; padding: 12px 0; border-bottom: 1px solid var(--border); text-decoration: none; color: var(--text); }
+    .featured-list div { display: flex; flex-direction: column; }
+    .latest-block { max-width: 860px; }
+    @media (max-width: 680px) {
+        body { padding: 16px; }
+        nav a { display: inline-block; margin-right: 12px; margin-bottom: 8px; }
+        .identity-grid { grid-template-columns: repeat(2, 1fr); }
+        .topic-grid { grid-template-columns: 1fr; }
+    }
+</style>
+
+</head>
+<body>
+    <nav>
+  <a href="/">首页</a>
+  <a href="/start-here/">开始这里</a>
+  <a href="/career/">Portfolio</a>
+  <a href="/tag/ai/">AI Agent</a>
+  <a href="/tag/docker/">Self-hosting</a>
+  <a href="/tag/%e8%bf%90%e7%bb%b4/">Engineering</a>
+  <a href="/post/">归档</a>
+  <a href="/tags/">标签</a>
+  <a href="/about/">关于</a>
+  <a href="https://github.com/margrop" target="_blank" rel="noopener">GitHub</a>
+</nav>
+
+    <div class="language-switcher">
+  <button class="theme-toggle" type="button" data-theme-toggle aria-label="切换到暗黑模式" aria-pressed="false">🌙</button>
+
+  
+  
+    <a href="/post/postgresql-production-readiness-after-migration/" class="active">中文</a>
+  
+    <a href="/en/post/postgresql-production-readiness-after-migration/" class="">English</a>
+  
+  
+</div>
+
+    
+    <article>
+        <h1>迁完就敢上线？我让 PostgreSQL 扛 150 个连接、制造 18 万条死元组，再亲手恢复一次误删</h1>
+        <div class="meta">
+            发布时间: 2026-08-23
+            <span class="meta-separator">·</span>
+            <span>阅读量 <span data-page-view-count>--</span></span>
+        </div>
+        
+<div class="tags">
+    
+    <a href="/tag/postgresql/"><span class="tag">PostgreSQL</span></a>
+    
+    <a href="/tag/mysql/"><span class="tag">MySQL</span></a>
+    
+    <a href="/tag/%E6%95%B0%E6%8D%AE%E5%BA%93/"><span class="tag">数据库</span></a>
+    
+    <a href="/tag/database/"><span class="tag">database</span></a>
+    
+    <a href="/tag/%E8%BF%90%E7%BB%B4/"><span class="tag">运维</span></a>
+    
+    <a href="/tag/%E6%95%85%E9%9A%9C%E6%8E%92%E6%9F%A5/"><span class="tag">故障排查</span></a>
+    
+    <a href="/tag/%E6%95%B0%E6%8D%AE%E8%BF%81%E7%A7%BB/"><span class="tag">数据迁移</span></a>
+    
+    <a href="/tag/%E6%95%99%E7%A8%8B/"><span class="tag">教程</span></a>
+    
+</div>
+
+
+        <div class="content">
+            <blockquote>
+<p><strong>先说结论</strong></p>
+<p>从 MySQL 迁到 PostgreSQL、数据核对一致、参数也调好了，仍然不能证明它可以上线。真正的生产就绪，至少要亲手撞过四道墙：<strong>连接耗尽时业务会怎样、慢 SQL 能否在证据链里被找到、死元组能否被及时回收、误删之后能否恢复到正确时刻</strong>。我在一个不发布宿主端口、只放合成数据的 PostgreSQL 18.6 沙盒里做了破坏性彩排：150 个直连撞出 <code>too many clients</code>；同样 150 个客户端经过 PgBouncer 后只占约 21 个数据库后端连接，完成 35,751 笔事务且 0 失败；一条查询从 61.953ms 降到 2.153ms；18 万条死元组经普通 VACUUM 变为 0；最后删掉一行，再用基础备份和 22 个归档 WAL 把它恢复回来。本文是 PostgreSQL 系列的收尾篇，也附上 Windows 11、Ubuntu 26.04、macOS 26 三套一键实验脚本和 Agent 自动验收指令。</p>
+</blockquote>
+<p><img alt="原创封面：迁移通过不等于生产就绪，必须通过连接、查询、清理和恢复四道闸。" src="/post-images/postgresql-production-readiness-after-migration/00-cover.svg"></p>
+<p><em>图 1：原创 SVG 封面。所有数字均来自本文可下载的隔离实验，不是容量承诺，也不是拿别人的跑分拼出来的故事。</em></p>
+<h2 id="一为什么还要有一篇收尾">一、为什么还要有一篇「收尾」</h2>
+<p>这个系列已经回答了三个问题：第一篇解释<a href="/post/why-projects-switch-from-mysql-to-postgresql/">为什么越来越多项目从 MySQL 转向 PostgreSQL</a>；第二篇完成<a href="/post/mysql-to-postgresql-migration-guide/">从 MySQL 到 PostgreSQL 的迁移与核对</a>；第三篇把<a href="/post/postgresql-production-tuning-ten-knobs/">搬家后必须调整的 10 个生产开关</a>拧了一遍。</p>
+<p>但它们共同缺少最后一个动词：<strong>证明</strong>。</p>
+<p>迁移像把一家医院从旧楼搬进新楼。病历都搬到了、灯也亮了、空调也调好了，并不代表明天可以接诊。你还要试一次停电，看看备用电源是否接管；要让很多人同时挂号，看看窗口是否堵死；还要故意拿错一份病历，再确认能不能追回正确版本。数据库上线也是这样：配置表是「我们觉得可以」，故障彩排才是「证据说可以」。</p>
+<p><img alt="原创路线图：PostgreSQL 系列从选型、迁移、调优走到故障彩排。" src="/post-images/postgresql-production-readiness-after-migration/01-series-map.svg"></p>
+<p><em>图 2：原创图。选型、迁移、调优、验证不是四篇互不相干的文章，而是一条链；最后一环没测，前三环的成功仍可能在上线当天归零。</em></p>
+<p>本文不会把一个小沙盒伪装成生产容量测试。实验只回答「机制是否按预期工作」：连接池是否真的折叠连接、执行计划是否真的变化、VACUUM 是否真的清掉死元组、PITR 是否真的找回目标时刻之前的数据。真实系统还要用真实数据分布、真实并发模型和真实磁盘再跑一轮。</p>
+<h2 id="二问题表现四种平时没事上线就出事">二、问题表现：四种「平时没事，上线就出事」</h2>
+<h3 id="21-第-101-位客人把门堵死">2.1 第 101 位客人把门堵死</h3>
+<p>PostgreSQL 采用一连接一后端进程的模型。连接不是网页标签页，多开几个无所谓；它更像餐厅里的专属服务员，每个人都要占内存、进程和调度时间。实验把 <code>max_connections</code> 固定在 100，然后直接发起 150 个客户端：</p>
+<p><img alt="真实实验输出截图：150 个客户端直连 PostgreSQL，连接上限被击穿。" src="/post-images/postgresql-production-readiness-after-migration/01-real-connection-wall.webp"></p>
+<p><em>图 3：真实实验输出截图，地址已经脱敏。进程非零退出，第 111 个客户端创建连接时收到 <code>FATAL: sorry, too many clients already</code>。这不是「慢一点」，而是请求根本进不了数据库。</em></p>
+<p>生产事故里更糟的一幕是：连接全被业务占满后，DBA 的诊断连接也进不去。只把 <code>max_connections</code> 从 100 改成 500，等于看见餐厅排队就临时招 400 名服务员——厨房面积没变，所有人反而互相碰撞。</p>
+<h3 id="22-同一条-sql读了不该读的-30-万行">2.2 同一条 SQL，读了不该读的 30 万行</h3>
+<p>慢 SQL 很少会主动在日志里写「我是因为缺索引而慢」。你只能从执行计划、缓存命中、I/O 时间和调用次数反推。本文的合成 <code>orders</code> 表有 30 万行，目标条件实际只命中 30 行；没有合适索引时，数据库还是要把几乎整座图书馆翻一遍。</p>
+<h3 id="23-delete-不是碎纸机">2.3 DELETE 不是碎纸机</h3>
+<p>PostgreSQL 的 MVCC 会保留旧行版本，让正在运行的事务仍能看到一致世界。UPDATE 通常会产生一个新版本，DELETE 也只是把旧版本标记为以后可清理。它像衣柜：旧衣服被塞进「待处理」格子，不会在你按下删除键的一瞬间消失。autovacuum 跟不上时，扫描、索引和磁盘都会慢慢变胖。</p>
+<h3 id="24-备份成功却没人证明它能恢复">2.4 备份成功，却没人证明它能恢复</h3>
+<p>监控里每天一个绿色的「备份任务成功」，只能证明文件被写了；它不能证明文件完整、WAL 连续、恢复参数正确，更不能证明值班同学知道应该停在哪一秒。<strong>未经恢复的备份，只是一种希望。</strong></p>
+<h2 id="三根因团队交付了数据库却没有交付安全网">三、根因：团队交付了数据库，却没有交付「安全网」</h2>
+<p>四种表现不是四个孤立 Bug，根因都是同一个：上线清单只检查静态状态——服务能启动、端口能连、行数一致、配置已加载——没有检查系统在压力和错误下如何退化。</p>
+<p>一个生产数据库应同时交付四张安全网：</p>
+<ol>
+<li><strong>流量安全网</strong>：应用连接先经过池化，数据库保留救火连接，过载时能排队或快速失败。</li>
+<li><strong>证据安全网</strong>：<code>pg_stat_statements</code>、慢查询日志、<code>EXPLAIN (ANALYZE, BUFFERS)</code> 能把「感觉慢」变成具体计划和 I/O。</li>
+<li><strong>空间安全网</strong>：autovacuum 的阈值、持续时间、冻结年龄和死元组都可见，清理不会悄悄落后几周。</li>
+<li><strong>时间安全网</strong>：基础备份、归档 WAL、恢复目标、RPO/RTO 和演练记录连成闭环。</li>
+</ol>
+<p>下面逐道闸复盘真实实验。</p>
+<h2 id="四第一道闸连接池不是加速器是限流阀">四、第一道闸：连接池不是加速器，是限流阀</h2>
+<p>PgBouncer 的 transaction pooling 可以把大量客户端会话复用到较少的数据库连接上。它像餐厅门口的领位员：150 位客人可以先拿号，后厨不必同时配 150 名厨师；某一桌点单结束，厨师马上服务下一桌。</p>
+<p><img alt="原创图解：150 个客户端经过 PgBouncer transaction 模式复用到有限后端连接。" src="/post-images/postgresql-production-readiness-after-migration/02-pool-restaurant.svg"></p>
+<p><em>图 4：原创图。transaction 模式按事务归还连接，因此会话级状态、临时表、部分 prepared statement 用法必须先查兼容性，不能只改连接地址就宣布完成。</em></p>
+<p>同样的 150 客户端、同一数据库和同一隔离网络，换到 PgBouncer 之后：</p>
+<p><img alt="真实实验输出截图：PgBouncer 承接 150 个客户端，0 笔事务失败。" src="/post-images/postgresql-production-readiness-after-migration/02-real-pgbouncer.webp"></p>
+<p><em>图 5：真实实验输出截图。负载期间数据库后端连接约 21 个；12 秒完成 35,751 笔只读事务，失败数 0，平均延迟 50.076ms，吞吐 2,995.425 TPS。这个数字只描述本次沙盒，不等于你的生产容量。</em></p>
+<p>上线前至少确认这些问题：</p>
+<ul>
+<li>连接池采用 session、transaction 还是 statement 模式？为什么？</li>
+<li>应用是否依赖 <code>SET</code> 后长期保留的会话状态、临时表或 session advisory lock？</li>
+<li><code>pool_size</code> 是否按数据库可承受并发算出，而不是照抄网上配置？</li>
+<li>是否保留运维专用角色与 <code>superuser_reserved_connections</code> / <code>reserved_connections</code>？</li>
+<li>池等待时间、客户端排队数、数据库实际后端数是否都进监控？</li>
+</ul>
+<p>结论不是「永远用 transaction 模式」，而是<strong>明确选择模式，并用应用行为验证兼容性</strong>。</p>
+<h2 id="五第二道闸慢-sql-要从猜变成查案">五、第二道闸：慢 SQL 要从「猜」变成「查案」</h2>
+<p>本次查询条件为 <code>customer_id = 4241 AND status = 'paid'</code>。建索引前，执行计划走 <code>Parallel Seq Scan</code>：</p>
+<p><img alt="真实实验输出截图：建索引前为 Parallel Seq Scan。" src="/post-images/postgresql-production-readiness-after-migration/03-real-slow-before.webp"></p>
+<p><em>图 6：真实实验输出截图。3 个执行进程每个返回约 10 行，同时过滤掉约 99,990 行；总执行时间 61.953ms。这里真正重要的不是「61」，而是扫描策略和被丢弃行数。</em></p>
+<p>然后创建与筛选条件匹配的复合索引并执行 <code>ANALYZE</code>：</p>
+<p><img alt="真实实验输出截图：建复合索引后改为 Bitmap Index Scan 和 Bitmap Heap Scan。" src="/post-images/postgresql-production-readiness-after-migration/04-real-slow-after.webp"></p>
+<p><em>图 7：真实实验输出截图。索引找到 30 个条目，再访问 30 个准确 heap block，总执行时间 2.153ms；本次运行约快 28.8 倍。缓存、并发和数据分布变化后倍率也会变化。</em></p>
+<p><img alt="原创图解：没有目录卡片要翻遍书架，有复合索引可直接定位 30 行。" src="/post-images/postgresql-production-readiness-after-migration/03-query-rescue.svg"></p>
+<p><em>图 8：原创图。索引像图书馆目录，不是书越多目录越多越好；每个索引都会增加写入成本、占磁盘并需要维护。只为高价值查询建有证据支持的索引。</em></p>
+<p>推荐的查案顺序是：</p>
+<ol>
+<li>用 <code>pg_stat_statements</code> 找总耗时、平均耗时、调用次数和临时块最多的 SQL，而不是先盯一条偶发日志。</li>
+<li>在安全的预生产副本上执行 <code>EXPLAIN (ANALYZE, BUFFERS)</code>；<code>ANALYZE</code> 会真的运行语句，面对 UPDATE/DELETE 必须用事务回滚或只做普通 <code>EXPLAIN</code>。</li>
+<li>比较估算行数与实际行数。相差几个数量级时，先查统计信息、数据倾斜和相关列，而不一定马上建索引。</li>
+<li>修改后重复同一组参数、同一缓存条件的测试，并观察写入成本，避免只截最漂亮的一次。</li>
+</ol>
+<p><code>pg_stat_statements</code> 像机场的航班总榜，告诉你哪条航线累计延误最多；单条慢日志像一名旅客的投诉。两者都需要，但不能只凭投诉决定扩建跑道。</p>
+<h2 id="六第三道闸普通-vacuum-回收的是可复用空间">六、第三道闸：普通 VACUUM 回收的是「可复用空间」</h2>
+<p>实验先更新 15 万行、再删除 3 万行，统计视图观察到 18 万条 dead tuples：</p>
+<p><img alt="真实实验输出截图：普通 VACUUM 前观察到 180,000 条死元组。" src="/post-images/postgresql-production-readiness-after-migration/05-real-dead-tuples-before.webp"></p>
+<p><em>图 9：真实实验输出截图。为了得到稳定证据，实验暂时关闭该表 autovacuum，制造垃圾后执行 ANALYZE 与统计刷新；生产环境不要长期关闭 autovacuum。</em></p>
+<p>执行普通 <code>VACUUM (ANALYZE)</code> 后：</p>
+<p><img alt="真实实验输出截图：普通 VACUUM 后死元组为 0，但总大小仍约 90MB。" src="/post-images/postgresql-production-readiness-after-migration/06-real-dead-tuples-after.webp"></p>
+<p><em>图 10：真实实验输出截图。<code>n_dead_tup</code> 变为 0，<code>vacuum_count</code> 增加；总大小仍约 90MB。这恰好纠正了「VACUUM 一定缩文件」的常见误解。</em></p>
+<p><img alt="原创图解：普通 VACUUM 是整理衣柜，不是把房子缩小。" src="/post-images/postgresql-production-readiness-after-migration/04-vacuum-closet.svg"></p>
+<p><em>图 11：原创图。普通 VACUUM 把格子标记为可复用，通常不会把文件尾部空间立即还给操作系统；<code>VACUUM FULL</code> 会重写并锁表，<code>pg_repack</code> 也需要额外空间和操作评估。</em></p>
+<p>生产监控不要只看当前 dead tuples，还要看趋势与原因：长事务是否阻止回收、autovacuum 是否被取消、表级 scale factor 是否适合超大表、<code>relfrozenxid</code> 年龄是否逼近风险线。保洁不是「今天扫过一次」就永远干净，而是客流、垃圾产生速度和保洁能力三者的持续平衡。</p>
+<h2 id="七第四道闸亲手删一次再把时间拨回来">七、第四道闸：亲手删一次，再把时间拨回来</h2>
+<p>PITR 的原理很像游戏存档：基础备份是某一刻的完整存档，归档 WAL 是之后每一步操作的录像。恢复时先加载存档，再把录像播放到误操作之前按暂停。</p>
+<p><img alt="原创时间线：基础备份、目标行写入、恢复目标、误删和恢复。" src="/post-images/postgresql-production-readiness-after-migration/05-pitr-timeline.svg"></p>
+<p><em>图 12：原创图。恢复目标必须在事故之前且包含目标事务。生产恢复应优先在旁路实例完成校验，避免把唯一的原库直接改造成恢复试验场。</em></p>
+<p>实验流程是：完成基础备份；插入标记行并切换 WAL；记录恢复目标；再删除该行并切换 WAL；确认当前库查询为 0 行；停止源库，把基础备份复制到新卷；配置 <code>recovery.signal</code>、<code>restore_command</code> 与 <code>recovery_target_time</code>；启动隔离恢复实例并查询标记行。</p>
+<p><img alt="真实实验输出截图：误删后为 0 行，PITR 恢复后为 1 行。" src="/post-images/postgresql-production-readiness-after-migration/07-real-pitr.webp"></p>
+<p><em>图 13：真实实验输出截图。事故后目标行数为 0，归档目录中有 22 个 WAL 文件；恢复实例进入 running/ready 状态，目标行和内容均恢复。实验没有发布宿主端口。</em></p>
+<p>这证明的是「恢复链条可工作」，不是生产 RTO。真实 RTO 还包含下载备份、拉取归档、回放大量 WAL、业务校验、DNS/连接切换和沟通决策。真正的验收表应该写：</p>
+<ul>
+<li><strong>RPO</strong>：最多允许丢多少分钟数据？归档延迟是否小于它？</li>
+<li><strong>RTO</strong>：从宣布恢复到业务重新开放要多久？最近一次演练实测多少？</li>
+<li>备份是否异地、加密、不可被同一管理员一键删除？</li>
+<li>谁能发起恢复、谁批准、谁核对关键业务数据？</li>
+<li>恢复后如何处理时间线分叉和旧主库，避免双写？</li>
+</ul>
+<h2 id="八最终验收不是一张服务为绿的截图">八、最终验收：不是一张「服务为绿」的截图</h2>
+<p><img alt="原创清单：连接、查询、VACUUM、恢复四道闸全部有证据才允许切流。" src="/post-images/postgresql-production-readiness-after-migration/06-launch-gates.svg"></p>
+<p><em>图 14：原创图。生产就绪是四个绿色闸门，不是 <code>SELECT 1</code> 成功一次。任何一项没有负责人、阈值和演练证据，都应该标成未知，而不是默认通过。</em></p>
+<p>完整脚本最后会生成一份验收摘要：</p>
+<p><img alt="真实实验输出截图：六项 PostgreSQL 生产就绪实验全部 PASS。" src="/post-images/postgresql-production-readiness-after-migration/08-real-acceptance.webp"></p>
+<p><em>图 15：真实实验输出截图。直连上限、池化并发、慢 SQL 计划变化、死元组回收、PITR 找回误删行、无宿主端口，六项全部通过。</em></p>
+<p>建议把切流拆成三个时间尺度：</p>
+<p><strong>T-30 天</strong>：冻结数据类型映射；用生产规模副本跑 Top SQL；确定 PgBouncer 模式；定义 RPO/RTO；完成第一次恢复演练；建立 dead tuples、冻结年龄、归档失败、连接等待告警。</p>
+<p><strong>T-7 天</strong>：重新核对行数、校验和与关键业务规则；压测连接池和应用重连；演练回滚；确认值班表、变更窗口、DNS/连接串 TTL；保留旧库只读窗口。</p>
+<p><strong>T-0</strong>：暂停或双写收敛；记录最后增量位置；执行最终核对；按百分比放量；观察错误率、连接等待、P95/P99、WAL 产生速度和复制/归档延迟。指标越线就按事先约定回滚，不能在群里临时投票。</p>
+<p><strong>T+1 至 T+30</strong>：不要立即拆旧库；复盘新出现的计划、autovacuum 和容量趋势；至少再做一次从线上备份到隔离环境的恢复。迁移完成的真正标志不是旧库关机，而是新库的运行手册、告警和演练都有人接手。</p>
+<h2 id="九三平台一键实验windows-11--ubuntu-2604--macos-26">九、三平台一键实验：Windows 11 / Ubuntu 26.04 / macOS 26</h2>
+<blockquote>
+<p><strong>安全说明</strong>：脚本只操作固定实验项目，使用合成数据，不读取真实凭据，不发布宿主端口，不运行全局 <code>docker system prune</code>。它会拉取 PostgreSQL 18 官方镜像并在本地消耗数百 MB 临时空间；请勿在装有同名实验资源的环境并行运行。</p>
+</blockquote>
+<p>下载完整包：<a href="/post-files/postgresql-production-readiness-after-migration-three-platforms.zip">PostgreSQL 三平台生产就绪实验 ZIP</a>。包内含 Compose、PgBouncer、SQL、PITR、三平台入口、Agent 指令及<a href="/post-files/postgresql-production-readiness-after-migration/reference-results/11-acceptance-summary.txt">脱敏参考结果</a>。ZIP 的 SHA-256 为 <code>7b1e0ce68cc52dc36b76cf60bcae6c2e8094153560e2cd7e8536fea66f3cf471</code>。</p>
+<h3 id="91-人工一键执行">9.1 人工一键执行</h3>
+<p><strong>Windows 11</strong>：需要 Docker Desktop 的 Linux 容器引擎和 WSL 2 集成。解压后在 PowerShell 中执行：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-powershell" data-lang="powershell"><span style="display:flex;"><span>Set-ExecutionPolicy -Scope <span style="color:#66d9ef">Process</span> Bypass
+</span></span><span style="display:flex;"><span>.\Run-Windows11.ps1
+</span></span></code></pre></div><p>脚本入口可单独下载：<a href="/post-files/postgresql-production-readiness-after-migration/Run-Windows11.ps1">Run-Windows11.ps1</a>。它通过 Windows 自带的 WSL 运行同一份 <code>run-lab.sh</code>，避免维护一套行为不同的「缩水版」实验。</p>
+<p><strong>Ubuntu 26.04</strong>：Docker Engine 与 Compose v2 就绪后：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>chmod +x run-lab.sh run-ubuntu-26.04.sh
+</span></span><span style="display:flex;"><span>./run-ubuntu-26.04.sh
+</span></span></code></pre></div><p>入口：<a href="/post-files/postgresql-production-readiness-after-migration/run-ubuntu-26.04.sh">run-ubuntu-26.04.sh</a>。</p>
+<p><strong>macOS 26</strong>：启动本地 Docker 运行时后：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-zsh" data-lang="zsh"><span style="display:flex;"><span>chmod +x run-lab.sh run-macos-26.zsh
+</span></span><span style="display:flex;"><span>./run-macos-26.zsh
+</span></span></code></pre></div><p>入口：<a href="/post-files/postgresql-production-readiness-after-migration/run-macos-26.zsh">run-macos-26.zsh</a>。</p>
+<p>三者最终都执行同一核心脚本：<a href="/post-files/postgresql-production-readiness-after-migration/run-lab.sh">run-lab.sh</a>。成功标准不是命令退出码看起来为 0，而是 <code>results/11-acceptance-summary.txt</code> 六行全部为 <code>[PASS]</code>，并确认实验容器、网络和卷完成定向清理。</p>
+<h3 id="92-agent-自动配置与验收">9.2 Agent 自动配置与验收</h3>
+<p>把下面指令交给能执行本机命令的 Agent；完整双语版本也在 <a href="/post-files/postgresql-production-readiness-after-migration/AGENT-PROMPT.md">AGENT-PROMPT.md</a>：</p>
+<blockquote>
+<p>在当前目录运行 PostgreSQL 生产就绪实验，不得连接或修改任何现有数据库。先读 README、Compose 与当前平台入口；只允许操作固定实验项目和恢复容器，不得发布宿主端口、不得加载真实凭据、不得运行全局 Docker prune。Windows 11 执行 PowerShell 入口，Ubuntu 26.04 执行 Bash 入口，macOS 26 执行 zsh 入口。完成后检查六项 <code>[PASS]</code>、检查无重复副作用并确认定向清理；失败时保留日志解释根因，禁止修改验收文件制造成功。</p>
+</blockquote>
+<p>Agent 方法的价值不是少敲三行命令，而是让「权限边界、成功标准、失败时保留什么」先写清楚。一个只收到「帮我把 PG 搞好」的 Agent，就像只听到「把厨房收拾一下」的小学生：它不知道哪些柜子不能碰，也不知道什么叫完成。</p>
+<h2 id="十qa">十、Q&amp;A</h2>
+<h3 id="q1150-个直连失败是否应该马上把-max_connections-改成-300">Q1：150 个直连失败，是否应该马上把 max_connections 改成 300？</h3>
+<p>不应该只改这一项。先按业务事务时长和数据库 CPU/I/O 能力计算后端并发，再用 PgBouncer 折叠外部连接；为运维保留连接；最后用真实连接生命周期压测。连接数是预算，不是越大越豪华。</p>
+<h3 id="q2为什么-pgbouncer-有-150-个客户端数据库仍有约-21-个连接不是配置中的整齐数字">Q2：为什么 PgBouncer 有 150 个客户端，数据库仍有约 21 个连接，不是配置中的整齐数字？</h3>
+<p>统计快照包含负载使用的连接、实验查询自身和当时活动状态；transaction pool 会按需求建立与复用后端，并不要求快照恰好等于上限。应关注它显著小于客户端数且事务无失败，而不是追求一张「刚好 20」的截图。</p>
+<h3 id="q3索引让查询快-288-倍能否直接在生产创建">Q3：索引让查询快 28.8 倍，能否直接在生产创建？</h3>
+<p>先看写入成本、磁盘、锁和版本能力。大表通常考虑 <code>CREATE INDEX CONCURRENTLY</code>，但它更慢、也可能留下 invalid index；需要监控并准备清理。索引列顺序还必须符合真实谓词、排序与选择性。</p>
+<h3 id="q4vacuum-后文件没变小是否说明没效果">Q4：VACUUM 后文件没变小，是否说明没效果？</h3>
+<p>不是。普通 VACUUM 的主要任务是让空间可供表内部复用并维护可见性信息，避免持续膨胀；是否把空间还给操作系统是另一件事。只有确认长期不会再用到这部分空间，才评估会重写或移动数据的方案。</p>
+<h3 id="q5有云厂商快照还需要-postgresql-pitr-吗">Q5：有云厂商快照，还需要 PostgreSQL PITR 吗？</h3>
+<p>通常需要。磁盘快照解决「整块盘回到某个点」，数据库 PITR 解决「一致的基础备份加 WAL 精确回放」。两者可以组合，但快照是否跨卷一致、WAL 是否在别处、恢复流程是否被演练，都要明确。</p>
+<h3 id="q6实验恢复成功是否意味着备份方案已经合格">Q6：实验恢复成功，是否意味着备份方案已经合格？</h3>
+<p>只说明这套合成实验的恢复机制通过。生产合格还要用真实备份量测 RPO/RTO、校验业务数据、验证密钥与权限、测试异地故障，并让非作者按运行手册独立完成一次。</p>
+<h3 id="q7为什么脚本不开放端口让我直接连">Q7：为什么脚本不开放端口让我直接连？</h3>
+<p>因为它的目标是验证机制，不是部署长期服务。所有组件在隔离 Docker 网络内通信，减少误连、端口冲突和把弱实验配置暴露出去的风险。需要查看结果时读 <code>results/</code> 即可。</p>
+<h2 id="十一参考资料与最后一句话">十一、参考资料与最后一句话</h2>
+<ul>
+<li><a href="https://www.postgresql.org/docs/18/monitoring-stats.html">PostgreSQL 18：累计统计系统</a></li>
+<li><a href="https://www.postgresql.org/docs/18/pgstatstatements.html">PostgreSQL 18：pg_stat_statements</a></li>
+<li><a href="https://www.postgresql.org/docs/18/routine-vacuuming.html">PostgreSQL 18：Routine Vacuuming</a></li>
+<li><a href="https://www.postgresql.org/docs/18/continuous-archiving.html">PostgreSQL 18：Continuous Archiving and PITR</a></li>
+<li><a href="https://www.pgbouncer.org/features.html">PgBouncer：Features 与池化兼容性</a></li>
+<li><a href="https://www.pgbouncer.org/usage.html">PgBouncer：Usage</a></li>
+</ul>
+<p>这个系列从「为什么搬」走到「怎么搬」，又从「怎么调」走到「怎么证明」。如果只能从收尾篇带走一句话，希望是：<strong>不要上线一套你从未亲手尝试破坏、也从未亲手恢复过的数据库。</strong></p>
+        </div>
+    </article>
+
+    
+  
+
+
+
+
+    
+<div class="site-stats" aria-label="访问统计">
+    <span>本文阅读量 <span data-page-view-count>--</span></span>
+</div>
+
+
+    
+    <script type="text/javascript" src="https://js.users.51.la/21044367.js"></script>
+    <script charset="UTF-8" id="LA_COLLECT" src="//sdk.51.la/js-sdk-pro.min.js"></script>
+    <script>LA.init({id: "1vVTUWl7zoRjnKXi",ck: "1vVTUWl7zoRjnKXi"})</script>
+    <script src="https://sdk.51.la/perf/js-sdk-perf.min.js" crossorigin="anonymous"></script>
+    <script>
+      new LingQue.Monitor().init({id:"202teQt8THXwqyve"});
+    </script>
+    <script defer src="/js/page-views.js"></script>
+    <div class="la-theme-widget" data-51la-widget aria-label="51.la 网站统计"></div>
+    <script defer src="/js/51la-theme-widget.js"></script>
+</body>
+</html>

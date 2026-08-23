@@ -216,12 +216,12 @@
 <p>The fix is embarrassingly simple: <strong>delete one of the two orphan networks</strong> (<code>docker network rm &lt;id&gt;</code> or click Remove in Portainer&rsquo;s Networks page), then re-run Update the stack with the exact same content. It just works.</p>
 </blockquote>
 <p>This post is a real debugging session: a stack update that was supposed to be a 30-second mount-path change turned into a 1-hour investigation. All private details (internal addresses, registry URLs, volume paths, container names, credentials) have been replaced with <code>&lt;PLACEHOLDER&gt;</code>. Only public source code, official docs, and the error text itself are preserved.</p>
-<p><img src="/post-images/portainer-500-duplicate-compose-network-enigma/01-hero.svg" alt="The uncanny valley: two librespeed_default networks at once"></p>
+<p><img alt="The uncanny valley: two librespeed_default networks at once" src="/post-images/portainer-500-duplicate-compose-network-enigma/01-hero.svg"></p>
 <p><em>Figure 1: The author&rsquo;s hero image. Portainer returns 500. The real story is that the engine has two networks sharing a single name.</em></p>
 <h2 id="1-background-a-harmless-stack-update">1. Background: A &ldquo;Harmless&rdquo; Stack Update</h2>
 <p>The setup: a 24/7 home NAS, Portainer managing a dozen stacks, one of which is <code>librespeed</code> — the lightweight LinuxServer speedtest image. Nothing exotic.</p>
 <p>The original compose file (anonymized):</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-yaml" data-lang="yaml"><span style="display:flex;"><span><span style="color:#f92672">version</span>: <span style="color:#e6db74">&#39;3&#39;</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-yaml" data-lang="yaml"><span style="display:flex;"><span><span style="color:#f92672">version</span>: <span style="color:#e6db74">&#39;3&#39;</span>
 </span></span><span style="display:flex;"><span><span style="color:#f92672">services</span>:
 </span></span><span style="display:flex;"><span>  <span style="color:#f92672">librespeed</span>:
 </span></span><span style="display:flex;"><span>    <span style="color:#f92672">image</span>: <span style="color:#ae81ff">&lt;REGISTRY&gt;/linuxserver/librespeed:5.4.1</span>
@@ -255,13 +255,13 @@
 <li>The 500 popup shows only one sentence — &ldquo;failed to deploy a stack&rdquo; — with no actionable next step.</li>
 </ul>
 <p>Looking at the popup alone gives you no way forward. Open DevTools → Network → find that PUT request → look at the Response Body. You&rsquo;ll see a JSON like this:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-json" data-lang="json"><span style="display:flex;"><span>{
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-json" data-lang="json"><span style="display:flex;"><span>{
 </span></span><span style="display:flex;"><span>  <span style="color:#f92672">&#34;message&#34;</span>: <span style="color:#e6db74">&#34;failed to deploy a stack: compose up operation failed: Error response from daemon: network librespeed_default is ambiguous (2 matches found on name)&#34;</span>,
 </span></span><span style="display:flex;"><span>  <span style="color:#f92672">&#34;details&#34;</span>: <span style="color:#e6db74">&#34;Failed to deploy a stack: compose up operation failed: Error response from daemon: network librespeed_default is ambiguous (2 matches found on name)&#34;</span>
 </span></span><span style="display:flex;"><span>}
 </span></span></code></pre></div><p>That string is the entire smoking gun.</p>
 <p>Figure 2 maps the call chain from your browser button down to dockerd:</p>
-<p><img src="/post-images/portainer-500-duplicate-compose-network-enigma/02-bug-hunt-flowchart.svg" alt="End-to-end call chain for a stack update"></p>
+<p><img alt="End-to-end call chain for a stack update" src="/post-images/portainer-500-duplicate-compose-network-enigma/02-bug-hunt-flowchart.svg"></p>
 <p><em>Figure 2: The five-layer call chain. The error bubbles up from dockerd; Portainer merely wraps it as a 500.</em></p>
 <p>A few subtle things to note:</p>
 <ul>
@@ -273,11 +273,11 @@
 <p>Before any other investigation, rule out &ldquo;you wrote it wrong.&rdquo; Otherwise, every conclusion later is suspect.</p>
 <h3 id="31-static-validation-with-docker-compose-config">3.1 Static validation with <code>docker compose config</code></h3>
 <p>Save the Portainer text locally as <code>docker-compose.yml</code>:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>docker compose config --quiet
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>docker compose config --quiet
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># (no output = static syntax is fine)</span>
 </span></span></code></pre></div><p><code>--quiet</code> mode only prints errors. No output means YAML parsing, field names, version field, and image resolution are all OK.</p>
 <h3 id="32-expand-it-with-docker-compose-config-no---quiet">3.2 Expand it with <code>docker compose config</code> (no <code>--quiet</code>)</h3>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>docker compose config
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>docker compose config
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># outputs the fully-expanded YAML: ports, volumes, env, etc.</span>
 </span></span></code></pre></div><p>The output matches expectations: <code>ports</code> resolves to <code>8888:80</code>, <code>volumes</code> is in <code>host:container</code> form, no warnings.</p>
 <h3 id="33-check-the-response-code-in-portainer-devtools">3.3 Check the response code in Portainer DevTools</h3>
@@ -298,34 +298,34 @@
 <h2 id="5-root-cause-two-librespeed_default-networks-at-once">5. Root Cause: Two <code>librespeed_default</code> Networks at Once</h2>
 <p>In Portainer&rsquo;s Networks page, <code>librespeed_default</code> appears <strong>twice</strong>:</p>
 <table>
-	<thead>
-			<tr>
-					<th>NETWORK ID</th>
-					<th>NAME</th>
-					<th>DRIVER</th>
-					<th>SCOPE</th>
-					<th>CONTAINERS</th>
-			</tr>
-	</thead>
-	<tbody>
-			<tr>
-					<td><code>a1b2...</code></td>
-					<td><code>librespeed_default</code></td>
-					<td>bridge</td>
-					<td>local</td>
-					<td><code>{}</code></td>
-			</tr>
-			<tr>
-					<td><code>7z8y...</code></td>
-					<td><code>librespeed_default</code></td>
-					<td>bridge</td>
-					<td>local</td>
-					<td><code>{}</code></td>
-			</tr>
-	</tbody>
+<thead>
+<tr>
+<th>NETWORK ID</th>
+<th>NAME</th>
+<th>DRIVER</th>
+<th>SCOPE</th>
+<th>CONTAINERS</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>a1b2...</code></td>
+<td><code>librespeed_default</code></td>
+<td>bridge</td>
+<td>local</td>
+<td><code>{}</code></td>
+</tr>
+<tr>
+<td><code>7z8y...</code></td>
+<td><code>librespeed_default</code></td>
+<td>bridge</td>
+<td>local</td>
+<td><code>{}</code></td>
+</tr>
+</tbody>
 </table>
 <p>Same <code>NAME</code>, different <code>NETWORK ID</code>. Open their labels and you see:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-json" data-lang="json"><span style="display:flex;"><span><span style="color:#e6db74">&#34;com.docker.compose.project&#34;</span><span style="color:#960050;background-color:#1e0010">:</span> <span style="color:#e6db74">&#34;librespeed&#34;</span><span style="color:#960050;background-color:#1e0010">,</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-json" data-lang="json"><span style="display:flex;"><span><span style="color:#e6db74">&#34;com.docker.compose.project&#34;</span><span style="color:#960050;background-color:#1e0010">:</span> <span style="color:#e6db74">&#34;librespeed&#34;</span><span style="color:#960050;background-color:#1e0010">,</span>
 </span></span><span style="display:flex;"><span><span style="color:#e6db74">&#34;com.docker.compose.network&#34;</span><span style="color:#960050;background-color:#1e0010">:</span> <span style="color:#e6db74">&#34;default&#34;</span><span style="color:#960050;background-color:#1e0010">,</span>
 </span></span><span style="display:flex;"><span><span style="color:#e6db74">&#34;com.docker.compose.config-hash&#34;</span><span style="color:#960050;background-color:#1e0010">:</span> <span style="color:#e6db74">&#34;aacc11d868e9...&#34;</span>
 </span></span></code></pre></div><p>Two crucial observations:</p>
@@ -338,17 +338,17 @@
 7z8y...  Created: 2026-06-13T06:55:33.119233258+08:00
 </code></pre><p><strong>Difference: 0.000162 seconds.</strong> This is almost certainly the same <code>compose up</code> call: the engine created two networks back-to-back, the second one didn&rsquo;t get cleaned up, and the next <code>compose up</code> tried to look up the name and hit the ambiguous check.</p>
 <p>Figure 3 reproduces the <code>docker network ls</code> output as it appeared on the engine:</p>
-<p><img src="/post-images/portainer-500-duplicate-compose-network-enigma/06-docker-network-ls-mockup.svg" alt="docker network ls — the two ghosts side by side"></p>
+<p><img alt="docker network ls — the two ghosts side by side" src="/post-images/portainer-500-duplicate-compose-network-enigma/06-docker-network-ls-mockup.svg"></p>
 <p><em>Figure 3: The two &ldquo;orphan&rdquo; networks. Same NAME, same Driver, same project label, same config-hash, but different IDs.</em></p>
 <p>At this point, <strong>the root cause is clear: the Docker engine holds two networks sharing a single name; docker compose asks the engine to resolve the name; the engine refuses to pick, so <code>compose up</code> fails.</strong></p>
 <h2 id="6-why-does-the-engine-say-ambiguous">6. Why Does the Engine Say &ldquo;ambiguous&rdquo;?</h2>
 <p>To understand fully, open the moby source code (the open-source implementation of the Docker engine). In <code>daemon/network.go</code>, look at <code>FindNetwork()</code>:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-go" data-lang="go"><span style="display:flex;"><span><span style="color:#75715e">// FindNetwork returns a network based on:</span>
-</span></span><span style="display:flex;"><span><span style="color:#75715e">// 1. Full ID</span>
-</span></span><span style="display:flex;"><span><span style="color:#75715e">// 2. Full Name</span>
-</span></span><span style="display:flex;"><span><span style="color:#75715e">// 3. Partial ID</span>
-</span></span><span style="display:flex;"><span><span style="color:#75715e">// as long as there is no ambiguity</span>
-</span></span><span style="display:flex;"><span><span style="color:#66d9ef">func</span> (<span style="color:#a6e22e">daemon</span> <span style="color:#f92672">*</span><span style="color:#a6e22e">Daemon</span>) <span style="color:#a6e22e">FindNetwork</span>(<span style="color:#a6e22e">term</span> <span style="color:#66d9ef">string</span>) (<span style="color:#f92672">*</span><span style="color:#a6e22e">libnetwork</span>.<span style="color:#a6e22e">Network</span>, <span style="color:#66d9ef">error</span>) {
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-go" data-lang="go"><span style="display:flex;"><span><span style="color:#75715e">// FindNetwork returns a network based on:
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e">// 1. Full ID
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e">// 2. Full Name
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e">// 3. Partial ID
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e">// as long as there is no ambiguity
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span><span style="color:#66d9ef">func</span> (<span style="color:#a6e22e">daemon</span> <span style="color:#f92672">*</span><span style="color:#a6e22e">Daemon</span>) <span style="color:#a6e22e">FindNetwork</span>(<span style="color:#a6e22e">term</span> <span style="color:#66d9ef">string</span>) (<span style="color:#f92672">*</span><span style="color:#a6e22e">libnetwork</span>.<span style="color:#a6e22e">Network</span>, <span style="color:#66d9ef">error</span>) {
 </span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">var</span> <span style="color:#a6e22e">listByFullName</span>, <span style="color:#a6e22e">listByPartialID</span> []<span style="color:#f92672">*</span><span style="color:#a6e22e">libnetwork</span>.<span style="color:#a6e22e">Network</span>
 </span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">for</span> <span style="color:#a6e22e">_</span>, <span style="color:#a6e22e">nw</span> <span style="color:#f92672">:=</span> <span style="color:#66d9ef">range</span> <span style="color:#a6e22e">daemon</span>.<span style="color:#a6e22e">getAllNetworks</span>() {
 </span></span><span style="display:flex;"><span>        <span style="color:#a6e22e">nwID</span> <span style="color:#f92672">:=</span> <span style="color:#a6e22e">nw</span>.<span style="color:#a6e22e">ID</span>()
@@ -365,8 +365,8 @@
 </span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">switch</span> {
 </span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">case</span> len(<span style="color:#a6e22e">listByFullName</span>) <span style="color:#f92672">==</span> <span style="color:#ae81ff">1</span>:
 </span></span><span style="display:flex;"><span>        <span style="color:#66d9ef">return</span> <span style="color:#a6e22e">listByFullName</span>[<span style="color:#ae81ff">0</span>], <span style="color:#66d9ef">nil</span>
-</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">case</span> len(<span style="color:#a6e22e">listByFullName</span>) &gt; <span style="color:#ae81ff">1</span>:                     <span style="color:#75715e">// ← we hit this branch</span>
-</span></span><span style="display:flex;"><span>        <span style="color:#66d9ef">return</span> <span style="color:#66d9ef">nil</span>, <span style="color:#a6e22e">errdefs</span>.<span style="color:#a6e22e">InvalidParameter</span>(
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">case</span> len(<span style="color:#a6e22e">listByFullName</span>) &gt; <span style="color:#ae81ff">1</span>:                     <span style="color:#75715e">// ← we hit this branch
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>        <span style="color:#66d9ef">return</span> <span style="color:#66d9ef">nil</span>, <span style="color:#a6e22e">errdefs</span>.<span style="color:#a6e22e">InvalidParameter</span>(
 </span></span><span style="display:flex;"><span>            <span style="color:#a6e22e">fmt</span>.<span style="color:#a6e22e">Errorf</span>(<span style="color:#e6db74">&#34;network %s is ambiguous (%d matches found on name)&#34;</span>,
 </span></span><span style="display:flex;"><span>                <span style="color:#a6e22e">term</span>, len(<span style="color:#a6e22e">listByFullName</span>)))
 </span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">case</span> len(<span style="color:#a6e22e">listByPartialID</span>) <span style="color:#f92672">==</span> <span style="color:#ae81ff">1</span>:
@@ -388,32 +388,32 @@
 <p>The design is sensible: instead of letting the engine pick wrong, refuse and force the caller to clean up. The trouble is, the caller (docker compose) can&rsquo;t self-heal once it sees this error.</p>
 <h2 id="7-what-is-compose-doing-about-it">7. What Is Compose Doing About It?</h2>
 <p>In <code>pkg/compose/create.go</code>, find <code>resolveOrCreateNetwork()</code>:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-go" data-lang="go"><span style="display:flex;"><span><span style="color:#75715e">// First, try to find a unique network matching by name or ID</span>
-</span></span><span style="display:flex;"><span><span style="color:#a6e22e">res</span>, <span style="color:#a6e22e">err</span> <span style="color:#f92672">:=</span> <span style="color:#a6e22e">s</span>.<span style="color:#a6e22e">apiClient</span>().<span style="color:#a6e22e">NetworkInspect</span>(<span style="color:#a6e22e">ctx</span>, <span style="color:#a6e22e">n</span>.<span style="color:#a6e22e">Name</span>, <span style="color:#f92672">...</span>)
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-go" data-lang="go"><span style="display:flex;"><span><span style="color:#75715e">// First, try to find a unique network matching by name or ID
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span><span style="color:#a6e22e">res</span>, <span style="color:#a6e22e">err</span> <span style="color:#f92672">:=</span> <span style="color:#a6e22e">s</span>.<span style="color:#a6e22e">apiClient</span>().<span style="color:#a6e22e">NetworkInspect</span>(<span style="color:#a6e22e">ctx</span>, <span style="color:#a6e22e">n</span>.<span style="color:#a6e22e">Name</span>, <span style="color:#f92672">...</span>)
 </span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> <span style="color:#a6e22e">err</span> <span style="color:#f92672">==</span> <span style="color:#66d9ef">nil</span> {
 </span></span><span style="display:flex;"><span>    <span style="color:#a6e22e">inspect</span> <span style="color:#f92672">:=</span> <span style="color:#a6e22e">res</span>.<span style="color:#a6e22e">Network</span>
 </span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">if</span> <span style="color:#a6e22e">inspect</span>.<span style="color:#a6e22e">Name</span> <span style="color:#f92672">==</span> <span style="color:#a6e22e">n</span>.<span style="color:#a6e22e">Name</span> <span style="color:#f92672">||</span> <span style="color:#a6e22e">inspect</span>.<span style="color:#a6e22e">ID</span> <span style="color:#f92672">==</span> <span style="color:#a6e22e">n</span>.<span style="color:#a6e22e">Name</span> {
-</span></span><span style="display:flex;"><span>        <span style="color:#75715e">// Found, return inspect.ID</span>
-</span></span><span style="display:flex;"><span>        <span style="color:#f92672">...</span>
+</span></span><span style="display:flex;"><span>        <span style="color:#75715e">// Found, return inspect.ID
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>        <span style="color:#f92672">...</span>
 </span></span><span style="display:flex;"><span>    }
 </span></span><span style="display:flex;"><span>}
-</span></span><span style="display:flex;"><span><span style="color:#75715e">// ignore other errors. Typically, an ambiguous request by name</span>
-</span></span><span style="display:flex;"><span><span style="color:#75715e">// results in some generic `invalidParameter` error</span>
-</span></span><span style="display:flex;"><span>
-</span></span><span style="display:flex;"><span><span style="color:#75715e">// Either not found, or name is ambiguous - use NetworkList to list by name</span>
-</span></span><span style="display:flex;"><span><span style="color:#a6e22e">nwList</span>, <span style="color:#a6e22e">err</span> <span style="color:#f92672">:=</span> <span style="color:#a6e22e">s</span>.<span style="color:#a6e22e">apiClient</span>().<span style="color:#a6e22e">NetworkList</span>(<span style="color:#a6e22e">ctx</span>, <span style="color:#a6e22e">client</span>.<span style="color:#a6e22e">NetworkListOptions</span>{
+</span></span><span style="display:flex;"><span><span style="color:#75715e">// ignore other errors. Typically, an ambiguous request by name
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e">// results in some generic `invalidParameter` error
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e">// Either not found, or name is ambiguous - use NetworkList to list by name
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span><span style="color:#a6e22e">nwList</span>, <span style="color:#a6e22e">err</span> <span style="color:#f92672">:=</span> <span style="color:#a6e22e">s</span>.<span style="color:#a6e22e">apiClient</span>().<span style="color:#a6e22e">NetworkList</span>(<span style="color:#a6e22e">ctx</span>, <span style="color:#a6e22e">client</span>.<span style="color:#a6e22e">NetworkListOptions</span>{
 </span></span><span style="display:flex;"><span>    <span style="color:#a6e22e">Filters</span>: make(<span style="color:#a6e22e">client</span>.<span style="color:#a6e22e">Filters</span>).<span style="color:#a6e22e">Add</span>(<span style="color:#e6db74">&#34;name&#34;</span>, <span style="color:#a6e22e">n</span>.<span style="color:#a6e22e">Name</span>),
 </span></span><span style="display:flex;"><span>})
 </span></span><span style="display:flex;"><span><span style="color:#f92672">...</span>
 </span></span></code></pre></div><p>The comment is explicit: &ldquo;name ambiguous&rdquo; returns <code>invalidParameter</code>; compose sees it, gives up on lookup, and falls back to <code>NetworkList</code>.</p>
 <p>But <code>NetworkList</code> uses substring match (not exact match). The result still has 2 networks. Compose then filters them client-side:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-go" data-lang="go"><span style="display:flex;"><span><span style="color:#a6e22e">networks</span> <span style="color:#f92672">:=</span> <span style="color:#a6e22e">slices</span>.<span style="color:#a6e22e">DeleteFunc</span>(<span style="color:#a6e22e">nwList</span>.<span style="color:#a6e22e">Items</span>, <span style="color:#66d9ef">func</span>(<span style="color:#a6e22e">net</span> <span style="color:#a6e22e">network</span>.<span style="color:#a6e22e">Summary</span>) <span style="color:#66d9ef">bool</span> {
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-go" data-lang="go"><span style="display:flex;"><span><span style="color:#a6e22e">networks</span> <span style="color:#f92672">:=</span> <span style="color:#a6e22e">slices</span>.<span style="color:#a6e22e">DeleteFunc</span>(<span style="color:#a6e22e">nwList</span>.<span style="color:#a6e22e">Items</span>, <span style="color:#66d9ef">func</span>(<span style="color:#a6e22e">net</span> <span style="color:#a6e22e">network</span>.<span style="color:#a6e22e">Summary</span>) <span style="color:#66d9ef">bool</span> {
 </span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">return</span> <span style="color:#a6e22e">net</span>.<span style="color:#a6e22e">Name</span> <span style="color:#f92672">!=</span> <span style="color:#a6e22e">n</span>.<span style="color:#a6e22e">Name</span>
 </span></span><span style="display:flex;"><span>})
 </span></span></code></pre></div><p>It removes anything where <code>net.Name != n.Name</code>. Logically, only exact matches should remain. <strong>But &ldquo;exact match&rdquo; still produces 2 results</strong>, so the function continues: it can&rsquo;t find &ldquo;the unique network with the correct project label,&rdquo; or it finds 2 and doesn&rsquo;t know which to use.</p>
 <p>Either way, compose gives up on cleanup and propagates the engine&rsquo;s <code>ambiguous</code> error verbatim. Portainer wraps it as 500.</p>
 <p>Figure 4 puts the two source-code paths side by side:</p>
-<p><img src="/post-images/portainer-500-duplicate-compose-network-enigma/03-source-code-walkthrough.svg" alt="Source-code walkthrough: who throws “is ambiguous”"></p>
+<p><img alt="Source-code walkthrough: who throws &ldquo;is ambiguous&rdquo;" src="/post-images/portainer-500-duplicate-compose-network-enigma/03-source-code-walkthrough.svg"></p>
 <p><em>Figure 4: moby&rsquo;s <code>FindNetwork()</code> and compose&rsquo;s <code>resolveOrCreateNetwork()</code>. The engine throws the error but only reports; compose wants to catch it but can&rsquo;t.</em></p>
 <h2 id="8-postmortem-where-do-orphan-networks-come-from">8. Postmortem: Where Do Orphan Networks Come From?</h2>
 <p>Once you know the root cause, the next natural question is: how did the orphans get there?</p>
@@ -438,7 +438,7 @@
 <h2 id="9-the-fix-delete-the-orphan-then-retry">9. The Fix: Delete the Orphan, Then Retry</h2>
 <p>Three steps: locate, delete, retry.</p>
 <h3 id="91-locate-the-orphans">9.1 Locate the orphans</h3>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># List all networks whose project label is librespeed</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># List all networks whose project label is librespeed</span>
 </span></span><span style="display:flex;"><span>docker network ls --filter label<span style="color:#f92672">=</span>com.docker.compose.project<span style="color:#f92672">=</span>librespeed
 </span></span><span style="display:flex;"><span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># Look at each one&#39;s Labels and Containers</span>
@@ -451,7 +451,7 @@
 <li>IPAM subnets differ (if IPAM isn&rsquo;t even set up, the orphan never even got to attaching containers)</li>
 </ul>
 <h3 id="92-delete-one">9.2 Delete one</h3>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># CLI</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># CLI</span>
 </span></span><span style="display:flex;"><span>docker network rm &lt;orphan_id&gt;
 </span></span><span style="display:flex;"><span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># Or in Portainer UI</span>
@@ -459,22 +459,22 @@
 </span></span></code></pre></div><p><strong>Never delete both at once.</strong> Delete one, verify the effect, then delete the other if needed.</p>
 <h3 id="93-retry-the-portainer-stack-update">9.3 Retry the Portainer stack update</h3>
 <p>Go back to the stack in Portainer, click Update the stack, <strong>with the same compose content</strong>. If all goes well, the response is <code>HTTP/1.1 200 OK</code>, the container starts automatically, port 8888 is bound.</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>$ curl -I http://&lt;NAS_HOST&gt;:8888/
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>$ curl -I http://&lt;NAS_HOST&gt;:8888/
 </span></span><span style="display:flex;"><span>HTTP/1.1 <span style="color:#ae81ff">200</span> OK
 </span></span><span style="display:flex;"><span>Server: nginx
 </span></span><span style="display:flex;"><span>Content-Length: <span style="color:#ae81ff">10252</span>
 </span></span></code></pre></div><p>Figure 5 shows the full repair path:</p>
-<p><img src="/post-images/portainer-500-duplicate-compose-network-enigma/04-fix-flow.svg" alt="The fix path: delete the orphan and retry"></p>
+<p><img alt="The fix path: delete the orphan and retry" src="/post-images/portainer-500-duplicate-compose-network-enigma/04-fix-flow.svg"></p>
 <p><em>Figure 5: Locate orphan → delete → retry Portainer update. Three steps and you&rsquo;re done.</em></p>
 <h2 id="10-prevention-four-reusable-techniques">10. Prevention: Four Reusable Techniques</h2>
 <p>Orphan networks are an &ldquo;undefined behavior&rdquo; of the compose/engine interaction. You can&rsquo;t fully prevent them, but you can make them very easy to discover.</p>
 <h3 id="101-docker-network-prune">10.1 <code>docker network prune</code></h3>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>docker network prune
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>docker network prune
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># or force-skip confirmation</span>
 </span></span><span style="display:flex;"><span>docker network prune -f
 </span></span></code></pre></div><p><code>network prune</code> defaults to skipping the three system networks (<code>bridge</code>, <code>host</code>, <code>none</code>) and removes any custom network that <strong>has no container reference</strong>. <strong>Our orphan networks have no container reference, so prune will clean them up.</strong></p>
 <p>Add filters for more precision:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># only remove orphans older than 24h</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># only remove orphans older than 24h</span>
 </span></span><span style="display:flex;"><span>docker network prune --filter <span style="color:#e6db74">&#34;until=24h&#34;</span>
 </span></span><span style="display:flex;"><span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># only remove orphans with a specific label</span>
@@ -483,16 +483,16 @@
 <h3 id="102-docker-compose---remove-orphans">10.2 <code>docker compose --remove-orphans</code></h3>
 <p><code>docker compose up --remove-orphans</code> removes containers that the compose file doesn&rsquo;t declare but that share the stack&rsquo;s label. It manages containers, not networks. Still, enabling it reduces the &ldquo;half-finished stack&rdquo; residue.</p>
 <h3 id="103-compose_remove_orphans-environment-variable">10.3 <code>COMPOSE_REMOVE_ORPHANS</code> environment variable</h3>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>export COMPOSE_REMOVE_ORPHANS<span style="color:#f92672">=</span><span style="color:#ae81ff">1</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>export COMPOSE_REMOVE_ORPHANS<span style="color:#f92672">=</span><span style="color:#ae81ff">1</span>
 </span></span><span style="display:flex;"><span>docker compose up -d
 </span></span></code></pre></div><p>Equivalent to <code>--remove-orphans</code>. This env var also works for Portainer, as long as you set it in the stack&rsquo;s environment.</p>
 <h3 id="104-periodic-inspection-script">10.4 Periodic inspection script</h3>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e">#!/bin/bash
-</span></span></span><span style="display:flex;"><span><span style="color:#75715e"># Find orphan networks under any compose project label</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e">#!/bin/bash
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span><span style="color:#75715e"># Find orphan networks under any compose project label</span>
 </span></span><span style="display:flex;"><span>docker network ls --quiet --filter label<span style="color:#f92672">=</span>com.docker.compose.project <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span>  | <span style="color:#66d9ef">while</span> read net_id; <span style="color:#66d9ef">do</span>
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  | <span style="color:#66d9ef">while</span> read net_id; <span style="color:#66d9ef">do</span>
 </span></span><span style="display:flex;"><span>      containers<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>docker network inspect <span style="color:#e6db74">&#34;</span>$net_id<span style="color:#e6db74">&#34;</span> <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span>                   --format <span style="color:#e6db74">&#39;{{ len .Containers }}&#39;</span><span style="color:#66d9ef">)</span>
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>                   --format <span style="color:#e6db74">&#39;{{ len .Containers }}&#39;</span><span style="color:#66d9ef">)</span>
 </span></span><span style="display:flex;"><span>      <span style="color:#66d9ef">if</span> <span style="color:#f92672">[</span> <span style="color:#e6db74">&#34;</span>$containers<span style="color:#e6db74">&#34;</span> <span style="color:#f92672">=</span> <span style="color:#e6db74">&#34;0&#34;</span> <span style="color:#f92672">]</span>; <span style="color:#66d9ef">then</span>
 </span></span><span style="display:flex;"><span>          echo <span style="color:#e6db74">&#34;Orphan network: </span>$net_id<span style="color:#e6db74">&#34;</span>
 </span></span><span style="display:flex;"><span>          docker network rm <span style="color:#e6db74">&#34;</span>$net_id<span style="color:#e6db74">&#34;</span>
@@ -502,7 +502,7 @@
 <h3 id="105-dont-trust-portainers-top-bar-stats">10.5 Don&rsquo;t Trust Portainer&rsquo;s Top-Bar Stats</h3>
 <p>Portainer&rsquo;s top bar often shows &ldquo;all stacks healthy&rdquo; — but <strong>it checks container counts, not network state</strong>. Orphan networks are not part of its health check. <code>docker network ls</code> is the only source of truth.</p>
 <p>Figure 6 reproduces what the UI actually shows:</p>
-<p><img src="/post-images/portainer-500-duplicate-compose-network-enigma/05-portainer-stack-editor-mockup.svg" alt="Portainer stack editor and 500 popup"></p>
+<p><img alt="Portainer stack editor and 500 popup" src="/post-images/portainer-500-duplicate-compose-network-enigma/05-portainer-stack-editor-mockup.svg"></p>
 <p><em>Figure 6: The 500 popup as it flashes on the Portainer UI. The real diagnostic info is hidden in Details or the DevTools Response Body.</em></p>
 <h2 id="11-qa">11. Q&amp;A</h2>
 <h3 id="q1-docker-network-ls-shows-two-librespeed_default-but-docker-compose-down-says-network-not-found-why">Q1: <code>docker network ls</code> shows two <code>librespeed_default</code>, but <code>docker compose down</code> says &ldquo;network not found.&rdquo; Why?</h3>

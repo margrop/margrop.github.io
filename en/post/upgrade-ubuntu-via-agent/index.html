@@ -224,7 +224,7 @@
 <p>A remote home-lab box had been sitting on Ubuntu 22.04.4 LTS (jammy, kernel 5.15) for a long time. After one sentence — &ldquo;upgrade the box at 192.168.103.182 to Ubuntu 24.04&rdquo; — Claude opened a tmux session to babysit the run, brought up a fallback sshd on port 1022 so a mid-upgrade sshd restart would not strand me, then drove <code>do-release-upgrade -f DistUpgradeViewNonInteractive</code> end to end. Twenty-five minutes later the host came back: kernel 6.8.0-124, every service still listening.</p>
 <p>This is not a tutorial on <code>do-release-upgrade</code>; the Ubuntu docs already cover that. This is about what an Agent does once it gets an SSH handle on a box, why it does each step, and which pitfalls you have to clear out of the way before letting it loose.</p>
 </blockquote>
-<p><img src="/post-images/upgrade-ubuntu-via-agent/en/05-noble-desktop.png" alt="Ubuntu 24.04 LTS default desktop (public screenshot from Wikimedia Commons)"></p>
+<p><img alt="Ubuntu 24.04 LTS default desktop (public screenshot from Wikimedia Commons)" src="/post-images/upgrade-ubuntu-via-agent/en/05-noble-desktop.png"></p>
 <p><em>Cover: the official Ubuntu 24.04 LTS (Noble Numbat) desktop. This is what the upgraded room looks like.</em></p>
 <hr>
 <h2 id="1-why-i-handed-the-upgrade-to-an-agent">1. Why I handed the upgrade to an Agent</h2>
@@ -238,12 +238,12 @@
 </ol>
 <p>Putting those three together, the answer is clear: <strong>let the Agent drive, and only review the result.</strong> I hand it one sentence; it strings together tmux-guarding, fallback sshd, <code>do-release-upgrade</code>, and log monitoring. If something fails, I can scroll back; if it succeeds, I drink tea.</p>
 <p>This is the bird&rsquo;s-eye view:</p>
-<p><img src="/post-images/upgrade-ubuntu-via-agent/en/01-couch-to-server-metaphor.svg" alt="One-sentence upgrade: you on the couch, Agent in the other room dismantling the old cabinet and installing a new one"></p>
+<p><img alt="One-sentence upgrade: you on the couch, Agent in the other room dismantling the old cabinet and installing a new one" src="/post-images/upgrade-ubuntu-via-agent/en/01-couch-to-server-metaphor.svg"></p>
 <p><em>Figure 1: you (left) speak one sentence; the Agent goes through ssh + tmux to the remote box (right). The box upgrades from jammy 22.04 to noble 24.04. tmux keeps the process alive across disconnects; fallback sshd on :1022 covers the moment the main sshd gets replaced. You never leave the couch.</em></p>
 <hr>
 <h2 id="2-what-the-agent-does-first-look-at-the-box">2. What the Agent does first: look at the box</h2>
 <p>By reflex, an Agent that receives a remote task starts with a probe. The probe is not &ldquo;can I ping it&rdquo;; it is &ldquo;let me read its ID card&rdquo;:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>ssh root@host <span style="color:#e6db74">&#39;cat /etc/os-release; uname -a; uptime; df -h /; free -h; ss -tlnp | head -20&#39;</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>ssh root@host <span style="color:#e6db74">&#39;cat /etc/os-release; uname -a; uptime; df -h /; free -h; ss -tlnp | head -20&#39;</span>
 </span></span></code></pre></div><p>What the Agent actually pays attention to in the output:</p>
 <ul>
 <li><strong>Distro and codename:</strong> <code>Ubuntu 22.04.4 LTS (jammy)</code>. The target is <code>noble</code>.</li>
@@ -263,7 +263,7 @@
 <p>It is like hiring a moving company and going downstairs for a coffee — if nobody answers the doorbell, the movers leave. <strong>You need someone standing at the gate the whole time, even while you are out.</strong></p>
 </blockquote>
 <p><code>tmux</code> is that someone at the gate. The Agent opens a detached session on the remote side:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>tmux new-session -d -s upg -c /root <span style="color:#e6db74">&#39;bash -lc &#34;echo tmux-ready; bash&#34;&#39;</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>tmux new-session -d -s upg -c /root <span style="color:#e6db74">&#39;bash -lc &#34;echo tmux-ready; bash&#34;&#39;</span>
 </span></span></code></pre></div><p>After that, every operation — including the actual <code>do-release-upgrade</code> — is delivered into the session via <code>tmux send-keys</code>. <code>tmux</code> runs as a server process on the remote box and does not depend on the SSH connection. If the Agent&rsquo;s SSH drops ten times in a row, no big deal — <code>tmux attach -t upg</code> and you are right back where you were.</p>
 <p>Why <code>tmux</code> and not <code>nohup</code> + <code>&amp;</code>? Because <code>tmux</code> also gives you a <strong>replayable scrollback</strong>: you can scrub back and see which dpkg line ran, which package got stuck, what the journal said three minutes ago. That is a lifeline when something goes wrong.</p>
 <hr>
@@ -280,7 +280,7 @@
 <p>It is like replacing the elevator cables: while the main elevator is down, a backup elevator has to be standing by. You cannot leave the passengers stranded on the 20th floor.</p>
 </blockquote>
 <p>The fix: before the upgrade starts, the Agent launches an <strong>independent sshd</strong>, outside of systemd, listening on port 1022:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>ssh-keygen -A
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>ssh-keygen -A
 </span></span><span style="display:flex;"><span>/usr/sbin/sshd -D -p <span style="color:#ae81ff">1022</span> -o PidFile<span style="color:#f92672">=</span>/run/sshd-extra/sshd-1022.pid &amp;
 </span></span></code></pre></div><p>This sshd is not under systemd&rsquo;s control, so <strong><code>dpkg</code> swapping the package on disk cannot touch it</strong> — the running process already has the binary mapped into memory; rewriting the file does not affect a process that has already loaded it.</p>
 <p>After this, every time the Agent&rsquo;s SSH drops, it tries :22 first, then :1022. Port 1022 is the real escape hatch.</p>
@@ -288,7 +288,7 @@
 <hr>
 <h2 id="5-what-the-agent-does-fourth-actually-run-the-upgrade">5. What the Agent does fourth: actually run the upgrade</h2>
 <p>With everything ready, the Agent types into the tmux session:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>DEBIAN_FRONTEND<span style="color:#f92672">=</span>noninteractive <span style="color:#66d9ef">do</span>-release-upgrade -f DistUpgradeViewNonInteractive 2&gt;&amp;<span style="color:#ae81ff">1</span> | tee /var/log/dist-upgrade.log
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>DEBIAN_FRONTEND<span style="color:#f92672">=</span>noninteractive <span style="color:#66d9ef">do</span>-release-upgrade -f DistUpgradeViewNonInteractive 2&gt;&amp;<span style="color:#ae81ff">1</span> | tee /var/log/dist-upgrade.log
 </span></span></code></pre></div><p>Two key switches:</p>
 <ul>
 <li><code>-f DistUpgradeViewNonInteractive</code>: <strong>no interactive prompts at all.</strong> By default, <code>do-release-upgrade</code> asks many questions — &ldquo;keep this conffile?&rdquo;, &ldquo;restart this service?&rdquo; — and any one of them blocks an unattended run. <code>-f DistUpgradeViewNonInteractive</code> picks the safe defaults automatically.</li>
@@ -296,10 +296,10 @@
 </ul>
 <p>After that, the Agent switches roles: from &ldquo;driver&rdquo; to &ldquo;observer&rdquo;. It stops sending commands and just polls — every 30 seconds it reads <code>journalctl</code>, captures the tmux pane, and greps for <code>dpkg</code>. Each tick is a heartbeat saying &ldquo;still moving&rdquo;.</p>
 <p>The whole pipeline splits cleanly into five stages:</p>
-<p><img src="/post-images/upgrade-ubuntu-via-agent/en/02-five-step-flow.svg" alt="The Agent’s five-stage upgrade pipeline"></p>
+<p><img alt="The Agent&rsquo;s five-stage upgrade pipeline" src="/post-images/upgrade-ubuntu-via-agent/en/02-five-step-flow.svg"></p>
 <p><em>Figure 2: the upgrade split into five stages. Every stage has a visible signal, and the Agent uses those signals to know whether it is safe to move to the next one.</em></p>
 <p>What actually happens inside each stage — here is the EKG the Agent pulled out of journalctl:</p>
-<p><img src="/post-images/upgrade-ubuntu-via-agent/en/03-timeline.svg" alt="Real timeline: 25 minutes from probe to new kernel online"></p>
+<p><img alt="Real timeline: 25 minutes from probe to new kernel online" src="/post-images/upgrade-ubuntu-via-agent/en/03-timeline.svg"></p>
 <p><em>Figure 3: an excerpt of the journalctl timeline for the same run. 10:14 — into dpkg. 10:21 — udev 255 (the noble version) comes online. 10:24 — autoremove releases the old packages. 10:28 — reboot. 10:35 — the new kernel 6.8.0-124 is up; sshd PID 805 owns port 22. The heartbeat is steady; nothing got stuck.</em></p>
 <p>The official docs say &ldquo;this can take one to several hours&rdquo;. On this machine it was <strong>27 minutes from the first SSH probe at 10:08 to the new kernel being online at 10:35</strong>. About 6 minutes were downloading packages on a 100-megabit link, about 14 minutes were the dpkg stage, and the rest was probing, waiting, and the reboot.</p>
 <hr>
@@ -312,9 +312,9 @@
 <li>Wait for the host to come back.</li>
 <li>The instant it comes back, run:</li>
 </ol>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>ssh root@host <span style="color:#e6db74">&#39;cat /etc/os-release; uname -r; uptime; ss -tlnp; systemctl is-active ssh&#39;</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>ssh root@host <span style="color:#e6db74">&#39;cat /etc/os-release; uname -r; uptime; ss -tlnp; systemctl is-active ssh&#39;</span>
 </span></span></code></pre></div><p>The expected output is:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>PRETTY_NAME=&#34;Ubuntu 24.04.4 LTS (Noble Numbat)&#34;
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>PRETTY_NAME=&#34;Ubuntu 24.04.4 LTS (Noble Numbat)&#34;
 </span></span><span style="display:flex;"><span>VERSION_ID=&#34;24.04&#34;
 </span></span><span style="display:flex;"><span>VERSION_CODENAME=noble
 </span></span><span style="display:flex;"><span>6.8.0-124-generic
@@ -325,7 +325,7 @@
 </span></span><span style="display:flex;"><span>active
 </span></span></code></pre></div><p>This step is how you <strong>prove</strong> the upgrade actually happened. &ldquo;dpkg finished&rdquo; alone is not enough — the kernel did not switch, systemd did not switch, that does not count. <strong>What counts is the version string you <code>cat</code>, and the kernel string <code>uname</code> prints.</strong></p>
 <p>Here is the Agent&rsquo;s view of <code>/etc/os-release</code> (sanitised):</p>
-<p><img src="/post-images/upgrade-ubuntu-via-agent/en/04-os-release.svg" alt="Verifying /etc/os-release"></p>
+<p><img alt="Verifying /etc/os-release" src="/post-images/upgrade-ubuntu-via-agent/en/04-os-release.svg"></p>
 <p><em>Figure 4: the post-upgrade &ldquo;physical&rdquo;. <code>VERSION_CODENAME=noble</code> is the ultimate verdict; <code>VERSION_ID=24.04</code> is the secondary one; <code>uname -r=6.8.0-124-generic</code> is the kernel verdict. All three matching is what &ldquo;really upgraded&rdquo; means.</em></p>
 <p>At this point the Agent reports back to me.</p>
 <hr>
@@ -372,7 +372,7 @@
 <li>Ubuntu Wiki — ReleaseUpgrade SOP: <a href="https://wiki.ubuntu.com/SystemMaintenance/ReleaseUpgrades">https://wiki.ubuntu.com/SystemMaintenance/ReleaseUpgrades</a></li>
 <li><code>tmux</code> manual and best practices: <a href="https://github.com/tmux/tmux/wiki">https://github.com/tmux/tmux/wiki</a></li>
 <li>systemd <code>service.d</code> mechanism (drop-in override): <a href="https://www.freedesktop.org/software/systemd/man/latest/systemd.unit.html">https://www.freedesktop.org/software/systemd/man/latest/systemd.unit.html</a></li>
-<li>SSH fallback port on upgrade (launchpad bug 1192476 — the original justification for the 22→1022 fallback): <a href="https://bugs.launchpad.net/ubuntu-release-upgrader/&#43;bug/1192476">https://bugs.launchpad.net/ubuntu-release-upgrader/+bug/1192476</a></li>
+<li>SSH fallback port on upgrade (launchpad bug 1192476 — the original justification for the 22→1022 fallback): <a href="https://bugs.launchpad.net/ubuntu-release-upgrader/+bug/1192476">https://bugs.launchpad.net/ubuntu-release-upgrader/+bug/1192476</a></li>
 <li>Ubuntu 24.04 LTS Noble Numbat desktop screenshots: Wikimedia Commons (CC BY-SA 4.0): <a href="https://commons.wikimedia.org/wiki/Category:Ubuntu_24.04">https://commons.wikimedia.org/wiki/Category:Ubuntu_24.04</a></li>
 </ol>
 <blockquote>

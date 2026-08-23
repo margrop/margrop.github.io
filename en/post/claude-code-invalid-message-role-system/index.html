@@ -214,7 +214,7 @@
 </blockquote>
 <p>This post is a troubleshooting write-up for a local Claude Code environment. The fix itself was small, but the incident is useful because it shows a pattern that is becoming common in AI agent tooling: the CLI, environment settings, model gateway, API compatibility layer, and actual model backend are often separate moving pieces. When one layer changes its request structure, the terminal may only show a vague 400.</p>
 <p>All private details have been removed. This article does not include real internal addresses, usernames, tokens, private provider names, local absolute paths, or private service domains. Configuration examples use placeholders such as <code>&lt;PLACEHOLDER&gt;</code>, <code>&lt;MODEL_GATEWAY&gt;</code>, and <code>&lt;MODEL_NAME&gt;</code>. The goal is to document a reusable debugging method, not to expose a specific environment.</p>
-<p><img src="/post-images/claude-code-invalid-message-role-system/01-hero-claude-system-role.png" alt="Abstract cover image for a Claude Code compatibility failure"></p>
+<p><img alt="Abstract cover image for a Claude Code compatibility failure" src="/post-images/claude-code-invalid-message-role-system/01-hero-claude-system-role.png"></p>
 <p><em>Figure 1: The visible error looked model-side. The useful path was to trace Claude Code, Anthropic API semantics, and the compatibility gateway between them.</em></p>
 <h2 id="1-background-claude-code-is-often-not-just-cli-talks-to-anthropic">1. Background: Claude Code is often not just &ldquo;CLI talks to Anthropic&rdquo;</h2>
 <p>The simplest mental model for Claude Code is straightforward: you run <code>claude</code> in a terminal, Claude Code calls Anthropic, and the model returns an answer. That model is good enough for a direct official setup, but many real development environments are more layered.</p>
@@ -230,25 +230,25 @@
 <p>That was the pattern in this incident. The user saw every model fail, but the failure was concentrated in the currently selected compatible endpoint.</p>
 <h2 id="2-symptom-even-the-smallest-prompt-returned-400">2. Symptom: even the smallest prompt returned 400</h2>
 <p>The visible error was:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>API Error: 400 invalid params, chat content has invalid message role: system (2013)
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>API Error: 400 invalid params, chat content has invalid message role: system (2013)
 </span></span></code></pre></div><p>Several details matter.</p>
 <p>First, it is a 400. This points toward request parameters or protocol compatibility, not authentication, quota, rate limiting, or a provider outage. A 401 or 403 would lead the investigation toward credentials. A 429 would lead toward quota and concurrency. A 5xx would lead toward upstream stability. A 400 that mentions a message role is a very different class of problem.</p>
 <p>Second, the error explicitly names <code>system</code>. That means some layer parsed the request body, found a message role, and rejected it as invalid in that position.</p>
 <p>Third, it happened across models. That can be misleading. &ldquo;Every model fails&rdquo; does not necessarily mean every model backend is down. If all model calls pass through the same gateway and the gateway rejects the request before routing, all models will appear broken.</p>
 <p>The first useful check was a minimal reproduction:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>claude -p <span style="color:#e6db74">&#34;reply only OK&#34;</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>claude -p <span style="color:#e6db74">&#34;reply only OK&#34;</span>
 </span></span></code></pre></div><p>The same 400 came back. This ruled out a lot of noise: project-specific instructions, a bad <code>CLAUDE.md</code>, conversation history, tool calls, MCP servers, long context compaction, and prompt complexity. A single prompt through the global configuration was enough to fail.</p>
-<p><img src="/post-images/claude-code-invalid-message-role-system/02-layered-diagnosis.svg" alt="Trace the visible 400 through the request path"></p>
+<p><img alt="Trace the visible 400 through the request path" src="/post-images/claude-code-invalid-message-role-system/02-layered-diagnosis.svg"></p>
 <p><em>Figure 2: Do not stop at the first error line. Identify which layer rejects the request shape.</em></p>
 <h2 id="3-first-pass-identify-who-is-rejecting-the-request">3. First pass: identify who is rejecting the request</h2>
 <p>For this kind of failure, I do not start by rotating keys or reinstalling the tool. Those are broad changes, and they can destroy useful evidence. I start by recording the current version, current provider path, relevant environment variables, and minimal request behavior.</p>
 <h3 id="31-check-the-claude-code-version">3.1 Check the Claude Code version</h3>
 <p>The first command was:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>claude --version
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>claude --version
 </span></span></code></pre></div><p>The installed version was <code>2.1.156</code>. The user also mentioned that the problem might be related to a recent Claude update. That matters. If a setup worked before the update and failed immediately after it, the client version belongs at the top of the suspect list.</p>
 <h3 id="32-check-whether-the-client-is-using-a-custom-base-url">3.2 Check whether the client is using a custom base URL</h3>
 <p>The Claude Code settings showed a structure like this after redaction:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-json" data-lang="json"><span style="display:flex;"><span>{
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-json" data-lang="json"><span style="display:flex;"><span>{
 </span></span><span style="display:flex;"><span>  <span style="color:#f92672">&#34;env&#34;</span>: {
 </span></span><span style="display:flex;"><span>    <span style="color:#f92672">&#34;ANTHROPIC_BASE_URL&#34;</span>: <span style="color:#e6db74">&#34;https://&lt;MODEL_GATEWAY&gt;/anthropic&#34;</span>,
 </span></span><span style="display:flex;"><span>    <span style="color:#f92672">&#34;ANTHROPIC_AUTH_TOKEN&#34;</span>: <span style="color:#e6db74">&#34;&lt;TOKEN&gt;&#34;</span>,
@@ -267,11 +267,11 @@
 </ol>
 <h3 id="33-test-provider-paths-without-changing-global-state">3.3 Test provider paths without changing global state</h3>
 <p>The machine had a provider switching tool. The provider list contained multiple Claude provider definitions: the current compatible endpoint and a few alternatives. In redacted form, it looked like this:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>Current: &lt;Provider A&gt;  -&gt; https://&lt;MODEL_GATEWAY_A&gt;/anthropic
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>Current: &lt;Provider A&gt;  -&gt; https://&lt;MODEL_GATEWAY_A&gt;/anthropic
 </span></span><span style="display:flex;"><span>Other:   &lt;Provider B&gt;  -&gt; https://&lt;MODEL_GATEWAY_B&gt;/anthropic
 </span></span><span style="display:flex;"><span>Other:   &lt;Provider C&gt;  -&gt; https://&lt;MODEL_GATEWAY_C&gt;/anthropic
 </span></span></code></pre></div><p>Instead of changing the global default immediately, I temporarily launched Claude Code through each provider:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>cc-switch start claude &lt;PROVIDER_ID&gt; -- -p <span style="color:#e6db74">&#34;reply only OK&#34;</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>cc-switch start claude &lt;PROVIDER_ID&gt; -- -p <span style="color:#e6db74">&#34;reply only OK&#34;</span>
 </span></span></code></pre></div><p>The results were useful:</p>
 <ol>
 <li>The current provider failed with the same <code>invalid message role: system</code> error.</li>
@@ -282,7 +282,7 @@
 <h2 id="4-the-key-api-detail-in-anthropic-messages-system-is-not-just-another-chat-message-role">4. The key API detail: in Anthropic Messages, <code>system</code> is not just another chat message role</h2>
 <p>To understand the error, you need one bit of API context.</p>
 <p>In many OpenAI-compatible Chat Completions APIs, the system prompt is commonly represented as a message inside the <code>messages</code> array:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-json" data-lang="json"><span style="display:flex;"><span>{
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-json" data-lang="json"><span style="display:flex;"><span>{
 </span></span><span style="display:flex;"><span>  <span style="color:#f92672">&#34;messages&#34;</span>: [
 </span></span><span style="display:flex;"><span>    {<span style="color:#f92672">&#34;role&#34;</span>: <span style="color:#e6db74">&#34;system&#34;</span>, <span style="color:#f92672">&#34;content&#34;</span>: <span style="color:#e6db74">&#34;You are a helpful assistant.&#34;</span>},
 </span></span><span style="display:flex;"><span>    {<span style="color:#f92672">&#34;role&#34;</span>: <span style="color:#e6db74">&#34;user&#34;</span>, <span style="color:#f92672">&#34;content&#34;</span>: <span style="color:#e6db74">&#34;Hello&#34;</span>}
@@ -302,14 +302,14 @@
 <h2 id="5-second-pass-use-version-probes-to-find-the-regression-window">5. Second pass: use version probes to find the regression window</h2>
 <p>Because the user suspected a recent update, the next step was not to merely agree. The suspicion needed to be tested.</p>
 <p>The method was simple: run adjacent Claude Code versions with the same minimal prompt and the same current configuration. <code>npx</code> makes that easy:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>npx -y @anthropic-ai/claude-code@2.1.154 -p <span style="color:#e6db74">&#34;reply only OK&#34;</span> --model &lt;MODEL_NAME&gt;
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>npx -y @anthropic-ai/claude-code@2.1.154 -p <span style="color:#e6db74">&#34;reply only OK&#34;</span> --model &lt;MODEL_NAME&gt;
 </span></span><span style="display:flex;"><span>npx -y @anthropic-ai/claude-code@2.1.150 -p <span style="color:#e6db74">&#34;reply only OK&#34;</span> --model &lt;MODEL_NAME&gt;
 </span></span></code></pre></div><p>The observed behavior was:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>2.1.156 -&gt; 400 invalid message role: system
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>2.1.156 -&gt; 400 invalid message role: system
 </span></span><span style="display:flex;"><span>2.1.154 -&gt; 400 invalid message role: system
 </span></span><span style="display:flex;"><span>2.1.150 -&gt; OK
 </span></span></code></pre></div><p>At that point the issue was no longer &ldquo;maybe the upgrade matters.&rdquo; It had a reproducible version boundary. I did not need to test every version between <code>2.1.150</code> and <code>2.1.154</code> to restore service. For practical recovery, it was enough to identify the last known good version.</p>
-<p><img src="/post-images/claude-code-invalid-message-role-system/03-regression-window.svg" alt="Version probes found the last known good Claude Code release"></p>
+<p><img alt="Version probes found the last known good Claude Code release" src="/post-images/claude-code-invalid-message-role-system/03-regression-window.svg"></p>
 <p><em>Figure 3: A minimal prompt across adjacent versions gives much better evidence than blind reinstalling.</em></p>
 <p>This is the important distinction: rolling back is not a debugging strategy by itself. Rolling back becomes a valid recovery action when you know exactly which version works, which version fails, and what command proves it.</p>
 <h2 id="6-root-cause-a-protocol-compatibility-break-between-the-newer-client-and-the-gateway">6. Root cause: a protocol compatibility break between the newer client and the gateway</h2>
@@ -328,22 +328,22 @@
 <p>I am intentionally calling this a compatibility break rather than simply &ldquo;a Claude Code bug&rdquo; or &ldquo;a gateway bug.&rdquo; In practice, these incidents often sit between components. Claude Code may legitimately evolve its request format. A compatible gateway must track those changes closely. The operational failure is that the compatibility contract was not tested tightly enough across versions.</p>
 <h2 id="7-the-fix-pin-claude-code-to-the-last-known-good-version">7. The fix: pin Claude Code to the last known good version</h2>
 <p>Once <code>2.1.150</code> was confirmed to work, the recovery command was straightforward:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>npm install -g @anthropic-ai/claude-code@2.1.150
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>npm install -g @anthropic-ai/claude-code@2.1.150
 </span></span></code></pre></div><p>After installation, I verified three things.</p>
 <p>First, the installed version:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>claude --version
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>claude --version
 </span></span></code></pre></div><p>Expected output:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>2.1.150 (Claude Code)
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>2.1.150 (Claude Code)
 </span></span></code></pre></div><p>Second, the explicit-model minimal prompt:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>claude -p <span style="color:#e6db74">&#34;reply only OK&#34;</span> --model &lt;MODEL_NAME&gt;
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>claude -p <span style="color:#e6db74">&#34;reply only OK&#34;</span> --model &lt;MODEL_NAME&gt;
 </span></span></code></pre></div><p>Expected output:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>OK
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>OK
 </span></span></code></pre></div><p>Third, the default model path:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>claude -p <span style="color:#e6db74">&#34;reply only OK&#34;</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>claude -p <span style="color:#e6db74">&#34;reply only OK&#34;</span>
 </span></span></code></pre></div><p>Expected output:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>OK
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>OK
 </span></span></code></pre></div><p>The third check matters. Real interactive usage usually does not pass <code>--model</code> every time. If the explicit model works but the default Sonnet/Haiku/Opus mapping still points to a broken path, the user will hit the same failure as soon as they start a normal session.</p>
-<p><img src="/post-images/claude-code-invalid-message-role-system/04-fix-decision-tree.svg" alt="Choose the smallest reversible fix"></p>
+<p><img alt="Choose the smallest reversible fix" src="/post-images/claude-code-invalid-message-role-system/04-fix-decision-tree.svg"></p>
 <p><em>Figure 4: If another provider is acceptable, switch temporarily. If the same gateway is required, pin the last known good client version while the adapter catches up.</em></p>
 <h2 id="8-why-i-did-not-start-by-changing-the-key-model-or-session">8. Why I did not start by changing the key, model, or session</h2>
 <p>Several tempting fixes would have been wrong or at least premature.</p>
@@ -358,21 +358,21 @@
 <h2 id="9-a-reusable-checklist-for-every-model-is-broken-incidents">9. A reusable checklist for &ldquo;every model is broken&rdquo; incidents</h2>
 <p>Here is the checklist I would use next time.</p>
 <h3 id="91-classify-the-error-code-first">9.1 Classify the error code first</h3>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>400 -&gt; request shape, parameters, protocol compatibility
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>400 -&gt; request shape, parameters, protocol compatibility
 </span></span><span style="display:flex;"><span>401/403 -&gt; authentication, authorization, account status
 </span></span><span style="display:flex;"><span>404 -&gt; endpoint path, model name, route mapping
 </span></span><span style="display:flex;"><span>429 -&gt; rate limits, quota, concurrency
 </span></span><span style="display:flex;"><span>5xx -&gt; upstream service, provider outage, gateway instability
 </span></span></code></pre></div><p>This is not a perfect rule, but it prevents the first step from going in the wrong direction.</p>
 <h3 id="92-use-a-minimal-prompt">9.2 Use a minimal prompt</h3>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>claude -p <span style="color:#e6db74">&#34;reply only OK&#34;</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>claude -p <span style="color:#e6db74">&#34;reply only OK&#34;</span>
 </span></span></code></pre></div><p>If this fails, investigate global configuration, provider routing, client version, and endpoint behavior before project-specific instructions.</p>
 <h3 id="93-record-the-exact-client-version">9.3 Record the exact client version</h3>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>claude --version
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>claude --version
 </span></span></code></pre></div><p>Do not write &ldquo;latest&rdquo; in a troubleshooting note. &ldquo;Latest&rdquo; changes. A version number is evidence.</p>
 <h3 id="94-check-whether-a-custom-anthropic-base-url-is-configured">9.4 Check whether a custom Anthropic base URL is configured</h3>
 <p>Look for:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>ANTHROPIC_BASE_URL
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>ANTHROPIC_BASE_URL
 </span></span><span style="display:flex;"><span>ANTHROPIC_MODEL
 </span></span><span style="display:flex;"><span>ANTHROPIC_DEFAULT_SONNET_MODEL
 </span></span><span style="display:flex;"><span>ANTHROPIC_DEFAULT_HAIKU_MODEL
@@ -380,10 +380,10 @@
 </span></span></code></pre></div><p>A custom <code>ANTHROPIC_BASE_URL</code> means a compatibility layer is part of the incident until proven otherwise.</p>
 <h3 id="95-test-provider-paths-horizontally">9.5 Test provider paths horizontally</h3>
 <p>If you have a provider switching tool, avoid changing the global default first. Start temporary sessions:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>cc-switch start claude &lt;PROVIDER_ID&gt; -- -p <span style="color:#e6db74">&#34;reply only OK&#34;</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>cc-switch start claude &lt;PROVIDER_ID&gt; -- -p <span style="color:#e6db74">&#34;reply only OK&#34;</span>
 </span></span></code></pre></div><p>If provider A fails and provider B succeeds, you have learned more than a global reinstall would tell you.</p>
 <h3 id="96-test-client-versions-vertically">9.6 Test client versions vertically</h3>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>npx -y @anthropic-ai/claude-code@&lt;VERSION&gt; -p <span style="color:#e6db74">&#34;reply only OK&#34;</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>npx -y @anthropic-ai/claude-code@&lt;VERSION&gt; -p <span style="color:#e6db74">&#34;reply only OK&#34;</span>
 </span></span></code></pre></div><p>Find the last known good version, then decide whether to pin or report the compatibility issue.</p>
 <h3 id="97-change-global-state-only-after-you-know-the-recovery-target">9.7 Change global state only after you know the recovery target</h3>
 <p>Once you know which provider and which client version work, then update the global installation or provider configuration. After that, verify both explicit and default model paths.</p>
@@ -412,9 +412,9 @@
 <p>It is a temporary recovery measure, not a long-term strategy. Older versions may lack features, bug fixes, or security improvements. Document why the pin exists, add a regression test, and revisit the pin after the gateway catches up.</p>
 <h3 id="q5-how-do-i-prevent-an-accidental-upgrade-from-reintroducing-this">Q5: How do I prevent an accidental upgrade from reintroducing this?</h3>
 <p>Put the explicit version in your setup script or machine bootstrap script:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>npm install -g @anthropic-ai/claude-code@2.1.150
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>npm install -g @anthropic-ai/claude-code@2.1.150
 </span></span></code></pre></div><p>Then add a post-install smoke test:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>claude -p <span style="color:#e6db74">&#34;reply only OK&#34;</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>claude -p <span style="color:#e6db74">&#34;reply only OK&#34;</span>
 </span></span></code></pre></div><p>If that command does not return <code>OK</code>, treat the environment as not ready.</p>
 <h3 id="q6-what-if-i-do-not-have-a-provider-switching-tool">Q6: What if I do not have a provider switching tool?</h3>
 <p>Inspect <code>~/.claude/settings.json</code>, shell startup files, and environment variables. Find <code>ANTHROPIC_BASE_URL</code>. If it points to a custom endpoint, treat the endpoint as part of the system under test. Then test Claude Code versions vertically with <code>npx</code>.</p>
@@ -422,7 +422,7 @@
 <p>No. In this incident, one provider path returned <code>OK</code>. Compatibility depends on the gateway implementation, supported client versions, message conversion logic, and downstream model validation rules.</p>
 <h2 id="12-retrospective-the-valuable-part-was-not-the-downgrade-it-was-the-evidence-chain">12. Retrospective: the valuable part was not the downgrade; it was the evidence chain</h2>
 <p>The final command was short:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>npm install -g @anthropic-ai/claude-code@2.1.150
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>npm install -g @anthropic-ai/claude-code@2.1.150
 </span></span></code></pre></div><p>But the important part was the evidence chain:</p>
 <ol>
 <li>Minimal prompt reproduced the failure.</li>

@@ -219,7 +219,7 @@
 </blockquote>
 <p>字面意思非常直接：第 10 块盘的坏扇区数涨了。对一个常年用 NAS 的人来说，这种告警永远要第一时间去看——因为它既是&quot;可能是误报&quot;的开端，也常常是&quot;一块盘要开始掉链子&quot;的早期信号。</p>
 <p>所以我没等它自己消失，直接 SSH 进 NAS 看了一眼整体状况。</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>$ lsblk
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>$ lsblk
 </span></span><span style="display:flex;"><span>sda     9.1T   WDC WD100EMAZ
 </span></span><span style="display:flex;"><span>sdb     9.1T   WDC WD101EMAZ
 </span></span><span style="display:flex;"><span>sde     9.1T   HUH721010ALE601
@@ -227,9 +227,9 @@
 </span></span></code></pre></div><p>四块 10TB 盘，看序列号就能对上：<code>/dev/sdj</code> 正是告警里说的&quot;硬盘 10&quot;——一块希捷 IronWolf Pro，序列号尾号 <code>X4K</code>。</p>
 <h2 id="2-第一件事拿-smartctl-体检">2. 第一件事：拿 smartctl 体检</h2>
 <p>NAS 上有现成的 <code>smartctl</code>（DSM 把它放在 <code>/usr/bin/smartctl</code>），不需要额外装包。对希捷这种 SATA 盘，加上 <code>-d sat</code> 才能稳定读出全部 SMART 属性：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>smartctl -d sat -a /dev/sdj
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>smartctl -d sat -a /dev/sdj
 </span></span></code></pre></div><p>完整输出我截了几段关键值：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>=== START OF READ SMART DATA SECTION ===
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>=== START OF READ SMART DATA SECTION ===
 </span></span><span style="display:flex;"><span>SMART Attributes Data Structure revision number: 10
 </span></span><span style="display:flex;"><span>
 </span></span><span style="display:flex;"><span>ID# ATTRIBUTE_NAME                  RAW_VALUE
@@ -243,7 +243,7 @@
 </span></span><span style="display:flex;"><span>197 Current_Pending_Sector          0  (已自愈)
 </span></span><span style="display:flex;"><span>198 Offline_Uncorrectable           0
 </span></span><span style="display:flex;"><span>199 UDMA_CRC_Error_Count            8
-</span></span></code></pre></div><p><img src="/post-images/seagate-ironwolf-rma-rescue/smart-panel-zh.svg" alt="smartctl 输出样例"></p>
+</span></span></code></pre></div><p><img alt="smartctl 输出样例" src="/post-images/seagate-ironwolf-rma-rescue/smart-panel-zh.svg"></p>
 <p><em>图 1：smartctl -a /dev/sdj 的关键 SMART 字段，红字是这次告警的元凶。</em></p>
 <p>先别急着下结论，把这几个数字<strong>逐个看明白</strong>比较重要。Backblaze 在他们公开的硬盘健康研究里给出的判断阈值很简单：<strong>只要 <code>Reallocated_Sector_Ct</code>、<code>Current_Pending_Sector</code>、<code>Offline_Uncorrectable</code>、<code>Reported_Uncorrect</code>、<code>Command_Timeout</code> 这五个属性里任何一个的 RAW 值大于 0，就要进入重点观察名单</strong>。在我的盘里，至少有四项已经命中。</p>
 <p>但对&quot;现在到底有多危险&quot;这个问题，光看数字还不够，要看<strong>这些数字是&quot;还在涨&quot;还是&quot;已经停下来了&quot;</strong>。</p>
@@ -252,7 +252,7 @@
 <ol>
 <li><strong>再过一小时读一次</strong>：<code>Reallocated_Sector_Ct</code> 从 18496 涨到了 18528。<strong>还在涨。</strong></li>
 <li><strong>跑一次短自检</strong>：
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>smartctl -d sat -t short /dev/sdj
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>smartctl -d sat -t short /dev/sdj
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># 等 1 分钟</span>
 </span></span><span style="display:flex;"><span>smartctl -d sat -l selftest /dev/sdj
 </span></span></code></pre></div>结果是 <code>Completed without error</code>，自检本身没找到新错误。</li>
@@ -269,7 +269,7 @@
 <h2 id="4-一个被忽略的细节另一块盘才是更危险的">4. 一个被忽略的细节：另一块盘才是更危险的</h2>
 <p>按理说到这里就可以进入&quot;换盘&quot;流程了。但我顺手把四块盘都过了一遍，结果发现了一个<strong>更严重的问题</strong>。</p>
 <p>第 5 块盘 <code>/dev/sde</code>（HGST Ultrastar He10 10TB）的 SMART 看起来非常干净（<code>Reallocated_Sector_Ct</code> 是 0），但内核日志里全是 <code>ata5</code> 端口的异常：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>[Sun May 31 11:20:55 2026] ata5.00: exception Emask 0x11 ... action 0x6 frozen
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>[Sun May 31 11:20:55 2026] ata5.00: exception Emask 0x11 ... action 0x6 frozen
 </span></span><span style="display:flex;"><span>[Sun May 31 11:20:55 2026] ata5.00: irq_stat 0x48000008, interface fatal error
 </span></span><span style="display:flex;"><span>[Sun May 31 11:20:55 2026] ata5: hard resetting link
 </span></span><span style="display:flex;"><span>[Sun May 31 11:20:56 2026] ata5: SATA link up 6.0 Gbps
@@ -277,14 +277,14 @@
 </span></span><span style="display:flex;"><span>[Wed Jun 10 03:38:33 2026] ata5.00: exception Emask 0x11 ... frozen
 </span></span><span style="display:flex;"><span>[Wed Jun 10 03:38:34 2026] ata5: hard resetting link
 </span></span></code></pre></div><p>跑 <code>smartctl -d sat -x /dev/sde | grep &quot;SATA Phy Event Counters&quot; -A 12</code>：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>0x0001  185  Command failed due to ICRC error
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>0x0001  185  Command failed due to ICRC error
 </span></span><span style="display:flex;"><span>0x0002  185  R_ERR response for data FIS
 </span></span><span style="display:flex;"><span>0x0004  185  R_ERR response for host-to-device data FIS
 </span></span><span style="display:flex;"><span>0x0009  202  Transition from drive PhyRdy to drive PhyNRdy
 </span></span><span style="display:flex;"><span>0x000a  196  Device-to-host register FISes sent due to a COMRESET
 </span></span><span style="display:flex;"><span>0x000b  184  CRC errors within host-to-device FIS
 </span></span></code></pre></div><p><code>UDMA_CRC_Error_Count</code> 也已经堆到 <strong>1884</strong>。</p>
-<p><img src="/post-images/seagate-ironwolf-rma-rescue/crc-panel.svg" alt="dmesg 中的 ata5 复位风暴 &#43; SATA Phy 计数"></p>
+<p><img alt="dmesg 中的 ata5 复位风暴 + SATA Phy 计数" src="/post-images/seagate-ironwolf-rma-rescue/crc-panel.svg"></p>
 <p><em>图 2：ata5 端口的 hard reset 风暴和 SATA Phy 事件计数。这不是硬盘坏，是接口链路在丢包。</em></p>
 <p>这种症状<strong>和硬盘本身的物理健康度完全无关</strong>。它真正在说的是：<code>ata5</code> 这个 SATA 通道的物理连接质量有问题，常见原因有三个：</p>
 <ol>
@@ -325,7 +325,7 @@
 <li>中国台湾：选 <code>Taiwan</code>，结果 <code>IN WARRANTY</code>，保修到期日 <strong>2027-03-30</strong></li>
 </ul>
 <p>也就是说，这块盘<strong>还有大约 9 个月的保修期</strong>，但<strong>区域是绑死在台湾的</strong>——如果直接寄给希捷中国，希捷会直接以&quot;非本区域购买&quot;为由拒收。</p>
-<p><img src="/post-images/seagate-ironwolf-rma-rescue/regions.svg" alt="同一序列号在三个区域的查询结果对比"></p>
+<p><img alt="同一序列号在三个区域的查询结果对比" src="/post-images/seagate-ironwolf-rma-rescue/regions.svg"></p>
 <p><em>图 3：同一序列号在中国大陆 / 台湾 / 转保后三种查询结果。SN 决定一切。</em></p>
 <h2 id="7-路径选择寄回台湾-vs-在国内转保">7. 路径选择：寄回台湾 vs. 在国内转保</h2>
 <p>摆在面前的选项其实只有两条：</p>
@@ -466,43 +466,43 @@ I am currently residing in mainland China for long-term work, and the drive is i
 </ol>
 <h2 id="9-完整路径总结">9. 完整路径总结</h2>
 <p>把整件事压成一张图，方便收藏：</p>
-<p><img src="/post-images/seagate-ironwolf-rma-rescue/flow-zh.svg" alt="NAS 硬盘健康判断与售后换新完整路径"></p>
+<p><img alt="NAS 硬盘健康判断与售后换新完整路径" src="/post-images/seagate-ironwolf-rma-rescue/flow-zh.svg"></p>
 <p><em>图 4：从 SMART 体检到 RMA 换新上线的全流程。</em></p>
 <table>
-	<thead>
-			<tr>
-					<th>步骤</th>
-					<th>关键动作</th>
-					<th>工具/命令</th>
-			</tr>
-	</thead>
-	<tbody>
-			<tr>
-					<td>① 体检</td>
-					<td>跑 smartctl 看 SMART 5/187/197/198</td>
-					<td><code>smartctl -d sat -a /dev/sdX</code></td>
-			</tr>
-			<tr>
-					<td>② 分类</td>
-					<td>看 Realloc 趋势、Pending、CRC</td>
-					<td>多次采样 + 短自检</td>
-			</tr>
-			<tr>
-					<td>③ 路径</td>
-					<td>确认保修区域和转移可能性</td>
-					<td>希捷官网多区域查询</td>
-			</tr>
-			<tr>
-					<td>④ 申请</td>
-					<td>邮件 / 工单 / 400 电话</td>
-					<td>见上文邮件模板</td>
-			</tr>
-			<tr>
-					<td>⑤ 验证</td>
-					<td>新盘到货后 SMART + badblocks 长测</td>
-					<td><code>smartctl</code> + <code>badblocks -wsv</code></td>
-			</tr>
-	</tbody>
+<thead>
+<tr>
+<th>步骤</th>
+<th>关键动作</th>
+<th>工具/命令</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>① 体检</td>
+<td>跑 smartctl 看 SMART 5/187/197/198</td>
+<td><code>smartctl -d sat -a /dev/sdX</code></td>
+</tr>
+<tr>
+<td>② 分类</td>
+<td>看 Realloc 趋势、Pending、CRC</td>
+<td>多次采样 + 短自检</td>
+</tr>
+<tr>
+<td>③ 路径</td>
+<td>确认保修区域和转移可能性</td>
+<td>希捷官网多区域查询</td>
+</tr>
+<tr>
+<td>④ 申请</td>
+<td>邮件 / 工单 / 400 电话</td>
+<td>见上文邮件模板</td>
+</tr>
+<tr>
+<td>⑤ 验证</td>
+<td>新盘到货后 SMART + badblocks 长测</td>
+<td><code>smartctl</code> + <code>badblocks -wsv</code></td>
+</tr>
+</tbody>
 </table>
 <h2 id="10-包装希捷-rma-最容易踩的坑">10. 包装：希捷 RMA 最容易踩的坑</h2>
 <p>很多人 RMA 被拒不是硬盘不过保，而是<strong>包装不过关</strong>。希捷对硬盘包装的要求相当严格：</p>
@@ -512,7 +512,7 @@ I am currently residing in mainland China for long-term work, and the drive is i
 <li>上下左右前后<strong>六面都至少 5cm 厚</strong>的减震泡沫</li>
 <li><strong>不要用订书钉</strong>封防静电袋（会戳破袋子和袋内硬盘 PCB），用胶带</li>
 </ul>
-<p><img src="/post-images/seagate-ironwolf-rma-rescue/packaging.svg" alt="RMA 包装剖面示意"></p>
+<p><img alt="RMA 包装剖面示意" src="/post-images/seagate-ironwolf-rma-rescue/packaging.svg"></p>
 <p><em>图 5：合格的 RMA 包装剖面。希捷会拒收任何&quot;晃起来有响声&quot;的包裹。</em></p>
 <h2 id="11-长期建议3-2-1-备份原则">11. 长期建议：3-2-1 备份原则</h2>
 <p>这块 IronWolf Pro 的故障给我提了一个很实在的醒：<strong>单盘 Basic 模式不要放任何不可重建的数据</strong>。群晖的存储空间里这个卷是 RAID 0（单盘裸跑），所以一块盘掉了，整个卷就没了。</p>

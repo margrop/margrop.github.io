@@ -227,17 +227,17 @@
 <p>The root cause is not systemd&rsquo;s fault and not Ubuntu&rsquo;s fault. It is <strong>Python&rsquo;s asyncio runtime not actually ending its child tasks when SIGTERM arrives</strong> — it is parked on a <code>socket.recv</code> and never voluntarily looks at the signal queue.</p>
 <p>The fix has two halves, both required: <strong>(1)</strong> a systemd drop-in that lowers <code>TimeoutStopSec</code> from the default 90s down to 20s on the affected Python units; <strong>(2)</strong> inside the Python service itself, walk <code>asyncio.all_tasks()</code>, <code>.cancel()</code> the in-flight connection handlers on SIGTERM, and wrap <code>self.stop()</code> in <code>asyncio.wait_for(..., timeout=10)</code> as a safety net. After both halves, the same <code>reboot</code> drops from 90 seconds to one second.</p>
 </blockquote>
-<p><img src="/post-images/ubuntu-shutdown-stuck/en/01-pizza-restaurant.svg" alt="Shutdown as last-call at a restaurant: the OS is the restaurant, services are customers"></p>
+<p><img alt="Shutdown as last-call at a restaurant: the OS is the restaurant, services are customers" src="/post-images/ubuntu-shutdown-stuck/en/01-pizza-restaurant.svg"></p>
 <p><em>Cover: &ldquo;shutdown&rdquo; as last-call at a restaurant. finalrd the waiter leaves in a second; Python customers smart-proxy and rule-proxy are stuck on a call; the systemd guard waits 90 seconds and then cuts the line. This map is the whole post in one picture.</em></p>
 <hr>
 <h2 id="1-background-a-freshly-upgraded-proxy-box-that-reboots-slowly">1. Background: a freshly-upgraded proxy box that reboots slowly</h2>
 <p>The timeline was this —</p>
 <p>The previous afternoon I had upgraded my home proxy box from Ubuntu 22.04 (jammy) to 24.04 (noble), kernel 6.8. The upgrade itself had finished cleanly in 27 minutes; every service was back up.</p>
 <p>The next day I wanted a &ldquo;cold-boot validation&rdquo;, so:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>ssh root@host <span style="color:#e6db74">&#39;systemctl reboot&#39;</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>ssh root@host <span style="color:#e6db74">&#39;systemctl reboot&#39;</span>
 </span></span></code></pre></div><p>Then —</p>
 <p>I sat staring at my local terminal. <strong>For 90 full seconds the SSH did not drop.</strong></p>
-<p><img src="/post-images/upgrade-ubuntu-via-agent/en/06-noble-wallpaper.png" alt="Ubuntu 24.04 wallpaper"></p>
+<p><img alt="Ubuntu 24.04 wallpaper" src="/post-images/upgrade-ubuntu-via-agent/en/06-noble-wallpaper.png"></p>
 <p><em>Figure 0 · This machine&rsquo;s operating system is Ubuntu 24.04 Noble Numbat (the official wallpaper). On top of it sit v2ray and a self-written Python proxy.</em></p>
 <p>After 90 seconds SSH finally died. A few more seconds of nothing, then the box came back. I logged in and ran <code>journalctl -b -1</code>:</p>
 <pre tabindex="0"><code>Oct 23 10:34:01 host systemd[1]: Stopping smart-proxy.service ...
@@ -250,7 +250,7 @@ Oct 23 10:35:31 host systemd[1]: Stopped smart-proxy.service.
 <p>Note the timing: from 10:34:01 (systemd says &ldquo;I&rsquo;m going to stop it&rdquo;) to 10:35:31 (systemd gives up, SIGKILL), exactly <strong>90 seconds</strong> pass. That is systemd&rsquo;s default <code>TimeoutStopSec=90s</code>.</p>
 </blockquote>
 <p>Here is that timeline drawn out:</p>
-<p><img src="/post-images/ubuntu-shutdown-stuck/en/02-signal-vs-kill.svg" alt="SIGTERM vs SIGKILL: same process, two shutdowns, two outcomes"></p>
+<p><img alt="SIGTERM vs SIGKILL: same process, two shutdowns, two outcomes" src="/post-images/ubuntu-shutdown-stuck/en/02-signal-vs-kill.svg"></p>
 <p><em>Figure 2: a single shutdown. At t=0 systemd sends SIGTERM. At t=1s the old code has not reacted at all. At t=90s systemd gives up and sends SIGKILL. Only then does the reboot actually begin. All that wait time is wasted on a single Python process.</em></p>
 <p>Why does this happen? We need to understand two things: <strong>how systemd stops a service</strong>, and <strong>what Python asyncio actually does when SIGTERM arrives</strong>.</p>
 <hr>
@@ -289,7 +289,7 @@ t=0            t=1s                          t=90s
 <p>When SIGTERM arrives, Python&rsquo;s event loop is sitting inside <code>select()</code> waiting for I/O. <strong><code>select()</code> does not know about SIGTERM.</strong> It only waits for file descriptors. SIGTERM goes into the pending-signal queue, but as long as any socket is in select, Python will not look at that queue.</p>
 <p>The result: for 90 seconds, <strong>SIGTERM is parked in the queue</strong>, Python has no idea anyone is calling it. Until systemd SIGKILLs the whole process — only then does Python &ldquo;learn&rdquo; it is dead.</p>
 <p>Drawn as a task tree:</p>
-<p><img src="/post-images/ubuntu-shutdown-stuck/en/03-asyncio-task-tree.svg" alt="The asyncio task tree: the parent must tear down the children"></p>
+<p><img alt="The asyncio task tree: the parent must tear down the children" src="/post-images/ubuntu-shutdown-stuck/en/03-asyncio-task-tree.svg"></p>
 <p><em>Figure 3: the Python process&rsquo;s asyncio task tree. The parent task <code>serve_forever</code> is waiting on SIGTERM. Below it sit N children <code>handle_socks_client</code> / <code>handle_http_client</code>, each with its own <code>asyncio.open_connection</code> coroutine parked on a socket. The health-check loops are another branch. SIGTERM only reaches the parent; the children&rsquo;s sockets keep waiting; the parent&rsquo;s <code>await self.stop()</code> is stuck too.</em></p>
 <hr>
 <h2 id="4-the-fix-half-on-the-system-side-half-on-the-application-side">4. The fix: half on the system side, half on the application side</h2>
@@ -300,12 +300,12 @@ t=0            t=1s                          t=90s
 </ul>
 <p><strong>The correct fix is to do both, AND to make Python cancel its children rather than relying on SIGKILL.</strong></p>
 <p>The repair strategy:</p>
-<p><img src="/post-images/ubuntu-shutdown-stuck/en/04-drop-in-fix.svg" alt="systemd drop-in: patch a unit without editing it"></p>
+<p><img alt="systemd drop-in: patch a unit without editing it" src="/post-images/ubuntu-shutdown-stuck/en/04-drop-in-fix.svg"></p>
 <p><em>Figure 4: the original unit (left) is untouched line by line. The drop-in (right) overrides only four key/value pairs — &ldquo;patching without touching the original&rdquo;. A drop-in is systemd&rsquo;s safe patch slot.</em></p>
 <h3 id="41-system-side-a-systemd-drop-in">4.1 System side: a systemd drop-in</h3>
 <p>You should not just edit <code>/etc/systemd/system/&lt;service&gt;.service</code> — the next package upgrade may overwrite it. systemd provides a <strong>safe patch slot</strong>: the directory <code>/etc/systemd/system/&lt;service&gt;.service.d/</code>, where any <code>*.conf</code> file is automatically layered on top of the unit.</p>
 <p>For <code>smart-proxy.service</code>:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>mkdir -p /etc/systemd/system/smart-proxy.service.d
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>mkdir -p /etc/systemd/system/smart-proxy.service.d
 </span></span><span style="display:flex;"><span>cat &gt; /etc/systemd/system/smart-proxy.service.d/override.conf <span style="color:#e6db74">&lt;&lt;&#39;EOF&#39;
 </span></span></span><span style="display:flex;"><span><span style="color:#e6db74">[Service]
 </span></span></span><span style="display:flex;"><span><span style="color:#e6db74">TimeoutStopSec=20s
@@ -325,7 +325,7 @@ t=0            t=1s                          t=90s
 <h3 id="42-application-side-python-cancels-its-own-children">4.2 Application side: Python cancels its own children</h3>
 <p>The drop-in tightens &ldquo;how long is the worst case&rdquo; from 90 seconds down to 20. The proper cure is for Python to <strong>finish itself within a second of receiving SIGTERM</strong>.</p>
 <p>The asyncio service&rsquo;s <code>serve_forever</code> originally looked like this (simplified):</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-python" data-lang="python"><span style="display:flex;"><span><span style="color:#66d9ef">async</span> <span style="color:#66d9ef">def</span> <span style="color:#a6e22e">serve_forever</span>(self) <span style="color:#f92672">-&gt;</span> <span style="color:#66d9ef">None</span>:
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-python" data-lang="python"><span style="display:flex;"><span><span style="color:#66d9ef">async</span> <span style="color:#66d9ef">def</span> <span style="color:#a6e22e">serve_forever</span>(self) <span style="color:#f92672">-&gt;</span> <span style="color:#66d9ef">None</span>:
 </span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">await</span> self<span style="color:#f92672">.</span>start()
 </span></span><span style="display:flex;"><span>    stop_event <span style="color:#f92672">=</span> asyncio<span style="color:#f92672">.</span>Event()
 </span></span><span style="display:flex;"><span>    loop <span style="color:#f92672">=</span> asyncio<span style="color:#f92672">.</span>get_running_loop()
@@ -335,7 +335,7 @@ t=0            t=1s                          t=90s
 </span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">await</span> self<span style="color:#f92672">.</span>stop()
 </span></span></code></pre></div><p>The logic is fine — receive SIGTERM, set <code>stop_event</code>, then <code>await self.stop()</code>.</p>
 <p><strong>The real problem is inside <code>self.stop()</code></strong>:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-python" data-lang="python"><span style="display:flex;"><span><span style="color:#66d9ef">async</span> <span style="color:#66d9ef">def</span> <span style="color:#a6e22e">stop</span>(self) <span style="color:#f92672">-&gt;</span> <span style="color:#66d9ef">None</span>:
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-python" data-lang="python"><span style="display:flex;"><span><span style="color:#66d9ef">async</span> <span style="color:#66d9ef">def</span> <span style="color:#a6e22e">stop</span>(self) <span style="color:#f92672">-&gt;</span> <span style="color:#66d9ef">None</span>:
 </span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">for</span> server <span style="color:#f92672">in</span> self<span style="color:#f92672">.</span>servers:
 </span></span><span style="display:flex;"><span>        server<span style="color:#f92672">.</span>close()
 </span></span><span style="display:flex;"><span>        <span style="color:#66d9ef">await</span> server<span style="color:#f92672">.</span>wait_closed()   <span style="color:#75715e"># ← this hangs!</span>
@@ -346,7 +346,7 @@ t=0            t=1s                          t=90s
 </span></span></code></pre></div><p>After <code>server.close()</code>, no new connections are accepted, but <strong>connections that are already in flight (<code>handle_socks_client</code> coroutines) keep running</strong>. Those coroutines are parked on <code>socket.recv</code>, and <code>socket.recv</code> does not react to SIGTERM — Python has no idea those coroutines should be cancelled.</p>
 <p><strong>So even after <code>stop_event</code> is set, the event loop is still in <code>select()</code>, still not reacting to anything.</strong> It is systemd&rsquo;s 90-second timeout that finally wins.</p>
 <p>The fix: after <code>stop_event.wait()</code> in <code>serve_forever</code>, <strong>explicitly walk all running tasks, match their names, and force-cancel the in-flight connection handlers</strong>:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-python" data-lang="python"><span style="display:flex;"><span><span style="color:#66d9ef">async</span> <span style="color:#66d9ef">def</span> <span style="color:#a6e22e">serve_forever</span>(self) <span style="color:#f92672">-&gt;</span> <span style="color:#66d9ef">None</span>:
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-python" data-lang="python"><span style="display:flex;"><span><span style="color:#66d9ef">async</span> <span style="color:#66d9ef">def</span> <span style="color:#a6e22e">serve_forever</span>(self) <span style="color:#f92672">-&gt;</span> <span style="color:#66d9ef">None</span>:
 </span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">await</span> self<span style="color:#f92672">.</span>start()
 </span></span><span style="display:flex;"><span>    stop_event <span style="color:#f92672">=</span> asyncio<span style="color:#f92672">.</span>Event()
 </span></span><span style="display:flex;"><span>    loop <span style="color:#f92672">=</span> asyncio<span style="color:#f92672">.</span>get_running_loop()
@@ -389,7 +389,7 @@ t=0            t=1s                          t=90s
 10:41:45  first log of the next boot
 </code></pre><p><strong>Both <code>rule-proxy</code> and <code>smart-proxy</code> Deactivated within one second each</strong>, instead of stalling for 90 seconds and getting SIGKILLed.</p>
 <p>The contrast is the whole point of the fix:</p>
-<p><img src="/post-images/ubuntu-shutdown-stuck/en/02-signal-vs-kill.svg" alt="SIGTERM vs SIGKILL: 90 seconds vs 1 second"></p>
+<p><img alt="SIGTERM vs SIGKILL: 90 seconds vs 1 second" src="/post-images/ubuntu-shutdown-stuck/en/02-signal-vs-kill.svg"></p>
 <p><em>Figure 2 (revisited): the same process, the same service, the same <code>reboot</code> command — only 15 lines of Python cancel logic and a 4-line systemd drop-in added. From 90 seconds to one second.</em></p>
 <p>I left <code>.bak.20260619_103832</code> backups of both Python files in <code>/opt/smart-proxy/</code>. If the new code misbehaves, just <code>cp</code> the backup back and <code>systemctl restart</code> the services.</p>
 <hr>
@@ -423,7 +423,7 @@ t=0            t=1s                          t=90s
 </ul>
 <h3 id="q9-is-there-a-more-engineered-version-of-this">Q9: Is there a more &ldquo;engineered&rdquo; version of this?</h3>
 <p>Yes. If you maintain this long-term, a context manager like <code>graceful_shutdown</code> makes sense:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-python" data-lang="python"><span style="display:flex;"><span><span style="color:#a6e22e">@asynccontextmanager</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-python" data-lang="python"><span style="display:flex;"><span><span style="color:#a6e22e">@asynccontextmanager</span>
 </span></span><span style="display:flex;"><span><span style="color:#66d9ef">async</span> <span style="color:#66d9ef">def</span> <span style="color:#a6e22e">graceful_shutdown</span>(handler_names, timeout<span style="color:#f92672">=</span><span style="color:#ae81ff">10</span>):
 </span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">yield</span>
 </span></span><span style="display:flex;"><span>    <span style="color:#75715e"># post-yield teardown</span>

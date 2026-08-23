@@ -213,7 +213,7 @@
 <p><strong>一句话总结：</strong></p>
 <p>macOS 上同时跑了两个 VPN（<code>utun0</code>、<code>utun15</code>），其中 <code>utun0</code> 推送了一条 <code>10.0.0.0/8</code> 的聚合路由，把目标 <code>10.x.x.x</code> 全部&quot;吃&quot;掉了——而我真正想走的是 <code>utun15</code> 对端的内网。DNS 能解析，TCP/ICMP 就是不通。<strong><code>route -n get</code> 是定位这类问题的第一把刀</strong>。</p>
 </blockquote>
-<p><img src="/post-images/macos-routing-table-vpn-troubleshooting/01-routing-flow.svg" alt="macOS 路由表查找：最长前缀匹配流程"></p>
+<p><img alt="macOS 路由表查找：最长前缀匹配流程" src="/post-images/macos-routing-table-vpn-troubleshooting/01-routing-flow.svg"></p>
 <p><em>图 1：macOS 内核路由查找流程。从应用进程发出目的 IP，内核按&quot;最长前缀匹配&quot;在路由表里挑一条，匹配上 <code>10.0.0.0/8</code> 就走 utun0，匹配上更精确的 /32 就走 utun15。</em></p>
 <hr>
 <h2 id="问题背景连上-vpn-后内网域名访问不了">问题背景：连上 VPN 后，内网域名访问不了</h2>
@@ -241,7 +241,7 @@ Request timeout for icmp_seq 1
 <hr>
 <h2 id="问题分析路由表的视角">问题分析：路由表的视角</h2>
 <p>排查路由问题，最快的办法就是把路由表打印出来。我直接 SSH 到那台机器，跑：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>netstat -rn
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>netstat -rn
 </span></span></code></pre></div><p>输出节选（关键的几条）：</p>
 <pre tabindex="0"><code>Internet:
 Destination        Gateway            Flags     Netif
@@ -277,12 +277,12 @@ default            10.255.255.1      UGScg     utun15
 <p><code>utun0</code> 是系统层自动建立的全路由 VPN，每次连接都会自动塞这条 /8 聚合进路由表；用户毫无感知。</p>
 <p>而 <code>utun15</code> 是按需拨号的，它推送的路由里没包含 10.99.0.0/16 段，<strong>客户端不会自动补全</strong>。</p>
 <p>两者一叠加，目标 IP 就被 utun0 静默接管了。</p>
-<p><img src="/post-images/macos-routing-table-vpn-troubleshooting/02-dual-vpn-topology.svg" alt="双 VPN 路由冲突拓扑图：utun0 推送 /8 聚合，utun15 缺少 /16 网段路由，10.99.99.99 走错接口"></p>
+<p><img alt="双 VPN 路由冲突拓扑图：utun0 推送 /8 聚合，utun15 缺少 /16 网段路由，10.99.99.99 走错接口" src="/post-images/macos-routing-table-vpn-troubleshooting/02-dual-vpn-topology.svg"></p>
 <p><em>图 2：双 VPN 同时存在时的路由冲突。utun0 推送了覆盖整个 10.0.0.0/8 的聚合路由，utun15 没有 10.99.0.0/16 路由——结果 10.99.99.99 走了 utun0 而不是 utun15。</em></p>
 <hr>
 <h2 id="验证问题route--n-get-是最直接的诊断工具">验证问题：<code>route -n get</code> 是最直接的诊断工具</h2>
 <p>怀疑路由有问题时，不要靠猜，直接用 <code>route -n get &lt;目标IP&gt;</code> 让内核告诉你答案：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>$ route -n get 10.99.99.99
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>$ route -n get 10.99.99.99
 </span></span><span style="display:flex;"><span>
 </span></span><span style="display:flex;"><span>   route to: 10.99.99.99
 </span></span><span style="display:flex;"><span>destination: 10.99.99.99
@@ -290,7 +290,7 @@ default            10.255.255.1      UGScg     utun15
 </span></span><span style="display:flex;"><span>      flags: &lt;UP,HOST,DONE,WASCLONED,IFSCOPE,IFREF&gt;
 </span></span></code></pre></div><p>如果输出的 <code>interface</code> 不是你期望的那个（这里是 <code>utun15</code>），就坐实了&quot;路由选错了&quot;。</p>
 <p>接着对照路由表，看 utun0 上为什么匹配上：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>$ netstat -rn | grep -E <span style="color:#e6db74">&#34;^10 |utun15|default&#34;</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>$ netstat -rn | grep -E <span style="color:#e6db74">&#34;^10 |utun15|default&#34;</span>
 </span></span><span style="display:flex;"><span>default            10.255.255.1      UGScg     utun15
 </span></span><span style="display:flex;"><span><span style="color:#ae81ff">10</span>                 utun0             USc       utun0
 </span></span><span style="display:flex;"><span>10.19.180.31/32    10.255.255.1      UGHS      utun15
@@ -299,7 +299,7 @@ default            10.255.255.1      UGScg     utun15
 <h2 id="解决问题加一条更精确的路由">解决问题：加一条更精确的路由</h2>
 <p><strong>思路</strong>：让内核在为 10.99.99.99 选路时，能找到一条前缀长度比 /8 更长的路由（哪怕只是个 /32），就能压过 utun0 的聚合。</p>
 <p>macOS 加静态路由的命令是 <code>route -n add</code>：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># 单 IP 走 utun15</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># 单 IP 走 utun15</span>
 </span></span><span style="display:flex;"><span>sudo route -n add -host 10.99.99.99 -interface utun15
 </span></span><span style="display:flex;"><span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># 整个 10.99.0.0/16 网段都走 utun15</span>
@@ -311,7 +311,7 @@ default            10.255.255.1      UGScg     utun15
 <li>命令的 <code>-n</code> 是&quot;不解析名字&quot;，影响显示，不影响行为</li>
 </ul>
 <p>执行后再次验证：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>$ route -n get 10.99.99.99
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>$ route -n get 10.99.99.99
 </span></span><span style="display:flex;"><span>
 </span></span><span style="display:flex;"><span>   route to: 10.99.99.99
 </span></span><span style="display:flex;"><span>destination: 10.99.99.99
@@ -326,14 +326,14 @@ default            10.255.255.1      UGScg     utun15
 </span></span><span style="display:flex;"><span>--- 10.99.99.99 ping statistics ---
 </span></span><span style="display:flex;"><span><span style="color:#ae81ff">3</span> packets transmitted, <span style="color:#ae81ff">3</span> packets received, 0% packet loss
 </span></span></code></pre></div><p>通了。</p>
-<p><img src="/post-images/macos-routing-table-vpn-troubleshooting/03-route-fix-compare.svg" alt="修复前后路由表与 ping 对比：左红 / 右绿"></p>
+<p><img alt="修复前后路由表与 ping 对比：左红 / 右绿" src="/post-images/macos-routing-table-vpn-troubleshooting/03-route-fix-compare.svg"></p>
 <p><em>图 3：修复前后的 <code>route -n get</code> 输出与 ping 结果对比。左边：包被发往 utun0，ping 100% 丢包。右边：手动添加 /32 主机路由后，包从 utun15 顺利到达。</em></p>
 <hr>
 <h2 id="让路由永久生效launchd-启动项">让路由永久生效：launchd 启动项</h2>
 <p><code>route -n add</code> 加的路由只在当前会话有效，<strong>重启或者 VPN 重连后会丢失</strong>。要让路由在系统启动后自动重建，有几种方案。</p>
 <h3 id="方案-1launchd-启动任务推荐">方案 1：launchd 启动任务（推荐）</h3>
 <p>macOS 上最稳妥的方式是写一个 launchd plist 放到 <code>/Library/LaunchDaemons/</code>：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>sudo tee /Library/LaunchDaemons/com.local.vpn-route-fix.plist <span style="color:#e6db74">&lt;&lt;&#39;PLIST&#39;
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>sudo tee /Library/LaunchDaemons/com.local.vpn-route-fix.plist <span style="color:#e6db74">&lt;&lt;&#39;PLIST&#39;
 </span></span></span><span style="display:flex;"><span><span style="color:#e6db74">&lt;?xml version=&#34;1.0&#34; encoding=&#34;UTF-8&#34;?&gt;
 </span></span></span><span style="display:flex;"><span><span style="color:#e6db74">&lt;!DOCTYPE plist PUBLIC &#34;-//Apple//DTD PLIST</span> 1.0//EN<span style="color:#e6db74">&#34; &#34;</span>http://www.apple.com/DTDs/PropertyList-1.0.dtd<span style="color:#e6db74">&#34;&gt;
 </span></span></span><span style="display:flex;"><span><span style="color:#e6db74">&lt;plist version=&#34;</span>1.0<span style="color:#e6db74">&#34;&gt;
@@ -367,7 +367,7 @@ default            10.255.255.1      UGScg     utun15
 <p><strong>注意</strong>：launchd 任务在系统启动时就会执行，但此时 utun15 还没建立好。所以更稳妥的做法是写个 shell 脚本，先 sleep 等接口出现再加路由。</p>
 </blockquote>
 <p>改进版本——用一个 shell 脚本做包装：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># /usr/local/bin/vpn-route-fix.sh</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># /usr/local/bin/vpn-route-fix.sh</span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e">#!/bin/sh</span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># 等待 utun15 接口就绪</span>
 </span></span><span style="display:flex;"><span><span style="color:#66d9ef">for</span> i in <span style="color:#66d9ef">$(</span>seq <span style="color:#ae81ff">1</span> 30<span style="color:#66d9ef">)</span>; <span style="color:#66d9ef">do</span>
@@ -380,7 +380,7 @@ default            10.255.255.1      UGScg     utun15
 </span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> ifconfig utun15 &gt;/dev/null 2&gt;&amp;1; <span style="color:#66d9ef">then</span>
 </span></span><span style="display:flex;"><span>    /sbin/route -n add -host 10.99.99.99 -interface utun15
 </span></span><span style="display:flex;"><span><span style="color:#66d9ef">fi</span>
-</span></span></code></pre></div><div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>sudo chmod +x /usr/local/bin/vpn-route-fix.sh
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>sudo chmod +x /usr/local/bin/vpn-route-fix.sh
 </span></span></code></pre></div><p>然后 plist 里 <code>ProgramArguments</code> 改成执行这个脚本即可。</p>
 <h3 id="方案-2写到-rclocal--startupitem">方案 2：写到 rc.local / StartupItem</h3>
 <p>旧式做法。新版 macOS 已经废弃了 <code>/etc/rc.local</code>，不推荐。</p>
@@ -398,7 +398,7 @@ default            10.255.255.1      UGScg     utun15
 <h2 id="macos-路由表常用命令速查">macOS 路由表常用命令速查</h2>
 <p>最后整理一份日常会用到的命令清单：</p>
 <h3 id="查看路由表">查看路由表</h3>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># 默认格式（IPv4 + IPv6 全部，flags 字母可读性更好）</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># 默认格式（IPv4 + IPv6 全部，flags 字母可读性更好）</span>
 </span></span><span style="display:flex;"><span>netstat -rn
 </span></span><span style="display:flex;"><span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># 数字格式，无 DNS 解析</span>
@@ -410,7 +410,7 @@ default            10.255.255.1      UGScg     utun15
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># 看某个目标 IP 走哪条出口</span>
 </span></span><span style="display:flex;"><span>route -n get 8.8.8.8
 </span></span></code></pre></div><h3 id="加--删--改路由">加 / 删 / 改路由</h3>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># 加 /32 主机路由</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># 加 /32 主机路由</span>
 </span></span><span style="display:flex;"><span>sudo route -n add -host 10.99.99.99 -interface utun15
 </span></span><span style="display:flex;"><span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># 加 /24 网段路由（指定网关）</span>
@@ -426,21 +426,21 @@ default            10.255.255.1      UGScg     utun15
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># 改一条（先 delete 再 add）</span>
 </span></span><span style="display:flex;"><span>sudo route -n change -host 10.99.99.99 -interface utun0
 </span></span></code></pre></div><h3 id="临时禁用某个接口">临时禁用某个接口</h3>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># 临时关掉 utun0，强制所有 10.x 走 utun15</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># 临时关掉 utun0，强制所有 10.x 走 utun15</span>
 </span></span><span style="display:flex;"><span>sudo ifconfig utun0 down
 </span></span><span style="display:flex;"><span>sudo ifconfig utun0 up
 </span></span></code></pre></div><h3 id="监控路由变化">监控路由变化</h3>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># 持续观察路由表变化（调试 VPN 客户端的路由推送）</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># 持续观察路由表变化（调试 VPN 客户端的路由推送）</span>
 </span></span><span style="display:flex;"><span>watch -n <span style="color:#ae81ff">1</span> <span style="color:#e6db74">&#39;netstat -rn -f inet&#39;</span>
 </span></span></code></pre></div><h3 id="清除所有手动加的路由">清除所有手动加的路由</h3>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># 注意：只清你自己加的，不要动 default 和系统路由</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># 注意：只清你自己加的，不要动 default 和系统路由</span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># 最稳妥的是重启机器</span>
 </span></span><span style="display:flex;"><span>sudo reboot
 </span></span></code></pre></div><hr>
 <h2 id="qa">Q&amp;A</h2>
 <h3 id="q1能不能直接删掉-utun0-上的-100008-路由">Q1：能不能直接删掉 utun0 上的 <code>10.0.0.0/8</code> 路由？</h3>
 <p>技术上可以：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>sudo route -n delete -net 10.0.0.0/8 -interface utun0
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>sudo route -n delete -net 10.0.0.0/8 -interface utun0
 </span></span></code></pre></div><p>但<strong>通常不建议</strong>，原因：</p>
 <ul>
 <li>utun0 上其他正常工作的 IP（10.19.x、10.20.x、10.127.x）会失去路由</li>
@@ -475,7 +475,7 @@ Pushed routes:
   10.0.0.0/8 via 10.255.255.1
   ...
 </code></pre><p>也可以连接后立即跑 <code>netstat -rn</code> 对比前后变化。如果不放心，加上 <code>-v</code> 跑：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>sudo route -n monitor
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>sudo route -n monitor
 </span></span></code></pre></div><p>会实时打印路由表变更事件。</p>
 <h3 id="q6utun-编号为什么是动态的">Q6：<code>utun</code> 编号为什么是动态的？</h3>
 <p>macOS 给每个 VPN/tunnel 接口分配一个 utun 编号，<strong>编号不固定</strong>。今天可能是 utun15，明天连另一个 VPN 就变成 utun16。</p>
@@ -498,7 +498,7 @@ Pushed routes:
 <p><strong>老老实实写 launchd plist</strong>。</p>
 <h3 id="q9什么是-metric在路由选择里起什么作用">Q9：什么是 &ldquo;metric&rdquo;，在路由选择里起什么作用？</h3>
 <p>metric 是路由的&quot;代价&quot;，数字越小越优先。<code>route -n get</code> 输出里能看到 <code>rtt,msec</code> 和 <code>hopcount</code>，但主要看 metric：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>$ route -n get 8.8.8.8
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>$ route -n get 8.8.8.8
 </span></span><span style="display:flex;"><span>...
 </span></span><span style="display:flex;"><span>      flags: &lt;UP,GATEWAY,IFSCOPE&gt;
 </span></span><span style="display:flex;"><span>   recvpipe  sendpipe  ssthresh  rtt,msec    rttvar  hopcount
@@ -506,7 +506,7 @@ Pushed routes:
 </span></span></code></pre></div><p>如果两条路由<strong>前缀长度相同</strong>，metric 小的胜出。<code>netstat -rn</code> 里 flags 后面跟的 <code>S</code>（static）和 <code>D</code>（dynamic）等只是来源标识，不影响 metric。</p>
 <h3 id="q10ipv6-路由表也要单独看吗">Q10：IPv6 路由表也要单独看吗？</h3>
 <p>是的。<code>netstat -rn</code> 默认会混着打印 IPv4 和 IPv6，最好分开：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>netstat -rn -f inet     <span style="color:#75715e"># 仅 IPv4</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>netstat -rn -f inet     <span style="color:#75715e"># 仅 IPv4</span>
 </span></span><span style="display:flex;"><span>netstat -rn -f inet6    <span style="color:#75715e"># 仅 IPv6</span>
 </span></span></code></pre></div><p>如果你用的是纯 IPv4 业务，IPv6 路由一般不用管；但如果内网是双栈，IPv6 路由不对也会出现&quot;打不开网页&quot;的现象。</p>
 <hr>

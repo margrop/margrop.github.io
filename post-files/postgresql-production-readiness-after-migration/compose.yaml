@@ -1,0 +1,74 @@
+services:
+  volume-init:
+    image: postgres:18
+    user: "0:0"
+    command:
+      - bash
+      - -lc
+      - |
+        chown -R postgres:postgres /archive /backups
+        chmod 700 /backups
+    volumes:
+      - pgarchive:/archive
+      - pgbackup:/backups
+
+  db:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: labuser
+      POSTGRES_DB: lab
+      POSTGRES_HOST_AUTH_METHOD: trust
+      PGDATA: /var/lib/postgresql/data
+    command:
+      - postgres
+      - -c
+      - max_connections=100
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+      - -c
+      - track_io_timing=on
+      - -c
+      - archive_mode=on
+      - -c
+      - wal_level=replica
+      - -c
+      - archive_command=test ! -f /archive/%f && cp %p /archive/%f
+    depends_on:
+      volume-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U labuser -d lab"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - pgarchive:/archive
+      - pgbackup:/backups
+
+  client:
+    image: postgres:18
+    environment:
+      PGUSER: labuser
+      PGDATABASE: lab
+    command: ["sleep", "infinity"]
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./sql:/lab/sql:ro
+
+  pgbouncer:
+    build:
+      context: ./pgbouncer
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./pgbouncer/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro
+      - ./pgbouncer/userlist.txt:/etc/pgbouncer/userlist.txt:ro
+
+volumes:
+  pgdata:
+  pgarchive:
+  pgbackup:

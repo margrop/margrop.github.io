@@ -226,28 +226,28 @@
 </ol>
 <p>QUIC&rsquo;s fix is beautifully blunt: <strong>rebuild all of TCP&rsquo;s wisdom on top of UDP, where nobody interferes.</strong> This is the finale of our networking trilogy — part one covered <em>how to use the network</em>, part two <em>why TCP/IP was designed so well</em>, and this one <em>how even the mighty TCP got replaced by its own heirs</em>. All screenshots come from real systems; IPs and hostnames are masked.</p>
 </blockquote>
-<p><img src="/post-images/why-http3-ditched-tcp-quic/00-ai-cover.png" alt="Cover: TCP ruled for 40 years — why did HTTP/3 dump it?"></p>
+<p><img alt="Cover: TCP ruled for 40 years — why did HTTP/3 dump it?" src="/post-images/why-http3-ditched-tcp-quic/00-ai-cover.png"></p>
 <p><em>Figure 1: The Web changed drivers. The new driver is QUIC; the chassis is still the same one (UDP).</em></p>
 <hr>
 <h2 id="1-the-day-the-web-changed-drivers">1. The Day the Web Changed Drivers</h2>
 <p>In June 2022, the IETF published <strong>RFC 9114</strong>, and HTTP/3 became an official standard. A notable day in Internet history: <strong>for the first time since the Web was born in 1991, web traffic no longer depends on TCP.</strong></p>
 <p>The story started earlier: in 2012, Google engineers, fed up with TCP&rsquo;s limits, built an experiment called gQUIC (Quick UDP Internet Connections) and quietly shipped it in Chrome and their own servers. After nearly a decade of real-world validation, they handed it to the IETF — the result was QUIC (RFC 9000, 2021). The combination &ldquo;HTTP over QUIC&rdquo; was named HTTP/3.</p>
 <p>This is no paper standard — it&rsquo;s deployed in production. Here&rsquo;s a real DNS query I ran against Cloudflare (asking for a newer record type called HTTPS, which sites use to advertise which protocols they speak):</p>
-<p><img src="/post-images/why-http3-ditched-tcp-quic/shot-01-dig-type65.png" alt="Real screenshot: the HTTPS-type DNS record of cloudflare.com"></p>
+<p><img alt="Real screenshot: the HTTPS-type DNS record of cloudflare.com" src="/post-images/why-http3-ditched-tcp-quic/shot-01-dig-type65.png"></p>
 <p><em>Figure 2: A real query. <code>alpn=&quot;h3,h2&quot;</code> means: &ldquo;I speak HTTP/3 (h3) and HTTP/2 (h2) — your pick.&rdquo; Note h3 is listed first: HTTP/3 is already the preferred protocol at major providers.</em></p>
 <p>So what was worth replacing a 40-year incumbent for? Three midlife conditions — each harder to cure than the last.</p>
 <hr>
 <h2 id="2-condition-1-head-of-line-blocking--one-parcel-detained-everyone-waits">2. Condition 1: Head-of-Line Blocking — One Parcel Detained, Everyone Waits</h2>
 <p>TCP&rsquo;s essence is <strong>a single ordered byte stream</strong>. Picture a single-lane toll booth on a highway: parcels must pass in numbered order, and <strong>if parcel #3 gets lost on the way, parcels #4, #5, #6… must all wait in line — even if they already arrived — until #3 is retransmitted.</strong> That&rsquo;s head-of-line (HOL) blocking.</p>
 <p>You might say packet loss isn&rsquo;t an everyday thing. Sorry — it literally is. Real TCP statistics from my server:</p>
-<p><img src="/post-images/why-http3-ditched-tcp-quic/shot-03-tcp-retrans.png" alt="Real screenshot: TCP retransmission statistics on a server"></p>
+<p><img alt="Real screenshot: TCP retransmission statistics on a server" src="/post-images/why-http3-ditched-tcp-quic/shot-03-tcp-retrans.png"></p>
 <p><em>Figure 3: Real <code>netstat -s</code> output. Of 16.65 million segments sent, 52,981 had to be retransmitted — roughly 1 in every 300+ parcels needs a resend. Every resend is a full-queue standstill.</em></p>
 <p>HOL blocking used to be one connection&rsquo;s private problem. But in 2015, HTTP/2 did something that backfired: <strong>multiplexing</strong> — a single TCP connection between browser and server carries dozens of requests (HTML, CSS, images, JS) as dozens of &ldquo;streams,&rdquo; interleaved on the wire.</p>
 <p>Real HTTP/2 connection logs from my machine — note every stream has its own ID:</p>
-<p><img src="/post-images/why-http3-ditched-tcp-quic/shot-02-http2-streams.png" alt="Real screenshot: HTTP/2 stream identifiers"></p>
+<p><img alt="Real screenshot: HTTP/2 stream identifiers" src="/post-images/why-http3-ditched-tcp-quic/shot-02-http2-streams.png"></p>
 <p><em>Figure 4: Real <code>curl -v</code> output. <code>[HTTP/2] [1] OPENED stream</code> — the request goes into stream number 1. Multiplexing did cure <em>application-layer</em> HOL blocking (requests no longer queue), but underneath, it&rsquo;s still the same single TCP.</em></p>
 <p>See the problem? <strong>HTTP/2 strapped dozens of streams onto one TCP lane.</strong> Before, one lost packet stalled one stream; now one lost packet <strong>stalls dozens of streams at once</strong> — images, styles, and scripts on the page all freeze together. The more successful the multiplexing, the more painful the blocking.</p>
-<p><img src="/post-images/why-http3-ditched-tcp-quic/01-hol-blocking.png" alt="TCP head-of-line blocking vs QUIC independent streams"></p>
+<p><img alt="TCP head-of-line blocking vs QUIC independent streams" src="/post-images/why-http3-ditched-tcp-quic/01-hol-blocking.png"></p>
 <p><em>Figure 5: Left (TCP): parcel #3 is lost; every stream waits for its retransmission. Right (QUIC): streams are independent; only the owning stream waits.</em></p>
 <hr>
 <h2 id="3-condition-2-expensive-handshakes--half-a-second-of-small-talk-before-business">3. Condition 2: Expensive Handshakes — Half a Second of Small Talk Before Business</h2>
@@ -258,10 +258,10 @@
 </ol>
 <p>So <strong>before the browser sends its first real request, it waits 2-3 network round trips doing nothing else.</strong> On a same-city link (a few ms), who cares; on intercontinental fiber or mobile networks, one round trip is 100-300 ms — half a second burned on pleasantries alone.</p>
 <p>Not theory — real measurements from my machine:</p>
-<p><img src="/post-images/why-http3-ditched-tcp-quic/shot-04-curl-timing.png" alt="Real screenshot: curl phase timing — 573 ms spent on handshakes"></p>
+<p><img alt="Real screenshot: curl phase timing — 573 ms spent on handshakes" src="/post-images/why-http3-ditched-tcp-quic/shot-04-curl-timing.png"></p>
 <p><em>Figure 6: Real <code>curl</code> timing. TCP connected at 279 ms (first round trip), TLS agreed at 573 ms (second round trip) — 0.57 seconds of pure greeting before the first data byte.</em></p>
 <p>How many pleasantries does a TLS handshake actually take? Also measured:</p>
-<p><img src="/post-images/why-http3-ditched-tcp-quic/shot-05-tls-steps.png" alt="Real screenshot: detailed TLS handshake steps"></p>
+<p><img alt="Real screenshot: detailed TLS handshake steps" src="/post-images/why-http3-ditched-tcp-quic/shot-05-tls-steps.png"></p>
 <p><em>Figure 7: Real <code>curl -v</code> output. Client hello → Server hello → Certificate (show me your papers) → Key exchange… a whole etiquette ritual before business begins.</em></p>
 <p>The TCP community tried to fix this long ago — &ldquo;TCP Fast Open&rdquo; sends data <em>during</em> the handshake. The result? <strong>Hardly anyone dares enable it</strong> — because it requires changing TCP itself, which brings us to the third, most hopeless condition.</p>
 <hr>
@@ -272,7 +272,7 @@
 <li><strong>TCP lives in the operating system kernel.</strong> Upgrading TCP means upgrading billions of Windows, macOS, Linux, Android devices and router firmwares — a multi-decade project at best;</li>
 <li><strong>Middleboxes have welded TCP in place.</strong> Your packets traverse countless NATs, firewalls, and carrier appliances. These &ldquo;middleboxes&rdquo; only recognize classic TCP. Use a TCP extension they&rsquo;ve never seen (Fast Open, multipath MPTCP), and your packet gets dropped as a suspicious character. Protocol researchers have a name for this: <strong>ossification</strong>.</li>
 </ul>
-<p><img src="/post-images/why-http3-ditched-tcp-quic/03-tcp-ossification.png" alt="TCP welded shut: kernel &#43; middleboxes"></p>
+<p><img alt="TCP welded shut: kernel + middleboxes" src="/post-images/why-http3-ditched-tcp-quic/03-tcp-ossification.png"></p>
 <p><em>Figure 8: Middleboxes (firewalls, NATs, carrier appliances) only recognize classic TCP. The moment a packet looks different, they drop it. TCP is effectively welded shut from both sides.</em></p>
 <p>Remember &ldquo;we believe in running code&rdquo; from part two? <strong>TCP no longer gets to run new code</strong> — it is locked in by its own success.</p>
 <p>So QUIC&rsquo;s designers reached a conclusion that sounds like giving up but is actually genius: <strong>if TCP can&rsquo;t be changed, don&rsquo;t change it — rebuild TCP&rsquo;s wisdom on top of UDP, where nobody interferes.</strong></p>
@@ -281,13 +281,13 @@
 <h2 id="5-quics-four-trump-cards">5. QUIC&rsquo;s Four Trump Cards</h2>
 <p><strong>Trump 1: Independent streams — the HOL cure.</strong> QUIC natively multiplexes independent streams over UDP, with retransmission and ordering tracked <em>per stream</em> — parcel #3 lost? Only its own stream waits; the rest flow on (right half of Figure 5). The multiplexing HTTP/2 dreamed of is finally real.</p>
 <p><strong>Trump 2: Encryption built into the handshake — the cost cure.</strong> QUIC welds TLS 1.3 directly into its own handshake: for a new friend, <strong>1 round trip</strong> and data flows (versus 2-3 for TCP+TLS); for a returning friend, even <strong>0-RTT</strong> — the very first packet already carries data. Not a single pleasantry wasted.</p>
-<p><img src="/post-images/why-http3-ditched-tcp-quic/04-handshake-rtt.png" alt="Handshake cost: TCP&#43;TLS needs 2-3 round trips; QUIC needs 1, or 0"></p>
+<p><img alt="Handshake cost: TCP+TLS needs 2-3 round trips; QUIC needs 1, or 0" src="/post-images/why-http3-ditched-tcp-quic/04-handshake-rtt.png"></p>
 <p><em>Figure 9: Left (TCP): dial (1 RTT) + agree on cipher (1-2 RTT) — business starts on trip 3. Right (QUIC): the cipher is embedded in the dial; old friends start talking business immediately.</em></p>
 <p><strong>Trump 3: Connection IDs — the cure for dropped calls on the go.</strong> TCP identifies a connection by four values — both IPs and both ports. Walk from your living room to the street, and as WiFi hands over to 5G (part one covered these two networks), your IP changes and every TCP connection dies. QUIC ignores IPs: it issues each connection a <strong>badge</strong> (Connection ID). Switch networks all you like — as long as the badge holds, the video call and the download continue.</p>
-<p><img src="/post-images/why-http3-ditched-tcp-quic/05-connection-migration.png" alt="Connection migration: WiFi to 5G, same badge, connection survives"></p>
+<p><img alt="Connection migration: WiFi to 5G, same badge, connection survives" src="/post-images/why-http3-ditched-tcp-quic/05-connection-migration.png"></p>
 <p><em>Figure 10: Carrying the same badge (Connection ID) from WiFi to 5G — to QUIC, you&rsquo;re still you.</em></p>
 <p><strong>Trump 4: User-space and fully encrypted — the ossification cure.</strong> QUIC ships as ordinary code inside the app (Chrome updates, QUIC updates) — no waiting for OS upgrades. And it goes further: <strong>nearly everything, packet headers included, is encrypted.</strong> Middleboxes see nothing but &ldquo;a UDP packet,&rdquo; so there&rsquo;s nothing for them to meddle with. You love ossifying things? Fine — you get to see nothing.</p>
-<p><img src="/post-images/why-http3-ditched-tcp-quic/06-quic-userspace.png" alt="QUIC in user space, fully encrypted vs TCP in kernel, cleartext headers"></p>
+<p><img alt="QUIC in user space, fully encrypted vs TCP in kernel, cleartext headers" src="/post-images/why-http3-ditched-tcp-quic/06-quic-userspace.png"></p>
 <p><em>Figure 11: Left (TCP): lives in the kernel, upgrades require OS swaps, headers in cleartext for middleboxes to inspect and police. Right (QUIC): travels with the app, upgrades anytime, encrypted end to end — middleboxes can only stare.</em></p>
 <hr>
 <h2 id="6-has-tcp-really-been-abandoned">6. Has TCP Really Been Abandoned?</h2>

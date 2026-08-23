@@ -214,7 +214,7 @@
 <p>问题现象：AI Agent 在 DingTalk 通道中回复了重复的文本。消息不是发送了两次，而是一条消息里的内容被复制了一遍。排障最终定位到 NewAPI（QuantumNous 维护的 OneAPI 分支）v1.0.0-rc.10 版本的一个流式响应 Bug：当通过 OpenAI Chat Completions 协议转发 MiniMax 模型时，finish chunk 会<strong>同时包含 <code>delta.content</code> 和 <code>message.content</code></strong>，且两者内容完全一致。Agent 框架的流式处理器将两者都当作&quot;可见文本&quot;消费，导致最终文本被拼接两次。修复方案也很朴素：将 OpenClaw provider 协议从 <code>openai-completions</code> 切换到 <code>anthropic-messages</code>，OneAPI 原生支持该协议，且该路径下流式响应正常。</p>
 <p>本文不会出现任何真实内网地址、Token、模型 ID 或私有路径。所有配置片段都已脱敏。</p>
 </blockquote>
-<p><img src="/post-images/newapi-duplicate-content/flow-architecture.svg" alt="流式响应重复问题分析图"></p>
+<p><img alt="流式响应重复问题分析图" src="/post-images/newapi-duplicate-content/flow-architecture.svg"></p>
 <p><em>图 1：本文自制分析图。展示了从用户请求到最终重复回复的完整请求链路，以及流式 chunk 中的重复内容。</em></p>
 <h2 id="1-问题背景当-ai-agent-接入-im每一处异常都无处遁形">1. 问题背景：当 AI Agent 接入 IM，每一处异常都无处遁形</h2>
 <p>将 AI Agent 接入即时通讯工具（钉钉、微信、飞书等）已经成了很常见的使用模式。相比在终端里和 Agent 对话，IM 入口的好处显而易见：你不需要记住某个 Dashboard 地址，也不需要 SSH 到服务器上敲命令。随手发一条消息，Agent 就能执行脚本、查询状态、分析数据或整理摘要。</p>
@@ -222,23 +222,23 @@
 <p>这次的场景是：用户通过 DingTalk 和 OpenClaw Agent 对话，无论问什么，Agent 都会把同一段回复在一条消息里重复两次。注意关键细节：不是收到两条消息，而是一条消息里有两份完全相同的文本。这个差异非常重要——它决定了排障的起点应该放在发送层还是模型层。</p>
 <h2 id="2-问题表现一条消息两份内容">2. 问题表现：一条消息，两份内容</h2>
 <p>问题的表现用一句话就能说清：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>用户问：hi
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>用户问：hi
 </span></span><span style="display:flex;"><span>期望：你好！有什么需要帮忙的吗？
 </span></span><span style="display:flex;"><span>实际：你好！有什么需要帮忙的吗？你好！有什么需要帮忙的吗？
 </span></span></code></pre></div><p>从 OpenClaw 的会话日志中可以看到明确的证据。使用 <code>custom/DIY-123</code> 模型（通过 OneAPI 网关转发）时，Agent 记录到的最终可见文本是：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-json" data-lang="json"><span style="display:flex;"><span>{
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-json" data-lang="json"><span style="display:flex;"><span>{
 </span></span><span style="display:flex;"><span>  <span style="color:#f92672">&#34;provider&#34;</span>: <span style="color:#e6db74">&#34;custom&#34;</span>,
 </span></span><span style="display:flex;"><span>  <span style="color:#f92672">&#34;model&#34;</span>: <span style="color:#e6db74">&#34;DIY-123&#34;</span>,
 </span></span><span style="display:flex;"><span>  <span style="color:#f92672">&#34;finalText&#34;</span>: <span style="color:#e6db74">&#34;你好！有什么需要帮忙的吗？你好！有什么需要帮忙的吗？&#34;</span>
 </span></span><span style="display:flex;"><span>}
 </span></span></code></pre></div><p>而使用原生 MiniMax provider 时，同一 prompt 的输出是正常的：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-json" data-lang="json"><span style="display:flex;"><span>{
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-json" data-lang="json"><span style="display:flex;"><span>{
 </span></span><span style="display:flex;"><span>  <span style="color:#f92672">&#34;provider&#34;</span>: <span style="color:#e6db74">&#34;minimax&#34;</span>,
 </span></span><span style="display:flex;"><span>  <span style="color:#f92672">&#34;model&#34;</span>: <span style="color:#e6db74">&#34;MiniMax-M2.7&#34;</span>,
 </span></span><span style="display:flex;"><span>  <span style="color:#f92672">&#34;finalText&#34;</span>: <span style="color:#e6db74">&#34;你好！有什么需要帮忙的吗？&#34;</span>
 </span></span><span style="display:flex;"><span>}
 </span></span></code></pre></div><p>对比非常清晰：<strong>同一个模型，在不同 provider 协议路径下，输出了不同质量的结果。</strong> 兼容网关路径产生了重复文本，原生路径完全正常。</p>
-<p><img src="/post-images/newapi-duplicate-content/debug-comparison.svg" alt="Provider 对比调试图"></p>
+<p><img alt="Provider 对比调试图" src="/post-images/newapi-duplicate-content/debug-comparison.svg"></p>
 <p><em>图 2：同一 prompt 在不同 provider 下的输出对比。红色路径（openai-completions 协议）产生重复，绿色路径（anthropic-messages 协议）正常。</em></p>
 <h2 id="3-排障过程逆向追溯逐层缩小范围">3. 排障过程：逆向追溯，逐层缩小范围</h2>
 <p>我的排障思路是：不先假设问题出在哪一层，而是用最小可复现样本逐层排除。基本上是一个&quot;从外到内&quot;的逆向追溯过程。</p>
@@ -257,11 +257,11 @@
 <p>这就把问题定位到了模型路由层和 provider 层。接下来需要找出：为什么通过 OneAPI 网关转发时，内容会重复？</p>
 <h3 id="33-第三层直接测试-oneapi-的流式响应">3.3 第三层：直接测试 OneAPI 的流式响应</h3>
 <p>这一步是最关键的转折点。我不想在代码里猜，而是直接用 curl 测试 OneAPI 转发 MiniMax 的流式响应。测试脚本如下：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>curl -s -X POST <span style="color:#e6db74">&#34;https://&lt;ONEAPI_ENDPOINT&gt;/v1/chat/completions&#34;</span> <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span>  -H <span style="color:#e6db74">&#34;Authorization: Bearer &lt;TOKEN&gt;&#34;</span> <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span>  -H <span style="color:#e6db74">&#34;Content-Type: application/json&#34;</span> <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span>  -d <span style="color:#e6db74">&#39;{&#34;model&#34;:&#34;&lt;MODEL_ID&gt;&#34;,&#34;messages&#34;:[{&#34;role&#34;:&#34;user&#34;,&#34;content&#34;:&#34;hi&#34;}],&#34;stream&#34;:true,&#34;max_tokens&#34;:500}&#39;</span> <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span>  | python3 -c <span style="color:#e6db74">&#39;
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>curl -s -X POST <span style="color:#e6db74">&#34;https://&lt;ONEAPI_ENDPOINT&gt;/v1/chat/completions&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  -H <span style="color:#e6db74">&#34;Authorization: Bearer &lt;TOKEN&gt;&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  -H <span style="color:#e6db74">&#34;Content-Type: application/json&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  -d <span style="color:#e6db74">&#39;{&#34;model&#34;:&#34;&lt;MODEL_ID&gt;&#34;,&#34;messages&#34;:[{&#34;role&#34;:&#34;user&#34;,&#34;content&#34;:&#34;hi&#34;}],&#34;stream&#34;:true,&#34;max_tokens&#34;:500}&#39;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  | python3 -c <span style="color:#e6db74">&#39;
 </span></span></span><span style="display:flex;"><span><span style="color:#e6db74">import sys, json
 </span></span></span><span style="display:flex;"><span><span style="color:#e6db74">for line in sys.stdin:
 </span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    line = line.strip()
@@ -285,13 +285,13 @@ FINISH: stop
 FINAL message.content: &#39;Hello! How can I help you today?&#39;
 FINISH: stop
 </code></pre><p><strong>Bug 确凿无疑。</strong> 同一个 <code>&quot;Hello! How can I help you today?&quot;</code> 被输出了两次：一次通过 <code>delta.content</code>（正常流式事件），一次通过 finish chunk 中的 <code>message.content</code>（不该出现）。</p>
-<p><img src="/post-images/newapi-duplicate-content/curl-verify-output.png" alt="Curl 验证输出"></p>
+<p><img alt="Curl 验证输出" src="/post-images/newapi-duplicate-content/curl-verify-output.png"></p>
 <p><em>图 3：Curl 命令直接验证——finish chunk 中同时存在 delta.content 和 message.content，内容完全一致。</em></p>
 <h2 id="4-根因分析oneapi-的-finish-chunk-包含了冗余的-messagecontent">4. 根因分析：OneAPI 的 finish chunk 包含了冗余的 message.content</h2>
 <h3 id="41-openai-chat-completions-协议标准">4.1 OpenAI Chat Completions 协议标准</h3>
 <p>OpenAI Chat Completions 流式协议的标准行为是：在 stream 模式下，除了最后一个 chunk 之外，每个 chunk 的 <code>choices[0]</code> 只包含 <code>delta</code> 字段，不包含 <code>message</code> 字段。最后一个 chunk（finish_reason 不为 null）可以包含 <code>message</code> 字段，但标准实现中<strong>不会同时提供非空的 <code>delta.content</code> 和 <code>message.content</code></strong>。</p>
 <p>标准 finish chunk 示例：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-json" data-lang="json"><span style="display:flex;"><span>{
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-json" data-lang="json"><span style="display:flex;"><span>{
 </span></span><span style="display:flex;"><span>  <span style="color:#f92672">&#34;choices&#34;</span>: [{
 </span></span><span style="display:flex;"><span>    <span style="color:#f92672">&#34;delta&#34;</span>: {},
 </span></span><span style="display:flex;"><span>    <span style="color:#f92672">&#34;message&#34;</span>: {<span style="color:#f92672">&#34;content&#34;</span>: <span style="color:#e6db74">&#34;Hello!&#34;</span>},
@@ -299,7 +299,7 @@ FINISH: stop
 </span></span><span style="display:flex;"><span>  }]
 </span></span><span style="display:flex;"><span>}
 </span></span></code></pre></div><p>或者：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-json" data-lang="json"><span style="display:flex;"><span>{
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-json" data-lang="json"><span style="display:flex;"><span>{
 </span></span><span style="display:flex;"><span>  <span style="color:#f92672">&#34;choices&#34;</span>: [{
 </span></span><span style="display:flex;"><span>    <span style="color:#f92672">&#34;delta&#34;</span>: {},
 </span></span><span style="display:flex;"><span>    <span style="color:#f92672">&#34;finish_reason&#34;</span>: <span style="color:#e6db74">&#34;stop&#34;</span>
@@ -307,7 +307,7 @@ FINISH: stop
 </span></span><span style="display:flex;"><span>}
 </span></span></code></pre></div><h3 id="42-oneapi-v100-rc10-的实际行为">4.2 OneAPI v1.0.0-rc.10 的实际行为</h3>
 <p>但 OneAPI v1.0.0-rc.10（QuantumNous 分支）在转发 MiniMax 模型时，finish chunk 是这样的：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-json" data-lang="json"><span style="display:flex;"><span>{
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-json" data-lang="json"><span style="display:flex;"><span>{
 </span></span><span style="display:flex;"><span>  <span style="color:#f92672">&#34;choices&#34;</span>: [{
 </span></span><span style="display:flex;"><span>    <span style="color:#f92672">&#34;delta&#34;</span>: {<span style="color:#f92672">&#34;content&#34;</span>: <span style="color:#e6db74">&#34;Hello! How can I help you today?&#34;</span>},
 </span></span><span style="display:flex;"><span>    <span style="color:#f92672">&#34;message&#34;</span>: {<span style="color:#f92672">&#34;content&#34;</span>: <span style="color:#e6db74">&#34;Hello! How can I help you today?&#34;</span>},
@@ -333,12 +333,12 @@ FINISH: stop
 <p>方案 3 是最低成本、最高收益的选择。OneAPI 原生支持 Anthropic Messages 协议，且 OpenClaw 也内置了 <code>anthropic-messages</code> 作为 <code>GENERIC_PROVIDER_APIS</code> 之一。</p>
 <h3 id="52-具体更改">5.2 具体更改</h3>
 <p>在 OpenClaw 配置中，将 provider 的 <code>api</code> 类型从 <code>openai-completions</code> 改为 <code>anthropic-messages</code>：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-json" data-lang="json"><span style="display:flex;"><span>{
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-json" data-lang="json"><span style="display:flex;"><span>{
 </span></span><span style="display:flex;"><span>  <span style="color:#f92672">&#34;providers&#34;</span>: [
 </span></span><span style="display:flex;"><span>    {
 </span></span><span style="display:flex;"><span>      <span style="color:#f92672">&#34;name&#34;</span>: <span style="color:#e6db74">&#34;custom&#34;</span>,
 </span></span><span style="display:flex;"><span>      <span style="color:#f92672">&#34;api&#34;</span>: <span style="color:#e6db74">&#34;anthropic-messages&#34;</span>,  <span style="color:#75715e">// 之前是 &#34;openai-completions&#34;
-</span></span></span><span style="display:flex;"><span>      <span style="color:#f92672">&#34;baseUrl&#34;</span>: <span style="color:#e6db74">&#34;https://&lt;ONEAPI_ENDPOINT&gt;&#34;</span>,
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>      <span style="color:#f92672">&#34;baseUrl&#34;</span>: <span style="color:#e6db74">&#34;https://&lt;ONEAPI_ENDPOINT&gt;&#34;</span>,
 </span></span><span style="display:flex;"><span>      <span style="color:#f92672">&#34;apiKey&#34;</span>: <span style="color:#e6db74">&#34;&lt;TOKEN&gt;&#34;</span>,
 </span></span><span style="display:flex;"><span>      <span style="color:#f92672">&#34;models&#34;</span>: [
 </span></span><span style="display:flex;"><span>        {<span style="color:#f92672">&#34;model&#34;</span>: <span style="color:#e6db74">&#34;DIY-123&#34;</span>, <span style="color:#f92672">&#34;reasoning&#34;</span>: <span style="color:#66d9ef">true</span>}
@@ -352,7 +352,7 @@ FINISH: stop
 <pre tabindex="0"><code>data: {&#34;type&#34;:&#34;content_block_delta&#34;,&#34;delta&#34;:{&#34;text&#34;:&#34;Hello!&#34;}}
 data: {&#34;type&#34;:&#34;message_stop&#34;}
 </code></pre><p>没有重复，没有再出现冗余的 <code>message.content</code>。Agent 在实际对话中也恢复了正常：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>用户：hi
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>用户：hi
 </span></span><span style="display:flex;"><span>Agent：你好！有什么需要帮忙的吗？
 </span></span></code></pre></div><h2 id="6-为什么不是修改-openclaw-的流式处理器">6. 为什么不是修改 OpenClaw 的流式处理器？</h2>
 <p>你可能想问：既然 OpenClaw 同时消费 <code>delta.content</code> 和 <code>message.content</code>，难道不是 OpenClaw 的 Bug？</p>

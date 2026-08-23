@@ -214,7 +214,7 @@
 <p>My home server runs a single <code>registry:2</code> container that currently holds <strong>13 GB of cached blobs across 95 repositories</strong>. Every NAS, Proxmox node, Mac, and Windows machine on my LAN pulls through it. A cold start of <code>alpine:3.19</code> finishes in under a second, with zero traffic going out to the public Docker Hub.</p>
 <p>This isn&rsquo;t a one-line &ldquo;install Docker and run a container&rdquo; tutorial. I&rsquo;ll show you the <strong>production-grade deployment script I actually run</strong>, walk through the Docker v2 auth flow, and call out the four reverse-proxy pitfalls that turn every <code>docker login</code> into a 401 mystery. You&rsquo;ll leave able to: ① bring up an authenticated registry in 10 minutes; ② explain why the <code>WWW-Authenticate</code> header is sacred; ③ describe the whole thing to a non-technical family member without losing accuracy.</p>
 </blockquote>
-<p><img src="/post-images/build-private-docker-registry-without-hassle/01-cover.svg" alt="Cover: migration diagram from public Docker Hub to a self-hosted registry, with a firewall in between"></p>
+<p><img alt="Cover: migration diagram from public Docker Hub to a self-hosted registry, with a firewall in between" src="/post-images/build-private-docker-registry-without-hassle/01-cover.svg"></p>
 <p><em>Figure 1: the blue box on the left is the public Docker Hub, the cyan box in the middle is the <code>registry:2</code> I run at home, and the purple box on the right is every machine on my LAN that needs to pull images. The rest of this post is about that cyan box.</em></p>
 <hr>
 <h2 id="1-background-why-bother-running-a-private-registry">1. Background: Why Bother Running a Private Registry?</h2>
@@ -227,7 +227,7 @@
 </ul>
 <p>The natural fix: stand up one <strong>shared image cache</strong> on the LAN. Every machine pulls from it. The cache pulls from the public registry once, stores the blobs on disk, and serves the next pull straight from local filesystem.</p>
 <p>That cache is just <strong>Docker&rsquo;s official <code>registry:2</code> image</strong>: a 24 MB Go binary that speaks HTTP. That&rsquo;s all you need.</p>
-<p><img src="/post-images/build-private-docker-registry-without-hassle/02-pull-flow.svg" alt="Registry architecture: client requests intercepted by the registry, served from local disk or fetched upstream"></p>
+<p><img alt="Registry architecture: client requests intercepted by the registry, served from local disk or fetched upstream" src="/post-images/build-private-docker-registry-without-hassle/02-pull-flow.svg"></p>
 <p><em>Figure 2: what really happens during <code>docker pull</code>. Client → GET /v2/ → GET manifest → GET blobs layer by layer → unpack into local storage. The private registry intercepts every one of those GETs, prefers local disk, and only goes upstream when the cache misses.</em></p>
 <p>The implementation isn&rsquo;t complicated. The <strong>pitfalls</strong> are. Over the past three years I&rsquo;ve fixed the same five issues at least twice each — every time I forgot what I&rsquo;d learned the time before. Here they all are, plus the exact config I run today.</p>
 <hr>
@@ -274,7 +274,7 @@ If the office door is a plastic prop door without a real lock (HTTP without TLS)
 <h2 id="4-solution-from-one-docker-run-to-a-production-ready-registry-in-10-minutes">4. Solution: From One <code>docker run</code> to a Production-Ready Registry in 10 Minutes</h2>
 <p>This is the script I run today. It&rsquo;s been stable for half a year. Four steps, each with a &ldquo;why this matters&rdquo; note.</p>
 <h3 id="step-1-prepare-persistent-host-directories">Step 1: Prepare Persistent Host Directories</h3>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># Everything lives on the host filesystem so it survives container restarts</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># Everything lives on the host filesystem so it survives container restarts</span>
 </span></span><span style="display:flex;"><span>mkdir -p /docker/registry-dockerhub      <span style="color:#75715e"># config.yml lives here</span>
 </span></span><span style="display:flex;"><span>mkdir -p /docker/registry-cache/dockerhub <span style="color:#75715e"># 13 GB of blob cache lives here</span>
 </span></span><span style="display:flex;"><span>mkdir -p /docker/registry/auth           <span style="color:#75715e"># htpasswd file lives here</span>
@@ -283,21 +283,21 @@ If the office door is a plastic prop door without a real lock (HTTP without TLS)
 Docker containers are ephemeral by default. Delete the container, lose everything inside. By bind-mounting <code>/var/lib/registry</code> to <code>/docker/registry-cache/dockerhub</code> on the host, you give the container an &ldquo;external hard drive&rdquo; — every byte survives container recreation, host reboots, even migrations to another machine.</p>
 </blockquote>
 <h3 id="step-2-generate-the-htpasswd-file">Step 2: Generate the htpasswd File</h3>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># Run once; the file persists forever (or until you change the password)</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># Run once; the file persists forever (or until you change the password)</span>
 </span></span><span style="display:flex;"><span>docker run --rm <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span>  --entrypoint htpasswd <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span>  httpd:2.4 -Bbn admin <span style="color:#e6db74">&#39;MyS3cretPass!&#39;</span> <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span>  &gt; /docker/registry/auth/htpasswd
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  --entrypoint htpasswd <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  httpd:2.4 -Bbn admin <span style="color:#e6db74">&#39;MyS3cretPass!&#39;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  &gt; /docker/registry/auth/htpasswd
 </span></span></code></pre></div><p>After that command your password file contains:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>admin:$2y$05$kxqfBjMmhK6eOZ8m9eRkgeW7FZmkjj8OQ8iCpzJZ1Vb5lpWWGbH1e
-</span></span></code></pre></div><p><img src="/post-images/build-private-docker-registry-without-hassle/shot-05-htpasswd.png" alt="Real terminal screenshot of htpasswd generation"></p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>admin:$2y$05$kxqfBjMmhK6eOZ8m9eRkgeW7FZmkjj8OQ8iCpzJZ1Vb5lpWWGbH1e
+</span></span></code></pre></div><p><img alt="Real terminal screenshot of htpasswd generation" src="/post-images/build-private-docker-registry-without-hassle/shot-05-htpasswd.png"></p>
 <p><em>Figure 3: <code>htpasswd</code> uses bcrypt to hash the password. What&rsquo;s stored on disk is the <code>$2y$05$...</code> hash, not the original password. <code>htpasswd -Bbn</code> means: bcrypt algorithm, read password from stdin, append to file (don&rsquo;t overwrite).</em></p>
 <blockquote>
 <p><strong>Never use <code>-m</code> (md5).</strong>
 <code>-m</code> is the legacy MD5 hash, easily cracked with rainbow tables. The Docker daemon accepts md5, sha1, and bcrypt — bcrypt&rsquo;s strength isn&rsquo;t compatibility, it&rsquo;s that in 2026 you&rsquo;d be hard-pressed to defend a md5-only auth choice.</p>
 </blockquote>
 <h3 id="step-3-write-a-configyml-optional-default-works-too">Step 3: Write a <code>config.yml</code> (Optional; Default Works Too)</h3>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>cat &gt; /docker/registry-dockerhub/config.yml <span style="color:#e6db74">&lt;&lt;&#39;YAML&#39;
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>cat &gt; /docker/registry-dockerhub/config.yml <span style="color:#e6db74">&lt;&lt;&#39;YAML&#39;
 </span></span></span><span style="display:flex;"><span><span style="color:#e6db74">version: 0.1
 </span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log:
 </span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  fields:
@@ -312,7 +312,7 @@ Docker containers are ephemeral by default. Delete the container, lose everythin
 </span></span></span><span style="display:flex;"><span><span style="color:#e6db74">proxy:
 </span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  remoteurl: https://hub1.nat.tf
 </span></span></span><span style="display:flex;"><span><span style="color:#e6db74">YAML</span>
-</span></span></code></pre></div><p><img src="/post-images/build-private-docker-registry-without-hassle/shot-03-config.png" alt="Real config.yml from my home registry"></p>
+</span></span></code></pre></div><p><img alt="Real config.yml from my home registry" src="/post-images/build-private-docker-registry-without-hassle/shot-03-config.png"></p>
 <p><em>Figure 4: <code>proxy.remoteurl</code> is the key line — it tells the registry: &ldquo;when the local cache misses, fetch from this URL.&rdquo; Without it the registry only accepts <code>docker push</code>, never fetches new images from upstream.</em></p>
 <blockquote>
 <p><strong>What is <code>proxy.remoteurl</code>?</strong>
@@ -320,21 +320,21 @@ Analogy: it&rsquo;s the store&rsquo;s wholesale supplier. A customer wants a bot
 Note: <code>https://hub1.nat.tf</code> works on my network (I documented the why in <a href="/en/post/docker-registry-mirror-rebuild-2026/">an earlier post on mirror speed tuning</a>). On your network it may be slower or blocked — measure before you commit.</p>
 </blockquote>
 <h3 id="step-4-start-the-container">Step 4: Start the Container</h3>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>docker run -d <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span>  --name registry-dockerhub <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span>  --restart<span style="color:#f92672">=</span>always <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span>  -p 8082:5000 <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span>  -v /docker/registry-dockerhub/config.yml:/etc/docker/registry/config.yml <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span>  -v /docker/registry-cache/dockerhub:/var/lib/registry <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span>  -v /docker/registry/auth:/auth <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span>  -e REGISTRY_AUTH<span style="color:#f92672">=</span>htpasswd <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span>  -e REGISTRY_AUTH_HTPASSWD_REALM<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;Registry Realm&#34;</span> <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span>  -e REGISTRY_AUTH_HTPASSWD_PATH<span style="color:#f92672">=</span>/auth/htpasswd <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span>  registry:2
-</span></span></code></pre></div><p><img src="/post-images/build-private-docker-registry-without-hassle/shot-06-docker-run.png" alt="The actual docker run command, annotated"></p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>docker run -d <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  --name registry-dockerhub <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  --restart<span style="color:#f92672">=</span>always <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  -p 8082:5000 <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  -v /docker/registry-dockerhub/config.yml:/etc/docker/registry/config.yml <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  -v /docker/registry-cache/dockerhub:/var/lib/registry <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  -v /docker/registry/auth:/auth <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  -e REGISTRY_AUTH<span style="color:#f92672">=</span>htpasswd <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  -e REGISTRY_AUTH_HTPASSWD_REALM<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;Registry Realm&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  -e REGISTRY_AUTH_HTPASSWD_PATH<span style="color:#f92672">=</span>/auth/htpasswd <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  registry:2
+</span></span></code></pre></div><p><img alt="The actual docker run command, annotated" src="/post-images/build-private-docker-registry-without-hassle/shot-06-docker-run.png"></p>
 <p><em>Figure 5: copy-paste this and you have a working authenticated registry. The three <code>REGISTRY_AUTH_*</code> env vars are the entire htpasswd switchboard — miss one and you&rsquo;ll get 401s.</em></p>
 <p>Then verify:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>$ docker ps --format <span style="color:#e6db74">&#39;table {{.Names}}\t{{.Image}}\t{{.Ports}}&#39;</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>$ docker ps --format <span style="color:#e6db74">&#39;table {{.Names}}\t{{.Image}}\t{{.Ports}}&#39;</span>
 </span></span><span style="display:flex;"><span>NAMES               IMAGE          PORTS
 </span></span><span style="display:flex;"><span>registry-dockerhub  registry:2     0.0.0.0:8082-&gt;5000/tcp
 </span></span><span style="display:flex;"><span>registry-ghcr       registry:2     0.0.0.0:8083-&gt;5000/tcp
@@ -349,7 +349,7 @@ The right health check is <code>curl -i https://&lt;host&gt;/v2/ | head -1</code
 <hr>
 <h2 id="5-clients-from-one-machine-to-the-whole-cluster">5. Clients: From One Machine to the Whole Cluster</h2>
 <p><strong>Single-client setup</strong> (one-off):</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># 1. Log in (HTTP to a private IP is allowed by daemon)</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># 1. Log in (HTTP to a private IP is allowed by daemon)</span>
 </span></span><span style="display:flex;"><span>docker login 192.168.x.x:8082
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># Username: admin</span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># Password: ********</span>
@@ -361,11 +361,11 @@ The right health check is <code>curl -i https://&lt;host&gt;/v2/ | head -1</code
 </span></span><span style="display:flex;"><span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># 3. From any other machine, pull</span>
 </span></span><span style="display:flex;"><span>docker pull 192.168.x.x:8082/test/hello-world:v1
-</span></span></code></pre></div><p><img src="/post-images/build-private-docker-registry-without-hassle/shot-07-login-push.png" alt="docker login &#43; push &#43; pull flow, real terminal output"></p>
+</span></span></code></pre></div><p><img alt="docker login + push + pull flow, real terminal output" src="/post-images/build-private-docker-registry-without-hassle/shot-07-login-push.png"></p>
 <p><em>Figure 6: <code>docker login</code> to get a token, <code>docker push</code> to upload, and from another machine <code>docker pull</code> — all over the LAN, &lt; 1 ms latency, zero public internet.</em></p>
 <p><strong>Whole-cluster setup</strong> (one config, every daemon obeys):</p>
 <p>Add this to <code>/etc/docker/daemon.json</code> on every machine:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-json" data-lang="json"><span style="display:flex;"><span>{
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-json" data-lang="json"><span style="display:flex;"><span>{
 </span></span><span style="display:flex;"><span>  <span style="color:#f92672">&#34;insecure-registries&#34;</span>: [<span style="color:#e6db74">&#34;192.168.x.x:8082&#34;</span>, <span style="color:#e6db74">&#34;192.168.x.x:8083&#34;</span>]
 </span></span><span style="display:flex;"><span>}
 </span></span></code></pre></div><blockquote>
@@ -382,19 +382,19 @@ For a private LAN, self-signed certs + installing your own CA on every client is
 <hr>
 <h2 id="6-cache-demystified-13-gb-looks-big-but-content-addressable-storage-means-it-already-deduped">6. Cache Demystified: 13 GB Looks Big, But Content-Addressable Storage Means It Already Deduped</h2>
 <p>After a while you can poke around the cache:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>$ du -sh /docker/registry-cache/*
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>$ du -sh /docker/registry-cache/*
 </span></span><span style="display:flex;"><span>13G   /docker/registry-cache/dockerhub
 </span></span><span style="display:flex;"><span>3.0G  /docker/registry-cache/ghcr
 </span></span></code></pre></div><p>Is 13 GB real? <strong>Yes.</strong> But the same 13 GB physically holds <strong>hundreds of images</strong> thanks to content-addressable storage.</p>
 <p>Look at how blobs are stored on disk:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>$ find /docker/registry-cache/dockerhub/docker/registry/v2/blobs/sha256/ <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span>    -type f -printf <span style="color:#e6db74">&#39;%s %p\n&#39;</span> | sort -rn | head -5
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>$ find /docker/registry-cache/dockerhub/docker/registry/v2/blobs/sha256/ <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>    -type f -printf <span style="color:#e6db74">&#39;%s %p\n&#39;</span> | sort -rn | head -5
 </span></span><span style="display:flex;"><span><span style="color:#ae81ff">934308001</span> .../sha256/de/de4a0c57...cfff/data   <span style="color:#75715e"># alpine rootfs ~890 MB</span>
 </span></span><span style="display:flex;"><span><span style="color:#ae81ff">753000000</span> .../sha256/13/13d4f7c2...a51d/data
 </span></span><span style="display:flex;"><span><span style="color:#ae81ff">540000000</span> .../sha256/f5/f5fc7c45.../data
 </span></span><span style="display:flex;"><span><span style="color:#ae81ff">534000000</span> .../sha256/89/894f7c54.../data
 </span></span><span style="display:flex;"><span><span style="color:#ae81ff">422000000</span> .../sha256/9c/9c8a7d83.../data
-</span></span></code></pre></div><p><img src="/post-images/build-private-docker-registry-without-hassle/shot-08-cache-stats.png" alt="Cache directory real layout and size statistics"></p>
+</span></span></code></pre></div><p><img alt="Cache directory real layout and size statistics" src="/post-images/build-private-docker-registry-without-hassle/shot-08-cache-stats.png"></p>
 <p><em>Figure 7: the blob storage path is literally the first 2 chars of its own sha256 plus the full hash. That means: two different images that share a base layer (e.g. both based on <code>library/alpine</code>) will <strong>physically share</strong> that layer on disk — only one copy ever exists.</em></p>
 <blockquote>
 <p><strong>&ldquo;Addressable by sha256&rdquo; via a library analogy</strong>:
@@ -403,29 +403,29 @@ But if books are filed by &ldquo;the SHA256 of this book&rsquo;s first sentence&
 Docker&rsquo;s registry uses exactly this scheme. Any given content exists on disk as exactly one file, no matter how many images reference it.</p>
 </blockquote>
 <p>Here are the tag counts I have for <code>library/alpine</code> cached locally:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>$ curl -sS http://localhost:8082/v2/library/alpine/tags/list | jq <span style="color:#e6db74">&#39;.tags | length&#39;</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>$ curl -sS http://localhost:8082/v2/library/alpine/tags/list | jq <span style="color:#e6db74">&#39;.tags | length&#39;</span>
 </span></span><span style="display:flex;"><span><span style="color:#ae81ff">219</span>
-</span></span></code></pre></div><p><img src="/post-images/build-private-docker-registry-without-hassle/shot-10-tags.png" alt="219 cached tags for library/alpine on my registry"></p>
+</span></span></code></pre></div><p><img alt="219 cached tags for library/alpine on my registry" src="/post-images/build-private-docker-registry-without-hassle/shot-10-tags.png"></p>
 <p><em>Figure 8: just for <code>library/alpine</code>, my registry has cached 219 tags — from <code>2.6</code> all the way to <code>latest</code>. They share huge amounts of base layer content, so the actual on-disk footprint is far smaller than &ldquo;219 separate alpine images&rdquo; would suggest.</em></p>
 <p>Across the whole registry I have 95 distinct repository names, from <code>library/alpine</code> to <code>zyplayer/zyplayer-doc</code>, but the disk holds only 13 GB:</p>
-<p><img src="/post-images/build-private-docker-registry-without-hassle/shot-02-catalog-pretty.png" alt="Real /v2/_catalog response showing all 95 repos"></p>
+<p><img alt="Real /v2/_catalog response showing all 95 repos" src="/post-images/build-private-docker-registry-without-hassle/shot-02-catalog-pretty.png"></p>
 <p><em>Figure 9: <code>/v2/_catalog</code> lists every repository the registry knows about. This is the real output from my home registry — <code>library/alpine</code>, <code>portainer/portainer-ce</code>, <code>vaultwarden/server</code>, everything cached locally.</em></p>
 <hr>
 <h2 id="7-reverse-proxy-the-four-most-common-401-traps">7. Reverse Proxy: The Four Most Common 401 Traps</h2>
 <p>If you want this registry to be reachable from outside the LAN (family members pulling from afar, CI triggers, etc.), you need a reverse proxy in front. <strong>This is where 80% of &ldquo;I swear the password is right&rdquo; tickets get filed.</strong></p>
 <p>A minimal Caddy config that actually works:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-caddyfile" data-lang="caddyfile"><span style="display:flex;"><span>registry.lab.local {
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-caddyfile" data-lang="caddyfile"><span style="display:flex;"><span>registry.lab.local {
 </span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">reverse_proxy</span> localhost:<span style="color:#ae81ff">8082</span> {<span style="color:#75715e">
 </span></span></span><span style="display:flex;"><span><span style="color:#75715e">        # Critical #1: must pass WWW-Authenticate through
-</span></span></span><span style="display:flex;"><span>        <span style="color:#66d9ef">header_up</span> <span style="color:#e6db74">-WWW-Authenticate</span>
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>        <span style="color:#66d9ef">header_up</span> <span style="color:#e6db74">-WWW-Authenticate</span>
 </span></span><span style="display:flex;"><span>        <span style="color:#66d9ef">header_up</span> <span style="color:#e6db74">+WWW-Authenticate</span><span style="color:#75715e">
 </span></span></span><span style="display:flex;"><span><span style="color:#75715e">
 </span></span></span><span style="display:flex;"><span><span style="color:#75715e">        # Critical #2: don&#39;t buffer large image streams
-</span></span></span><span style="display:flex;"><span>        <span style="color:#66d9ef">flush_interval</span> <span style="color:#e6db74">-1</span>
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>        <span style="color:#66d9ef">flush_interval</span> <span style="color:#e6db74">-1</span>
 </span></span><span style="display:flex;"><span>    }
 </span></span><span style="display:flex;"><span>}
 </span></span></code></pre></div><p>Same idea in Nginx:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-nginx" data-lang="nginx"><span style="display:flex;"><span><span style="color:#66d9ef">server</span> {
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-nginx" data-lang="nginx"><span style="display:flex;"><span><span style="color:#66d9ef">server</span> {
 </span></span><span style="display:flex;"><span>    <span style="color:#f92672">listen</span> <span style="color:#ae81ff">443</span> <span style="color:#e6db74">ssl</span>;
 </span></span><span style="display:flex;"><span>    <span style="color:#f92672">server_name</span> <span style="color:#e6db74">registry.lab.local</span>;
 </span></span><span style="display:flex;"><span>
@@ -437,7 +437,7 @@ Docker&rsquo;s registry uses exactly this scheme. Any given content exists on di
 </span></span><span style="display:flex;"><span>        <span style="color:#f92672">proxy_set_header</span> <span style="color:#e6db74">Host</span> $host;
 </span></span><span style="display:flex;"><span>        <span style="color:#f92672">proxy_set_header</span> <span style="color:#e6db74">X-Real-IP</span> $remote_addr;
 </span></span><span style="display:flex;"><span>        <span style="color:#75715e"># ⚠️ must pass these through
-</span></span></span><span style="display:flex;"><span>        <span style="color:#f92672">proxy_pass_request_headers</span> <span style="color:#66d9ef">on</span>;
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>        <span style="color:#f92672">proxy_pass_request_headers</span> <span style="color:#66d9ef">on</span>;
 </span></span><span style="display:flex;"><span>        <span style="color:#f92672">proxy_buffering</span> <span style="color:#66d9ef">off</span>;
 </span></span><span style="display:flex;"><span>        <span style="color:#f92672">proxy_request_buffering</span> <span style="color:#66d9ef">off</span>;
 </span></span><span style="display:flex;"><span>        <span style="color:#f92672">client_max_body_size</span> <span style="color:#ae81ff">0</span>;
@@ -456,67 +456,67 @@ Triage order: ① <code>curl -i</code> to verify <code>WWW-Authenticate</code> r
 </blockquote>
 <hr>
 <h2 id="8-three-deployment-shapes-which-one-are-you">8. Three Deployment Shapes: Which One Are You?</h2>
-<p><img src="/post-images/build-private-docker-registry-without-hassle/06-deployment-shapes.svg" alt="Three deployment shapes compared: home / small team / company"></p>
+<p><img alt="Three deployment shapes compared: home / small team / company" src="/post-images/build-private-docker-registry-without-hassle/06-deployment-shapes.svg"></p>
 <p><em>Figure 10: the same <code>registry:2</code> image, but the surrounding components differ wildly at different scales. I run the leftmost shape at home; a startup team runs the middle; an enterprise runs the rightmost.</em></p>
 <table>
-	<thead>
-			<tr>
-					<th>Dimension</th>
-					<th>Home / Lab</th>
-					<th>Small Team</th>
-					<th>Company</th>
-			</tr>
-	</thead>
-	<tbody>
-			<tr>
-					<td><strong># of clients</strong></td>
-					<td>1–5</td>
-					<td>10–50</td>
-					<td>hundreds–thousands</td>
-			</tr>
-			<tr>
-					<td><strong>Reverse proxy</strong></td>
-					<td>none</td>
-					<td>Caddy / Nginx + self-signed CA</td>
-					<td>Nginx / Envoy + commercial CA</td>
-			</tr>
-			<tr>
-					<td><strong>Auth</strong></td>
-					<td>htpasswd single user</td>
-					<td>htpasswd + read/write groups</td>
-					<td>LDAP / OIDC / OAuth</td>
-			</tr>
-			<tr>
-					<td><strong>Storage</strong></td>
-					<td>local filesystem</td>
-					<td>local filesystem + backups</td>
-					<td>S3 / OSS / MinIO</td>
-			</tr>
-			<tr>
-					<td><strong>Monitoring</strong></td>
-					<td><code>du -sh</code> glances</td>
-					<td>Prometheus exporter</td>
-					<td>Grafana + alerting + SLA</td>
-			</tr>
-			<tr>
-					<td><strong>HA</strong></td>
-					<td>not needed, just restart</td>
-					<td>single point + backup</td>
-					<td>multi-replica + cross-region</td>
-			</tr>
-			<tr>
-					<td><strong>SLA</strong></td>
-					<td>none</td>
-					<td>none</td>
-					<td>99.9%</td>
-			</tr>
-	</tbody>
+<thead>
+<tr>
+<th>Dimension</th>
+<th>Home / Lab</th>
+<th>Small Team</th>
+<th>Company</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong># of clients</strong></td>
+<td>1–5</td>
+<td>10–50</td>
+<td>hundreds–thousands</td>
+</tr>
+<tr>
+<td><strong>Reverse proxy</strong></td>
+<td>none</td>
+<td>Caddy / Nginx + self-signed CA</td>
+<td>Nginx / Envoy + commercial CA</td>
+</tr>
+<tr>
+<td><strong>Auth</strong></td>
+<td>htpasswd single user</td>
+<td>htpasswd + read/write groups</td>
+<td>LDAP / OIDC / OAuth</td>
+</tr>
+<tr>
+<td><strong>Storage</strong></td>
+<td>local filesystem</td>
+<td>local filesystem + backups</td>
+<td>S3 / OSS / MinIO</td>
+</tr>
+<tr>
+<td><strong>Monitoring</strong></td>
+<td><code>du -sh</code> glances</td>
+<td>Prometheus exporter</td>
+<td>Grafana + alerting + SLA</td>
+</tr>
+<tr>
+<td><strong>HA</strong></td>
+<td>not needed, just restart</td>
+<td>single point + backup</td>
+<td>multi-replica + cross-region</td>
+</tr>
+<tr>
+<td><strong>SLA</strong></td>
+<td>none</td>
+<td>none</td>
+<td>99.9%</td>
+</tr>
+</tbody>
 </table>
 <p><strong>My home deployment</strong> is the leftmost shape: single container + filesystem + htpasswd + a cron backup, running stable for a year. <strong>Don&rsquo;t over-engineer for &ldquo;home LAN.&rdquo;</strong></p>
 <hr>
 <h2 id="9-live-debugging-docker-login-keeps-saying-unauthorized">9. Live Debugging: <code>docker login</code> Keeps Saying &ldquo;unauthorized&rdquo;</h2>
 <p>This is the most common question, and the most commonly misanswered one. Here&rsquo;s my standard triage.</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># Step 1: confirm the server is actually listening</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># Step 1: confirm the server is actually listening</span>
 </span></span><span style="display:flex;"><span>$ ss -tlnp | grep <span style="color:#ae81ff">8082</span>
 </span></span><span style="display:flex;"><span>LISTEN <span style="color:#ae81ff">0</span>  <span style="color:#ae81ff">4096</span>  0.0.0.0:8082  0.0.0.0:*  users:<span style="color:#f92672">((</span><span style="color:#e6db74">&#34;docker-proxy&#34;</span>,pid<span style="color:#f92672">=</span>226477,fd<span style="color:#f92672">=</span>8<span style="color:#f92672">))</span>
 </span></span><span style="display:flex;"><span>
@@ -544,34 +544,34 @@ Triage order: ① <code>curl -i</code> to verify <code>WWW-Authenticate</code> r
 </span></span><span style="display:flex;"><span>$ rm ~/.docker/config.json    <span style="color:#75715e"># clear stale creds first</span>
 </span></span><span style="display:flex;"><span>$ docker login -u admin -p <span style="color:#e6db74">&#39;MyS3cretPass!&#39;</span> 192.168.x.x:8082
 </span></span><span style="display:flex;"><span>Login Succeeded
-</span></span></code></pre></div><p><img src="/post-images/build-private-docker-registry-without-hassle/shot-09-troubleshoot.png" alt="Complete docker login 401 triage flow"></p>
+</span></span></code></pre></div><p><img alt="Complete docker login 401 triage flow" src="/post-images/build-private-docker-registry-without-hassle/shot-09-troubleshoot.png"></p>
 <p><em>Figure 11: from <code>curl -i</code> to verify the WWW-Authenticate header, to <code>htpasswd -Bv</code> to confirm the password, to <code>rm ~/.docker/config.json</code> to clear cached client credentials — the standard &ldquo;client doesn&rsquo;t trust server&rdquo; three-step.</em></p>
 <p><strong>Four common errors and what they actually mean</strong>:</p>
 <table>
-	<thead>
-			<tr>
-					<th>Error message</th>
-					<th>Real cause</th>
-			</tr>
-	</thead>
-	<tbody>
-			<tr>
-					<td><code>no such host</code></td>
-					<td>DNS resolution failed / wrong IP</td>
-			</tr>
-			<tr>
-					<td><code>connection refused</code></td>
-					<td>Server not running / wrong port</td>
-			</tr>
-			<tr>
-					<td><code>tls: failed to verify certificate</code></td>
-					<td>HTTPS but cert not trusted by daemon</td>
-			</tr>
-			<tr>
-					<td><code>unauthorized: authentication required</code></td>
-					<td>Server is up, but <code>WWW-Authenticate</code> header is missing / password is wrong</td>
-			</tr>
-	</tbody>
+<thead>
+<tr>
+<th>Error message</th>
+<th>Real cause</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>no such host</code></td>
+<td>DNS resolution failed / wrong IP</td>
+</tr>
+<tr>
+<td><code>connection refused</code></td>
+<td>Server not running / wrong port</td>
+</tr>
+<tr>
+<td><code>tls: failed to verify certificate</code></td>
+<td>HTTPS but cert not trusted by daemon</td>
+</tr>
+<tr>
+<td><code>unauthorized: authentication required</code></td>
+<td>Server is up, but <code>WWW-Authenticate</code> header is missing / password is wrong</td>
+</tr>
+</tbody>
 </table>
 <hr>
 <h2 id="10-backups-and-cleanup-will-the-disk-explode-after-a-year">10. Backups and Cleanup: Will the Disk Explode After a Year?</h2>
@@ -582,7 +582,7 @@ Triage order: ① <code>curl -i</code> to verify <code>WWW-Authenticate</code> r
 <li>The built-in scheduler runs every 24 hours and prunes anything not touched in 7 days.</li>
 </ol>
 <p>If you want to take manual control, add this:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-yaml" data-lang="yaml"><span style="display:flex;"><span><span style="color:#f92672">storage</span>:
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-yaml" data-lang="yaml"><span style="display:flex;"><span><span style="color:#f92672">storage</span>:
 </span></span><span style="display:flex;"><span>  <span style="color:#f92672">filesystem</span>:
 </span></span><span style="display:flex;"><span>    <span style="color:#f92672">rootdirectory</span>: <span style="color:#ae81ff">/var/lib/registry</span>
 </span></span><span style="display:flex;"><span>  <span style="color:#f92672">delete</span>:
@@ -590,12 +590,12 @@ Triage order: ① <code>curl -i</code> to verify <code>WWW-Authenticate</code> r
 </span></span><span style="display:flex;"><span>  <span style="color:#f92672">cache</span>:
 </span></span><span style="display:flex;"><span>    <span style="color:#f92672">blobdescriptor</span>: <span style="color:#ae81ff">inmemory</span>
 </span></span></code></pre></div><p>Then trigger GC yourself via the registry API:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>$ curl -X POST -u admin:<span style="color:#e6db74">&#39;MyS3cretPass!&#39;</span> <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span>    http://localhost:8082/v2/_catalog?n<span style="color:#f92672">=</span><span style="color:#ae81ff">1000</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>$ curl -X POST -u admin:<span style="color:#e6db74">&#39;MyS3cretPass!&#39;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>    http://localhost:8082/v2/_catalog?n<span style="color:#f92672">=</span><span style="color:#ae81ff">1000</span>
 </span></span><span style="display:flex;"><span>$ curl -u admin:<span style="color:#e6db74">&#39;MyS3cretPass!&#39;</span> <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span>    http://localhost:8082/debug/health | jq .
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>    http://localhost:8082/debug/health | jq .
 </span></span></code></pre></div><p><strong>Backup is even simpler</strong>: just tar the whole <code>/docker/registry-cache</code> directory.</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># Every Sunday at 03:00</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># Every Sunday at 03:00</span>
 </span></span><span style="display:flex;"><span><span style="color:#ae81ff">0</span> <span style="color:#ae81ff">3</span> * * <span style="color:#ae81ff">0</span> tar czf /backup/registry-<span style="color:#66d9ef">$(</span>date +<span style="color:#ae81ff">\%</span>F<span style="color:#66d9ef">)</span>.tgz /docker/registry-cache
 </span></span></code></pre></div><blockquote>
 <p><strong>Analogy</strong>:
@@ -618,8 +618,8 @@ header_up +WWW-Authenticate       # Caddy
 <p>A: <strong>No.</strong> On every pull, registry:2 sends <code>HEAD /v2/&lt;name&gt;/manifests/&lt;tag&gt;</code> upstream first, asking &ldquo;which digest does this tag currently point to?&rdquo; If the upstream digest differs from the locally cached digest, the registry proactively fetches the new manifest and the new blobs. <strong>The client sees the latest version transparently.</strong></p>
 <p><strong>Q: How do I bulk-push all my local images to a private registry?</strong></p>
 <p>A: A quick script:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e">#!/bin/bash
-</span></span></span><span style="display:flex;"><span>DEST<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;192.168.x.x:8082&#34;</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e">#!/bin/bash
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>DEST<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;192.168.x.x:8082&#34;</span>
 </span></span><span style="display:flex;"><span>docker images --format <span style="color:#e6db74">&#39;{{.Repository}}:{{.Tag}}&#39;</span> | grep -v <span style="color:#e6db74">&#39;&lt;none&gt;&#39;</span> | <span style="color:#66d9ef">while</span> read img; <span style="color:#66d9ef">do</span>
 </span></span><span style="display:flex;"><span>    new<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>echo <span style="color:#e6db74">&#34;</span>$img<span style="color:#e6db74">&#34;</span> | sed <span style="color:#e6db74">&#34;s|^|</span>$DEST<span style="color:#e6db74">/|&#34;</span><span style="color:#66d9ef">)</span>
 </span></span><span style="display:flex;"><span>    docker tag <span style="color:#e6db74">&#34;</span>$img<span style="color:#e6db74">&#34;</span> <span style="color:#e6db74">&#34;</span>$new<span style="color:#e6db74">&#34;</span>

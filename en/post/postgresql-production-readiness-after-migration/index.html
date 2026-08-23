@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="en-US">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Migrated and Ready to Ship? I Hit PostgreSQL with 150 Connections, Created 180,000 Dead Tuples, Then Recovered an Accidental DELETE - Margrop Blog</title>
+<meta name="description" content="TL;DR Migrating from MySQL to PostgreSQL, reconciling the data, and tuning the parameters still do not prove that the new database is ready to launch. …">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://blog.margrop.net/en/post/postgresql-production-readiness-after-migration/"><meta property="og:site_name" content="Margrop Blog">
+<meta property="og:title" content="Migrated and Ready to Ship? I Hit PostgreSQL with 150 Connections, Created 180,000 Dead Tuples, Then Recovered an Accidental DELETE - Margrop Blog">
+<meta property="og:description" content="TL;DR Migrating from MySQL to PostgreSQL, reconciling the data, and tuning the parameters still do not prove that the new database is ready to launch. …">
+<meta property="og:url" content="https://blog.margrop.net/en/post/postgresql-production-readiness-after-migration/">
+<meta property="og:locale" content="en_US"><meta property="og:type" content="article"><meta property="og:locale:alternate" content="zh_CN"><meta property="og:image" content="https://blog.margrop.net/images/avatar.png"><meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Migrated and Ready to Ship? I Hit PostgreSQL with 150 Connections, Created 180,000 Dead Tuples, Then Recovered an Accidental DELETE - Margrop Blog">
+<meta name="twitter:description" content="TL;DR Migrating from MySQL to PostgreSQL, reconciling the data, and tuning the parameters still do not prove that the new database is ready to launch. …"><meta name="twitter:image" content="https://blog.margrop.net/images/avatar.png"><link rel="alternate" hreflang="zh-CN" href="https://blog.margrop.net/post/postgresql-production-readiness-after-migration/"><link rel="alternate" hreflang="en-US" href="https://blog.margrop.net/en/post/postgresql-production-readiness-after-migration/"><link rel="alternate" hreflang="x-default" href="https://blog.margrop.net/"><meta property="article:published_time" content="2026-08-23T17:20:00&#43;08:00">
+<meta property="article:modified_time" content="2026-08-23T17:20:00&#43;08:00"><meta property="article:tag" content="PostgreSQL"><meta property="article:tag" content="MySQL"><meta property="article:tag" content="数据库"><meta property="article:tag" content="database"><meta property="article:tag" content="运维"><meta property="article:tag" content="故障排查"><meta property="article:tag" content="数据迁移"><meta property="article:tag" content="教程"><script type="application/ld+json">{"@context":"https://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"Margrop"},"dateModified":"2026-08-23T17:20:00+08:00","datePublished":"2026-08-23T17:20:00+08:00","description":"TL;DR Migrating from MySQL to PostgreSQL, reconciling the data, and tuning the parameters still do not prove that the new database is ready to launch. …","headline":"Migrated and Ready to Ship? I Hit PostgreSQL with 150 Connections, Created 180,000 Dead Tuples, Then Recovered an Accidental DELETE","mainEntityOfPage":"https://blog.margrop.net/en/post/postgresql-production-readiness-after-migration/","url":"https://blog.margrop.net/en/post/postgresql-production-readiness-after-migration/"}</script>
+    <meta name="baidu-site-verification" content="code-sVFZ8SER59" />
+    <script src="/js/theme-toggle.js"></script>
+
+    
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-3J2W592DHJ"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-3J2W592DHJ');
+    </script>
+
+    <style>
+    :root {
+        color-scheme: light;
+        --page-bg: #fff;
+        --surface-bg: #f4f4f4;
+        --text: #222;
+        --muted: #666;
+        --subtle: #777;
+        --border: #eee;
+        --border-strong: #ddd;
+        --link: #006CFF;
+        --tag-bg: #eee;
+        --button-bg: #fff;
+        --button-primary-bg: #333;
+    }
+    @media (prefers-color-scheme: dark) {
+        :root:not([data-theme]) {
+            color-scheme: dark;
+            --page-bg: #111315;
+            --surface-bg: #1d2126;
+            --text: #e8eaed;
+            --muted: #aeb4bd;
+            --subtle: #9aa2ad;
+            --border: #30353d;
+            --border-strong: #454c56;
+            --link: #79b8ff;
+            --tag-bg: #2a3038;
+            --button-bg: #1d2126;
+            --button-primary-bg: #e8eaed;
+        }
+    }
+    html[data-theme="dark"] {
+        color-scheme: dark;
+        --page-bg: #111315;
+        --surface-bg: #1d2126;
+        --text: #e8eaed;
+        --muted: #aeb4bd;
+        --subtle: #9aa2ad;
+        --border: #30353d;
+        --border-strong: #454c56;
+        --link: #79b8ff;
+        --tag-bg: #2a3038;
+        --button-bg: #1d2126;
+        --button-primary-bg: #e8eaed;
+    }
+    html[data-theme="light"] {
+        color-scheme: light;
+        --page-bg: #fff;
+        --surface-bg: #f4f4f4;
+        --text: #222;
+        --muted: #666;
+        --subtle: #777;
+        --border: #eee;
+        --border-strong: #ddd;
+        --link: #006CFF;
+        --tag-bg: #eee;
+        --button-bg: #fff;
+        --button-primary-bg: #333;
+    }
+    body { background: var(--page-bg); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 860px; margin: 0 auto; padding: 20px; line-height: 1.7; color: var(--text); }
+    h1 { border-bottom: 2px solid var(--border-strong); padding-bottom: 10px; }
+    article > h1 { font-size: 2em; line-height: 1.3; margin-bottom: 12px; }
+    .post-list { list-style: none; padding: 0; }
+    .post-list li { margin: 15px 0; }
+    .post-list a { text-decoration: none; color: var(--text); font-size: 18px; }
+    .post-list a:hover { color: var(--link); }
+    .date { color: var(--muted); font-size: 14px; margin-right: 10px; }
+    .tags { margin-top: 8px; }
+    .tag { background: var(--tag-bg); padding: 2px 8px; border-radius: 3px; font-size: 12px; margin-right: 5px; display: inline-block; }
+    nav { margin-bottom: 18px; border-bottom: 1px solid var(--border); padding-bottom: 15px; }
+    nav a { margin-right: 20px; text-decoration: none; color: var(--text); font-size: 16px; }
+    nav a:hover { color: var(--link); }
+    .language-switcher { display: flex; align-items: center; gap: 10px; margin: -8px 0 26px; }
+    .language-switcher a { display: inline-block; padding: 4px 10px; border: 1px solid var(--border-strong); border-radius: 999px; color: var(--muted); text-decoration: none; font-size: 14px; }
+    .language-switcher a.active { background: var(--link); border-color: var(--link); color: #fff; }
+    .content { line-height: 1.8; }
+    .content code { background: var(--surface-bg); padding: 2px 5px; border-radius: 3px; }
+    .content pre { background: var(--surface-bg); padding: 15px; overflow-x: auto; border-radius: 5px; }
+    .content img { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+    .content .code-snippet__fix {
+        margin: 0 0 1.5em;
+    }
+    .content .code-snippet__fix .code-snippet__line-index {
+        display: none !important;
+    }
+    .meta { color: var(--muted); font-size: 14px; margin-bottom: 14px; }
+    .meta-separator { margin: 0 6px; color: var(--subtle); }
+    .site-stats { display: flex; flex-wrap: wrap; gap: 10px 18px; margin: 28px 0 8px; padding-top: 12px; border-top: 1px solid var(--border); color: var(--subtle); font-size: 12px; }
+    a { color: var(--link); }
+    .hero { padding: 12px 0 24px; }
+    .hero h1 { border-bottom: 2px solid #333; }
+    .eyebrow { color: var(--muted); font-size: 12px; letter-spacing: .12em; margin: 0 0 8px; }
+    .hero-tagline { font-size: 18px; margin: 12px 0 8px; }
+    .hero-copy { color: var(--muted); margin: 0 0 14px; }
+    .hero-actions { margin: 14px 0 4px; }
+    .button { display: inline-block; margin-right: 12px; border: 1px solid var(--border-strong); border-radius: 3px; padding: 4px 10px; text-decoration: none; color: var(--text); background: var(--button-bg); font-size: 14px; }
+    .button-primary { background: var(--button-primary-bg); border-color: var(--button-primary-bg); color: var(--page-bg); }
+    .theme-toggle { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 1px solid var(--border-strong); border-radius: 999px; background: var(--button-bg); color: var(--text); cursor: pointer; font: inherit; font-size: 16px; }
+    .theme-toggle:hover { border-color: var(--link); color: var(--link); }
+    .la-theme-widget { margin: 12px 0 20px; min-height: 24px; color: var(--text); }
+    .identity-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: 16px 0; }
+    .identity-grid div { display: flex; flex-direction: column; }
+    .identity-grid strong { font-size: 15px; }
+    .identity-grid span, .topic-card span, .featured-list small { color: var(--muted); font-size: 13px; }
+    .section-block { padding-top: 28px; }
+    .section-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+    .section-heading h2 { margin: 0; }
+    .section-heading a { font-size: 14px; }
+    .topic-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+    .topic-card { display: block; padding: 14px; border: 1px solid var(--border); text-decoration: none; color: var(--text); }
+    .topic-card:hover { border-color: var(--border-strong); }
+    .topic-card strong { display: block; margin: 4px 0; font-size: 17px; }
+    .topic-index, .featured-list > a > span { color: var(--muted) !important; font-size: 12px !important; }
+    .featured-list { border-top: 1px solid var(--border); }
+    .featured-list > a { display: flex; gap: 14px; padding: 12px 0; border-bottom: 1px solid var(--border); text-decoration: none; color: var(--text); }
+    .featured-list div { display: flex; flex-direction: column; }
+    .latest-block { max-width: 860px; }
+    @media (max-width: 680px) {
+        body { padding: 16px; }
+        nav a { display: inline-block; margin-right: 12px; margin-bottom: 8px; }
+        .identity-grid { grid-template-columns: repeat(2, 1fr); }
+        .topic-grid { grid-template-columns: 1fr; }
+    }
+</style>
+
+</head>
+<body>
+    <nav>
+  <a href="/en/">Home</a>
+  <a href="/en/start-here/">Start Here</a>
+  <a href="/en/career/">Portfolio</a>
+  <a href="/en/tag/ai/">AI Agent</a>
+  <a href="/en/tag/docker/">Self-hosting</a>
+  <a href="/en/tag/%e8%bf%90%e7%bb%b4/">Engineering</a>
+  <a href="/en/post/">Archive</a>
+  <a href="/en/tags/">Tags</a>
+  <a href="/en/about/">About</a>
+  <a href="https://github.com/margrop" target="_blank" rel="noopener">GitHub</a>
+</nav>
+
+    <div class="language-switcher">
+  <button class="theme-toggle" type="button" data-theme-toggle aria-label="切换到暗黑模式" aria-pressed="false">🌙</button>
+
+  
+  
+    <a href="/post/postgresql-production-readiness-after-migration/" class="">中文</a>
+  
+    <a href="/en/post/postgresql-production-readiness-after-migration/" class="active">English</a>
+  
+  
+</div>
+
+    
+    <article>
+        <h1>Migrated and Ready to Ship? I Hit PostgreSQL with 150 Connections, Created 180,000 Dead Tuples, Then Recovered an Accidental DELETE</h1>
+        <div class="meta">
+            Published: 2026-08-23
+            <span class="meta-separator">·</span>
+            <span>阅读量 <span data-page-view-count>--</span></span>
+        </div>
+        
+<div class="tags">
+    
+    <a href="/en/tag/postgresql/"><span class="tag">PostgreSQL</span></a>
+    
+    <a href="/en/tag/mysql/"><span class="tag">MySQL</span></a>
+    
+    <a href="/en/tag/%E6%95%B0%E6%8D%AE%E5%BA%93/"><span class="tag">数据库</span></a>
+    
+    <a href="/en/tag/database/"><span class="tag">database</span></a>
+    
+    <a href="/en/tag/%E8%BF%90%E7%BB%B4/"><span class="tag">Operation and maintenance</span></a>
+    
+    <a href="/en/tag/%E6%95%85%E9%9A%9C%E6%8E%92%E6%9F%A5/"><span class="tag">故障排查</span></a>
+    
+    <a href="/en/tag/%E6%95%B0%E6%8D%AE%E8%BF%81%E7%A7%BB/"><span class="tag">数据迁移</span></a>
+    
+    <a href="/en/tag/%E6%95%99%E7%A8%8B/"><span class="tag">教程</span></a>
+    
+</div>
+
+
+        <div class="content">
+            <blockquote>
+<p><strong>TL;DR</strong></p>
+<p>Migrating from MySQL to PostgreSQL, reconciling the data, and tuning the parameters still do not prove that the new database is ready to launch. Production readiness requires you to hit at least four walls yourself: <strong>what happens when connections are exhausted, whether slow SQL can be found through an evidence chain, whether dead tuples are reclaimed in time, and whether an accidental deletion can be recovered to the correct moment</strong>. I ran a destructive rehearsal in a PostgreSQL 18.6 sandbox that publishes no host ports and contains only synthetic data. One hundred and fifty direct clients produced <code>too many clients</code>; the same 150 clients behind PgBouncer used about 21 database backends, completed 35,751 transactions, and failed zero; one query fell from 61.953ms to 2.153ms; 180,000 dead tuples became zero after an ordinary VACUUM; and a deleted row came back through a base backup plus 22 archived WAL files. This is the finale of my PostgreSQL series, with one-click labs for Windows 11, Ubuntu 26.04, and macOS 26, plus a bounded prompt for Agent-driven execution.</p>
+</blockquote>
+<p><img alt="Original cover: passing a migration is not the same as passing the four gates of connections, queries, cleanup, and recovery." src="/post-images/postgresql-production-readiness-after-migration/00-cover.svg"></p>
+<p><em>Figure 1: Original SVG cover. Every number comes from the downloadable isolated lab. None is a capacity promise or a benchmark borrowed from someone else&rsquo;s machine.</em></p>
+<h2 id="1-why-does-this-series-need-a-finale">1. Why Does This Series Need a Finale?</h2>
+<p>The first three parts answered three different questions. Part one explored <a href="/en/post/why-projects-switch-from-mysql-to-postgresql/">why projects move from MySQL to PostgreSQL</a>. Part two performed and verified <a href="/en/post/mysql-to-postgresql-migration-guide/">a MySQL-to-PostgreSQL migration</a>. Part three turned <a href="/en/post/postgresql-production-tuning-ten-knobs/">ten production switches that matter after the move</a>.</p>
+<p>All three were missing the final verb: <strong>prove</strong>.</p>
+<p>Think of moving a hospital from an old building into a new one. Every medical record has arrived, the lights work, and the air conditioning is tuned. That still does not mean the hospital should admit patients tomorrow. Someone must cut the power and watch the generator take over. Many people must try to register at once so the team can see whether the front desk collapses. Someone must deliberately retrieve the wrong record and prove that the right version can be restored. A database launch is the same: a configuration sheet says, “we think this should work”; a failure rehearsal says, “the evidence shows what it actually does.”</p>
+<p><img alt="Original roadmap: the PostgreSQL series moves from selection and migration to tuning and failure rehearsal." src="/post-images/postgresql-production-readiness-after-migration/01-series-map.svg"></p>
+<p><em>Figure 2: Original diagram. Selection, migration, tuning, and proof are not four unrelated posts. They form one chain, and an untested final link can erase the success of the first three on launch day.</em></p>
+<p>This article does not pretend that a small sandbox is a production capacity test. The lab answers narrower, useful questions: does the pool really fold clients into fewer backends, does the execution plan really change, does VACUUM really make dead space reusable, and does PITR really retrieve data committed before a target time? A real launch still needs another rehearsal with the real data distribution, connection lifecycle, query mix, and storage system.</p>
+<h2 id="2-symptoms-four-problems-that-hide-until-launch-day">2. Symptoms: Four Problems That Hide Until Launch Day</h2>
+<h3 id="21-the-101st-guest-blocks-the-door">2.1 The 101st Guest Blocks the Door</h3>
+<p>PostgreSQL uses one backend process per connection. A connection is not a browser tab that costs almost nothing; it is more like a dedicated waiter in a restaurant. Every waiter consumes memory, a process slot, and CPU scheduling time. The lab fixes <code>max_connections</code> at 100 and then starts 150 clients directly:</p>
+<p><img alt="Real lab-output capture: 150 clients connect directly to PostgreSQL and hit the configured ceiling." src="/post-images/postgresql-production-readiness-after-migration/01-real-connection-wall.webp"></p>
+<p><em>Figure 3: Real lab-output capture; the internal address is redacted. The process exits nonzero, and client 111 receives <code>FATAL: sorry, too many clients already</code>. This is not “a little slower.” The request never enters the database.</em></p>
+<p>A production incident can be worse: once business connections occupy every slot, the DBA&rsquo;s diagnostic session may be rejected too. Raising <code>max_connections</code> from 100 to 500 in isolation is like seeing a restaurant queue and immediately hiring 400 more waiters. The kitchen did not get larger; now everyone collides inside it.</p>
+<h3 id="22-one-query-reads-almost-300000-rows-to-find-30">2.2 One Query Reads Almost 300,000 Rows to Find 30</h3>
+<p>A slow query rarely writes, “I am slow because an index is missing” in its log line. You infer the cause from its plan, buffer activity, I/O time, call count, and row-estimation errors. The synthetic <code>orders</code> table contains 300,000 rows, while the target predicate matches only 30. Without an appropriate index, PostgreSQL still walks nearly the entire library to retrieve those few books.</p>
+<h3 id="23-delete-is-not-a-paper-shredder">2.3 DELETE Is Not a Paper Shredder</h3>
+<p>PostgreSQL&rsquo;s MVCC keeps old row versions so concurrent transactions can continue to see a consistent world. An UPDATE usually creates a new version, and a DELETE marks the old version for later cleanup. Imagine a wardrobe: pressing Delete moves clothes into a “to be cleared” compartment; they do not disappear from the apartment at that instant. When autovacuum cannot keep up, table scans, indexes, and disk usage slowly get fatter.</p>
+<h3 id="24-a-green-backup-job-that-nobody-has-restored">2.4 A Green Backup Job That Nobody Has Restored</h3>
+<p>A daily green “backup completed” indicator proves only that some files were written. It does not prove that the files are complete, the WAL sequence is continuous, the recovery settings are correct, or the on-call engineer knows which second to stop at. <strong>An untested backup is a hope, not a recovery capability.</strong></p>
+<h2 id="3-root-cause-the-team-delivered-a-database-but-not-its-safety-nets">3. Root Cause: The Team Delivered a Database, but Not Its Safety Nets</h2>
+<p>These four symptoms are not four unrelated bugs. They share one root cause: the launch checklist tests static state—service starts, endpoint responds, row counts match, configuration loaded—but not the way the system degrades under pressure and human error.</p>
+<p>A production database should ship with four safety nets:</p>
+<ol>
+<li><strong>Traffic safety:</strong> application sessions are pooled, rescue connections are reserved, and overload queues or fails quickly in a known way.</li>
+<li><strong>Evidence safety:</strong> <code>pg_stat_statements</code>, slow-query logging, and <code>EXPLAIN (ANALYZE, BUFFERS)</code> turn “it feels slow” into a plan, row count, and I/O trail.</li>
+<li><strong>Space safety:</strong> autovacuum thresholds, duration, freeze age, and dead-tuple trends are visible before cleanup silently falls weeks behind.</li>
+<li><strong>Time safety:</strong> base backups, archived WAL, recovery targets, RPO/RTO, and rehearsal records form one closed loop.</li>
+</ol>
+<p>The rest of this article walks through each gate using the measured lab evidence.</p>
+<h2 id="4-gate-one-a-connection-pool-is-a-flow-control-valve">4. Gate One: A Connection Pool Is a Flow-Control Valve</h2>
+<p>PgBouncer transaction pooling can multiplex many client sessions over a smaller number of database connections. It works like the host at a restaurant. One hundred and fifty guests can take queue numbers; the kitchen does not need 150 chefs simultaneously. When one table finishes a transaction, its chef can immediately serve the next table.</p>
+<p><img alt="Original diagram: 150 clients use PgBouncer transaction mode to share a bounded set of PostgreSQL backends." src="/post-images/postgresql-production-readiness-after-migration/02-pool-restaurant.svg"></p>
+<p><em>Figure 4: Original diagram. Transaction mode returns a connection after every transaction. Session state, temporary tables, advisory locks, and some prepared-statement patterns therefore require an explicit compatibility review; changing only the endpoint is not an acceptance test.</em></p>
+<p>With the same 150 clients, database, and isolated network, the PgBouncer path behaves differently:</p>
+<p><img alt="Real lab-output capture: PgBouncer serves 150 clients with zero failed transactions." src="/post-images/postgresql-production-readiness-after-migration/02-real-pgbouncer.webp"></p>
+<p><em>Figure 5: Real lab-output capture. The database has about 21 backend connections during load. Over 12 seconds, the test completes 35,751 read-only transactions, fails zero, averages 50.076ms latency, and reports 2,995.425 TPS. Those figures describe this sandbox—not your capacity.</em></p>
+<p>Before launch, answer at least these questions:</p>
+<ul>
+<li>Are you choosing session, transaction, or statement pooling, and why?</li>
+<li>Does the application depend on long-lived <code>SET</code> state, temporary tables, or session advisory locks?</li>
+<li>Is <code>pool_size</code> derived from database CPU and I/O capacity instead of copied from a random configuration?</li>
+<li>Are operational roles and <code>superuser_reserved_connections</code> or <code>reserved_connections</code> protected?</li>
+<li>Do dashboards show pool wait time, queued clients, and actual database backends together?</li>
+</ul>
+<p>The conclusion is not “transaction mode everywhere.” The conclusion is: <strong>choose the mode explicitly, then test it against real application behavior.</strong></p>
+<h2 id="5-gate-two-turn-slow-sql-from-guesswork-into-a-case-file">5. Gate Two: Turn Slow SQL from Guesswork into a Case File</h2>
+<p>The predicate in this experiment is <code>customer_id = 4241 AND status = 'paid'</code>. Before the index exists, the plan chooses a <code>Parallel Seq Scan</code>:</p>
+<p><img alt="Real lab-output capture: the query uses a Parallel Seq Scan before indexing." src="/post-images/postgresql-production-readiness-after-migration/03-real-slow-before.webp"></p>
+<p><em>Figure 6: Real lab-output capture. Three execution processes return about ten rows each while each filters roughly 99,990. Total execution time is 61.953ms. “61” is less important than the scan strategy and the number of discarded rows.</em></p>
+<p>The lab then creates a composite index that matches the predicates and runs <code>ANALYZE</code>:</p>
+<p><img alt="Real lab-output capture: a Bitmap Index Scan and Bitmap Heap Scan after the composite index." src="/post-images/postgresql-production-readiness-after-migration/04-real-slow-after.webp"></p>
+<p><em>Figure 7: Real lab-output capture. The index finds 30 entries and visits 30 exact heap blocks. Total execution time is 2.153ms, about 28.8 times faster in this run. A different cache state, concurrency level, or data distribution will change the ratio.</em></p>
+<p><img alt="Original diagram: without a catalog the librarian scans shelves; a composite index points to the 30 matching rows." src="/post-images/postgresql-production-readiness-after-migration/03-query-rescue.svg"></p>
+<p><em>Figure 8: Original diagram. An index is a library catalog, but more catalogs are not automatically better. Every index consumes disk, adds write cost, and requires maintenance. Build indexes for high-value queries supported by evidence.</em></p>
+<p>A disciplined investigation order looks like this:</p>
+<ol>
+<li>Use <code>pg_stat_statements</code> to find SQL with the most total time, mean time, calls, and temporary blocks. Do not start with a single dramatic log line.</li>
+<li>Run <code>EXPLAIN (ANALYZE, BUFFERS)</code> on a safe pre-production copy. <code>ANALYZE</code> really executes the statement, so an UPDATE or DELETE needs a rollback wrapper—or plain <code>EXPLAIN</code> only.</li>
+<li>Compare estimated rows with actual rows. When they differ by orders of magnitude, inspect statistics, skew, and correlated columns before assuming that another index is the only answer.</li>
+<li>After a change, repeat the same parameters and cache conditions and observe the write penalty. Do not publish only the prettiest run.</li>
+</ol>
+<p><code>pg_stat_statements</code> is an airport&rsquo;s aggregate delay board: it tells you which route has wasted the most time overall. A slow-query log is one passenger complaint. Both matter, but one complaint alone should not decide whether to build a new runway.</p>
+<h2 id="6-gate-three-ordinary-vacuum-reclaims-reusable-space">6. Gate Three: Ordinary VACUUM Reclaims Reusable Space</h2>
+<p>The experiment updates 150,000 rows and deletes 30,000. The statistics view then reports 180,000 dead tuples:</p>
+<p><img alt="Real lab-output capture: 180,000 dead tuples are visible before ordinary VACUUM." src="/post-images/postgresql-production-readiness-after-migration/05-real-dead-tuples-before.webp"></p>
+<p><em>Figure 9: Real lab-output capture. To produce stable evidence, the lab temporarily disables autovacuum for this synthetic table, creates the churn, runs ANALYZE, and flushes statistics. Never leave autovacuum disabled on a production table without a tightly controlled substitute.</em></p>
+<p>After an ordinary <code>VACUUM (ANALYZE)</code>:</p>
+<p><img alt="Real lab-output capture: dead tuples fall to zero after VACUUM, while total size remains about 90MB." src="/post-images/postgresql-production-readiness-after-migration/06-real-dead-tuples-after.webp"></p>
+<p><em>Figure 10: Real lab-output capture. <code>n_dead_tup</code> becomes zero and <code>vacuum_count</code> increases, while total size remains about 90MB. This is useful evidence against the common belief that VACUUM must shrink the file.</em></p>
+<p><img alt="Original diagram: ordinary VACUUM organizes a wardrobe; it does not shrink the apartment." src="/post-images/postgresql-production-readiness-after-migration/04-vacuum-closet.svg"></p>
+<p><em>Figure 11: Original diagram. Ordinary VACUUM marks slots reusable inside the relation; it generally does not immediately return trailing file space to the operating system. <code>VACUUM FULL</code> rewrites and locks the table, while <code>pg_repack</code> also requires extra space and an operational review.</em></p>
+<p>Production monitoring must look beyond the current dead-tuple number. Track the trend and its causes: long transactions that hold old snapshots, canceled autovacuum workers, table-specific scale factors for huge relations, and <code>relfrozenxid</code> age approaching dangerous territory. Cleaning is not “the janitor visited once.” It is a continuous balance among customer traffic, garbage generation, and cleanup capacity.</p>
+<h2 id="7-gate-four-delete-something-then-turn-back-the-clock">7. Gate Four: Delete Something, Then Turn Back the Clock</h2>
+<p>PITR works like a video game&rsquo;s save system. A base backup is a full saved game at one moment. Archived WAL is a move-by-move recording after that point. Recovery loads the save, replays the recording, and presses Pause immediately before the destructive move.</p>
+<p><img alt="Original timeline: base backup, marker-row insert, recovery target, accidental delete, and restored row." src="/post-images/postgresql-production-readiness-after-migration/05-pitr-timeline.svg"></p>
+<p><em>Figure 12: Original diagram. The recovery target must be after the desired transaction and before the accident. Production recovery should normally happen in a side-by-side instance first, rather than turning the only source database into an experiment.</em></p>
+<p>The lab performs these steps: take a base backup; insert a marker row and switch WAL; record a recovery target; delete the marker and switch WAL again; prove the current database contains zero matching rows; stop the source; copy the base backup into a fresh volume; write <code>recovery.signal</code>, <code>restore_command</code>, and <code>recovery_target_time</code>; start an isolated recovery instance; and query the marker row.</p>
+<p><img alt="Real lab-output capture: zero rows after the delete and one row after point-in-time recovery." src="/post-images/postgresql-production-readiness-after-migration/07-real-pitr.webp"></p>
+<p><em>Figure 13: Real lab-output capture. The post-incident query returns zero; the archive contains 22 WAL files; the restored instance reaches running/ready state and returns the marker value. The lab publishes no host port.</em></p>
+<p>This proves that the recovery chain works in the lab. It does not establish a production RTO. A real RTO includes fetching the base backup, downloading archives, replaying a large WAL backlog, validating business invariants, switching connections, and coordinating a decision. A serious acceptance sheet should state:</p>
+<ul>
+<li><strong>RPO:</strong> How many minutes of data may be lost, and is archive delay consistently below that limit?</li>
+<li><strong>RTO:</strong> How long from declaring recovery until traffic reopens, and what did the latest rehearsal measure?</li>
+<li>Are backups off-site, encrypted, and protected from deletion by the same single administrator?</li>
+<li>Who may start a recovery, who approves it, and who validates critical business data?</li>
+<li>How are timeline forks and the old primary handled so two writable databases cannot reappear?</li>
+</ul>
+<h2 id="8-final-acceptance-is-not-one-green-service-up-screenshot">8. Final Acceptance Is Not One Green “Service Up” Screenshot</h2>
+<p><img alt="Original checklist: connection, query, vacuum, and recovery gates all need evidence before cutover." src="/post-images/postgresql-production-readiness-after-migration/06-launch-gates.svg"></p>
+<p><em>Figure 14: Original diagram. Production readiness means four evidence-backed green gates, not one successful <code>SELECT 1</code>. Any gate without an owner, threshold, and rehearsal record is unknown—not passed by default.</em></p>
+<p>The complete lab writes an acceptance summary at the end:</p>
+<p><img alt="Real lab-output capture: all six PostgreSQL production-readiness checks pass." src="/post-images/postgresql-production-readiness-after-migration/08-real-acceptance.webp"></p>
+<p><em>Figure 15: Real lab-output capture. Direct connection ceiling, pooled concurrency, query-plan change, dead-tuple reclamation, PITR recovery, and the no-host-port boundary all pass.</em></p>
+<p>A practical cutover plan operates on several time horizons.</p>
+<p><strong>T-30 days:</strong> freeze data-type mappings; run top SQL against a production-scale copy; select and test the PgBouncer mode; define RPO/RTO; complete the first recovery rehearsal; alert on dead tuples, freeze age, archive failures, and pool waits.</p>
+<p><strong>T-7 days:</strong> reconcile row counts, checksums, and business invariants again; load-test pool and reconnection behavior; rehearse rollback; confirm the on-call roster, change window, and connection-string or DNS TTL; keep a read-only window for the old database.</p>
+<p><strong>T-0:</strong> pause writes or converge the dual-write stream; record the final incremental position; run the final checks; release traffic by percentage; watch errors, pool waits, P95/P99, WAL generation, and replication or archive lag. If a threshold is crossed, follow the agreed rollback rule rather than holding an emergency vote in chat.</p>
+<p><strong>T+1 through T+30:</strong> do not dismantle the old system immediately; review new query plans, autovacuum behavior, and capacity trends; perform at least one more restore from an actual production backup into isolation. A migration is truly complete when the runbook, alerts, and rehearsals have owners—not merely when the old server is powered off.</p>
+<h2 id="9-one-click-labs-windows-11-ubuntu-2604-and-macos-26">9. One-Click Labs: Windows 11, Ubuntu 26.04, and macOS 26</h2>
+<blockquote>
+<p><strong>Safety boundary:</strong> The package operates only on a fixed lab project, uses synthetic data, loads no real credentials, publishes no host ports, and never runs a global <code>docker system prune</code>. It pulls the official PostgreSQL 18 image and temporarily consumes several hundred megabytes. Do not run two copies against resources with the same lab name.</p>
+</blockquote>
+<p>Download the complete <a href="/post-files/postgresql-production-readiness-after-migration-three-platforms.zip">three-platform PostgreSQL readiness lab ZIP</a>. It contains Compose, PgBouncer, SQL, PITR logic, all three entry points, the Agent prompt, and <a href="/post-files/postgresql-production-readiness-after-migration/reference-results/11-acceptance-summary.txt">privacy-sanitized reference output</a>. Its SHA-256 is <code>7b1e0ce68cc52dc36b76cf60bcae6c2e8094153560e2cd7e8536fea66f3cf471</code>.</p>
+<h3 id="91-human-started-fully-automatic-execution">9.1 Human-Started, Fully Automatic Execution</h3>
+<p><strong>Windows 11:</strong> Docker Desktop must be running Linux containers with WSL 2 integration. Extract the archive and run in PowerShell:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-powershell" data-lang="powershell"><span style="display:flex;"><span>Set-ExecutionPolicy -Scope <span style="color:#66d9ef">Process</span> Bypass
+</span></span><span style="display:flex;"><span>.\Run-Windows11.ps1
+</span></span></code></pre></div><p>The entry point is also available directly as <a href="/post-files/postgresql-production-readiness-after-migration/Run-Windows11.ps1">Run-Windows11.ps1</a>. It invokes the same <code>run-lab.sh</code> through Windows&rsquo; WSL rather than maintaining a reduced PowerShell experiment with subtly different behavior.</p>
+<p><strong>Ubuntu 26.04:</strong> with Docker Engine and Compose v2 ready:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>chmod +x run-lab.sh run-ubuntu-26.04.sh
+</span></span><span style="display:flex;"><span>./run-ubuntu-26.04.sh
+</span></span></code></pre></div><p>Direct entry point: <a href="/post-files/postgresql-production-readiness-after-migration/run-ubuntu-26.04.sh">run-ubuntu-26.04.sh</a>.</p>
+<p><strong>macOS 26:</strong> after starting your local Docker runtime:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-zsh" data-lang="zsh"><span style="display:flex;"><span>chmod +x run-lab.sh run-macos-26.zsh
+</span></span><span style="display:flex;"><span>./run-macos-26.zsh
+</span></span></code></pre></div><p>Direct entry point: <a href="/post-files/postgresql-production-readiness-after-migration/run-macos-26.zsh">run-macos-26.zsh</a>.</p>
+<p>All three eventually execute the same <a href="/post-files/postgresql-production-readiness-after-migration/run-lab.sh">run-lab.sh</a>. Success is not merely a zero-looking exit status. Require all six <code>[PASS]</code> lines in <code>results/11-acceptance-summary.txt</code>, then confirm that the scoped containers, network, and volumes were removed.</p>
+<h3 id="92-agent-driven-setup-and-acceptance">9.2 Agent-Driven Setup and Acceptance</h3>
+<p>Give the following instruction to an Agent that is allowed to run local commands. A complete bilingual copy is in <a href="/post-files/postgresql-production-readiness-after-migration/AGENT-PROMPT.md">AGENT-PROMPT.md</a>:</p>
+<blockquote>
+<p>Run the PostgreSQL production-readiness lab in the current directory without connecting to or changing any existing database. Read the README, Compose file, and current-platform entry point first. Operate only on the fixed lab project and restore container; never publish a host port, load a real credential, or run a global Docker prune. Use the PowerShell entry on Windows 11, Bash entry on Ubuntu 26.04, or zsh entry on macOS 26. After execution, require all six <code>[PASS]</code> lines, check for duplicate side effects, and confirm scoped cleanup. If anything fails, retain the logs and explain the root cause; never rewrite acceptance output to manufacture success.</p>
+</blockquote>
+<p>The Agent method is not valuable merely because it saves three commands. Its value is that authority, success criteria, and failure evidence are explicit before execution. An Agent told only “make PostgreSQL ready” is like a child told “clean the kitchen”: it cannot know which cupboards are forbidden or what “done” means.</p>
+<h2 id="10-qa">10. Q&amp;A</h2>
+<h3 id="q1-the-150-client-direct-test-fails-should-i-immediately-raise-max_connections-to-300">Q1: The 150-client direct test fails. Should I immediately raise max_connections to 300?</h3>
+<p>Not in isolation. First derive backend concurrency from transaction duration and database CPU/I/O capacity, then fold external sessions through PgBouncer. Preserve operational connections and test the real connection lifecycle. Connections are a budget, not a luxury feature whose value rises with the number.</p>
+<h3 id="q2-why-does-the-database-show-about-21-backends-for-150-clients-instead-of-a-perfectly-round-configured-number">Q2: Why does the database show about 21 backends for 150 clients instead of a perfectly round configured number?</h3>
+<p>The snapshot includes load connections, the measurement query itself, and whatever was active at that instant. Transaction pooling creates and reuses backends according to demand; a snapshot is not required to equal the ceiling. The useful evidence is that backend count is dramatically below client count and no transaction fails—not a cosmetically perfect “20.”</p>
+<h3 id="q3-the-index-made-this-query-288-times-faster-can-i-create-it-in-production-immediately">Q3: The index made this query 28.8 times faster. Can I create it in production immediately?</h3>
+<p>Review write amplification, disk capacity, locks, and version capabilities first. Large production tables often use <code>CREATE INDEX CONCURRENTLY</code>, but it runs longer and can leave an invalid index after failure. Monitor it and prepare cleanup. Column order must also fit actual predicates, ordering, and selectivity.</p>
+<h3 id="q4-the-file-did-not-shrink-after-vacuum-did-vacuum-fail">Q4: The file did not shrink after VACUUM. Did VACUUM fail?</h3>
+<p>No. Ordinary VACUUM primarily makes internal space reusable and maintains visibility information so bloat does not keep growing. Returning space to the operating system is a separate decision. Only when that space will remain unused should you consider an operation that rewrites or relocates data.</p>
+<h3 id="q5-i-have-cloud-provider-snapshots-do-i-still-need-postgresql-pitr">Q5: I have cloud-provider snapshots. Do I still need PostgreSQL PITR?</h3>
+<p>Usually yes. A volume snapshot answers “return this disk to a point,” while database PITR combines a consistent base backup with precise WAL replay. They can complement each other, but cross-volume consistency, WAL location, and the actual restore procedure must be tested.</p>
+<h3 id="q6-the-lab-recovered-successfully-is-my-backup-strategy-now-approved">Q6: The lab recovered successfully. Is my backup strategy now approved?</h3>
+<p>It proves only that this synthetic recovery mechanism passes. Production acceptance requires measuring RPO/RTO at real backup size, validating business data, testing keys and permissions, rehearsing an off-site failure, and asking someone other than the author to complete the runbook independently.</p>
+<h3 id="q7-why-does-the-lab-not-expose-a-port-so-i-can-connect-manually">Q7: Why does the lab not expose a port so I can connect manually?</h3>
+<p>Its purpose is mechanism verification, not a long-running database deployment. Components communicate inside an isolated Docker network, reducing accidental connections, port collisions, and exposure of deliberately weak lab settings. Read the generated <code>results/</code> for evidence.</p>
+<h2 id="11-references-and-the-final-sentence">11. References and the Final Sentence</h2>
+<ul>
+<li><a href="https://www.postgresql.org/docs/18/monitoring-stats.html">PostgreSQL 18: The Cumulative Statistics System</a></li>
+<li><a href="https://www.postgresql.org/docs/18/pgstatstatements.html">PostgreSQL 18: pg_stat_statements</a></li>
+<li><a href="https://www.postgresql.org/docs/18/routine-vacuuming.html">PostgreSQL 18: Routine Vacuuming</a></li>
+<li><a href="https://www.postgresql.org/docs/18/continuous-archiving.html">PostgreSQL 18: Continuous Archiving and PITR</a></li>
+<li><a href="https://www.pgbouncer.org/features.html">PgBouncer: Features and pooling compatibility</a></li>
+<li><a href="https://www.pgbouncer.org/usage.html">PgBouncer: Usage</a></li>
+</ul>
+<p>This series moved from “why migrate” to “how to migrate,” then from “how to tune” to “how to prove.” If you remember only one sentence from the finale, make it this one: <strong>do not ship a database that you have never tried to break and never personally restored.</strong></p>
+        </div>
+    </article>
+
+    
+  
+
+
+
+
+    
+<div class="site-stats" aria-label="访问统计">
+    <span>本文阅读量 <span data-page-view-count>--</span></span>
+</div>
+
+
+    
+    <script type="text/javascript" src="https://js.users.51.la/21044367.js"></script>
+    <script charset="UTF-8" id="LA_COLLECT" src="//sdk.51.la/js-sdk-pro.min.js"></script>
+    <script>LA.init({id: "1vVTUWl7zoRjnKXi",ck: "1vVTUWl7zoRjnKXi"})</script>
+    <script src="https://sdk.51.la/perf/js-sdk-perf.min.js" crossorigin="anonymous"></script>
+    <script>
+      new LingQue.Monitor().init({id:"202teQt8THXwqyve"});
+    </script>
+    <script defer src="/js/page-views.js"></script>
+    <div class="la-theme-widget" data-51la-widget aria-label="51.la 网站统计"></div>
+    <script defer src="/js/51la-theme-widget.js"></script>
+</body>
+</html>

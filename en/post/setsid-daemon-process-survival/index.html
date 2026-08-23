@@ -218,24 +218,24 @@
 </blockquote>
 <p>This post is based on a real debugging session of the CLIProxyAPI service. The service was started with <code>nohup</code> but kept disappearing every time an automation script finished. The management panel kept showing &ldquo;connection failed.&rdquo; The culprit turned out to be a subtle Unix process lifecycle issue. This class of problem is common in cloud dev machines, CI runners, SSH jump hosts, and containerized workflows, but it&rsquo;s often misdiagnosed because the underlying process model is poorly understood.</p>
 <p>All private details have been removed. No real internal addresses, tokens, or paths appear in this article.</p>
-<p><img src="/post-images/setsid-daemon-process-survival/hero-daemon-process.svg" alt="Abstract hero image for a disappearing background process"></p>
+<p><img alt="Abstract hero image for a disappearing background process" src="/post-images/setsid-daemon-process-survival/hero-daemon-process.svg"></p>
 <p><em>Figure 1: The process started, nohup was used, but moments later it was gone.</em></p>
 <h2 id="1-background-everything-looked-normal">1. Background: Everything Looked Normal</h2>
 <p>On an internal development machine, we needed to run a local proxy service called <code>cliproxy</code> for an extended period. The startup command was straightforward:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>cd /root/CLIProxyAPI
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>cd /root/CLIProxyAPI
 </span></span><span style="display:flex;"><span>nohup ./cliproxy &gt; /tmp/cliproxy.log 2&gt;&amp;<span style="color:#ae81ff">1</span> &amp;
 </span></span></code></pre></div><p>The startup log confirmed success:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>API server started successfully on: &lt;DEV_HOST&gt;:8317
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>API server started successfully on: &lt;DEV_HOST&gt;:8317
 </span></span></code></pre></div><p>The management key was verified against its bcrypt hash—it was correct. Everything seemed fine.</p>
 <p>But when we opened the management panel in a browser at <code>http://&lt;DEV_HOST&gt;:8317/management.html</code>, we got:</p>
 <blockquote>
 <p><strong>Network connection failed. Please check the network or server address.</strong></p>
 </blockquote>
 <p>A curl test confirmed the problem:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>curl -s http://&lt;DEV_HOST&gt;:8317/management.html
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>curl -s http://&lt;DEV_HOST&gt;:8317/management.html
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># curl: (7) Failed to connect to &lt;DEV_HOST&gt; port 8317 after 0 ms: Connection refused</span>
 </span></span></code></pre></div><p>A <code>ps</code> check showed the process was gone:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>ps aux | grep cliproxy
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>ps aux | grep cliproxy
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># (no output)</span>
 </span></span></code></pre></div><p>Yet the process had clearly started moments earlier—the log file showed a successful startup message. <strong>The process started, ran briefly, and then exited.</strong></p>
 <h2 id="2-symptoms-inconsistent-behavior">2. Symptoms: Inconsistent Behavior</h2>
@@ -249,7 +249,7 @@
 <p>The key insight: <strong>your process isn&rsquo;t crashing—it&rsquo;s being killed as collateral damage when its process group is reaped.</strong></p>
 <h2 id="3-first-check-did-nohup-actually-work">3. First Check: Did <code>nohup</code> Actually Work?</h2>
 <p>A common reaction is to check whether <code>nohup</code> did its job. Let&rsquo;s verify:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># Start the process</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># Start the process</span>
 </span></span><span style="display:flex;"><span>nohup ./cliproxy &gt; /tmp/cliproxy.log 2&gt;&amp;<span style="color:#ae81ff">1</span> &amp;
 </span></span><span style="display:flex;"><span>echo $!  <span style="color:#75715e"># record the PID</span>
 </span></span><span style="display:flex;"><span>
@@ -260,13 +260,13 @@
 </span></span><span style="display:flex;"><span>cat /proc/$!/status | grep -i sighup
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># SigIgn: 0000000000000001  (bit 0 = SIGHUP masked)</span>
 </span></span></code></pre></div><p>If bit 0 of <code>SigIgn</code> is 1, <code>nohup</code> did set <code>signal(SIGHUP, SIG_IGN)</code>. But ignoring SIGHUP only solves half the problem.</p>
-<p><img src="/post-images/setsid-daemon-process-survival/process-lifecycle-comparison.svg" alt="Process lifecycle comparison: &amp; vs nohup vs setsid"></p>
+<p><img alt="Process lifecycle comparison: &amp; vs nohup vs setsid" src="/post-images/setsid-daemon-process-survival/process-lifecycle-comparison.svg"></p>
 <p><em>Figure 2: A side-by-side comparison of how &amp; (background), nohup, and setsid differ in process group, session, and terminal relationship. This is the most important diagram in this article.</em></p>
 <h2 id="4-root-cause-analysis-why-nohup-isnt-enough">4. Root Cause Analysis: Why <code>nohup</code> Isn&rsquo;t Enough</h2>
 <p>To understand this, we need to dive into the Linux process model: processes, process groups, and sessions.</p>
 <h3 id="41-process-groups">4.1 Process Groups</h3>
 <p>Every process belongs to a process group, identified by PGID (Process Group ID). When you run a command (or a pipeline) in a shell, all related processes are placed in the same process group.</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>shell (bash, PID=1000, PGID=1000, SID=1000)
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>shell (bash, PID=1000, PGID=1000, SID=1000)
 </span></span><span style="display:flex;"><span>  └── cliproxy (PID=1001, PGID=1000, SID=1000)
 </span></span></code></pre></div><h3 id="42-sessions">4.2 Sessions</h3>
 <p>A session contains one or more process groups. The session leader is typically the login shell. When you log in via SSH, SSHD assigns a controlling terminal to your session.</p>
@@ -295,38 +295,38 @@
 </blockquote>
 <p>Here&rsquo;s the crucial distinction between the protection mechanisms:</p>
 <table>
-	<thead>
-			<tr>
-					<th>Mechanism</th>
-					<th>What it does</th>
-			</tr>
-	</thead>
-	<tbody>
-			<tr>
-					<td><code>&amp;</code></td>
-					<td>Backgrounds the process, but same process group</td>
-			</tr>
-			<tr>
-					<td><code>nohup</code></td>
-					<td>Ignores SIGHUP, but same session</td>
-			</tr>
-			<tr>
-					<td><code>disown</code></td>
-					<td>Removes from shell&rsquo;s job table; shell won&rsquo;t actively kill on exit</td>
-			</tr>
-			<tr>
-					<td><code>setsid</code></td>
-					<td>Creates new session; fully detached from original terminal and process group</td>
-			</tr>
-	</tbody>
+<thead>
+<tr>
+<th>Mechanism</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>&amp;</code></td>
+<td>Backgrounds the process, but same process group</td>
+</tr>
+<tr>
+<td><code>nohup</code></td>
+<td>Ignores SIGHUP, but same session</td>
+</tr>
+<tr>
+<td><code>disown</code></td>
+<td>Removes from shell&rsquo;s job table; shell won&rsquo;t actively kill on exit</td>
+</tr>
+<tr>
+<td><code>setsid</code></td>
+<td>Creates new session; fully detached from original terminal and process group</td>
+</tr>
+</tbody>
 </table>
 <p>The <code>nohup</code> + <code>&amp;</code> combination works in simple scenarios, but when the parent is not a persistent process (e.g., temporary SSH session, CI job, AI Agent bash environment), it becomes unreliable.</p>
 <h2 id="6-the-fix-using-setsid-to-create-an-independent-session">6. The Fix: Using <code>setsid</code> to Create an Independent Session</h2>
 <p>Once the root cause was identified, the fix was remarkably simple:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>setsid -f /root/CLIProxyAPI/cliproxy &gt; /tmp/cliproxy.log 2&gt;&amp;<span style="color:#ae81ff">1</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>setsid -f /root/CLIProxyAPI/cliproxy &gt; /tmp/cliproxy.log 2&gt;&amp;<span style="color:#ae81ff">1</span>
 </span></span></code></pre></div><p>The <code>-f</code> flag means &ldquo;fork before executing setsid,&rdquo; ensuring the calling process is not a process group leader (which is required by the <code>setsid(2)</code> system call—a process group leader cannot create a new session).</p>
 <p>Verification:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># Start</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># Start</span>
 </span></span><span style="display:flex;"><span>setsid -f /root/CLIProxyAPI/cliproxy &gt; /tmp/cliproxy.log 2&gt;&amp;<span style="color:#ae81ff">1</span>
 </span></span><span style="display:flex;"><span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># Confirm new session</span>
@@ -347,7 +347,7 @@
 </ul>
 <p>This means when the original shell exits, neither <code>killpg(1000, SIGHUP)</code> nor <code>killpg(1000, SIGTERM)</code> will affect cliproxy. It&rsquo;s in a completely isolated process group (3001) and session (3001).</p>
 <p>Post-fix verification:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>curl -s -o /dev/null -w <span style="color:#e6db74">&#34;%{http_code}&#34;</span> http://&lt;DEV_HOST&gt;:8317/management.html
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>curl -s -o /dev/null -w <span style="color:#e6db74">&#34;%{http_code}&#34;</span> http://&lt;DEV_HOST&gt;:8317/management.html
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># 200</span>
 </span></span></code></pre></div><p>Even after disconnecting SSH, closing the terminal, or letting the automation tool finish, the service stayed online.</p>
 <h2 id="7-deep-dive-how-setsid-works">7. Deep Dive: How <code>setsid</code> Works</h2>
@@ -361,18 +361,18 @@
 </blockquote>
 <p>There is one important constraint: <strong>the calling process must not be a process group leader.</strong> This is why the <code>setsid</code> command forks first—the child process&rsquo;s PID cannot equal its parent&rsquo;s PGID, so the EPERM error won&rsquo;t trigger.</p>
 <p>The <code>setsid -f</code> flag performs this fork+setsid sequence. It&rsquo;s equivalent to:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-c" data-lang="c"><span style="display:flex;"><span><span style="color:#66d9ef">pid_t</span> pid <span style="color:#f92672">=</span> <span style="color:#a6e22e">fork</span>();
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-c" data-lang="c"><span style="display:flex;"><span><span style="color:#66d9ef">pid_t</span> pid <span style="color:#f92672">=</span> <span style="color:#a6e22e">fork</span>();
 </span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> (pid <span style="color:#f92672">==</span> <span style="color:#ae81ff">0</span>) {
 </span></span><span style="display:flex;"><span>    <span style="color:#a6e22e">setsid</span>();  <span style="color:#75715e">// child creates new session
-</span></span></span><span style="display:flex;"><span>    <span style="color:#a6e22e">execvp</span>(argv[<span style="color:#ae81ff">0</span>], argv);  <span style="color:#75715e">// execute target command
-</span></span></span><span style="display:flex;"><span>}
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>    <span style="color:#a6e22e">execvp</span>(argv[<span style="color:#ae81ff">0</span>], argv);  <span style="color:#75715e">// execute target command
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>}
 </span></span><span style="display:flex;"><span><span style="color:#a6e22e">exit</span>(<span style="color:#ae81ff">0</span>);  <span style="color:#75715e">// parent (intermediate fork) exits immediately
 </span></span></span></code></pre></div><p>This also explains why a <code>setsid</code>-launched process has PPID=1—the intermediate fork parent exits immediately, so the target process is adopted by init.</p>
 <h2 id="8-broader-background-process-management-practices">8. Broader Background Process Management Practices</h2>
 <p>Beyond <code>setsid</code>, there are additional practices worth knowing.</p>
 <h3 id="81-redirect-all-standard-streams">8.1 Redirect All Standard Streams</h3>
 <p>Even with <code>setsid</code>, always redirect stdin/stdout/stderr:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>setsid -f ./cliproxy &lt;/dev/null &gt;/tmp/cliproxy.log 2&gt;&amp;<span style="color:#ae81ff">1</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>setsid -f ./cliproxy &lt;/dev/null &gt;/tmp/cliproxy.log 2&gt;&amp;<span style="color:#ae81ff">1</span>
 </span></span></code></pre></div><p>This ensures:</p>
 <ul>
 <li><code>stdin</code> won&rsquo;t accidentally read EOF from a closed terminal</li>
@@ -380,11 +380,11 @@
 </ul>
 <h3 id="82-use-screen-or-tmux">8.2 Use <code>screen</code> or <code>tmux</code></h3>
 <p>For scenarios where you need interactive process management:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>screen -dmS cliproxy-session ./cliproxy
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>screen -dmS cliproxy-session ./cliproxy
 </span></span></code></pre></div><p>These tools create persistent pseudo-terminal sessions. Even if you disconnect SSH, the process continues running inside the <code>screen</code>/<code>tmux</code> daemon, and you can reattach later.</p>
 <h3 id="83-use-systemd">8.3 Use <code>systemd</code></h3>
 <p>For production environments, systemd is the recommended approach:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-ini" data-lang="ini"><span style="display:flex;"><span><span style="color:#66d9ef">[Unit]</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-ini" data-lang="ini"><span style="display:flex;"><span><span style="color:#66d9ef">[Unit]</span>
 </span></span><span style="display:flex;"><span><span style="color:#a6e22e">Description</span><span style="color:#f92672">=</span><span style="color:#e6db74">CLIProxy API Server</span>
 </span></span><span style="display:flex;"><span><span style="color:#a6e22e">After</span><span style="color:#f92672">=</span><span style="color:#e6db74">network.target</span>
 </span></span><span style="display:flex;"><span>
@@ -398,16 +398,16 @@
 </span></span><span style="display:flex;"><span>
 </span></span><span style="display:flex;"><span><span style="color:#66d9ef">[Install]</span>
 </span></span><span style="display:flex;"><span><span style="color:#a6e22e">WantedBy</span><span style="color:#f92672">=</span><span style="color:#e6db74">multi-user.target</span>
-</span></span></code></pre></div><div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>systemctl daemon-reload
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>systemctl daemon-reload
 </span></span><span style="display:flex;"><span>systemctl enable --now cliproxy
 </span></span></code></pre></div><p>systemd handles not just lifecycle management but also auto-restart, logging (journald), resource limits, and dependency management.</p>
 <h3 id="84-containerize">8.4 Containerize</h3>
 <p>For cloud-native environments, containerize the service:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-dockerfile" data-lang="dockerfile"><span style="display:flex;"><span><span style="color:#66d9ef">FROM</span> <span style="color:#e6db74">debian:bookworm-slim</span><span style="color:#960050;background-color:#1e0010">
-</span></span></span><span style="display:flex;"><span><span style="color:#66d9ef">COPY</span> cliproxy /usr/local/bin/<span style="color:#960050;background-color:#1e0010">
-</span></span></span><span style="display:flex;"><span><span style="color:#66d9ef">EXPOSE</span> <span style="color:#e6db74">8317</span><span style="color:#960050;background-color:#1e0010">
-</span></span></span><span style="display:flex;"><span><span style="color:#66d9ef">ENTRYPOINT</span> [<span style="color:#e6db74">&#34;/usr/local/bin/cliproxy&#34;</span>]<span style="color:#960050;background-color:#1e0010">
-</span></span></span></code></pre></div><div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>docker run -d --restart<span style="color:#f92672">=</span>always --name cliproxy -p 8317:8317 cliproxy
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-dockerfile" data-lang="dockerfile"><span style="display:flex;"><span><span style="color:#66d9ef">FROM</span><span style="color:#e6db74"> debian:bookworm-slim</span><span style="color:#960050;background-color:#1e0010">
+</span></span></span><span style="display:flex;"><span><span style="color:#960050;background-color:#1e0010"></span><span style="color:#66d9ef">COPY</span> cliproxy /usr/local/bin/<span style="color:#960050;background-color:#1e0010">
+</span></span></span><span style="display:flex;"><span><span style="color:#960050;background-color:#1e0010"></span><span style="color:#66d9ef">EXPOSE</span><span style="color:#e6db74"> 8317</span><span style="color:#960050;background-color:#1e0010">
+</span></span></span><span style="display:flex;"><span><span style="color:#960050;background-color:#1e0010"></span><span style="color:#66d9ef">ENTRYPOINT</span> [<span style="color:#e6db74">&#34;/usr/local/bin/cliproxy&#34;</span>]<span style="color:#960050;background-color:#1e0010">
+</span></span></span></code></pre></div><div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>docker run -d --restart<span style="color:#f92672">=</span>always --name cliproxy -p 8317:8317 cliproxy
 </span></span></code></pre></div><h2 id="9-when-exactly-does-nohup-fail">9. When Exactly Does <code>nohup</code> Fail?</h2>
 <p>Based on this debugging session, here&rsquo;s a summary of <code>nohup</code>&lsquo;s适用范围 and failure conditions:</p>
 <h3 id="scenario-a-nohup-works-fine">Scenario A: <code>nohup</code> Works Fine</h3>
@@ -434,35 +434,35 @@
 <h2 id="10-troubleshooting-checklist-when-a-background-process-vanishes">10. Troubleshooting Checklist: When a Background Process Vanishes</h2>
 <p>Next time you encounter a disappearing background process, follow this systematic approach.</p>
 <h3 id="step-1-confirm-the-process-actually-exited">Step 1: Confirm the process actually exited</h3>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># Check by PID directly (don&#39;t rely on fuzzy searches)</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># Check by PID directly (don&#39;t rely on fuzzy searches)</span>
 </span></span><span style="display:flex;"><span>ps -p &lt;PID&gt; -o pid,ppid,pgid,sid,stat,cmd
 </span></span><span style="display:flex;"><span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># Check for exit reasons</span>
 </span></span><span style="display:flex;"><span>dmesg | grep -i <span style="color:#e6db74">&#34;out of memory\|killed process&#34;</span>  <span style="color:#75715e"># OOM killer?</span>
 </span></span></code></pre></div><h3 id="step-2-check-how-it-was-started">Step 2: Check how it was started</h3>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># Who is the parent?</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># Who is the parent?</span>
 </span></span><span style="display:flex;"><span>ps -o ppid<span style="color:#f92672">=</span> -p &lt;PID&gt;
 </span></span><span style="display:flex;"><span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># PPID=1 means adopted by init—not inherently bad</span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># But if PPID is a short-lived process that already exited, investigate parent-child relationships</span>
 </span></span></code></pre></div><h3 id="step-3-check-signal-handling">Step 3: Check signal handling</h3>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>cat /proc/&lt;PID&gt;/status | grep -E <span style="color:#e6db74">&#34;SigIgn|SigCgt|SigBlk&#34;</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>cat /proc/&lt;PID&gt;/status | grep -E <span style="color:#e6db74">&#34;SigIgn|SigCgt|SigBlk&#34;</span>
 </span></span><span style="display:flex;"><span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># SigIgn bit 0 corresponds to SIGHUP</span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># If bit 0 is 1, SIGHUP is ignored</span>
 </span></span></code></pre></div><h3 id="step-4-check-process-group-and-session">Step 4: Check process group and session</h3>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>ps -p &lt;PID&gt; -o pid,ppid,pgid,sid,comm
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>ps -p &lt;PID&gt; -o pid,ppid,pgid,sid,comm
 </span></span><span style="display:flex;"><span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># If PGID ≠ PID, not a process group leader</span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># If SID ≠ PID, not a session leader</span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># Both mean: shell exit could affect this process</span>
 </span></span></code></pre></div><h3 id="step-5-check-controlling-terminal">Step 5: Check controlling terminal</h3>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>ps -p &lt;PID&gt; -o tty
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>ps -p &lt;PID&gt; -o tty
 </span></span><span style="display:flex;"><span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># If it shows ? or pts/0, it has a controlling terminal</span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># If ? and started via setsid, no controlling terminal—this is safe</span>
 </span></span></code></pre></div><h3 id="step-6-check-the-automation-environment">Step 6: Check the automation environment</h3>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># Check parent process chain</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># Check parent process chain</span>
 </span></span><span style="display:flex;"><span>pstree -s &lt;PID&gt;
 </span></span><span style="display:flex;"><span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># If it&#39;s a descendant of CI runner / AI Agent / ansible, </span>
@@ -489,7 +489,7 @@
 </blockquote>
 <p>If you run <code>nohup ./cliproxy &amp;</code> in a terminal, close the window, and it survives—that does NOT mean it will survive in CI, an AI Agent, or a remote command executor. The shell mode, job control, signal propagation, and file descriptor lifecycle are fundamentally different.</p>
 <p>The minimal test that catches this class of issue:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># Simulate a non-interactive shell starting a background process</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># Simulate a non-interactive shell starting a background process</span>
 </span></span><span style="display:flex;"><span>bash -c <span style="color:#e6db74">&#39;setsid -f /path/to/service &gt; /tmp/service.log 2&gt;&amp;1&#39;</span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># Verify the process survived</span>
 </span></span><span style="display:flex;"><span>ps aux | grep service | grep -v grep

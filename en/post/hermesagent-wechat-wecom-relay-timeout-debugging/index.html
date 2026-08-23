@@ -215,12 +215,12 @@
 <p>This incident looked like a model problem or a broken messaging channel, but the real failure happened one layer lower: my local <code>relay</code> cut the upstream request off after 3 seconds. That was fine for quick health checks, but it was wrong for real WeChat and WeCom turns, which often take longer to produce a complete answer from the NewAPI gateway. Once the relay disconnected too early, HermesAgent could only see <code>Connection error</code>, <code>RemoteProtocolError</code>, and then exhausted fallback attempts.</p>
 <p>The important boundary is this: HermesAgent itself was not the thing that needed a patch, and the model provider was not the thing that was down. The bug was in the connection policy of an external component. I had mixed up <code>connect timeout</code> with the lifetime of the entire response stream. That makes long requests fail even when the upstream model is perfectly healthy.</p>
 <p>The fix was straightforward once the layer boundary was clear: keep a short timeout only for the connection phase, then switch the socket into a blocking wait after the upstream link is established. I also made the relay a standalone persistent service instead of tying it to a temporary shell session. That keeps the workaround clean and keeps Hermes core upgrades separate.</p>
-<p><img src="/post-images/hermesagent-wechat-wecom-relay-timeout-debugging/cover.png" alt="HermesAgent relay debugging cover"></p>
+<p><img alt="HermesAgent relay debugging cover" src="/post-images/hermesagent-wechat-wecom-relay-timeout-debugging/cover.png"></p>
 <h2 id="background">Background</h2>
 <p>HermesAgent is not a single script sitting on a laptop. In this setup, a user message enters through WeChat or WeCom, passes into Hermes&rsquo; channel layer, then into the Gateway, then through a local relay, and only then reaches a self-hosted NewAPI gateway. The model&rsquo;s answer then travels back through the same stack before the user sees it in chat.</p>
 <p>That architecture is useful because it lets you swap providers and route traffic flexibly. It is also a perfect place for hidden failure modes. A user only sees a final symptom: &ldquo;no reply&rdquo; or a generic <code>Connection error</code>. The real cause could be in the channel, the gateway, the relay, a proxy, socket behavior, or the upstream model.</p>
 <p>At first I also suspected model configuration. That was reasonable because the logs were noisy and the behavior looked like provider failure:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>Primary model failed
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>Primary model failed
 </span></span><span style="display:flex;"><span>switching to fallback
 </span></span><span style="display:flex;"><span>API failed after 1 retries
 </span></span><span style="display:flex;"><span>Connection error
@@ -238,7 +238,7 @@
 <li>Hermes emitted a generic connection error.</li>
 </ol>
 <p>The models themselves were not the problem. The relay was truncating the wait window before the model had enough time to finish a real response.</p>
-<p><img src="/post-images/hermesagent-wechat-wecom-relay-timeout-debugging/01-layered-diagnosis.png" alt="Layered diagnosis"></p>
+<p><img alt="Layered diagnosis" src="/post-images/hermesagent-wechat-wecom-relay-timeout-debugging/01-layered-diagnosis.png"></p>
 <h2 id="what-i-ruled-out-first">What I ruled out first</h2>
 <h3 id="1-not-a-model-list-problem">1. Not a model-list problem</h3>
 <p>I always start with the simplest health checks. The model list was reachable, and minimal requests worked. That ruled out a completely dead provider.</p>
@@ -259,7 +259,7 @@
 <h3 id="layer-4-upstream-gateway-and-model">Layer 4: upstream gateway and model</h3>
 <p>The upstream was fine. The model could answer. The problem was that the relay stopped waiting too early. A healthy upstream is useless if the proxy in front of it closes the connection prematurely.</p>
 <p>The decisive test was to replay the same real request directly through the relay. It returned a normal <code>200 OK</code>, but it took roughly 8 seconds. That was the proof I needed. The model was not failing instantly; it just needed longer than 3 seconds. The relay was the thing that was too impatient.</p>
-<p><img src="/post-images/hermesagent-wechat-wecom-relay-timeout-debugging/02-before-after.png" alt="Before and after"></p>
+<p><img alt="Before and after" src="/post-images/hermesagent-wechat-wecom-relay-timeout-debugging/02-before-after.png"></p>
 <h2 id="the-actual-root-cause">The actual root cause</h2>
 <p>The core engineering conclusion is simple:</p>
 <blockquote>
@@ -273,7 +273,7 @@
 </ol>
 <p>Without that separation, the relay can close the socket while the model is still generating the answer. Hermes then only sees a disconnected transport, not a complete response.</p>
 <p>The relevant behavior ended up looking like this:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-python" data-lang="python"><span style="display:flex;"><span>upstream <span style="color:#f92672">=</span> socket<span style="color:#f92672">.</span>create_connection((UPSTREAM_HOST, UPSTREAM_PORT), timeout<span style="color:#f92672">=</span><span style="color:#ae81ff">3</span>)
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-python" data-lang="python"><span style="display:flex;"><span>upstream <span style="color:#f92672">=</span> socket<span style="color:#f92672">.</span>create_connection((UPSTREAM_HOST, UPSTREAM_PORT), timeout<span style="color:#f92672">=</span><span style="color:#ae81ff">3</span>)
 </span></span><span style="display:flex;"><span>upstream<span style="color:#f92672">.</span>settimeout(<span style="color:#66d9ef">None</span>)
 </span></span><span style="display:flex;"><span>client<span style="color:#f92672">.</span>settimeout(<span style="color:#66d9ef">None</span>)
 </span></span></code></pre></div><p>The point of the code is not the syntax. The point is the boundary: <strong>short timeout for connect, blocking wait for response</strong>. For a chat relay that forwards real generation turns, that boundary matters.</p>
@@ -297,7 +297,7 @@
 </ol>
 <p>After the fix, the turn no longer died at the 3-second mark. The reply returned normally, and the user-facing channels started working again.</p>
 <p>One subtle point is worth calling out: a 3-second limit is often enough to make a quick health probe look healthy, especially when you only test <code>/v1/models</code> or a tiny prompt. That is why this kind of bug can survive for a while. The path is &ldquo;working&rdquo; in the narrow sense that the socket connects and a trivial probe returns. It is only when the real turn has to wait for generation, tool routing, or a larger context window that the mistake becomes visible. In other words, the timeout was not obviously wrong until I tested the exact workload users actually send.</p>
-<p><img src="/post-images/hermesagent-wechat-wecom-relay-timeout-debugging/03-checklist.png" alt="Troubleshooting checklist"></p>
+<p><img alt="Troubleshooting checklist" src="/post-images/hermesagent-wechat-wecom-relay-timeout-debugging/03-checklist.png"></p>
 <h2 id="a-practical-checklist">A practical checklist</h2>
 <p>If you hit a similar issue, I would troubleshoot in this order:</p>
 <ol>

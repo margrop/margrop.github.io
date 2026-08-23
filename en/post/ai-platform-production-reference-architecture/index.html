@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="en-US">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>An AI Platform Is Not a Chat Box: I Injected Rate Limits, Worker Crashes, and Stale Memory to Find the Production Architecture - Margrop Blog</title>
+<meta name="description" content="TL;DR A chat demo needs a model, a prompt, and a web page. An AI Platform trusted to touch business systems must also answer questions about identity, …">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://blog.margrop.net/en/post/ai-platform-production-reference-architecture/"><meta property="og:site_name" content="Margrop Blog">
+<meta property="og:title" content="An AI Platform Is Not a Chat Box: I Injected Rate Limits, Worker Crashes, and Stale Memory to Find the Production Architecture - Margrop Blog">
+<meta property="og:description" content="TL;DR A chat demo needs a model, a prompt, and a web page. An AI Platform trusted to touch business systems must also answer questions about identity, …">
+<meta property="og:url" content="https://blog.margrop.net/en/post/ai-platform-production-reference-architecture/">
+<meta property="og:locale" content="en_US"><meta property="og:type" content="article"><meta property="og:locale:alternate" content="zh_CN"><meta property="og:image" content="https://blog.margrop.net/images/avatar.png"><meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="An AI Platform Is Not a Chat Box: I Injected Rate Limits, Worker Crashes, and Stale Memory to Find the Production Architecture - Margrop Blog">
+<meta name="twitter:description" content="TL;DR A chat demo needs a model, a prompt, and a web page. An AI Platform trusted to touch business systems must also answer questions about identity, …"><meta name="twitter:image" content="https://blog.margrop.net/images/avatar.png"><link rel="alternate" hreflang="zh-CN" href="https://blog.margrop.net/post/ai-platform-production-reference-architecture/"><link rel="alternate" hreflang="en-US" href="https://blog.margrop.net/en/post/ai-platform-production-reference-architecture/"><link rel="alternate" hreflang="x-default" href="https://blog.margrop.net/"><meta property="article:published_time" content="2026-08-23T17:40:00&#43;08:00">
+<meta property="article:modified_time" content="2026-08-23T17:40:00&#43;08:00"><meta property="article:tag" content="AI Agent"><meta property="article:tag" content="AI"><meta property="article:tag" content="架构"><meta property="article:tag" content="平台工程"><meta property="article:tag" content="可观测性"><meta property="article:tag" content="MCP"><meta property="article:tag" content="模型网关"><meta property="article:tag" content="工程实践"><script type="application/ld+json">{"@context":"https://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"Margrop"},"dateModified":"2026-08-23T17:40:00+08:00","datePublished":"2026-08-23T17:40:00+08:00","description":"TL;DR A chat demo needs a model, a prompt, and a web page. An AI Platform trusted to touch business systems must also answer questions about identity, …","headline":"An AI Platform Is Not a Chat Box: I Injected Rate Limits, Worker Crashes, and Stale Memory to Find the Production Architecture","mainEntityOfPage":"https://blog.margrop.net/en/post/ai-platform-production-reference-architecture/","url":"https://blog.margrop.net/en/post/ai-platform-production-reference-architecture/"}</script>
+    <meta name="baidu-site-verification" content="code-sVFZ8SER59" />
+    <script src="/js/theme-toggle.js"></script>
+
+    
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-3J2W592DHJ"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-3J2W592DHJ');
+    </script>
+
+    <style>
+    :root {
+        color-scheme: light;
+        --page-bg: #fff;
+        --surface-bg: #f4f4f4;
+        --text: #222;
+        --muted: #666;
+        --subtle: #777;
+        --border: #eee;
+        --border-strong: #ddd;
+        --link: #006CFF;
+        --tag-bg: #eee;
+        --button-bg: #fff;
+        --button-primary-bg: #333;
+    }
+    @media (prefers-color-scheme: dark) {
+        :root:not([data-theme]) {
+            color-scheme: dark;
+            --page-bg: #111315;
+            --surface-bg: #1d2126;
+            --text: #e8eaed;
+            --muted: #aeb4bd;
+            --subtle: #9aa2ad;
+            --border: #30353d;
+            --border-strong: #454c56;
+            --link: #79b8ff;
+            --tag-bg: #2a3038;
+            --button-bg: #1d2126;
+            --button-primary-bg: #e8eaed;
+        }
+    }
+    html[data-theme="dark"] {
+        color-scheme: dark;
+        --page-bg: #111315;
+        --surface-bg: #1d2126;
+        --text: #e8eaed;
+        --muted: #aeb4bd;
+        --subtle: #9aa2ad;
+        --border: #30353d;
+        --border-strong: #454c56;
+        --link: #79b8ff;
+        --tag-bg: #2a3038;
+        --button-bg: #1d2126;
+        --button-primary-bg: #e8eaed;
+    }
+    html[data-theme="light"] {
+        color-scheme: light;
+        --page-bg: #fff;
+        --surface-bg: #f4f4f4;
+        --text: #222;
+        --muted: #666;
+        --subtle: #777;
+        --border: #eee;
+        --border-strong: #ddd;
+        --link: #006CFF;
+        --tag-bg: #eee;
+        --button-bg: #fff;
+        --button-primary-bg: #333;
+    }
+    body { background: var(--page-bg); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 860px; margin: 0 auto; padding: 20px; line-height: 1.7; color: var(--text); }
+    h1 { border-bottom: 2px solid var(--border-strong); padding-bottom: 10px; }
+    article > h1 { font-size: 2em; line-height: 1.3; margin-bottom: 12px; }
+    .post-list { list-style: none; padding: 0; }
+    .post-list li { margin: 15px 0; }
+    .post-list a { text-decoration: none; color: var(--text); font-size: 18px; }
+    .post-list a:hover { color: var(--link); }
+    .date { color: var(--muted); font-size: 14px; margin-right: 10px; }
+    .tags { margin-top: 8px; }
+    .tag { background: var(--tag-bg); padding: 2px 8px; border-radius: 3px; font-size: 12px; margin-right: 5px; display: inline-block; }
+    nav { margin-bottom: 18px; border-bottom: 1px solid var(--border); padding-bottom: 15px; }
+    nav a { margin-right: 20px; text-decoration: none; color: var(--text); font-size: 16px; }
+    nav a:hover { color: var(--link); }
+    .language-switcher { display: flex; align-items: center; gap: 10px; margin: -8px 0 26px; }
+    .language-switcher a { display: inline-block; padding: 4px 10px; border: 1px solid var(--border-strong); border-radius: 999px; color: var(--muted); text-decoration: none; font-size: 14px; }
+    .language-switcher a.active { background: var(--link); border-color: var(--link); color: #fff; }
+    .content { line-height: 1.8; }
+    .content code { background: var(--surface-bg); padding: 2px 5px; border-radius: 3px; }
+    .content pre { background: var(--surface-bg); padding: 15px; overflow-x: auto; border-radius: 5px; }
+    .content img { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+    .content .code-snippet__fix {
+        margin: 0 0 1.5em;
+    }
+    .content .code-snippet__fix .code-snippet__line-index {
+        display: none !important;
+    }
+    .meta { color: var(--muted); font-size: 14px; margin-bottom: 14px; }
+    .meta-separator { margin: 0 6px; color: var(--subtle); }
+    .site-stats { display: flex; flex-wrap: wrap; gap: 10px 18px; margin: 28px 0 8px; padding-top: 12px; border-top: 1px solid var(--border); color: var(--subtle); font-size: 12px; }
+    a { color: var(--link); }
+    .hero { padding: 12px 0 24px; }
+    .hero h1 { border-bottom: 2px solid #333; }
+    .eyebrow { color: var(--muted); font-size: 12px; letter-spacing: .12em; margin: 0 0 8px; }
+    .hero-tagline { font-size: 18px; margin: 12px 0 8px; }
+    .hero-copy { color: var(--muted); margin: 0 0 14px; }
+    .hero-actions { margin: 14px 0 4px; }
+    .button { display: inline-block; margin-right: 12px; border: 1px solid var(--border-strong); border-radius: 3px; padding: 4px 10px; text-decoration: none; color: var(--text); background: var(--button-bg); font-size: 14px; }
+    .button-primary { background: var(--button-primary-bg); border-color: var(--button-primary-bg); color: var(--page-bg); }
+    .theme-toggle { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 1px solid var(--border-strong); border-radius: 999px; background: var(--button-bg); color: var(--text); cursor: pointer; font: inherit; font-size: 16px; }
+    .theme-toggle:hover { border-color: var(--link); color: var(--link); }
+    .la-theme-widget { margin: 12px 0 20px; min-height: 24px; color: var(--text); }
+    .identity-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: 16px 0; }
+    .identity-grid div { display: flex; flex-direction: column; }
+    .identity-grid strong { font-size: 15px; }
+    .identity-grid span, .topic-card span, .featured-list small { color: var(--muted); font-size: 13px; }
+    .section-block { padding-top: 28px; }
+    .section-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+    .section-heading h2 { margin: 0; }
+    .section-heading a { font-size: 14px; }
+    .topic-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+    .topic-card { display: block; padding: 14px; border: 1px solid var(--border); text-decoration: none; color: var(--text); }
+    .topic-card:hover { border-color: var(--border-strong); }
+    .topic-card strong { display: block; margin: 4px 0; font-size: 17px; }
+    .topic-index, .featured-list > a > span { color: var(--muted) !important; font-size: 12px !important; }
+    .featured-list { border-top: 1px solid var(--border); }
+    .featured-list > a { display: flex; gap: 14px; padding: 12px 0; border-bottom: 1px solid var(--border); text-decoration: none; color: var(--text); }
+    .featured-list div { display: flex; flex-direction: column; }
+    .latest-block { max-width: 860px; }
+    @media (max-width: 680px) {
+        body { padding: 16px; }
+        nav a { display: inline-block; margin-right: 12px; margin-bottom: 8px; }
+        .identity-grid { grid-template-columns: repeat(2, 1fr); }
+        .topic-grid { grid-template-columns: 1fr; }
+    }
+</style>
+
+</head>
+<body>
+    <nav>
+  <a href="/en/">Home</a>
+  <a href="/en/start-here/">Start Here</a>
+  <a href="/en/career/">Portfolio</a>
+  <a href="/en/tag/ai/">AI Agent</a>
+  <a href="/en/tag/docker/">Self-hosting</a>
+  <a href="/en/tag/%e8%bf%90%e7%bb%b4/">Engineering</a>
+  <a href="/en/post/">Archive</a>
+  <a href="/en/tags/">Tags</a>
+  <a href="/en/about/">About</a>
+  <a href="https://github.com/margrop" target="_blank" rel="noopener">GitHub</a>
+</nav>
+
+    <div class="language-switcher">
+  <button class="theme-toggle" type="button" data-theme-toggle aria-label="切换到暗黑模式" aria-pressed="false">🌙</button>
+
+  
+  
+    <a href="/post/ai-platform-production-reference-architecture/" class="">中文</a>
+  
+    <a href="/en/post/ai-platform-production-reference-architecture/" class="active">English</a>
+  
+  
+</div>
+
+    
+    <article>
+        <h1>An AI Platform Is Not a Chat Box: I Injected Rate Limits, Worker Crashes, and Stale Memory to Find the Production Architecture</h1>
+        <div class="meta">
+            Published: 2026-08-23
+            <span class="meta-separator">·</span>
+            <span>阅读量 <span data-page-view-count>--</span></span>
+        </div>
+        
+<div class="tags">
+    
+    <a href="/en/tag/ai-agent/"><span class="tag">AI Agent</span></a>
+    
+    <a href="/en/tag/ai/"><span class="tag">AI</span></a>
+    
+    <a href="/en/tag/%E6%9E%B6%E6%9E%84/"><span class="tag">架构</span></a>
+    
+    <a href="/en/tag/%E5%B9%B3%E5%8F%B0%E5%B7%A5%E7%A8%8B/"><span class="tag">平台工程</span></a>
+    
+    <a href="/en/tag/%E5%8F%AF%E8%A7%82%E6%B5%8B%E6%80%A7/"><span class="tag">可观测性</span></a>
+    
+    <a href="/en/tag/mcp/"><span class="tag">MCP</span></a>
+    
+    <a href="/en/tag/%E6%A8%A1%E5%9E%8B%E7%BD%91%E5%85%B3/"><span class="tag">模型网关</span></a>
+    
+    <a href="/en/tag/%E5%B7%A5%E7%A8%8B%E5%AE%9E%E8%B7%B5/"><span class="tag">工程实践</span></a>
+    
+</div>
+
+
+        <div class="content">
+            <blockquote>
+<p><strong>TL;DR</strong></p>
+<p>A chat demo needs a model, a prompt, and a web page. An AI Platform trusted to touch business systems must also answer questions about identity, authorization, approval, task state, idempotency, memory, tracing, cost, and recovery. <strong>The model proposes a next step; the platform decides whether it may happen, who performs it, how it stops when something fails, whether a retry repeats the action, and how the decision can be explained later.</strong> To test those boundaries, I built a dependency-free Python fault lab with zero network calls and zero real credentials. It makes the primary model route return a synthetic 429, holds a high-risk restart at an approval gate, rejects a prompt injection before model or tool execution, crashes a Worker after its side effect but before its checkpoint, and proves that recovery does not execute the effect twice. It also expires one memory and verifies that the stale value never enters context. The six acceptance checks pass in both macOS and Linux Python environments. This article presents the four-plane, one-identity-spine architecture I believe deserves to be called a production flagship.</p>
+</blockquote>
+<p><img alt="Original cover: the model proposes while the platform owns identity, policy, execution, and evidence." src="/post-images/ai-platform-production-reference-architecture/00-cover.svg"></p>
+<p><em>Figure 1: Original SVG cover. “Rate limit” in the title is deterministic fault injection, not a call to a real provider. The experiment validates control logic, not a provider&rsquo;s SLA.</em></p>
+<h2 id="1-background-why-a-chat-box-is-exposed-the-moment-it-enters-production">1. Background: Why a Chat Box Is Exposed the Moment It Enters Production</h2>
+<p>An AI demo usually follows three steps: a user types a sentence, the backend assembles a prompt, and a model returns text. The stage demonstration looks magical because the happy path is a straight road. Production is not a launch event. Users interrupt midway; providers rate-limit; tools time out; queues redeliver; permissions change; old memories expire; hostile instructions hide inside web pages or documents; and Finance asks why one turn consumed so many tokens.</p>
+<p>Many teams respond by putting every new concern back into the prompt:</p>
+<ul>
+<li>Tell the model, in text, not to leak secrets.</li>
+<li>Ask it, in text, to confirm before dangerous actions.</li>
+<li>Tell it to switch to another model whenever something fails.</li>
+<li>Treat chat history as both task state and long-term memory.</li>
+<li>Guess from application logs how many times a tool really ran.</li>
+</ul>
+<p>That is like asking an eloquent tour guide to become airport security, air-traffic control, maintenance, accounting, and the accident investigator at the same time. No matter how capable the guide is, one person should not hold every key. <strong>Natural language is excellent at expressing intent; deterministic systems are excellent at enforcing constraints. A production architecture gives each the job it can actually do.</strong></p>
+<h2 id="2-symptoms-seven-illnesses-that-appear-when-a-demo-becomes-a-system">2. Symptoms: Seven Illnesses That Appear When a Demo Becomes a System</h2>
+<ol>
+<li><strong>Identity falls off.</strong> The model knows that “someone requested a restart” but not whether tenant, user, device, role, and session are verified.</li>
+<li><strong>Fallback becomes concealment.</strong> Every error switches providers, so even 401s, exhausted balances, and policy denials disappear behind more retries and more charges.</li>
+<li><strong>Approval is just chat prose.</strong> The model asks, “Are you sure?” An ambiguous “fine” becomes authorization, and that old authorization remains valid after parameters change.</li>
+<li><strong>Worker redelivery doubles writes.</strong> A tool succeeds, the process dies before storing COMPLETED, and the queue sends the task again. One restart becomes two; one transfer becomes two.</li>
+<li><strong>More memory becomes more danger.</strong> A service name retired three months ago is retrieved, and the model confidently acts on the wrong target.</li>
+<li><strong>There are many logs but no causal chain.</strong> The web tier, model gateway, and tool service each log something, but no trace ID answers who approved exactly what.</li>
+<li><strong>Success rate looks wonderful.</strong> A dangerous request correctly denied by policy counts as a failure, while a fluent answer that solves nothing counts as success.</li>
+</ol>
+<p>Another system-prompt sentence cannot cure these. They belong to the platform.</p>
+<h2 id="3-root-cause-conversation-state-is-mistaken-for-business-state">3. Root Cause: Conversation State Is Mistaken for Business State</h2>
+<p>Chat messages can be truncated, summarized, reordered, or regenerated. A business task must have an explicit state, version, and owner. A message saying “executed” does not prove that a side effect happened exactly once. A model saying “the user approved” is not an immutable, argument-bound, unexpired approval record.</p>
+<p>A minimal demo puts everything into one context window. A production platform does the opposite: <strong>separate experience, control, execution, data, and evidence into independently scalable, independently authorized, independently failing planes—then connect them with verified identity and tracing.</strong></p>
+<p><img alt="Original architecture: experience, control, execution, and data/evidence planes crossed by one identity spine." src="/post-images/ai-platform-production-reference-architecture/01-four-planes.svg"></p>
+<p><em>Figure 2: Original diagram. These boxes are divided by failure boundaries, not by team names. A Worker crash must not erase the conversation; a rate-limited model must not bypass policy; an expired memory must not pollute execution.</em></p>
+<h2 id="4-the-flagship-architecture-four-planes-and-one-identity-spine">4. The Flagship Architecture: Four Planes and One Identity Spine</h2>
+<h3 id="41-experience-plane-manage-a-turn-not-merely-an-http-request">4.1 Experience Plane: Manage a Turn, Not Merely an HTTP Request</h3>
+<p>The experience plane contains adapters for Web, mobile, voice, messaging, and webhooks, plus a Turn Manager. It normalizes every channel into an envelope carrying verified identity, locale, device, attachments, deadline, and cancellation signal. It owns streaming, citations, reconnects, voice barge-in, and duplicate-message suppression.</p>
+<p>Here is a child-friendly analogy. A teacher asks a question and a student starts answering. Halfway through, the teacher says, “The question changed.” A system that only understands HTTP hides the old speech bubble but lets the student continue computing and operating on the old question. A Turn Manager propagates cancellation through the model stream, retrieval, and tools. Cancellation is not a front-end animation; it is a context tree crossing every layer.</p>
+<h3 id="42-control-plane-an-ai-gateway-is-more-than-a-reverse-proxy">4.2 Control Plane: An AI Gateway Is More Than a Reverse Proxy</h3>
+<p>The control plane contains identity resolution, the AI Gateway, model routing, context assembly, policy, approval, task orchestration, and budgets. A traditional API Gateway mainly understands URLs, authentication, quotas, and protocols. An AI Gateway must additionally understand model capabilities, context windows, data classification, token ceilings, provider geography, streaming events, tool calls, and fallback eligibility.</p>
+<p>A model may emit, “I suggest calling <code>service.restart</code>.” The Policy Engine independently evaluates role, tenant, resource scope, risk, and current approval, then returns ALLOW, DENY, or REQUIRE_APPROVAL. The model does not get the final vote.</p>
+<h3 id="43-execution-plane-remove-side-effects-from-the-chat-process">4.3 Execution Plane: Remove Side Effects from the Chat Process</h3>
+<p>The execution plane contains a durable task queue, Workers, sandboxes, tool adapters, MCP Client/Server boundaries, leases, timeouts, concurrency controls, and idempotency records. Reading health and deleting data should not share an all-powerful Worker. High-risk tools belong in separate pools with short-lived credentials and narrowly allowed network egress.</p>
+<p>Every side effect carries an idempotency key. Think of it as a parcel tracking number. If a network problem scans the same parcel twice, the warehouse still ships one box. Without the number, an at-least-once queue turns “delivered at least once” into “the action may happen many times.”</p>
+<h3 id="44-data-and-evidence-plane-memory-is-not-a-synonym-for-vector-database">4.4 Data and Evidence Plane: Memory Is Not a Synonym for Vector Database</h3>
+<p>This plane stores conversation records, structured memory, retrieval documents, tasks, approvals, tool results, artifacts, audit events, metrics, traces, evaluations, and cost. Different data needs different retention and access. A user preference may live for years; raw voice may disappear in days; an approval event may require regulated retention; a secret should enter neither prompt nor ordinary log.</p>
+<p>Structured memory needs at least <code>source</code>, <code>scope</code>, <code>version</code>, <code>expires_at</code>, sensitivity, and deletion semantics. Vector similarity answers “does this look related?” It cannot answer “is this still true?”</p>
+<h3 id="45-identity-spine-never-drop-the-passport-at-a-handoff">4.5 Identity Spine: Never Drop the Passport at a Handoff</h3>
+<p>Tenant, user, role, device, session, and delegation chain must propagate from entry to routing, policy, task, tool, and audit. Putting a username inside the prompt is not identity propagation. Authorization needs verified structured claims that a model cannot rewrite.</p>
+<p>The lab&rsquo;s read-only happy path prints that chain:</p>
+<p><img alt="Real lab-output capture: identity, prompt policy, model route, tool policy, and final state share one request." src="/post-images/ai-platform-production-reference-architecture/01-real-happy-path.webp"></p>
+<p><em>Figure 3: Real lab-output capture. A synthetic identity passes policy, routes to a local simulated provider, receives authorization for a read-only tool, sanitizes the result, and reaches COMPLETED. No real model or tool is called.</em></p>
+<h2 id="5-what-actually-happens-during-one-request">5. What Actually Happens During One Request?</h2>
+<p>Take “check the storage appliance&rsquo;s health and recommend the next step” as an example. A request should cross these accountable handoffs:</p>
+<ol>
+<li>The Channel Adapter verifies the channel signature and creates a common envelope.</li>
+<li>The Turn Manager establishes the turn, deadline, and cancellation tree.</li>
+<li>The Context Assembler selects only data valid for this tenant and purpose.</li>
+<li>The AI Gateway chooses a model by capability, data class, latency, and cost.</li>
+<li>The model proposes a plan or tool intent; it never receives broad production credentials.</li>
+<li>The Policy Engine rechecks tool name, normalized arguments, scope, and risk.</li>
+<li>If approval is required, the durable task enters WAITING_APPROVAL and the UI shows the exact impact.</li>
+<li>A Worker takes a lease, runs in a sandbox with short-lived credentials, and writes an idempotent result.</li>
+<li>A sanitizer filters tool output, and the Turn Manager streams the response.</li>
+<li>Trace, audit, tokens, cost, and business outcome are archived under one request identity.</li>
+</ol>
+<p><img alt="Original sequence: user request crosses turn management, gateway, policy, Worker, and evidence." src="/post-images/ai-platform-production-reference-architecture/02-request-sequence.svg"></p>
+<p><em>Figure 4: Original diagram. Air travel separates ticketing, security, the gate, the crew, and baggage tracking. Handing every role to an “eloquent captain” is not smarter; it makes incidents impossible to contain.</em></p>
+<p>The central rule is: <strong>propagate structured context at every hop, and reauthorize every side effect.</strong> Entry authentication does not make arbitrary model-generated arguments trustworthy.</p>
+<h2 id="6-failure-one-the-model-returns-429what-may-fall-back-and-what-must-stop">6. Failure One: The Model Returns 429—What May Fall Back, and What Must Stop?</h2>
+<p>For a 429 or a transient 5xx, a platform may switch to a compatible model within a bounded retry budget. A 401, invalid credential, exhausted entitlement, or compliance denial should expose the root cause immediately. Treating every error as fallback turns a configuration failure into an expensive, slow ghost incident.</p>
+<p><img alt="Real lab-output capture: the primary route returns a synthetic 429, and fallback succeeds within one retry." src="/post-images/ai-platform-production-reference-architecture/02-real-provider-fallback.webp"></p>
+<p><em>Figure 5: Real lab-output capture. The primary route returns synthetic 429, fallback returns 200, retry budget is one, and the reason is recorded. Authentication failures are explicitly ineligible.</em></p>
+<p><img alt="Original routing diagram: request envelope, primary 429, bounded fallback, and authentication errors that must stop." src="/post-images/ai-platform-production-reference-architecture/03-routing-failure.svg"></p>
+<p><em>Figure 6: Original diagram. Routing considers more than availability: may the data leave the region, does the model support tools or structured output, how much budget remains, and is there enough deadline left?</em></p>
+<p>An auditable routing decision records the candidate set, exclusion reasons, final route, model and prompt versions, attempt count, each error type, tokens, and cost. Otherwise “the system changed models” becomes an untestable explanation for every quality shift.</p>
+<h2 id="7-failure-two-the-approval-gate-lives-outside-the-model">7. Failure Two: The Approval Gate Lives Outside the Model</h2>
+<p>A dangerous write cannot rely on a model asking, “Are you sure?” An approval record must bind the exact tool, canonical arguments, resource scope, requester, approver, expiry, and one-time nonce. If the plan&rsquo;s arguments change, the approval becomes invalid.</p>
+<p><img alt="Real lab-output capture: a high-risk service.restart waits for approval while side-effect count stays zero." src="/post-images/ai-platform-production-reference-architecture/03-real-approval-gate.webp"></p>
+<p><em>Figure 7: Real lab-output capture. Even a synthetic platform-admin identity receives REQUIRE_APPROVAL. The task persists in a waiting state and the tool is not called. A powerful role is not an approval bypass.</em></p>
+<p><img alt="Original permission matrix: reads, restarts, and deletion are allowed, denied, or approved for different roles." src="/post-images/ai-platform-production-reference-architecture/04-permission-matrix.svg"></p>
+<p><em>Figure 8: Original diagram. A production matrix also considers tenant, resource tags, time window, change calendar, risk score, and separation of duties. The model submits a request; deterministic policy stamps it.</em></p>
+<p>The approval interface must not show only a model summary such as “optimize the service.” It should display the actual argument diff, number of affected objects, rollback action, evidence links, and expiration time. A human approves a precise work order, not a blank permission slip.</p>
+<h2 id="8-failure-three-prompt-injection-cannot-be-solved-by-prompt-alone">8. Failure Three: Prompt Injection Cannot Be Solved by Prompt Alone</h2>
+<p>Prompt injection may come directly from a user or hide inside a web page, email, PDF, code comment, or tool result. It is untrusted data pretending to be a control instruction. Writing “do not obey bad people” in a system prompt is like putting a “bad people may not enter” sign at a school gate. It has reminder value, but it is not access control.</p>
+<p><img alt="Real lab-output capture: injected instructions are denied before model and tool calls." src="/post-images/ai-platform-production-reference-architecture/04-real-injection-denied.webp"></p>
+<p><em>Figure 9: Real lab-output capture. The synthetic input combines instruction override with secret-exfiltration intent. Policy returns DENY; no model or tool is called and no secret is logged. The lab&rsquo;s keyword policy demonstrates a control point—it is not a production-grade injection defense.</em></p>
+<p>Production defense is layered: label source and trust level; place retrieved text inside an explicit data boundary; allowlist tools and validate arguments against schemas; separate read and write credentials; approve high-risk actions; restrict network egress; inspect input, plan, tool result, and final output separately; and continuously evaluate against red-team samples. Even if the model is manipulated into saying the wrong thing, policy and execution should keep it from doing the wrong thing.</p>
+<h2 id="9-failure-four-the-worker-crashes-in-the-most-dangerous-millisecond">9. Failure Four: The Worker Crashes in the Most Dangerous Millisecond</h2>
+<p>The hardest distributed-systems moment is after a tool has produced a side effect but before the Worker stores COMPLETED. The queue sees only an expired lease and redelivers the task. Without an idempotency record, the next Worker performs the action again.</p>
+<p><img alt="Real lab-output capture: the Worker crashes after its side effect and resume is deduplicated." src="/post-images/ai-platform-production-reference-architecture/05-real-worker-resume.webp"></p>
+<p><em>Figure 10: Real lab-output capture. The first attempt creates one synthetic effect and crashes. Recovery resumes from the before-tool checkpoint, the second call finds the idempotency record, final effect count remains one, and the task completes.</em></p>
+<p><img alt="Original state machine: PENDING, RUNNING, WAITING_APPROVAL, RECOVERING, and COMPLETED." src="/post-images/ai-platform-production-reference-architecture/05-task-state-machine.svg"></p>
+<p><em>Figure 11: Original diagram. The chat window may close while the durable task keeps its state. A production machine may also need CANCEL_REQUESTED, DENIED, FAILED, and COMPENSATING, with explicit transition authority and timeout rules.</em></p>
+<p>Derive the idempotency key from tenant, business task, tool, canonical arguments, and version, then commit it atomically with the result. When an external system is not naturally idempotent, use its request-key feature, a business unique constraint, or a compensation workflow. An <code>already_done = true</code> variable in Worker memory disappears with the process and solves nothing.</p>
+<h2 id="10-failure-five-stale-memory-is-more-dangerous-than-no-memory">10. Failure Five: Stale Memory Is More Dangerous Than No Memory</h2>
+<p>Forgetting a preference is annoying; confidently remembering a retired service, old contact, or expired permission is an incident. A memory system must answer who said it, whom it applies to, which version it is, when it expires, whether it can be deleted, and why it was retrieved.</p>
+<p><img alt="Real lab-output capture: one current memory is recalled and one expired memory is skipped." src="/post-images/ai-platform-production-reference-architecture/06-real-memory-freshness.webp"></p>
+<p><em>Figure 12: Real lab-output capture. The current item carries source and version, one stale item is counted but never enters the prompt, and memory is explicitly deletable.</em></p>
+<p><img alt="Original memory lifecycle: capture, classify, verify, recall, and expire." src="/post-images/ai-platform-production-reference-architecture/06-memory-lifecycle.svg"></p>
+<p><em>Figure 13: Original diagram. Memory is a library loan, not a tattoo: it needs a source card, borrowing scope, and return date. The vector store finds similar books; policy decides whether the book may be borrowed now.</em></p>
+<p>Useful categories include session working memory, user-confirmed long-term preference, low-confidence behavioral inference, organizational knowledge, and task artifacts. An inference must not silently become fact. A user correction should create a new version and suppress the old one. Memories about people, permissions, and production resources deserve shorter lifetimes and stricter verification.</p>
+<h2 id="11-observability-trace-the-decision-not-only-the-final-answer">11. Observability: Trace the Decision, Not Only the Final Answer</h2>
+<p>AI request latency is not one number. TTFT answers “how long until it started speaking.” Full response time answers “how long until it stopped speaking.” E2E for a tool task answers “how long until the work was actually complete.” It is like food delivery: fast order acceptance does not mean fast delivery, and an app saying “delivered” does not prove the correct meal reached your hands.</p>
+<p>One trace should join entry, retrieval, every model attempt, policy decision, approval wait, tool execution, retry, streaming response, and final business outcome. Tokens, cost, and model version are span attributes. Prompt and tool content should be redacted or hashed according to data class; debugging must not create a new secret warehouse.</p>
+<p><img alt="Real lab-output capture: one trace includes success, synthetic 429, fallback, and tool spans." src="/post-images/ai-platform-production-reference-architecture/07-real-trace-waterfall.webp"></p>
+<p><em>Figure 14: Real lab-output capture. The fault lab joins <code>ai.request</code>, <code>gen_ai.chat</code>, and <code>tool.execute</code> in one waterfall. Durations are tiny because all behavior is local and synthetic; they are not real-model latency claims.</em></p>
+<p><img alt="Original observability diagram: a trace waterfall beside TTFT, fallback, approval, duplicate-effect, and cost metrics." src="/post-images/ai-platform-production-reference-architecture/07-observability.svg"></p>
+<p><em>Figure 15: Original diagram. An operating panel must answer: is it fast, is it affordable, did it solve the task, and did it stay authorized? Optimizing only tokens or latency pushes the system in the wrong direction.</em></p>
+<p>Organize metrics into four groups:</p>
+<ul>
+<li><strong>Experience:</strong> TTFT, E2E, cancellation propagation, stream interruption, and user retry rate.</li>
+<li><strong>Inference:</strong> model errors, fallback, context size, input/output tokens, and structured-output validation failures.</li>
+<li><strong>Action:</strong> tool success, approval wait, duplicate effects, timeouts, and compensation success.</li>
+<li><strong>Outcome and risk:</strong> resolution rate, correct-denial rate, human takeover, cost per successful outcome, and blocked injection or authorization attempts.</li>
+</ul>
+<p>A correct denial is a safety success, not a business failure. A polished paragraph that completes no task is not success merely because HTTP returned 200.</p>
+<h2 id="12-where-mcp-fits-a-protocol-boundary-is-not-an-authorization-boundary">12. Where MCP Fits: A Protocol Boundary Is Not an Authorization Boundary</h2>
+<p>MCP standardizes how Hosts, Clients, and Servers expose tools, resources, and prompts, dramatically lowering integration cost. But “the tool is discoverable” does not mean “this caller is authorized to run it.” A Server describes capability; the platform still enforces tenant isolation, argument validation, risk classification, approval, and network policy before every call.</p>
+<p>Think of MCP as a standardized electrical outlet. Once the connector is common, both a lamp and a power drill can plug in. The outlet cannot decide whether a child may use the drill. Permission, circuit protection, and the work permit remain the building&rsquo;s job.</p>
+<p>High-risk Servers deserve separate processes or containers, minimum credentials, and fixed egress. Do not combine filesystem access, shell, production control, and personal data into a universal MCP Server. Version the tool catalog too: the schema the model sees, the schema policy validates, and the implementation the Worker runs must agree.</p>
+<h2 id="13-deployment-shape-scale-stateless-edges-and-protect-stateful-cores">13. Deployment Shape: Scale Stateless Edges and Protect Stateful Cores</h2>
+<p><img alt="Original deployment: channel edge, control services, Worker pools, and the stateful core." src="/post-images/ai-platform-production-reference-architecture/08-deployment-topology.svg"></p>
+<p><em>Figure 16: Original diagram. Horizontal scaling does not mean copying every box three times. The critical properties are one task lease holder, one idempotency record per effect, and a trusted source of truth for approvals and audit.</em></p>
+<p>A practical deployment keeps Channel, Turn, Gateway, Policy, and task APIs stateless and replicated. Tasks, approvals, and idempotency keys enter a transactional database. A queue manages leases and redelivery. Workers are split by tool risk and sandboxed. Large artifacts use object storage. Memory and retrieval stores enforce tenant filters and carry version metadata. OpenTelemetry Collectors gather traces, metrics, and logs, while audit events flow to stricter immutable storage.</p>
+<p>An early team does not need twenty microservices. The four planes are <strong>responsibility boundaries</strong> and can begin inside a modular monolith. Split processes when scaling, authority, or failure domains truly diverge. Prematurely distributing everything to look “flagship” buys network timeouts and consistency problems before it buys value.</p>
+<h2 id="14-from-demo-to-platform-a-realistic-90-day-path">14. From Demo to Platform: A Realistic 90-Day Path</h2>
+<p><strong>Days 1–30: install brakes first.</strong> Standardize the identity envelope; create tool allowlists and JSON Schemas; split read from write credentials; add high-risk approval; propagate one trace ID; record routing decisions; and establish a minimum red-team set. Connect fewer tools rather than give the model one universal token.</p>
+<p><strong>Days 31–60: separate tasks from conversation.</strong> Add a durable state machine, leases, timeouts, and idempotency; propagate cancellation; give structured memory source, version, and TTL; classify retryable errors; define success by outcome instead of HTTP code.</p>
+<p><strong>Days 61–90: operate by evidence.</strong> Build golden tasks and offline evaluations; use shadowing and canaries; analyze cost and quality by tenant, model, and tool; rehearse provider 429, queue backlog, Worker crash, approval timeout, unavailable memory store, and audit-pipeline failure; turn recovery results into release gates.</p>
+<p>Add components only when a clear pain requires them. A ten-person internal assistant and a multi-tenant enterprise platform can share principles without copying the same deployment scale.</p>
+<h2 id="15-reproducible-fault-lab-what-the-six-pass-results-prove">15. Reproducible Fault Lab: What the Six PASS Results Prove</h2>
+<p>The downloadable <a href="/post-files/ai-platform-production-reference-architecture/ai_platform_fault_lab.py">Python fault-injection script</a> uses only standard-library SQLite, hashing, JSON, and timing. It makes no network request, calls no real model or tool, and loads no secret. On Windows 11:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-powershell" data-lang="powershell"><span style="display:flex;"><span>py <span style="color:#ae81ff">-3</span> ai_platform_fault_lab.py --clean
+</span></span></code></pre></div><p>On Ubuntu 26.04 and macOS 26:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>python3 ai_platform_fault_lab.py --clean
+</span></span></code></pre></div><p>The lab tests control boundaries, not model quality, production security certification, or throughput. Read the <a href="/post-files/ai-platform-production-reference-architecture/README.md">README</a>, or inspect the structured <a href="/post-files/ai-platform-production-reference-architecture/lab-output/traces.jsonl">traces.jsonl</a> and <a href="/post-files/ai-platform-production-reference-architecture/lab-output/metrics.json">metrics.json</a>.</p>
+<p><img alt="Real lab-output capture: all six AI Platform fault-lab checks pass." src="/post-images/ai-platform-production-reference-architecture/08-real-acceptance.webp"></p>
+<p><em>Figure 17: Real lab-output capture. The identity-bound read, bounded 429 fallback, high-risk approval, pre-execution injection denial, crash-resume deduplication, and stale-memory exclusion all pass. Cost is zero because there is no external call. A 60% <code>successful_requests</code> rate excludes one correct denial and one approval wait, proving that a single “success rate” needs state-aware interpretation.</em></p>
+<p>The same script passes on two platform families with different Python versions. Trace durations differ, as expected. A production implementation must replace the toy keyword policy with layered controls, replace local SQLite with reliable shared state, and replace simulated tools with minimum-authority adapters.</p>
+<h2 id="16-qa">16. Q&amp;A</h2>
+<h3 id="q1-if-i-use-the-strongest-model-can-i-build-fewer-platform-controls">Q1: If I use the strongest model, can I build fewer platform controls?</h3>
+<p>No. A better model can reduce some reasoning errors; it cannot provide transactions, verified identity, approval, idempotency, or audit. A faster car needs reliable brakes more—not fewer.</p>
+<h3 id="q2-what-is-the-exact-difference-between-an-ai-gateway-and-an-api-gateway">Q2: What is the exact difference between an AI Gateway and an API Gateway?</h3>
+<p>A traditional gateway handles routing, authentication, quotas, and protocol concerns. An AI Gateway additionally handles model capability and version, context windows, data residency, token and cost budgets, streaming events, tool calls, fallback eligibility, and model-level observability. The layers may share infrastructure, but their responsibilities differ.</p>
+<h3 id="q3-why-not-ask-a-model-to-detect-prompt-injection">Q3: Why not ask a model to detect prompt injection?</h3>
+<p>A model can contribute a signal but cannot be the only judge. Attack content may resemble legitimate documents, and the detector itself reads the hostile context. Deterministic allowlists, schemas, authorization, sandboxing, egress limits, and human approval provide boundaries outside the model.</p>
+<h3 id="q4-does-every-tool-call-require-human-approval">Q4: Does every tool call require human approval?</h3>
+<p>No. Read-only, low-risk, reversible, narrowly scoped actions can be policy-approved automatically. Dangerous, irreversible, cross-tenant, or wide-impact actions need approval. Approving everything creates fatigue and blind clicking, so risk classification matters.</p>
+<h3 id="q5-does-exactly-once-eliminate-duplicate-side-effects">Q5: Does exactly-once eliminate duplicate side effects?</h3>
+<p>End-to-end exactly-once is difficult to promise. A realistic design uses at-least-once delivery, idempotent execution, uniqueness constraints, auditable results, and compensation or reconciliation for non-idempotent actions. The lab proves that redelivery does not repeat its synthetic effect.</p>
+<h3 id="q6-how-do-rag-long-term-memory-and-chat-history-differ">Q6: How do RAG, long-term memory, and chat history differ?</h3>
+<p>Chat history records what happened in the current conversation. RAG retrieves material from an external knowledge source for the current question. Long-term memory stores cross-session information with source and lifecycle. All may enter context, but their permission, retention, and confidence differ.</p>
+<h3 id="q7-if-an-mcp-server-declares-permissions-must-the-platform-check-again">Q7: If an MCP Server declares permissions, must the platform check again?</h3>
+<p>Yes. Capability metadata cannot replace caller identity and policy, and a remote Server may change or be compromised. Pin versions, restrict tools, validate schemas, limit egress and timeout, and reauthorize each high-risk call.</p>
+<h3 id="q8-must-an-ai-platform-use-microservices-kubernetes-and-a-vector-database">Q8: Must an AI Platform use microservices, Kubernetes, and a vector database?</h3>
+<p>No. A flagship starts with complete responsibility and evidence, not component count. A modular monolith, transactional database, and reliable queue can implement the four-plane boundaries. Split only when workload, organization, or compliance demands it.</p>
+<h3 id="q9-how-do-i-measure-whether-the-platform-is-useful">Q9: How do I measure whether the platform is useful?</h3>
+<p>Measure outcomes: first-attempt resolution, human time saved, correct denial, incidents, cost per successful task, and repeat usage. Model leaderboards, token count, or text-similarity scores explain pieces but do not prove work completed.</p>
+<h3 id="q10-which-three-elements-should-be-implemented-first">Q10: Which three elements should be implemented first?</h3>
+<p>The identity envelope, deterministic policy before tools, and one trace ID across request, model, and tool. They answer “who is acting,” “may this happen,” and “what happened”—the foundation for approval, idempotency, memory, and evaluation.</p>
+<h2 id="17-references-and-the-architectural-bottom-line">17. References and the Architectural Bottom Line</h2>
+<ul>
+<li><a href="https://www.nist.gov/itl/ai-risk-management-framework">NIST AI Risk Management Framework</a></li>
+<li><a href="https://genai.owasp.org/llm-top-10/">OWASP Top 10 for LLM / GenAI Applications</a></li>
+<li><a href="https://modelcontextprotocol.io/specification/latest/architecture">Model Context Protocol: Architecture</a></li>
+<li><a href="https://github.com/open-telemetry/semantic-conventions-genai">OpenTelemetry Generative AI Semantic Conventions</a></li>
+<li><a href="https://github.com/humanlayer/12-factor-agents">HumanLayer: 12-Factor Agents</a></li>
+</ul>
+<p>This architecture may begin with fewer components and a modular monolith, then evolve with scale. One boundary cannot be negotiated away: <strong>the model must never be the intent interpreter, permission approver, side-effect executor, and accident auditor at the same time. The model proposes; the platform owns the consequence.</strong></p>
+        </div>
+    </article>
+
+    
+  
+
+
+
+
+    
+<div class="site-stats" aria-label="访问统计">
+    <span>本文阅读量 <span data-page-view-count>--</span></span>
+</div>
+
+
+    
+    <script type="text/javascript" src="https://js.users.51.la/21044367.js"></script>
+    <script charset="UTF-8" id="LA_COLLECT" src="//sdk.51.la/js-sdk-pro.min.js"></script>
+    <script>LA.init({id: "1vVTUWl7zoRjnKXi",ck: "1vVTUWl7zoRjnKXi"})</script>
+    <script src="https://sdk.51.la/perf/js-sdk-perf.min.js" crossorigin="anonymous"></script>
+    <script>
+      new LingQue.Monitor().init({id:"202teQt8THXwqyve"});
+    </script>
+    <script defer src="/js/page-views.js"></script>
+    <div class="la-theme-widget" data-51la-widget aria-label="51.la 网站统计"></div>
+    <script defer src="/js/51la-theme-widget.js"></script>
+</body>
+</html>

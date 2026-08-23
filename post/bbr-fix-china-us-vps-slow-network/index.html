@@ -220,7 +220,7 @@
 <p>你从国内访问自己的美国 VPS，明明 SSH 打字很流畅，但下载一个 2 MB 的文件要一分多钟？以为是&quot;高峰期国际链路拥堵&quot;？大概率不是——你只是被 Linux 默认的 CUBIC 拥塞控制&quot;骗&quot;了。CUBIC 把每次丢包都当成&quot;前面堵车了&quot;，立刻踩刹车退让；而国际链路本身就有稳定 5-10% 的丢包，于是你的 TCP 连接被永远压在爬行状态。换成 Google 的 <strong>BBR</strong> 算法后，同样的物理链路、同一时刻、同样的丢包率，吞吐可以立刻涨 15-24 倍。</p>
 <p>本文记录了一次真实的 mesh 网络排查：家庭出口 → 美国 VPS 拉取 2.3 MB 的网页，实测从 <strong>30 KB/s 一路飙到 500-1000 KB/s</strong>，用的方法总共 4 行 shell 命令。文章包含三套一键脚本（Windows 11 / Ubuntu 26.04 / macOS 26），既能人工执行，也能交给 AI Agent 自动配置。所有内网地址、主机名和公网 IP 均已脱敏。</p>
 </blockquote>
-<p><img src="/post-images/bbr-fix-china-us-vps-slow-network/00-ai-cover.png" alt="封面：Linux BBR 让跨境链路的 TCP 吞吐从爬行加速到 500&#43; KB/s"></p>
+<p><img alt="封面：Linux BBR 让跨境链路的 TCP 吞吐从爬行加速到 500+ KB/s" src="/post-images/bbr-fix-china-us-vps-slow-network/00-ai-cover.png"></p>
 <p><em>图 1：BBR 让丢包严重的国际链路重新跑起来。绿色曲线是开启后，红色曲线是开启前。</em></p>
 <hr>
 <h2 id="一问题背景明明-ping-得通为什么大文件卡到怀疑人生">一、问题背景：明明 ping 得通，为什么大文件卡到怀疑人生</h2>
@@ -237,40 +237,40 @@
 <h2 id="二问题表现三个数据一对比就露馅了">二、问题表现：三个数据一对比就露馅了</h2>
 <p>我又在家里的 mesh 网关（在国内家宽下）直接跑同样的测试，四个方向的表现如下：</p>
 <table>
-	<thead>
-			<tr>
-					<th>路径</th>
-					<th>请求</th>
-					<th>耗时</th>
-					<th>速率</th>
-			</tr>
-	</thead>
-	<tbody>
-			<tr>
-					<td><strong>家庭网关 → 美国 VPS A</strong></td>
-					<td>2.3 MB 页面</td>
-					<td>79 秒</td>
-					<td>29 KB/s</td>
-			</tr>
-			<tr>
-					<td><strong>家庭网关 → 美国 VPS B</strong></td>
-					<td>2.3 MB 页面</td>
-					<td>90 秒</td>
-					<td>24 KB/s</td>
-			</tr>
-			<tr>
-					<td><strong>家庭网关 → 美国 VPS C</strong></td>
-					<td>2.3 MB 页面</td>
-					<td>84 秒</td>
-					<td>28 KB/s</td>
-			</tr>
-			<tr>
-					<td><strong>VPS A → VPS B（美国内部）</strong></td>
-					<td>2.3 MB 页面</td>
-					<td>0.5 秒</td>
-					<td>4.6 MB/s</td>
-			</tr>
-	</tbody>
+<thead>
+<tr>
+<th>路径</th>
+<th>请求</th>
+<th>耗时</th>
+<th>速率</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>家庭网关 → 美国 VPS A</strong></td>
+<td>2.3 MB 页面</td>
+<td>79 秒</td>
+<td>29 KB/s</td>
+</tr>
+<tr>
+<td><strong>家庭网关 → 美国 VPS B</strong></td>
+<td>2.3 MB 页面</td>
+<td>90 秒</td>
+<td>24 KB/s</td>
+</tr>
+<tr>
+<td><strong>家庭网关 → 美国 VPS C</strong></td>
+<td>2.3 MB 页面</td>
+<td>84 秒</td>
+<td>28 KB/s</td>
+</tr>
+<tr>
+<td><strong>VPS A → VPS B（美国内部）</strong></td>
+<td>2.3 MB 页面</td>
+<td>0.5 秒</td>
+<td>4.6 MB/s</td>
+</tr>
+</tbody>
 </table>
 <p>三个国际方向速率极其一致地卡在 <strong>24-29 KB/s</strong>。这个数据在过去 5 年里我看过太多次了——<strong>它是&quot;国内到境外链路吞吐被 CUBIC 压死&quot;的经典特征值</strong>。</p>
 <p>底层公网 ICMP 测试也印证了这点：</p>
@@ -278,7 +278,7 @@
 30 packets transmitted, 27 received, 10% packet loss, time 5824ms
 rtt min/avg/max/mdev = 166.334/167.062/168.315/0.457 ms
 </code></pre><p>RTT 相当稳定（167ms），但<strong>丢包率 10%</strong>。10% 听起来不多，但对 TCP 的 CUBIC 拥塞控制来说，这个数字足以让它把连接掐死在墙角。</p>
-<p><img src="/post-images/bbr-fix-china-us-vps-slow-network/shot-01-before.png" alt="真实截图：开启 BBR 之前，同一条链路三次测试都卡在 30 KB/s 附近"></p>
+<p><img alt="真实截图：开启 BBR 之前，同一条链路三次测试都卡在 30 KB/s 附近" src="/post-images/bbr-fix-china-us-vps-slow-network/shot-01-before.png"></p>
 <p><em>图 2：改动之前的真实测试记录。三台 VPS 各测一次，全部卡在 30 KB/s 上下。默认的 <code>cubic</code> 拥塞控制就是拖后腿的那个变量。</em></p>
 <hr>
 <h2 id="三问题分析tcp-为什么这么怕丢包">三、问题分析：TCP 为什么这么怕丢包</h2>
@@ -295,7 +295,7 @@ rtt min/avg/max/mdev = 166.334/167.062/168.315/0.457 ms
 <li>CUBIC 每次遇到这种&quot;背景丢包&quot;都以为是&quot;堵车了&quot;，立即减速</li>
 <li>结果 TCP 连接永远处于&quot;减速→尝试加速→再减速&quot;的循环，吞吐就被压在爬行速度</li>
 </ul>
-<p><img src="/post-images/bbr-fix-china-us-vps-slow-network/01-cubic-vs-bbr.svg" alt="CUBIC 和 BBR 在丢包链路上的行为对比"></p>
+<p><img alt="CUBIC 和 BBR 在丢包链路上的行为对比" src="/post-images/bbr-fix-china-us-vps-slow-network/01-cubic-vs-bbr.svg"></p>
 <p><em>图 3：同一条 10% 丢包的国际链路上，CUBIC 是锯齿状的爬行曲线，BBR 是稳定的高吞吐曲线。差别不是&quot;一点点&quot;，而是<strong>数量级</strong>。</em></p>
 <h3 id="bbr-是怎么想的">BBR 是怎么想的？</h3>
 <p>Google 在 2016 年提出、2017 年合入 Linux 4.9 主线的 <strong>BBR (Bottleneck Bandwidth and Round-trip time)</strong> 算法换了一种完全不同的思路：</p>
@@ -303,34 +303,34 @@ rtt min/avg/max/mdev = 166.334/167.062/168.315/0.457 ms
 <p><strong>不看丢包，直接测&quot;这条链路一秒能到多少字节、最快 RTT 是多少&quot;，然后按照这两个数字之间的乘积（BDP）来发数据。</strong></p>
 </blockquote>
 <p>用比喻的话，BBR 就像一位见多识广的老司机：<strong>&ldquo;这条路我熟，撒的小坑（丢包）不代表堵车，我看后车灯（RTT 上升）才判断真堵。&rdquo;</strong></p>
-<p><img src="/post-images/bbr-fix-china-us-vps-slow-network/02-toll-analogy.svg" alt="生活化比喻：CUBIC 是保守派老实人，BBR 是灵活派老司机"></p>
+<p><img alt="生活化比喻：CUBIC 是保守派老实人，BBR 是灵活派老司机" src="/post-images/bbr-fix-china-us-vps-slow-network/02-toll-analogy.svg"></p>
 <p><em>图 4：同样一条路，CUBIC 见到坑洼就刹车，BBR 只看整体是否堵。表下的三种场景数据都是真实实测。</em></p>
 <p>关键区别在<strong>遇到丢包时的反应</strong>：</p>
 <table>
-	<thead>
-			<tr>
-					<th>场景</th>
-					<th>CUBIC 的反应</th>
-					<th>BBR 的反应</th>
-			</tr>
-	</thead>
-	<tbody>
-			<tr>
-					<td>RTT 稳定 + 有丢包</td>
-					<td>❌ 以为堵，速率减半</td>
-					<td>✅ 忽略，保持发送速率</td>
-			</tr>
-			<tr>
-					<td>RTT 突然拉长 + 有丢包</td>
-					<td>减速</td>
-					<td>✅ 减速（真堵车了）</td>
-			</tr>
-			<tr>
-					<td>RTT 稳定 + 零丢包</td>
-					<td>缓慢加速</td>
-					<td>✅ 主动&quot;探测&quot;更大带宽</td>
-			</tr>
-	</tbody>
+<thead>
+<tr>
+<th>场景</th>
+<th>CUBIC 的反应</th>
+<th>BBR 的反应</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>RTT 稳定 + 有丢包</td>
+<td>❌ 以为堵，速率减半</td>
+<td>✅ 忽略，保持发送速率</td>
+</tr>
+<tr>
+<td>RTT 突然拉长 + 有丢包</td>
+<td>减速</td>
+<td>✅ 减速（真堵车了）</td>
+</tr>
+<tr>
+<td>RTT 稳定 + 零丢包</td>
+<td>缓慢加速</td>
+<td>✅ 主动&quot;探测&quot;更大带宽</td>
+</tr>
+</tbody>
 </table>
 <p>对国际链路来说，第一种场景太常见了。<strong>&ldquo;背景丢包&quot;不是拥塞，只是链路物理层的正常波动</strong>，BBR 直接忽视这类噪声，才能稳定跑满带宽。</p>
 <h3 id="会不会有副作用">会不会有副作用？</h3>
@@ -353,35 +353,35 @@ rtt min/avg/max/mdev = 166.334/167.062/168.315/0.457 ms
 <h2 id="四问题根因总结">四、问题根因总结</h2>
 <p>把整个链条拉通梳理一下：</p>
 <table>
-	<thead>
-			<tr>
-					<th>层</th>
-					<th>状态</th>
-					<th>是否是根因</th>
-			</tr>
-	</thead>
-	<tbody>
-			<tr>
-					<td><strong>物理层</strong>：国际光缆到目标机房</td>
-					<td>稳定丢包 6-10%</td>
-					<td>无法治愈的客观现实</td>
-			</tr>
-			<tr>
-					<td><strong>传输层 TCP</strong>：默认 CUBIC 算法</td>
-					<td>把每次丢包当拥塞信号</td>
-					<td><strong>就是它！</strong></td>
-			</tr>
-			<tr>
-					<td><strong>应用层 HTTP</strong>：Nginx / Caddy 等</td>
-					<td>完全正常</td>
-					<td>不是问题</td>
-			</tr>
-			<tr>
-					<td><strong>业务层</strong>：CLIProxyAPI / Web Panel</td>
-					<td>完全正常</td>
-					<td>不是问题</td>
-			</tr>
-	</tbody>
+<thead>
+<tr>
+<th>层</th>
+<th>状态</th>
+<th>是否是根因</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>物理层</strong>：国际光缆到目标机房</td>
+<td>稳定丢包 6-10%</td>
+<td>无法治愈的客观现实</td>
+</tr>
+<tr>
+<td><strong>传输层 TCP</strong>：默认 CUBIC 算法</td>
+<td>把每次丢包当拥塞信号</td>
+<td><strong>就是它！</strong></td>
+</tr>
+<tr>
+<td><strong>应用层 HTTP</strong>：Nginx / Caddy 等</td>
+<td>完全正常</td>
+<td>不是问题</td>
+</tr>
+<tr>
+<td><strong>业务层</strong>：CLIProxyAPI / Web Panel</td>
+<td>完全正常</td>
+<td>不是问题</td>
+</tr>
+</tbody>
 </table>
 <p><strong>根因只有一个：<code>Linux 默认使用 CUBIC 拥塞控制，与国际链路的丢包特性天然不匹配</code>。</strong></p>
 <p>好消息是——修它只需要 3 行 shell。</p>
@@ -398,12 +398,12 @@ rtt min/avg/max/mdev = 166.334/167.062/168.315/0.457 ms
 <li><strong>CentOS 7 原生内核 3.10</strong>：不支持，需要先升级内核</li>
 </ul>
 <p>Windows 11 和 macOS 26 是客户端角色（对端是 Linux VPS），本文的重点是<strong>在 Linux 服务器侧启用 BBR</strong>。客户端本身也提供了一键脚本，用于诊断链路质量和验证服务器侧配置是否生效。</p>
-<p><img src="/post-images/bbr-fix-china-us-vps-slow-network/shot-02-check.png" alt="真实截图：先看内核，再加载 tcp_bbr 模块，最后验证"></p>
+<p><img alt="真实截图：先看内核，再加载 tcp_bbr 模块，最后验证" src="/post-images/bbr-fix-china-us-vps-slow-network/shot-02-check.png"></p>
 <p><em>图 5：整个&quot;预检&quot;过程只需要 3 条命令，出问题的地方通常都会立刻暴露。</em></p>
 <h3 id="方法一人工自动执行linux-服务器侧">方法一：人工自动执行（Linux 服务器侧）</h3>
 <p>在 <strong>Ubuntu 26.04 / 24.04 / 22.04 / 20.04 / 18.04</strong>、Debian、任意 Linux 发行版上都通用。以 root 执行：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e">#!/usr/bin/env bash
-</span></span></span><span style="display:flex;"><span><span style="color:#75715e"># enable_bbr_ubuntu.sh — 幂等，可重复运行</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e">#!/usr/bin/env bash
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span><span style="color:#75715e"># enable_bbr_ubuntu.sh — 幂等，可重复运行</span>
 </span></span><span style="display:flex;"><span>set -euo pipefail
 </span></span><span style="display:flex;"><span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># 1. 检查内核版本</span>
@@ -440,7 +440,7 @@ rtt min/avg/max/mdev = 166.334/167.062/168.315/0.457 ms
 </span></span><span style="display:flex;"><span>lsmod | grep tcp_bbr <span style="color:#f92672">||</span> echo <span style="color:#e6db74">&#34;WARN: tcp_bbr 未在 lsmod 中&#34;</span>
 </span></span></code></pre></div><p>保存为 <code>enable_bbr.sh</code> 后 <code>chmod +x</code> 并以 root 运行即可。<strong>5 秒完成，全过程无害幂等</strong>——重复运行不会重复添加行。</p>
 <p>如果对端是 <strong>Windows 11</strong>（客户端诊断脚本，PowerShell 5.1+，不改注册表，只测量）：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-powershell" data-lang="powershell"><span style="display:flex;"><span><span style="color:#75715e"># check-tcp-throughput.ps1 — 客户端侧带宽验证</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-powershell" data-lang="powershell"><span style="display:flex;"><span><span style="color:#75715e"># check-tcp-throughput.ps1 — 客户端侧带宽验证</span>
 </span></span><span style="display:flex;"><span>$ErrorActionPreference = <span style="color:#e6db74">&#39;Stop&#39;</span>
 </span></span><span style="display:flex;"><span>$targets = @(<span style="color:#e6db74">&#39;目标域名或 IP:8317/大文件路径&#39;</span>)  <span style="color:#75715e"># 替换为你的目标</span>
 </span></span><span style="display:flex;"><span><span style="color:#66d9ef">foreach</span> ($t <span style="color:#66d9ef">in</span> $targets) {
@@ -459,8 +459,8 @@ rtt min/avg/max/mdev = 166.334/167.062/168.315/0.457 ms
 </span></span><span style="display:flex;"><span>}
 </span></span></code></pre></div><p>Windows 11 客户端<strong>不需要改任何设置</strong>——它默认的 TCP 拥塞控制（CTCP）在客户端角色下表现足够好；真正的瓶颈永远在<strong>服务器侧发送 TCP 数据时</strong>。</p>
 <p>如果对端是 <strong>macOS 26</strong>（客户端诊断脚本，用系统自带 <code>curl</code>）：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e">#!/usr/bin/env bash
-</span></span></span><span style="display:flex;"><span><span style="color:#75715e"># check-tcp-throughput-macos.sh — 客户端带宽验证</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e">#!/usr/bin/env bash
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span><span style="color:#75715e"># check-tcp-throughput-macos.sh — 客户端带宽验证</span>
 </span></span><span style="display:flex;"><span>set -euo pipefail
 </span></span><span style="display:flex;"><span>TARGETS<span style="color:#f92672">=(</span>
 </span></span><span style="display:flex;"><span>  <span style="color:#e6db74">&#34;目标域名或 IP:8317/大文件路径&#34;</span>
@@ -468,8 +468,8 @@ rtt min/avg/max/mdev = 166.334/167.062/168.315/0.457 ms
 </span></span><span style="display:flex;"><span><span style="color:#66d9ef">for</span> t in <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>TARGETS[@]<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>; <span style="color:#66d9ef">do</span>
 </span></span><span style="display:flex;"><span>  echo <span style="color:#e6db74">&#34;→ 测试 </span>$t<span style="color:#e6db74">&#34;</span>
 </span></span><span style="display:flex;"><span>  curl -s -o /dev/null <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span>    -w <span style="color:#e6db74">&#34;  HTTP: %{http_code}  time: %{time_total}s  speed: %{speed_download} B/s\n&#34;</span> <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span>    --max-time <span style="color:#ae81ff">90</span> <span style="color:#e6db74">&#34;http://</span>$t<span style="color:#e6db74">&#34;</span>
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>    -w <span style="color:#e6db74">&#34;  HTTP: %{http_code}  time: %{time_total}s  speed: %{speed_download} B/s\n&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>    --max-time <span style="color:#ae81ff">90</span> <span style="color:#e6db74">&#34;http://</span>$t<span style="color:#e6db74">&#34;</span>
 </span></span><span style="display:flex;"><span><span style="color:#66d9ef">done</span>
 </span></span></code></pre></div><p>macOS 26 本身用的是 BSD 内核，它有自己的拥塞控制（默认 cubic-like），但同样：<strong>客户端侧几乎不影响国际链路吞吐</strong>。</p>
 <h3 id="方法二ai-agent-自动配置推荐让-agent-一次性搞定所有-vps">方法二：AI Agent 自动配置（推荐让 Agent 一次性搞定所有 VPS）</h3>
@@ -493,7 +493,7 @@ rtt min/avg/max/mdev = 166.334/167.062/168.315/0.457 ms
 - 每台机器改动前请打印它当前的 kernel version 和 congestion control 让我确认
 - 全程不要动 /etc/sysctl.conf 里其它已有的行
 </code></pre><p>Agent 会自己规划步骤、执行、比对结果、汇总输出。整个过程你只需要给它 SSH 配置权限就行，不需要在每台机器上手动登陆。</p>
-<p><img src="/post-images/bbr-fix-china-us-vps-slow-network/shot-03-after.png" alt="真实截图：开启后立刻跑同样的测试，速率从 30 KB/s 冲到 500-1000 KB/s"></p>
+<p><img alt="真实截图：开启后立刻跑同样的测试，速率从 30 KB/s 冲到 500-1000 KB/s" src="/post-images/bbr-fix-china-us-vps-slow-network/shot-03-after.png"></p>
 <p><em>图 6：这是真的。同一台机器，同一个测试脚本，同一时刻，仅仅&quot;改了一行 sysctl&quot;，吞吐涨了 15-24 倍。图中三个数字分别对应三台 VPS。</em></p>
 <h3 id="验证确认配置真的生效">验证：确认配置真的生效</h3>
 <p>改完之后有三样东西必须都对上：</p>
@@ -503,7 +503,7 @@ rtt min/avg/max/mdev = 166.334/167.062/168.315/0.457 ms
 <li><code>lsmod | grep tcp_bbr</code> → 有一行（模块已加载）</li>
 </ol>
 <p>任何一样对不上，说明脚本没跑全或者被别的配置文件覆盖了（比如 <code>/etc/sysctl.d/*.conf</code> 里有优先级更高的旧值）。</p>
-<p><img src="/post-images/bbr-fix-china-us-vps-slow-network/shot-04-persist.png" alt="真实截图：验证配置在重启后也依然生效"></p>
+<p><img alt="真实截图：验证配置在重启后也依然生效" src="/post-images/bbr-fix-china-us-vps-slow-network/shot-04-persist.png"></p>
 <p><em>图 7：三个文件、三个 sysctl、一个 lsmod 全部对上，就是&quot;永久生效&quot;了。也可以用 <code>ss -tinp | grep bbr</code> 观察实际的 TCP 连接是不是在用 BBR。</em></p>
 <hr>
 <h2 id="六qa">六、Q&amp;A</h2>

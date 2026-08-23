@@ -214,7 +214,7 @@
 </blockquote>
 <p>这篇文章记录一次 Claude Code 本地环境排障。它不是一个复杂到需要改源码的问题，但很有代表性：AI Agent 工具链越来越依赖模型网关、兼容协议、环境变量、版本更新和本地 provider 切换；当其中一层发生协议细节变化时，终端里看到的却往往只是一句抽象的 400。</p>
 <p>为了避免泄露任何隐私信息，本文不会出现真实内网地址、真实用户名、真实 token、真实私有 provider 名称、真实本机路径或私有服务域名。所有配置片段都使用 <code>&lt;PLACEHOLDER&gt;</code>、<code>&lt;MODEL_GATEWAY&gt;</code>、<code>&lt;MODEL_NAME&gt;</code> 等占位符表示。文章重点是分享排障方法，而不是公开某个具体环境。</p>
-<p><img src="/post-images/claude-code-invalid-message-role-system/01-hero-claude-system-role.png" alt="Claude Code 升级后触发兼容网关错误的抽象题图"></p>
+<p><img alt="Claude Code 升级后触发兼容网关错误的抽象题图" src="/post-images/claude-code-invalid-message-role-system/01-hero-claude-system-role.png"></p>
 <p><em>图 1：本文自制题图。错误看起来发生在模型侧，真正需要追的是 Claude Code、Anthropic API 语义和兼容网关之间的消息格式。</em></p>
 <h2 id="1-问题背景现在的-claude-code-很少是单机直连模型">1. 问题背景：现在的 Claude Code 很少是“单机直连模型”</h2>
 <p>很多人第一次用 Claude Code 时，脑子里的结构很简单：终端里输入 <code>claude</code>，Claude Code 调 Anthropic，模型返回结果。这个理解在直连官方模型时大体成立，但在真实开发环境里，链路经常更复杂。</p>
@@ -230,25 +230,25 @@
 <p>这次就是这种情况。用户看到的是“访问任何模型都报错”，但真正坏掉的不是所有模型，而是当前选中的兼容入口无法接受新版 Claude Code 发出的某种消息结构。</p>
 <h2 id="2-问题表现一句最小-prompt-也-400">2. 问题表现：一句最小 prompt 也 400</h2>
 <p>最初的错误信息是：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>API Error: 400 invalid params, chat content has invalid message role: system (2013)
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>API Error: 400 invalid params, chat content has invalid message role: system (2013)
 </span></span></code></pre></div><p>这个错误有几个特点。</p>
 <p>第一，它是 400，不是 401、403、429 或 5xx。400 通常表示请求参数不符合服务端期望，而不是鉴权失败、额度不足、限流或服务端崩溃。</p>
 <p>第二，它明确提到了 <code>invalid message role: system</code>。这说明服务端已经解析到了请求体里的消息角色，并且认为 <code>system</code> 出现在了不允许的位置。</p>
 <p>第三，它在“任何模型”上都出现。这个现象很容易误导人。很多人会把它理解成“所有模型都不支持”，但从工程角度看，更可能是同一条上游请求在进入模型之前就被统一网关拒绝了。也就是说，错误可能发生在模型路由之前，而不是模型推理阶段。</p>
 <p>为了排除项目上下文、历史会话、工具调用、系统 prompt、MCP、长上下文压缩等干扰，我做的第一件事是最小复现：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>claude -p <span style="color:#e6db74">&#34;只回复 OK&#34;</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>claude -p <span style="color:#e6db74">&#34;只回复 OK&#34;</span>
 </span></span></code></pre></div><p>结果仍然返回同样的 400。这一步很重要。它说明问题不是某个项目里的 CLAUDE.md 写坏了，不是某次会话历史污染，也不是复杂工具调用触发了兼容问题。只要 Claude Code 用当前全局配置发出一次最简单的请求，就会失败。</p>
-<p><img src="/post-images/claude-code-invalid-message-role-system/02-layered-diagnosis.svg" alt="从表层错误追到真正拒绝请求的位置"></p>
+<p><img alt="从表层错误追到真正拒绝请求的位置" src="/post-images/claude-code-invalid-message-role-system/02-layered-diagnosis.svg"></p>
 <p><em>图 2：不要停在第一行 400。要确认请求经过了 CLI、API 语义层、兼容网关和模型后端中的哪一层。</em></p>
 <h2 id="3-第一轮排查先不要猜先确认谁在拒绝">3. 第一轮排查：先不要猜，先确认“谁在拒绝”</h2>
 <p>排这种问题时，我不建议第一反应就是换 Key、换模型或重装 Claude Code。因为这些动作都很大，而且会把现场证据冲掉。更稳的顺序是：先确认当前版本、当前 provider、当前环境变量和最小请求行为。</p>
 <h3 id="31-看-claude-code-版本">3.1 看 Claude Code 版本</h3>
 <p>先确认当前版本：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>claude --version
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>claude --version
 </span></span></code></pre></div><p>现场版本是 <code>2.1.156</code>。用户也提到“可能和最近更新了 Claude 版本有关”。这条信息很有价值，因为它把时间线拉出来了：如果更新前能用，更新后全模型 400，那版本变化就必须被当作一级嫌疑，而不是背景噪声。</p>
 <h3 id="32-看当前是否直连官方服务">3.2 看当前是否直连官方服务</h3>
 <p>接着看 Claude Code 的 settings。脱敏后结构大概类似：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-json" data-lang="json"><span style="display:flex;"><span>{
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-json" data-lang="json"><span style="display:flex;"><span>{
 </span></span><span style="display:flex;"><span>  <span style="color:#f92672">&#34;env&#34;</span>: {
 </span></span><span style="display:flex;"><span>    <span style="color:#f92672">&#34;ANTHROPIC_BASE_URL&#34;</span>: <span style="color:#e6db74">&#34;https://&lt;MODEL_GATEWAY&gt;/anthropic&#34;</span>,
 </span></span><span style="display:flex;"><span>    <span style="color:#f92672">&#34;ANTHROPIC_AUTH_TOKEN&#34;</span>: <span style="color:#e6db74">&#34;&lt;TOKEN&gt;&#34;</span>,
@@ -266,11 +266,11 @@
 </ol>
 <h3 id="33-看-provider-列表确认是不是所有路径都坏">3.3 看 provider 列表，确认是不是所有路径都坏</h3>
 <p>本地还使用了 provider 切换工具。查看 provider 列表后可以看到多个 Claude provider：有当前选中的兼容入口，也有其他候选入口。脱敏后可以理解为：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>Current: &lt;Provider A&gt;  -&gt; https://&lt;MODEL_GATEWAY_A&gt;/anthropic
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>Current: &lt;Provider A&gt;  -&gt; https://&lt;MODEL_GATEWAY_A&gt;/anthropic
 </span></span><span style="display:flex;"><span>Other:   &lt;Provider B&gt;  -&gt; https://&lt;MODEL_GATEWAY_B&gt;/anthropic
 </span></span><span style="display:flex;"><span>Other:   &lt;Provider C&gt;  -&gt; https://&lt;MODEL_GATEWAY_C&gt;/anthropic
 </span></span></code></pre></div><p>于是我没有立刻修改全局配置，而是用“临时启动”的方式分别测试不同 provider：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>cc-switch start claude &lt;PROVIDER_ID&gt; -- -p <span style="color:#e6db74">&#34;只回复 OK&#34;</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>cc-switch start claude &lt;PROVIDER_ID&gt; -- -p <span style="color:#e6db74">&#34;只回复 OK&#34;</span>
 </span></span></code></pre></div><p>结果很有意思：</p>
 <ol>
 <li>当前 provider 失败，报同样的 <code>invalid message role: system</code>。</li>
@@ -281,7 +281,7 @@
 <h2 id="4-关键背景anthropic-的-system-不是普通-messages-里的-role">4. 关键背景：Anthropic 的 <code>system</code> 不是普通 <code>messages</code> 里的 role</h2>
 <p>理解这个错误，需要先理解 Anthropic Messages API 和 OpenAI Chat Completions 在系统提示上的差异。</p>
 <p>在很多 OpenAI-compatible Chat Completions 接口里，常见写法是把系统提示放进 messages 数组：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-json" data-lang="json"><span style="display:flex;"><span>{
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-json" data-lang="json"><span style="display:flex;"><span>{
 </span></span><span style="display:flex;"><span>  <span style="color:#f92672">&#34;messages&#34;</span>: [
 </span></span><span style="display:flex;"><span>    {<span style="color:#f92672">&#34;role&#34;</span>: <span style="color:#e6db74">&#34;system&#34;</span>, <span style="color:#f92672">&#34;content&#34;</span>: <span style="color:#e6db74">&#34;You are a helpful assistant.&#34;</span>},
 </span></span><span style="display:flex;"><span>    {<span style="color:#f92672">&#34;role&#34;</span>: <span style="color:#e6db74">&#34;user&#34;</span>, <span style="color:#f92672">&#34;content&#34;</span>: <span style="color:#e6db74">&#34;Hello&#34;</span>}
@@ -300,14 +300,14 @@
 <h2 id="5-第二轮排查用版本探针找回归窗口">5. 第二轮排查：用版本探针找回归窗口</h2>
 <p>既然用户怀疑最近更新版本，我就需要验证这个怀疑，而不是只说“可能是”。验证方式很简单：用 <code>npx</code> 临时运行不同版本的 Claude Code，仍然使用同样的最小 prompt 和同样的当前配置。</p>
 <p>测试命令类似：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>npx -y @anthropic-ai/claude-code@2.1.154 -p <span style="color:#e6db74">&#34;只回复 OK&#34;</span> --model &lt;MODEL_NAME&gt;
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>npx -y @anthropic-ai/claude-code@2.1.154 -p <span style="color:#e6db74">&#34;只回复 OK&#34;</span> --model &lt;MODEL_NAME&gt;
 </span></span><span style="display:flex;"><span>npx -y @anthropic-ai/claude-code@2.1.150 -p <span style="color:#e6db74">&#34;只回复 OK&#34;</span> --model &lt;MODEL_NAME&gt;
 </span></span></code></pre></div><p>结果如下：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>2.1.156 -&gt; 400 invalid message role: system
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>2.1.156 -&gt; 400 invalid message role: system
 </span></span><span style="display:flex;"><span>2.1.154 -&gt; 400 invalid message role: system
 </span></span><span style="display:flex;"><span>2.1.150 -&gt; OK
 </span></span></code></pre></div><p>这一步把问题从“最近更新可能有关”变成了“版本区间内存在可复现的兼容变化”。虽然我没有继续逐个测试 <code>2.1.151</code>、<code>2.1.152</code>、<code>2.1.153</code>，但对恢复生产可用性来说，已经足够确认最后一个已知可用版本是 <code>2.1.150</code>。</p>
-<p><img src="/post-images/claude-code-invalid-message-role-system/03-regression-window.svg" alt="用相邻版本探针定位回归窗口"></p>
+<p><img alt="用相邻版本探针定位回归窗口" src="/post-images/claude-code-invalid-message-role-system/03-regression-window.svg"></p>
 <p><em>图 3：最小 prompt + 相邻版本测试，比盲目重装或换 Key 更可靠。</em></p>
 <p>这里有一个排障原则值得强调：<strong>回滚不是逃避，前提是你知道自己为什么回滚、回滚到哪里、以及如何验证。</strong></p>
 <p>如果只是随便装一个旧版本，确实是玄学。但如果你已经证明当前版本失败、相邻旧版本失败、更早版本成功，那么固定到最后一个已知可用版本就是合理的止血动作。</p>
@@ -327,22 +327,22 @@
 <p>这里我刻意使用“兼容断层”这个词，而不是简单说“Claude Code 有 bug”或“网关有 bug”。因为从工程角度看，兼容问题经常不是单方错误。Claude Code 可以合法更新请求结构；兼容网关也需要跟随官方 API 语义演进。真正的问题是双方之间缺少足够严格的兼容测试，尤其是针对 system prompt、tools、thinking、streaming、content block 等 Agent 场景里的复杂字段。</p>
 <h2 id="7-修复过程固定最后一个已知可用版本">7. 修复过程：固定最后一个已知可用版本</h2>
 <p>确认 <code>2.1.150</code> 可用后，修复动作很简单：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>npm install -g @anthropic-ai/claude-code@2.1.150
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>npm install -g @anthropic-ai/claude-code@2.1.150
 </span></span></code></pre></div><p>安装完成后做三次验证。</p>
 <p>第一，确认版本：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>claude --version
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>claude --version
 </span></span></code></pre></div><p>期望输出：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>2.1.150 (Claude Code)
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>2.1.150 (Claude Code)
 </span></span></code></pre></div><p>第二，用显式模型最小 prompt 验证：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>claude -p <span style="color:#e6db74">&#34;只回复 OK&#34;</span> --model &lt;MODEL_NAME&gt;
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>claude -p <span style="color:#e6db74">&#34;只回复 OK&#34;</span> --model &lt;MODEL_NAME&gt;
 </span></span></code></pre></div><p>期望输出：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>OK
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>OK
 </span></span></code></pre></div><p>第三，不带 <code>--model</code>，验证默认模型路径也正常：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>claude -p <span style="color:#e6db74">&#34;只回复 OK&#34;</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>claude -p <span style="color:#e6db74">&#34;只回复 OK&#34;</span>
 </span></span></code></pre></div><p>期望输出：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>OK
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>OK
 </span></span></code></pre></div><p>为什么要做第三步？因为真实使用时，用户往往不会每次都显式指定模型。如果只验证 <code>--model</code> 成功，而默认 provider、默认 haiku/sonnet/opus 映射仍然错误，那么一打开交互式 Claude Code 还是可能失败。</p>
-<p><img src="/post-images/claude-code-invalid-message-role-system/04-fix-decision-tree.svg" alt="修复策略：先止血，再等待兼容层跟进"></p>
+<p><img alt="修复策略：先止血，再等待兼容层跟进" src="/post-images/claude-code-invalid-message-role-system/04-fix-decision-tree.svg"></p>
 <p><em>图 4：如果能换 provider，可以临时切换；如果必须走同一个网关，固定最后一个已知可用版本是最小可逆修复。</em></p>
 <h2 id="8-为什么我没有优先改配置或换-api-key">8. 为什么我没有优先改配置或换 API Key</h2>
 <p>这类问题最容易出现几个错误动作。</p>
@@ -357,21 +357,21 @@
 <h2 id="9-可复用排障清单">9. 可复用排障清单</h2>
 <p>以后再遇到 Claude Code 或类似 Agent CLI 的“全模型不可用”，可以按这个顺序查。</p>
 <h3 id="91-先分类错误码">9.1 先分类错误码</h3>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>400 -&gt; 优先看请求格式、参数、协议兼容
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>400 -&gt; 优先看请求格式、参数、协议兼容
 </span></span><span style="display:flex;"><span>401/403 -&gt; 优先看鉴权、Key、权限、账号状态
 </span></span><span style="display:flex;"><span>404 -&gt; 优先看 endpoint、模型名、路径
 </span></span><span style="display:flex;"><span>429 -&gt; 优先看限流、额度、并发
 </span></span><span style="display:flex;"><span>5xx -&gt; 优先看服务端、网关、上游模型稳定性
 </span></span></code></pre></div><p>这不是绝对规则，但能帮助你避免第一步就走偏。</p>
 <h3 id="92-做最小-prompt">9.2 做最小 prompt</h3>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>claude -p <span style="color:#e6db74">&#34;只回复 OK&#34;</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>claude -p <span style="color:#e6db74">&#34;只回复 OK&#34;</span>
 </span></span></code></pre></div><p>如果最小 prompt 都失败，优先查全局配置、provider、版本和网络，不要先查项目 prompt。</p>
 <h3 id="93-确认当前版本">9.3 确认当前版本</h3>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>claude --version
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>claude --version
 </span></span></code></pre></div><p>记录版本号，不要只说“最新版”。技术排障里，“最新版”没有诊断价值，具体版本号才有。</p>
 <h3 id="94-确认是否使用兼容网关">9.4 确认是否使用兼容网关</h3>
 <p>查看 settings 或环境变量中是否存在：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>ANTHROPIC_BASE_URL
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>ANTHROPIC_BASE_URL
 </span></span><span style="display:flex;"><span>ANTHROPIC_MODEL
 </span></span><span style="display:flex;"><span>ANTHROPIC_DEFAULT_SONNET_MODEL
 </span></span><span style="display:flex;"><span>ANTHROPIC_DEFAULT_HAIKU_MODEL
@@ -379,10 +379,10 @@
 </span></span></code></pre></div><p>如果有自定义 <code>ANTHROPIC_BASE_URL</code>，就要把兼容层纳入排查范围。</p>
 <h3 id="95-横向测试-provider">9.5 横向测试 provider</h3>
 <p>如果本地有 provider 切换工具，不要一上来切全局。先临时启动不同 provider：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>cc-switch start claude &lt;PROVIDER_ID&gt; -- -p <span style="color:#e6db74">&#34;只回复 OK&#34;</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>cc-switch start claude &lt;PROVIDER_ID&gt; -- -p <span style="color:#e6db74">&#34;只回复 OK&#34;</span>
 </span></span></code></pre></div><p>如果 A 失败、B 成功，说明 CLI 本身不是完全坏掉，问题更可能在某条 provider 链路。</p>
 <h3 id="96-纵向测试版本">9.6 纵向测试版本</h3>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>npx -y @anthropic-ai/claude-code@&lt;VERSION&gt; -p <span style="color:#e6db74">&#34;只回复 OK&#34;</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>npx -y @anthropic-ai/claude-code@&lt;VERSION&gt; -p <span style="color:#e6db74">&#34;只回复 OK&#34;</span>
 </span></span></code></pre></div><p>找到最后一个已知可用版本，再决定是否固定。</p>
 <h3 id="97-最后才动全局配置">9.7 最后才动全局配置</h3>
 <p>只有当你已经知道“哪个 provider / 哪个版本 / 哪个 endpoint 可用”时，再改全局配置。改完之后必须复测默认调用。</p>
@@ -400,7 +400,7 @@
 <li>错误返回格式，确保客户端能看到有用信息。</li>
 </ol>
 <p>最小测试可以非常简单：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>claude -p <span style="color:#e6db74">&#34;reply exactly: OK&#34;</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>claude -p <span style="color:#e6db74">&#34;reply exactly: OK&#34;</span>
 </span></span></code></pre></div><p>但只有这个还不够。Agent 客户端的真实请求通常比普通 chat 更复杂，系统提示、工具定义、权限上下文和会话元数据都会进入请求。兼容层不能只用 curl 测一个 messages 数组就宣布“兼容 Anthropic”。</p>
 <h2 id="11-qa">11. Q&amp;A</h2>
 <h3 id="q1为什么错误说-system-role但你说-anthropic-里-system-是顶层字段">Q1：为什么错误说 <code>system role</code>，但你说 Anthropic 里 system 是顶层字段？</h3>
@@ -413,7 +413,7 @@
 <p>会。旧版本可能缺少新功能、修复或安全改进。所以固定版本应该被视为临时止血，不是长期答案。长期应由兼容网关适配新版 Claude Code，或者切换到已经适配的 provider。固定版本时，建议把原因写进团队文档，避免别人随手升级又踩同一个坑。</p>
 <h3 id="q5我怎么防止-npm-自动装回最新版">Q5：我怎么防止 npm 自动装回最新版？</h3>
 <p>如果你是全局安装，可以明确安装版本：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>npm install -g @anthropic-ai/claude-code@2.1.150
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>npm install -g @anthropic-ai/claude-code@2.1.150
 </span></span></code></pre></div><p>如果是团队环境，可以在安装脚本、镜像构建脚本或开发机 bootstrap 脚本里固定版本，并在升级前跑最小 prompt 回归测试。</p>
 <h3 id="q6如果我没有-provider-切换工具怎么办">Q6：如果我没有 provider 切换工具怎么办？</h3>
 <p>直接看 <code>~/.claude/settings.json</code>、shell 环境变量和启动脚本。重点找 <code>ANTHROPIC_BASE_URL</code>。如果它不是官方默认入口，而是某个自定义地址，就把它当成兼容网关处理。然后用不同 Claude Code 版本做纵向测试。</p>
@@ -421,7 +421,7 @@
 <p>不是。现场测试里就有其他 provider 能正常返回 <code>OK</code>。问题取决于具体网关如何实现请求转换、它支持到哪一版客户端行为、以及后端模型服务的消息 role 校验规则。</p>
 <h2 id="12-复盘这次真正有用的不是降级而是证据链">12. 复盘：这次真正有用的不是“降级”，而是证据链</h2>
 <p>最终修复只是一行命令：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>npm install -g @anthropic-ai/claude-code@2.1.150
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>npm install -g @anthropic-ai/claude-code@2.1.150
 </span></span></code></pre></div><p>但这篇文章想强调的不是“遇事就降级”。真正有价值的是这条证据链：</p>
 <ol>
 <li>最小 prompt 复现，排除项目和会话因素。</li>
