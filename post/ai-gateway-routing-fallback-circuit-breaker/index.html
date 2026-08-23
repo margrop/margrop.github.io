@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>429 就换模型？你可能正在把一次故障变成三倍账单：AI Gateway 路由、降级与熔断实战 - 魔都水滴</title>
+<meta name="description" content="先说结论 收到 429 就立刻换模型，看起来是在做高可用，实际上可能同时制造三件事：把一个短暂拥堵放大成重试风暴，把本来不该离开某个区域的数据送到不合规的备用线路，再让多个已经接单的模型共同计费。正确做法不是取消 fallback，而是把路由拆成三步：先用能力、地域、数据分类和预算做硬过滤，再根据健康度、延迟与成本选 …">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://blog.margrop.net/post/ai-gateway-routing-fallback-circuit-breaker/"><meta property="og:site_name" content="魔都水滴">
+<meta property="og:title" content="429 就换模型？你可能正在把一次故障变成三倍账单：AI Gateway 路由、降级与熔断实战 - 魔都水滴">
+<meta property="og:description" content="先说结论 收到 429 就立刻换模型，看起来是在做高可用，实际上可能同时制造三件事：把一个短暂拥堵放大成重试风暴，把本来不该离开某个区域的数据送到不合规的备用线路，再让多个已经接单的模型共同计费。正确做法不是取消 fallback，而是把路由拆成三步：先用能力、地域、数据分类和预算做硬过滤，再根据健康度、延迟与成本选 …">
+<meta property="og:url" content="https://blog.margrop.net/post/ai-gateway-routing-fallback-circuit-breaker/">
+<meta property="og:locale" content="zh_CN"><meta property="og:type" content="article"><meta property="og:locale:alternate" content="en_US"><meta property="og:image" content="https://blog.margrop.net/images/avatar.png"><meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="429 就换模型？你可能正在把一次故障变成三倍账单：AI Gateway 路由、降级与熔断实战 - 魔都水滴">
+<meta name="twitter:description" content="先说结论 收到 429 就立刻换模型，看起来是在做高可用，实际上可能同时制造三件事：把一个短暂拥堵放大成重试风暴，把本来不该离开某个区域的数据送到不合规的备用线路，再让多个已经接单的模型共同计费。正确做法不是取消 fallback，而是把路由拆成三步：先用能力、地域、数据分类和预算做硬过滤，再根据健康度、延迟与成本选 …"><meta name="twitter:image" content="https://blog.margrop.net/images/avatar.png"><link rel="alternate" hreflang="zh-CN" href="https://blog.margrop.net/post/ai-gateway-routing-fallback-circuit-breaker/"><link rel="alternate" hreflang="en-US" href="https://blog.margrop.net/en/post/ai-gateway-routing-fallback-circuit-breaker/"><link rel="alternate" hreflang="x-default" href="https://blog.margrop.net/"><meta property="article:published_time" content="2026-08-23T20:20:00&#43;08:00">
+<meta property="article:modified_time" content="2026-08-23T20:20:00&#43;08:00"><meta property="article:tag" content="AI Agent"><meta property="article:tag" content="AI Gateway"><meta property="article:tag" content="模型网关"><meta property="article:tag" content="NewAPI"><meta property="article:tag" content="架构"><meta property="article:tag" content="平台工程"><meta property="article:tag" content="可观测性"><meta property="article:tag" content="工程实践"><script type="application/ld+json">{"@context":"https://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"魔都水滴"},"dateModified":"2026-08-23T20:20:00+08:00","datePublished":"2026-08-23T20:20:00+08:00","description":"先说结论 收到 429 就立刻换模型，看起来是在做高可用，实际上可能同时制造三件事：把一个短暂拥堵放大成重试风暴，把本来不该离开某个区域的数据送到不合规的备用线路，再让多个已经接单的模型共同计费。正确做法不是取消 fallback，而是把路由拆成三步：先用能力、地域、数据分类和预算做硬过滤，再根据健康度、延迟与成本选 …","headline":"429 就换模型？你可能正在把一次故障变成三倍账单：AI Gateway 路由、降级与熔断实战","mainEntityOfPage":"https://blog.margrop.net/post/ai-gateway-routing-fallback-circuit-breaker/","url":"https://blog.margrop.net/post/ai-gateway-routing-fallback-circuit-breaker/"}</script>
+    <meta name="baidu-site-verification" content="code-sVFZ8SER59" />
+    <script src="/js/theme-toggle.js"></script>
+
+    
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-3J2W592DHJ"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-3J2W592DHJ');
+    </script>
+
+    <style>
+    :root {
+        color-scheme: light;
+        --page-bg: #fff;
+        --surface-bg: #f4f4f4;
+        --text: #222;
+        --muted: #666;
+        --subtle: #777;
+        --border: #eee;
+        --border-strong: #ddd;
+        --link: #006CFF;
+        --tag-bg: #eee;
+        --button-bg: #fff;
+        --button-primary-bg: #333;
+    }
+    @media (prefers-color-scheme: dark) {
+        :root:not([data-theme]) {
+            color-scheme: dark;
+            --page-bg: #111315;
+            --surface-bg: #1d2126;
+            --text: #e8eaed;
+            --muted: #aeb4bd;
+            --subtle: #9aa2ad;
+            --border: #30353d;
+            --border-strong: #454c56;
+            --link: #79b8ff;
+            --tag-bg: #2a3038;
+            --button-bg: #1d2126;
+            --button-primary-bg: #e8eaed;
+        }
+    }
+    html[data-theme="dark"] {
+        color-scheme: dark;
+        --page-bg: #111315;
+        --surface-bg: #1d2126;
+        --text: #e8eaed;
+        --muted: #aeb4bd;
+        --subtle: #9aa2ad;
+        --border: #30353d;
+        --border-strong: #454c56;
+        --link: #79b8ff;
+        --tag-bg: #2a3038;
+        --button-bg: #1d2126;
+        --button-primary-bg: #e8eaed;
+    }
+    html[data-theme="light"] {
+        color-scheme: light;
+        --page-bg: #fff;
+        --surface-bg: #f4f4f4;
+        --text: #222;
+        --muted: #666;
+        --subtle: #777;
+        --border: #eee;
+        --border-strong: #ddd;
+        --link: #006CFF;
+        --tag-bg: #eee;
+        --button-bg: #fff;
+        --button-primary-bg: #333;
+    }
+    body { background: var(--page-bg); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 860px; margin: 0 auto; padding: 20px; line-height: 1.7; color: var(--text); }
+    h1 { border-bottom: 2px solid var(--border-strong); padding-bottom: 10px; }
+    article > h1 { font-size: 2em; line-height: 1.3; margin-bottom: 12px; }
+    .post-list { list-style: none; padding: 0; }
+    .post-list li { margin: 15px 0; }
+    .post-list a { text-decoration: none; color: var(--text); font-size: 18px; }
+    .post-list a:hover { color: var(--link); }
+    .date { color: var(--muted); font-size: 14px; margin-right: 10px; }
+    .tags { margin-top: 8px; }
+    .tag { background: var(--tag-bg); padding: 2px 8px; border-radius: 3px; font-size: 12px; margin-right: 5px; display: inline-block; }
+    nav { margin-bottom: 18px; border-bottom: 1px solid var(--border); padding-bottom: 15px; }
+    nav a { margin-right: 20px; text-decoration: none; color: var(--text); font-size: 16px; }
+    nav a:hover { color: var(--link); }
+    .language-switcher { display: flex; align-items: center; gap: 10px; margin: -8px 0 26px; }
+    .language-switcher a { display: inline-block; padding: 4px 10px; border: 1px solid var(--border-strong); border-radius: 999px; color: var(--muted); text-decoration: none; font-size: 14px; }
+    .language-switcher a.active { background: var(--link); border-color: var(--link); color: #fff; }
+    .content { line-height: 1.8; }
+    .content code { background: var(--surface-bg); padding: 2px 5px; border-radius: 3px; }
+    .content pre { background: var(--surface-bg); padding: 15px; overflow-x: auto; border-radius: 5px; }
+    .content img { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+    .content .code-snippet__fix {
+        margin: 0 0 1.5em;
+    }
+    .content .code-snippet__fix .code-snippet__line-index {
+        display: none !important;
+    }
+    .meta { color: var(--muted); font-size: 14px; margin-bottom: 14px; }
+    .meta-separator { margin: 0 6px; color: var(--subtle); }
+    .site-stats { display: flex; flex-wrap: wrap; gap: 10px 18px; margin: 28px 0 8px; padding-top: 12px; border-top: 1px solid var(--border); color: var(--subtle); font-size: 12px; }
+    a { color: var(--link); }
+    .hero { padding: 12px 0 24px; }
+    .hero h1 { border-bottom: 2px solid #333; }
+    .eyebrow { color: var(--muted); font-size: 12px; letter-spacing: .12em; margin: 0 0 8px; }
+    .hero-tagline { font-size: 18px; margin: 12px 0 8px; }
+    .hero-copy { color: var(--muted); margin: 0 0 14px; }
+    .hero-actions { margin: 14px 0 4px; }
+    .button { display: inline-block; margin-right: 12px; border: 1px solid var(--border-strong); border-radius: 3px; padding: 4px 10px; text-decoration: none; color: var(--text); background: var(--button-bg); font-size: 14px; }
+    .button-primary { background: var(--button-primary-bg); border-color: var(--button-primary-bg); color: var(--page-bg); }
+    .theme-toggle { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 1px solid var(--border-strong); border-radius: 999px; background: var(--button-bg); color: var(--text); cursor: pointer; font: inherit; font-size: 16px; }
+    .theme-toggle:hover { border-color: var(--link); color: var(--link); }
+    .la-theme-widget { margin: 12px 0 20px; min-height: 24px; color: var(--text); }
+    .identity-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: 16px 0; }
+    .identity-grid div { display: flex; flex-direction: column; }
+    .identity-grid strong { font-size: 15px; }
+    .identity-grid span, .topic-card span, .featured-list small { color: var(--muted); font-size: 13px; }
+    .section-block { padding-top: 28px; }
+    .section-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+    .section-heading h2 { margin: 0; }
+    .section-heading a { font-size: 14px; }
+    .topic-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+    .topic-card { display: block; padding: 14px; border: 1px solid var(--border); text-decoration: none; color: var(--text); }
+    .topic-card:hover { border-color: var(--border-strong); }
+    .topic-card strong { display: block; margin: 4px 0; font-size: 17px; }
+    .topic-index, .featured-list > a > span { color: var(--muted) !important; font-size: 12px !important; }
+    .featured-list { border-top: 1px solid var(--border); }
+    .featured-list > a { display: flex; gap: 14px; padding: 12px 0; border-bottom: 1px solid var(--border); text-decoration: none; color: var(--text); }
+    .featured-list div { display: flex; flex-direction: column; }
+    .latest-block { max-width: 860px; }
+    @media (max-width: 680px) {
+        body { padding: 16px; }
+        nav a { display: inline-block; margin-right: 12px; margin-bottom: 8px; }
+        .identity-grid { grid-template-columns: repeat(2, 1fr); }
+        .topic-grid { grid-template-columns: 1fr; }
+    }
+</style>
+
+</head>
+<body>
+    <nav>
+  <a href="/">首页</a>
+  <a href="/start-here/">开始这里</a>
+  <a href="/career/">Portfolio</a>
+  <a href="/tag/ai/">AI Agent</a>
+  <a href="/tag/docker/">Self-hosting</a>
+  <a href="/tag/%e8%bf%90%e7%bb%b4/">Engineering</a>
+  <a href="/post/">归档</a>
+  <a href="/tags/">标签</a>
+  <a href="/about/">关于</a>
+  <a href="https://github.com/margrop" target="_blank" rel="noopener">GitHub</a>
+</nav>
+
+    <div class="language-switcher">
+  <button class="theme-toggle" type="button" data-theme-toggle aria-label="切换到暗黑模式" aria-pressed="false">🌙</button>
+
+  
+  
+    <a href="/post/ai-gateway-routing-fallback-circuit-breaker/" class="active">中文</a>
+  
+    <a href="/en/post/ai-gateway-routing-fallback-circuit-breaker/" class="">English</a>
+  
+  
+</div>
+
+    
+    <article>
+        <h1>429 就换模型？你可能正在把一次故障变成三倍账单：AI Gateway 路由、降级与熔断实战</h1>
+        <div class="meta">
+            发布时间: 2026-08-23
+            <span class="meta-separator">·</span>
+            <span>阅读量 <span data-page-view-count>--</span></span>
+        </div>
+        
+<div class="tags">
+    
+    <a href="/tag/ai-agent/"><span class="tag">AI Agent</span></a>
+    
+    <a href="/tag/ai-gateway/"><span class="tag">AI Gateway</span></a>
+    
+    <a href="/tag/%E6%A8%A1%E5%9E%8B%E7%BD%91%E5%85%B3/"><span class="tag">模型网关</span></a>
+    
+    <a href="/tag/newapi/"><span class="tag">NewAPI</span></a>
+    
+    <a href="/tag/%E6%9E%B6%E6%9E%84/"><span class="tag">架构</span></a>
+    
+    <a href="/tag/%E5%B9%B3%E5%8F%B0%E5%B7%A5%E7%A8%8B/"><span class="tag">平台工程</span></a>
+    
+    <a href="/tag/%E5%8F%AF%E8%A7%82%E6%B5%8B%E6%80%A7/"><span class="tag">可观测性</span></a>
+    
+    <a href="/tag/%E5%B7%A5%E7%A8%8B%E5%AE%9E%E8%B7%B5/"><span class="tag">工程实践</span></a>
+    
+</div>
+
+
+        <div class="content">
+            <blockquote>
+<p><strong>先说结论</strong></p>
+<p>收到 429 就立刻换模型，看起来是在做高可用，实际上可能同时制造三件事：把一个短暂拥堵放大成重试风暴，把本来不该离开某个区域的数据送到不合规的备用线路，再让多个已经接单的模型共同计费。正确做法不是取消 fallback，而是把路由拆成三步：<strong>先用能力、地域、数据分类和预算做硬过滤，再根据健康度、延迟与成本选路，最后只对明确可恢复的错误做有界重试。</strong> 临时限流型 429 和短暂 5xx 可以降级；401、403、余额耗尽、合规拒绝必须停止并暴露根因。本文用一个 Python 标准库、零网络、零凭据的故障实验，实测路由过滤、429 降级、熔断、hedging 成本与审计预算，7 项验收全部通过。</p>
+</blockquote>
+<p><img alt="原创封面：429 不等于重试一切，AI Gateway 要先路由、再约束、最后验证。" src="/post-images/ai-gateway-routing-fallback-circuit-breaker/00-cover.png"></p>
+<p><em>图 1：原创确定性 PNG 封面。文中的 provider、价格、延迟、Token 和错误均为本地合成教学数据，不代表任何真实厂商报价或 SLA。</em></p>
+<h2 id="一问题背景fallback-本来是安全网为什么会变成放大器">一、问题背景：fallback 本来是安全网，为什么会变成放大器</h2>
+<p>在 <a href="/post/ai-platform-production-reference-architecture/">AI Platform 旗舰架构</a> 里，我把 AI Gateway 放在控制平面：它不只转发 HTTP，而是要理解模型能力、上下文、数据边界、成本和降级资格。问题是很多系统落地时只写了这样一段逻辑：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>try primary model
+</span></span><span style="display:flex;"><span>if error:
+</span></span><span style="display:flex;"><span>    try fallback A
+</span></span><span style="display:flex;"><span>if error:
+</span></span><span style="display:flex;"><span>    try fallback B
+</span></span></code></pre></div><p>代码很短，事故却可能很长。主线路返回 429，应用层重试两次；SDK 自己又重试两次；网关再切两个模型；最外层 Agent 看到超时，还把整轮任务重新执行。每一层都以为自己只做了一次善意补救，乘起来却像几个人同时按电梯按钮：电梯不会来得更快，控制器反而更忙。</p>
+<p>更麻烦的是，模型调用并不是普通静态文件请求。候选模型可能不支持工具调用或 JSON Schema；某些数据只能留在指定区域；不同模型的上下文窗口、输入输出单价和内容策略不同；流式输出已经开始后再换模型，还可能让用户收到拼接答案。<strong>“这个地址能返回 200”只证明网络能走，不证明这条路适合这次请求。</strong></p>
+<h2 id="二问题表现一次-429-如何长成六种生产怪病">二、问题表现：一次 429 如何长成六种生产怪病</h2>
+<p>我见过的错误路由通常不是直接宕机，而是表现成一些很难归因的“怪病”：</p>
+<ol>
+<li><strong>尾延迟越来越长</strong>：每层都重试，用户等到最后才看到失败；监控只记录最终一次调用，看不见前面已经浪费的时间。</li>
+<li><strong>账单与成功量不成比例</strong>：hedging 同时发出两三份请求，只采用最快答案，但其他上游可能已经开始推理或输出。</li>
+<li><strong>质量悄悄变化</strong>：备用模型不支持相同工具、结构化输出或上下文长度，表面成功，实际把严格 JSON 变成一段自然语言。</li>
+<li><strong>安全边界被绕过</strong>：主线路因为合规策略拒绝，网关却把同一内容送给策略不同的备用线路。这不是高可用，而是自动绕过控制。</li>
+<li><strong>配置错误被隐藏</strong>：401 被包装成“全部模型繁忙”，值班同学忙着扩容，真正的失效凭据仍藏在日志深处。</li>
+<li><strong>雪崩自我延续</strong>：故障线路已经过载，新的请求和重试仍持续敲门；健康线路也被 fallback 流量拖垮。</li>
+</ol>
+<p>这像暴雨天打车：附近没车时，平台可以扩大搜索范围；但如果乘客证件失效，换一家车队不会让证件突然有效；如果目的地在交通管制区，也不能偷偷让司机绕过检查站。AI Gateway 要做的是“调度 + 分诊 + 账本”，不是盲目轮询电话号码。</p>
+<h2 id="三先划清边界ai-gateway-不等于-api-gateway">三、先划清边界：AI Gateway 不等于 API Gateway</h2>
+<p>API Gateway 和 AI Gateway 可以部署在相邻层，甚至共享一部分基础设施，但它们回答的问题不同。</p>
+<p><img alt="原创对照图：API Gateway 与 AI Gateway 负责相邻但不同的决策。" src="/post-images/ai-gateway-routing-fallback-circuit-breaker/01-api-vs-ai-gateway.png"></p>
+<p><em>图 2：原创图。API Gateway 更像商场大门，检查身份、入口和客流；AI Gateway 更像医院分诊台，还要判断专科能力、病情等级、床位、距离和费用。两层都需要，不能用其中一个冒充另一个。</em></p>
+<p>API Gateway 通常负责：入口认证、URL/协议路由、租户配额、边缘限流、WAF、证书和入口日志。AI Gateway 在此基础上还要处理：</p>
+<ul>
+<li>模型是否支持工具调用、视觉、音频、JSON Schema 或特定上下文长度；</li>
+<li>数据分类是否允许进入某个 provider、区域或部署形态；</li>
+<li>本次请求的 deadline、Token 上限、成本上限和质量等级；</li>
+<li>错误是临时拥堵、上游故障，还是凭据、余额、合规等终止错误；</li>
+<li>fallback 是否协议兼容，Prompt/工具 schema 版本是否一致；</li>
+<li>每次尝试用了多少时间和预算，为什么排除其他候选，最后如何向审计解释。</li>
+</ul>
+<p><a href="/post/newapi-self-hosted-relay-station/">NewAPI 自托管中转站</a> 可以统一模型入口、Token、渠道和用量，是很实用的网关基础；但“有统一入口”不自动等于“有完整路由策略”。生产系统仍需要在它的前后明确请求封套、错误分类、预算、熔断和审计所有权。</p>
+<h2 id="四正确路由的第一步先做硬过滤再谈加权评分">四、正确路由的第一步：先做硬过滤，再谈加权评分</h2>
+<p>很多路由器一上来就计算“哪个模型最便宜、最快”。顺序反了。数据地域、合规、能力和任务类型属于<strong>资格条件</strong>，不满足就是不能参赛；只有合格候选之间，才比较价格和延迟。</p>
+<p><img alt="原创路由漏斗：请求先经过能力、地域和分类硬过滤，再按健康、延迟与价格评分。" src="/post-images/ai-gateway-routing-fallback-circuit-breaker/02-routing-funnel.png"></p>
+<p><em>图 3：原创图。医院不会因为牙科今天便宜，就把骨折患者送去牙科；打车平台也不会因为另一座城市车辆更多，就派一辆根本到不了的车。硬约束先于偏好评分。</em></p>
+<p>我建议每次请求先形成一个不可由模型改写的结构化 envelope，至少包含：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-json" data-lang="json"><span style="display:flex;"><span>{
+</span></span><span style="display:flex;"><span>  <span style="color:#f92672">&#34;request_id&#34;</span>: <span style="color:#e6db74">&#34;req-demo-001&#34;</span>,
+</span></span><span style="display:flex;"><span>  <span style="color:#f92672">&#34;required_capabilities&#34;</span>: [<span style="color:#e6db74">&#34;tools&#34;</span>, <span style="color:#e6db74">&#34;json&#34;</span>],
+</span></span><span style="display:flex;"><span>  <span style="color:#f92672">&#34;allowed_regions&#34;</span>: [<span style="color:#e6db74">&#34;region-a&#34;</span>],
+</span></span><span style="display:flex;"><span>  <span style="color:#f92672">&#34;data_classification&#34;</span>: <span style="color:#e6db74">&#34;restricted&#34;</span>,
+</span></span><span style="display:flex;"><span>  <span style="color:#f92672">&#34;input_tokens_estimate&#34;</span>: <span style="color:#ae81ff">10000</span>,
+</span></span><span style="display:flex;"><span>  <span style="color:#f92672">&#34;max_output_tokens&#34;</span>: <span style="color:#ae81ff">2000</span>,
+</span></span><span style="display:flex;"><span>  <span style="color:#f92672">&#34;deadline_ms&#34;</span>: <span style="color:#ae81ff">1200</span>,
+</span></span><span style="display:flex;"><span>  <span style="color:#f92672">&#34;max_cost_usd&#34;</span>: <span style="color:#ae81ff">0.05</span>,
+</span></span><span style="display:flex;"><span>  <span style="color:#f92672">&#34;route_policy&#34;</span>: <span style="color:#e6db74">&#34;route-policy-v3&#34;</span>
+</span></span><span style="display:flex;"><span>}
+</span></span></code></pre></div><p>这里使用的都是合成值，不含真实租户、主机、地址或凭据。路由器先排除缺能力、地域不符、分类上限不足、最坏成本超过预算的线路；剩余候选再根据滚动健康度、P95 延迟、排队深度、价格和质量评分排序。</p>
+<p>本地实验把四条合成线路放进同一个候选池：一条地域不符，一条缺工具能力，一条最坏成本超出请求预算，只有 <code>route-fit</code> 同时满足全部条件。</p>
+<p><img alt="真实本地实验输出截图：路由器逐条记录排除原因并选择唯一合格线路。" src="/post-images/ai-gateway-routing-fallback-circuit-breaker/10-real-routing-filter.png"></p>
+<p><em>图 4：真实本地 stdout 截图。实验没有访问网络；选择结果不是“第一个能连上的”，而是能力、地域、数据分类和成本预算共同过滤后的结果。</em></p>
+<h3 id="能力路由模型名不是能力声明">能力路由：模型名不是能力声明</h3>
+<p>不要在业务代码里写“某模型一定支持 tools”。能力应该是版本化注册信息，并经过最小探测与契约测试。工具调用、严格 JSON、多模态输入、最大上下文、最大输出、流式事件格式都可能随 provider、模型版本和兼容层变化。</p>
+<h3 id="地域与数据分类最短路径不一定合法">地域与数据分类：最短路径不一定合法</h3>
+<p>先把数据分成 public、internal、restricted 等等级，再给每条路由声明允许的等级和区域。restricted 请求不能因为主线路拥堵就自动跑到不允许的区域；合规拒绝也不能通过 fallback 洗成“成功”。这就像学校规定学生档案只能由档案室保管，教室拥挤并不是把档案搬到校外便利店的理由。</p>
+<h3 id="成本路由比较最坏情况不只看输入单价">成本路由：比较最坏情况，不只看输入单价</h3>
+<p>估算至少要包含输入 Token、允许的最大输出、缓存命中规则、图片/音频计费和可能的重试预留。只看“每百万输入 Token 单价”会低估长输出和多模态任务。对 Agent，还要按<strong>完成一次业务结果的总成本</strong>衡量，而不是单次模型调用的价格。</p>
+<h2 id="五429-不是一种原因必须同时看状态码和错误子码">五、429 不是一种原因：必须同时看状态码和错误子码</h2>
+<p>RFC 6585 定义 429 为 Too Many Requests，并允许服务端返回 <code>Retry-After</code>。现实中的模型 API 还可能用相同 HTTP 状态承载不同业务原因，例如临时速率限制、组织配额耗尽或余额不足。于是“看见 429 就换模型”会把语义压扁。</p>
+<p><img alt="原创错误决策图：临时限流和短暂 5xx 可以有界降级，认证、余额和合规错误必须停止。" src="/post-images/ai-gateway-routing-fallback-circuit-breaker/03-error-decision.png"></p>
+<p><em>图 5：原创图。路由决策需要 <code>HTTP status + provider code + 本地策略</code>。同样是 429，<code>rate_limited</code> 可以进入有界 fallback，<code>insufficient_quota</code> 应停止；不能只用状态码做一个巨大 switch。</em></p>
+<p>建议先把各厂商错误归一化为本地稳定分类，再由策略决定动作：</p>
+<table>
+<thead>
+<tr>
+<th>归一化原因</th>
+<th>常见信号</th>
+<th>默认动作</th>
+<th>为什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>临时限流</td>
+<td>429 + <code>rate_limited</code>，可参考 <code>Retry-After</code></td>
+<td>有界退避或兼容线路 fallback</td>
+<td>资源可能很快恢复</td>
+</tr>
+<tr>
+<td>短暂上游故障</td>
+<td>500/502/503/504、连接超时</td>
+<td>有界 fallback，计入熔断</td>
+<td>不是请求本身错误</td>
+</tr>
+<tr>
+<td>认证失败</td>
+<td>401、<code>invalid_auth</code></td>
+<td>立即停止、告警</td>
+<td>自动换路会隐藏凭据故障</td>
+</tr>
+<tr>
+<td>权限失败</td>
+<td>403、<code>permission_denied</code></td>
+<td>立即停止</td>
+<td>不能用备用线路绕过授权</td>
+</tr>
+<tr>
+<td>余额/组织配额耗尽</td>
+<td><code>insufficient_quota</code>、<code>balance_exhausted</code></td>
+<td>立即停止</td>
+<td>这是预算事实，不是短暂拥堵</td>
+</tr>
+<tr>
+<td>合规/数据地域拒绝</td>
+<td><code>compliance_denied</code> 等</td>
+<td>立即停止并审计</td>
+<td>fallback 可能构成策略绕过</td>
+</tr>
+<tr>
+<td>参数/上下文错误</td>
+<td>400、schema/context 错误</td>
+<td>修正请求，不重试</td>
+<td>同一坏请求换线路仍然坏</td>
+</tr>
+</tbody>
+</table>
+<p>“立即停止”指<strong>不做自动 provider fallback</strong>，不是把错误吞掉。网关应该返回明确、脱敏、可操作的错误类别，同时触发控制面修复。若组织确实希望在某个 provider 余额耗尽时转移预算，应该提前写成一条经过审批、带总预算的显式策略，而不是把它伪装成普通 429 重试。</p>
+<h2 id="六有界重试不是重试三次而是同时守住四本账">六、有界重试：不是“重试三次”，而是同时守住四本账</h2>
+<p>只设置 <code>max_retries=2</code> 还不够。一条可靠请求至少要有四个相互约束的预算：</p>
+<ol>
+<li><strong>尝试次数预算</strong>：整个调用链总共允许几次，而不是每一层各允许几次。</li>
+<li><strong>时间预算</strong>：每次尝试、退避和 fallback 都从同一个 deadline 扣除。</li>
+<li><strong>Token/成本预算</strong>：失败前已经生成的内容也可能产生用量；下一条线路必须先估算再保留预算。</li>
+<li><strong>并发预算</strong>：限制同一租户、任务和上游的并发，避免 hedging 与重试一起膨胀。</li>
+</ol>
+<p>退避应包含 jitter，避免成千上万客户端在整点同时醒来。<code>Retry-After</code> 是重要信号，但仍要受本地 deadline 和预算约束；上游让你等 30 秒，而用户只剩 800 毫秒，正确结果是尽快失败或走合格备用线路，不是让请求在后台失踪。</p>
+<p>实验中，主线路 80ms 后返回合成 <code>429 rate_limited</code>，网关执行 100ms 确定性退避，备用线路 450ms 完成，总耗时 630ms，仍在 1200ms deadline 内；第三次尝试被统一预算挡住。</p>
+<p><img alt="真实本地实验输出截图：限流型 429 在一次退避后走兼容备用线路，第三次尝试被预算阻止。" src="/post-images/ai-gateway-routing-fallback-circuit-breaker/11-real-bounded-429.png"></p>
+<p><em>图 6：真实本地 stdout 截图。两次尝试、总成本和剩余时间被放在同一条证据链里；<code>outbound_network_calls=0</code> 说明所有 provider 都是本地合成对象。</em></p>
+<p>相反，实验给主线路依次注入 401、余额耗尽型 429 和合规型 403，三种错误全部被归类为 STOP，备用线路调用次数保持为 0。</p>
+<p><img alt="真实本地实验输出截图：401、余额耗尽型 429 与合规 403 全部停止，没有调用备用线路。" src="/post-images/ai-gateway-routing-fallback-circuit-breaker/12-real-terminal-errors.png"></p>
+<p><em>图 7：真实本地 stdout 截图。“服务更可用”不能以隐藏身份、预算或合规根因为代价；这三类错误应进入告警和修复流程。</em></p>
+<h2 id="七熔断器保护的是整条线路不是某一个请求">七、熔断器：保护的是整条线路，不是某一个请求</h2>
+<p>重试预算回答“这一个请求还能试几次”；熔断器回答“大家是否应该暂时别再敲这扇坏门”。没有熔断，成千上万请求会各自礼貌地重试，把一个局部故障变成全平台排队。</p>
+<p><img alt="原创熔断状态图：CLOSED、OPEN、HALF_OPEN 通过失败阈值、冷却时间与探测恢复。" src="/post-images/ai-gateway-routing-fallback-circuit-breaker/04-circuit-breaker.png"></p>
+<p><em>图 8：原创图。家里电路短路后，空气开关先断开；它不会让每件电器继续试十次。冷却后只做一次小探测，确认安全再恢复全部流量。</em></p>
+<p>生产熔断器应注意几个边界：</p>
+<ul>
+<li>按 provider + 模型/部署 + 区域的故障域统计，不要一个模型坏了就熔断全世界；</li>
+<li>只把短暂上游失败、超时和慢调用计入健康窗口，用户参数错误不应污染线路健康；</li>
+<li>401/403 等配置或权限错误应把该路由标记为不可用并告警，而不是反复半开探测；</li>
+<li>设置最小请求量，避免“刚好失败一次”就打开；使用滚动窗口而不是永久累计；</li>
+<li>OPEN 时快速失败或走合格备用线路，不能继续偷偷探测；</li>
+<li>HALF_OPEN 只允许极少量探针，成功关闭，失败重新打开；</li>
+<li>熔断状态变化要进入指标和审计，但不要把凭据 ID 写进公开标签。</li>
+</ul>
+<p>本地实验让同一线路连续三次返回 503，第三次后进入 OPEN；第 4 个请求零上游调用地快速失败。冷却时间没到仍保持 OPEN，到点后只放行一次 HALF_OPEN 探针，探针成功才回到 CLOSED。</p>
+<p><img alt="真实本地实验输出截图：连续 503 打开熔断，冷却前快速失败，半开探针成功后恢复。" src="/post-images/ai-gateway-routing-fallback-circuit-breaker/13-real-circuit-breaker.png"></p>
+<p><em>图 9：真实本地 stdout 截图。实验使用虚拟时钟，所以不用真的等待数秒；状态转换是确定性的，特别适合放进 CI 发布闸门。</em></p>
+<h2 id="八hedging可以降低尾延迟也能让一份答案收到三张账单">八、Hedging：可以降低尾延迟，也能让一份答案收到三张账单</h2>
+<p>Hedging 不是失败后重试，而是第一份请求还没完成时，延迟一小段时间再并发发出相同请求，采用最先返回的答案。它对幂等、只读、尾延迟很长的调用可能有效，但风险也最容易被“平均延迟下降”掩盖。</p>
+<p>实验构造了一个故意悲观的场景：A 在 0ms 接单，B 在 200ms 接单，C 在 400ms 接单；B 最早在 700ms 完成，于是网关采用 B 的答案并取消另外两条。但三条线路都已经接受任务，每条合成成本为 0.036 美元，总成本从 0.036 变成 0.108，正好 3 倍。</p>
+<p><img alt="真实本地实验输出截图：三条 hedged 线路都已接单，只使用一个答案，合成最坏成本达到 3 倍。" src="/post-images/ai-gateway-routing-fallback-circuit-breaker/14-real-hedging-cost.png"></p>
+<p><em>图 10：真实本地 stdout 截图。这是用来验证预算护栏的合成最坏案例，不声称每家 provider 都会以相同方式计费。取消到达时，上游可能尚未工作、已做部分工作或已完成，真实账单要以厂商规则和用量回执为准。</em></p>
+<p>如果确实要用 hedging，我会设置这些门槛：只允许无副作用的模型推理；默认最多两路；超过历史 P95/P99 的动态阈值才发第二路；发出前先保留最坏成本；首个有效答案胜出后立即取消；把 loser 的 Token、时间和费用单独计量；一旦进入工具调用阶段绝不复制执行。流式响应还要更谨慎——第一段内容已经展示给用户后，不能悄悄换成另一模型继续拼接。</p>
+<h2 id="九预算不是报表它必须在调用前挡住请求">九、预算不是报表：它必须在调用前挡住请求</h2>
+<p>很多平台“有成本看板”，但账单发生后才展示曲线。那是后视镜，不是刹车。真正的预算控制应采用<strong>先预留、后结算</strong>：根据输入估算、最大输出和价格表先保留额度；调用完成后按实际用量结算并释放差额；失败或 fallback 前重新计算整条请求的累计最坏成本。</p>
+<p>预算至少分四层：单次模型尝试、整次请求、完整 Agent 任务、租户/团队时间窗口。前两层防止一次异常，后两层防止慢性失控。预算耗尽应该返回明确的 BUDGET_EXCEEDED，不应伪装成模型拥堵。</p>
+<p><img alt="原创审计回执：记录策略、候选、排除原因、尝试和成本，同时不保存凭据与原始 Prompt。" src="/post-images/ai-gateway-routing-fallback-circuit-breaker/05-audit-receipt.png"></p>
+<p><em>图 11：原创图。路线小票像出租车行程单：要写清为什么派这辆车、绕了哪条路、花了多少；不需要把乘客的银行卡密码和整段私人谈话印上去。</em></p>
+<p>实验里，主线路在合成 503 前已经产生 0.020 美元部分费用，备用线路最坏估算 0.042 美元，两者累计 0.062，超过请求上限 0.050，因此 fallback 在调用前被拒绝。</p>
+<p><img alt="真实本地实验输出截图：累计最坏成本超过请求预算，昂贵备用线路未被调用。" src="/post-images/ai-gateway-routing-fallback-circuit-breaker/15-real-budget-audit.png"></p>
+<p><em>图 12：真实本地 stdout 截图。审计保留 request ID、策略版本、候选、排除原因、尝试和合成成本；凭据脱敏，原始 Prompt 不入这份路由日志。</em></p>
+<p>这也解释了为什么我在 <a href="/post/ai-hidden-bill-token-syndrome/">AI 隐形账单</a> 里强调“每个成功结果成本”：压低单价不等于总成本下降。上下文过长时可以参考 <a href="/post/headroom-newapi-openclaw-hermesagent-token-compression-guide/">Headroom + NewAPI Token 压缩实战</a>，但压缩、路由、重试和 hedging 的节省/浪费必须进入同一本任务账。</p>
+<h2 id="十可观测性与审计回答为什么走这条路">十、可观测性与审计：回答“为什么走这条路”</h2>
+<p>一次可解释的路由决定至少要记录：</p>
+<ul>
+<li>request/trace ID、租户的不可逆脱敏标识、数据分类；</li>
+<li>路由策略与价格表版本、所需能力、deadline 和预算；</li>
+<li>候选集，以及每个候选被排除的稳定原因码；</li>
+<li>每次尝试的 provider/模型别名、状态、归一化错误、退避和耗时；</li>
+<li>输入/输出 Token、缓存用量、估算与实际成本；</li>
+<li>fallback、熔断、hedging 和取消事件；</li>
+<li>最终业务结果，而不只是最后一个 HTTP 200。</li>
+</ul>
+<p>不要默认记录完整 Prompt、响应、API Key 或授权头。排障真正需要的通常是结构化元数据、内容哈希、采样后的脱敏片段和可受控访问的证据。OpenTelemetry 的 GenAI semantic conventions 可以作为 span/metric 命名参考，但仍在演进，生产使用应固定版本并建立自己的低基数属性规范。</p>
+<p>我会重点监控：fallback 率、终止错误率、每路 P50/P95/P99、熔断打开时长、半开探测结果、hedge winner/loser Token、取消后用量、每个成功任务成本、预算拒绝数和“不合规候选被正确排除”的数量。<strong>正确拒绝是安全成功，不能简单算成可用性失败。</strong></p>
+<h2 id="十一零网络故障实验7-个-pass-到底证明了什么">十一、零网络故障实验：7 个 PASS 到底证明了什么</h2>
+<p>本文提供的 <a href="/post-files/ai-gateway-routing-fallback-circuit-breaker/ai_gateway_fault_lab.py">Python 标准库实验</a> 不导入任何厂商 SDK，不读取环境凭据，不调用真实模型。脚本把 <code>socket.socket</code> 与 <code>socket.create_connection</code> 替换为 fail-closed guard，若未来误加出站调用会直接报错；当前全部场景的 <code>outbound_attempts</code> 为 0。</p>
+<p>它验证六类机制和一条总安全条件：</p>
+<ol>
+<li>能力、地域、数据分类和预算硬过滤；</li>
+<li>限流型 429 在次数、时间与成本预算内降级；</li>
+<li>401、403、余额耗尽与合规拒绝不触发 fallback；</li>
+<li>连续 503 打开熔断，冷却后由半开探针恢复；</li>
+<li>hedging 的未采用线路也必须进入成本风险统计；</li>
+<li>累计最坏成本超限时在调用前挡住 fallback；</li>
+<li>整个实验零真实凭据、零出站网络。</li>
+</ol>
+<p><img alt="真实本地实验输出截图：AI Gateway 故障实验 7 项验收全部通过。" src="/post-images/ai-gateway-routing-fallback-circuit-breaker/16-real-acceptance.png"></p>
+<p><em>图 13：真实本地 stdout 截图。7/7 PASS 证明的是控制逻辑按预期工作，不证明任何真实 provider 的质量、价格、吞吐或 SLA。</em></p>
+<p>结构化结果会写入 <a href="/post-files/ai-gateway-routing-fallback-circuit-breaker/lab-output/events.jsonl">events.jsonl</a> 与 <a href="/post-files/ai-gateway-routing-fallback-circuit-breaker/lab-output/summary.json">summary.json</a>。所有 provider 名、价格、延迟、Token 和响应均为合成数据，适合教学、回归和 CI，不适合拿来做厂商排行榜。</p>
+<h2 id="十二三平台一键运行windows-11ubuntu-2604macos-26">十二、三平台一键运行：Windows 11、Ubuntu 26.04、macOS 26</h2>
+<p>完整说明见 <a href="/post-files/ai-gateway-routing-fallback-circuit-breaker/README.md">README</a>。三个启动脚本只依赖系统中的 Python 3，不需要 Docker、数据库或第三方服务。</p>
+<h3 id="windows-11">Windows 11</h3>
+<p>下载 <a href="/post-files/ai-gateway-routing-fallback-circuit-breaker/run-windows11.ps1">PowerShell 一键脚本</a> 与同目录实验文件，然后执行：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-powershell" data-lang="powershell"><span style="display:flex;"><span>powershell -ExecutionPolicy Bypass <span style="color:#f92672">-File</span> .\run-windows11.ps1
+</span></span></code></pre></div><p>脚本优先使用 <code>py -3</code>，找不到时尝试 <code>python</code>；最后读取 <code>summary.json</code>，只有 7/7 且出站尝试为 0 才返回成功。</p>
+<h3 id="ubuntu-2604">Ubuntu 26.04</h3>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>bash run-ubuntu-2604.sh
+</span></span></code></pre></div><p>对应的 <a href="/post-files/ai-gateway-routing-fallback-circuit-breaker/run-ubuntu-2604.sh">Ubuntu 一键脚本</a> 使用 <code>set -euo pipefail</code>，执行后再次用标准库解析验收结果。</p>
+<h3 id="macos-26">macOS 26</h3>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>bash run-macos-26.sh
+</span></span></code></pre></div><p><a href="/post-files/ai-gateway-routing-fallback-circuit-breaker/run-macos-26.sh">macOS 一键脚本</a> 与 Ubuntu 版本保持相同验收语义，方便比较不同平台输出。本文素材生成时已在本地 macOS Python 环境实际执行通过。</p>
+<h3 id="人工逐项执行">人工逐项执行</h3>
+<p>如果不想直接跑全部场景，可以人工逐个观察：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>python3 ai_gateway_fault_lab.py --scenario routing
+</span></span><span style="display:flex;"><span>python3 ai_gateway_fault_lab.py --scenario bounded-429
+</span></span><span style="display:flex;"><span>python3 ai_gateway_fault_lab.py --scenario terminal-errors
+</span></span><span style="display:flex;"><span>python3 ai_gateway_fault_lab.py --scenario circuit
+</span></span><span style="display:flex;"><span>python3 ai_gateway_fault_lab.py --scenario hedging
+</span></span><span style="display:flex;"><span>python3 ai_gateway_fault_lab.py --scenario budget-audit
+</span></span></code></pre></div><p>Windows 把 <code>python3</code> 换成 <code>py -3</code> 即可。这里所谓“一键”只运行安全的本地模拟，不会发现、修改或调用你的真实网关。</p>
+<h2 id="十三agent-自动配置方法让-agent-执行但不让它弱化验收">十三、Agent 自动配置方法：让 Agent 执行，但不让它弱化验收</h2>
+<p>我额外提供了一份可直接下载的 <a href="/post-files/ai-gateway-routing-fallback-circuit-breaker/AGENT_TASK.md">AGENT_TASK.md</a>。把实验目录交给本地 Agent，并给出下面的任务即可：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>请只在当前 AI Gateway fault lab 目录内工作：
+</span></span><span style="display:flex;"><span>1. 阅读 README、AGENT_TASK.md 和 Python 实验；
+</span></span><span style="display:flex;"><span>2. 根据 Windows 11 / Ubuntu 26.04 / macOS 26 选择唯一对应脚本；
+</span></span><span style="display:flex;"><span>3. 不添加任何真实 endpoint、主机名、API Key 或网络访问；
+</span></span><span style="display:flex;"><span>4. 执行脚本并解析 lab-output/summary.json；
+</span></span><span style="display:flex;"><span>5. 只有 acceptance.passed=7 且 outbound_attempts=0 才报告成功；
+</span></span><span style="display:flex;"><span>6. 逐项报告失败和 stderr，不得通过删除断言、扩大预算或跳过场景来“修复”。
+</span></span></code></pre></div><p>这与人工执行的区别不是“Agent 有更大权限”，而是它会自动选择脚本、读取结构化结果并整理报告。<strong>自动化不能拥有修改验收标准的自由。</strong> 如果要把策略迁入真实网关，应另开变更单：先导出当前配置、脱敏备份、生成差异、人工批准，再做 shadow/canary；本文的零网络实验不会也不应该自动碰生产环境。</p>
+<h2 id="十四上线前故障注入我会把哪些结果写进发布闸门">十四、上线前故障注入：我会把哪些结果写进发布闸门</h2>
+<p>真实 AI Gateway 上线前，至少要在隔离环境注入这些场景：</p>
+<ul>
+<li>主线路 429 + <code>Retry-After</code>，确认总尝试次数、deadline 和 jitter 生效；</li>
+<li>429 + 余额耗尽子码，确认不会自动换路；</li>
+<li>401、403、合规拒绝，确认错误不被包装成“繁忙”；</li>
+<li>主线路连续 5xx，确认熔断按窗口打开，OPEN 期间上游调用为 0；</li>
+<li>半开探针失败和成功各一次，确认流量不会瞬间全开；</li>
+<li>fallback 缺 tools/JSON 能力，确认即使健康也不会入选；</li>
+<li>restricted 数据只有不合规备用线路，确认宁可明确失败也不越界；</li>
+<li>主调用已有部分 Token，用量加备用最坏估算超预算，确认调用前拒绝；</li>
+<li>hedging loser 在取消前后分别返回，确认用量与浪费可见；</li>
+<li>流式输出已开始后主线路断开，确认不会拼接两份相互矛盾的答案。</li>
+</ul>
+<p>验收指标不是“最终能返回一句话”，而是：重试总次数有上限、重复并发有上限、数据不越界、终止错误不隐藏、熔断能止血、每分钱能归因、每个选择能解释。</p>
+<h2 id="十五落到现有系统newapiheadroom-与-ai-platform-怎么分工">十五、落到现有系统：NewAPI、Headroom 与 AI Platform 怎么分工</h2>
+<p>如果已经运行 NewAPI，可以让它继续承担统一入口、渠道、Token、模型映射、额度和用量；在接入层或其相邻控制模块补齐 request envelope、规范化错误、全链路 retry budget、熔断和决策审计。不要同时在客户端 SDK、Agent 框架和 NewAPI 各开一套独立重试；应选择一个拥有全局 deadline 与成本视角的层做重试所有者，其他层关闭或收窄自动重试。</p>
+<p>Headroom 解决的是长上下文压缩，不是错误分类或熔断。它像仓库门口的真空打包台；AI Gateway 是调度中心。压缩后重新估算 Token 可以改善预算，但不能把 Anthropic 原生协议、OpenAI 兼容协议和工具 schema 不加验证地混到同一 fallback 池。具体迁移边界可参考前面的 <a href="/post/headroom-newapi-openclaw-hermesagent-token-compression-guide/">Headroom 实战</a>。</p>
+<p>在更完整的 AI Platform 中，Turn Manager 提供 deadline 与取消树，AI Gateway 负责模型路由、错误分类和成本，Policy Engine 负责数据/合规资格，Worker 负责工具副作用。模型 fallback 不能复制 Worker 工具执行；这也是“推理重试”和“业务重试”必须分开的原因。整个系列的上下文可从 <a href="/post/ai-platform-architecture-reading-map/">AI Platform 架构阅读地图</a> 进入。</p>
+<h2 id="十六qa">十六、Q&amp;A</h2>
+<h3 id="q1所有-429-都可以换模型吗">Q1：所有 429 都可以换模型吗？</h3>
+<p>不可以。至少要查看 provider 的错误子码、<code>Retry-After</code>、请求预算和本地政策。临时 <code>rate_limited</code> 可以有界退避/降级；余额或组织配额耗尽应默认停止。只看 HTTP 429 会把两种完全不同的事实混在一起。</p>
+<h3 id="q2为什么-401-不直接换一条带独立凭据的线路">Q2：为什么 401 不直接换一条带独立凭据的线路？</h3>
+<p>因为自动换路会让凭据轮换错误长期潜伏，还可能把本应使用指定身份的数据送到别处。默认停止并修复控制面更可审计。如果业务明确允许独立身份池容灾，必须写成显式、审批过、带数据与预算约束的策略，而不是通用 <code>if error</code>。</p>
+<h3 id="q3重试几次最合适">Q3：重试几次最合适？</h3>
+<p>没有统一数字。根据总 deadline、请求到达率、上游容量、失败持续时间和成本决定。交互请求通常宁可少而快；离线任务可以更久，但也要共享总预算。比具体次数更重要的是：只允许一个层拥有重试，使用指数退避 + jitter，并把每次尝试记进同一 trace。</p>
+<h3 id="q4熔断打开后是不是所有请求都失败">Q4：熔断打开后是不是所有请求都失败？</h3>
+<p>对被熔断的线路应快速失败；如果存在经过硬过滤的兼容备用线路，可以在总预算内降级。没有合格线路时，明确失败比发送到不兼容/不合规模型更正确。</p>
+<h3 id="q5什么时候值得用-hedging">Q5：什么时候值得用 hedging？</h3>
+<p>只读、幂等、尾延迟昂贵、输出较短、候选协议和质量相近，并且预算愿意支付重复调用时。不要 hedge 工具副作用；不要在没有 loser 用量指标时上线；不要把三路并发当默认值。</p>
+<h3 id="q6取消-loser-就不会计费了吗">Q6：取消 loser 就不会计费了吗？</h3>
+<p>不能这样保证。取消是尽力而为：上游收到前可能已经开始或完成计算，不同 provider 的计费规则也不同。按最坏成本预留，按真实 usage 回执结算，并持续测量取消后的浪费。</p>
+<h3 id="q7ai-gateway-一定要单独做成微服务吗">Q7：AI Gateway 一定要单独做成微服务吗？</h3>
+<p>不一定。早期可以是模块化单体中的明确模块。关键是它拥有统一错误分类、预算和路由证据，不是进程数量。只有扩缩、权限、团队或故障域真的不同，才值得拆服务。</p>
+<h3 id="q8只用-newapi-的重试和渠道优先级够不够">Q8：只用 NewAPI 的重试和渠道优先级够不够？</h3>
+<p>自用轻量场景可能够；涉及 restricted 数据、跨区域、多协议工具调用和严格预算时，还要验证它当前版本的错误分类、路由粒度、熔断、全链路 deadline 与审计是否覆盖需求。不要根据产品名称猜能力，要用故障注入证明。</p>
+<h3 id="q9本实验为什么不调用真实模型">Q9：本实验为什么不调用真实模型？</h3>
+<p>因为它验证的是控制逻辑。真实 API 会引入网络、凭据、价格变化和不可重复延迟，反而让状态机测试不稳定。先用确定性零网络实验证明边界，再在隔离环境做 provider 合同测试和 canary，两类证据互补。</p>
+<h3 id="q10最先落地哪三项">Q10：最先落地哪三项？</h3>
+<p>统一错误分类、贯穿全链路的 retry/deadline budget、可解释的 route decision log。它们先回答“能不能重试、还能花多少、为什么走这条路”，然后再加熔断、hedging 和高级评分。</p>
+<h2 id="十七参考资料与最终底线">十七、参考资料与最终底线</h2>
+<ul>
+<li><a href="https://www.rfc-editor.org/rfc/rfc6585">RFC 6585：HTTP 429 Too Many Requests</a></li>
+<li><a href="https://aws.amazon.com/builders-library/timeouts-retries-and-backoff-with-jitter/">AWS Builders&rsquo; Library：Timeouts, retries, and backoff with jitter</a></li>
+<li><a href="https://learn.microsoft.com/azure/architecture/patterns/retry">Microsoft Azure Architecture Center：Retry pattern</a></li>
+<li><a href="https://learn.microsoft.com/azure/architecture/patterns/circuit-breaker">Microsoft Azure Architecture Center：Circuit Breaker pattern</a></li>
+<li><a href="https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-metrics/">OpenTelemetry：Generative AI metrics semantic conventions</a></li>
+</ul>
+<p>这篇文章不是反对 fallback。恰恰相反，我希望 fallback 真正成为安全网，而不是一块盖住根因的毯子。最终底线可以压缩成一句话：<strong>先判断这条路有没有资格，再判断值不值得走；只为可恢复错误重试，只在总时间与总成本内重试；身份、余额和合规说“停”时，任何备用模型都无权替它们说“继续”。</strong></p>
+        </div>
+    </article>
+
+    
+  
+
+
+
+
+    
+<div class="site-stats" aria-label="访问统计">
+    <span>本文阅读量 <span data-page-view-count>--</span></span>
+</div>
+
+
+    
+    <script type="text/javascript" src="https://js.users.51.la/21044367.js"></script>
+    <script charset="UTF-8" id="LA_COLLECT" src="//sdk.51.la/js-sdk-pro.min.js"></script>
+    <script>LA.init({id: "1vVTUWl7zoRjnKXi",ck: "1vVTUWl7zoRjnKXi"})</script>
+    <script src="https://sdk.51.la/perf/js-sdk-perf.min.js" crossorigin="anonymous"></script>
+    <script>
+      new LingQue.Monitor().init({id:"202teQt8THXwqyve"});
+    </script>
+    <script defer src="/js/page-views.js"></script>
+    <div class="la-theme-widget" data-51la-widget aria-label="51.la 网站统计"></div>
+    <script defer src="/js/51la-theme-widget.js"></script>
+</body>
+</html>

@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+<html lang="en-US">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>A 429 Does Not Mean ‘Switch Models’: How One AI Gateway Failure Can Become a Triple Bill - Margrop Blog</title>
+<meta name="description" content="The conclusion first Switching models as soon as an upstream returns 429 looks like high availability. It can instead create three failures at once: turn brief …">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://blog.margrop.net/en/post/ai-gateway-routing-fallback-circuit-breaker/"><meta property="og:site_name" content="Margrop Blog">
+<meta property="og:title" content="A 429 Does Not Mean ‘Switch Models’: How One AI Gateway Failure Can Become a Triple Bill - Margrop Blog">
+<meta property="og:description" content="The conclusion first Switching models as soon as an upstream returns 429 looks like high availability. It can instead create three failures at once: turn brief …">
+<meta property="og:url" content="https://blog.margrop.net/en/post/ai-gateway-routing-fallback-circuit-breaker/">
+<meta property="og:locale" content="en_US"><meta property="og:type" content="article"><meta property="og:locale:alternate" content="zh_CN"><meta property="og:image" content="https://blog.margrop.net/images/avatar.png"><meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="A 429 Does Not Mean ‘Switch Models’: How One AI Gateway Failure Can Become a Triple Bill - Margrop Blog">
+<meta name="twitter:description" content="The conclusion first Switching models as soon as an upstream returns 429 looks like high availability. It can instead create three failures at once: turn brief …"><meta name="twitter:image" content="https://blog.margrop.net/images/avatar.png"><link rel="alternate" hreflang="zh-CN" href="https://blog.margrop.net/post/ai-gateway-routing-fallback-circuit-breaker/"><link rel="alternate" hreflang="en-US" href="https://blog.margrop.net/en/post/ai-gateway-routing-fallback-circuit-breaker/"><link rel="alternate" hreflang="x-default" href="https://blog.margrop.net/"><meta property="article:published_time" content="2026-08-23T20:20:00&#43;08:00">
+<meta property="article:modified_time" content="2026-08-23T20:20:00&#43;08:00"><meta property="article:tag" content="AI Agent"><meta property="article:tag" content="AI Gateway"><meta property="article:tag" content="模型网关"><meta property="article:tag" content="NewAPI"><meta property="article:tag" content="架构"><meta property="article:tag" content="平台工程"><meta property="article:tag" content="可观测性"><meta property="article:tag" content="工程实践"><script type="application/ld+json">{"@context":"https://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"Margrop"},"dateModified":"2026-08-23T20:20:00+08:00","datePublished":"2026-08-23T20:20:00+08:00","description":"The conclusion first Switching models as soon as an upstream returns 429 looks like high availability. It can instead create three failures at once: turn brief …","headline":"A 429 Does Not Mean ‘Switch Models’: How One AI Gateway Failure Can Become a Triple Bill","mainEntityOfPage":"https://blog.margrop.net/en/post/ai-gateway-routing-fallback-circuit-breaker/","url":"https://blog.margrop.net/en/post/ai-gateway-routing-fallback-circuit-breaker/"}</script>
+    <meta name="baidu-site-verification" content="code-sVFZ8SER59" />
+    <script src="/js/theme-toggle.js"></script>
+
+    
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-3J2W592DHJ"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-3J2W592DHJ');
+    </script>
+
+    <style>
+    :root {
+        color-scheme: light;
+        --page-bg: #fff;
+        --surface-bg: #f4f4f4;
+        --text: #222;
+        --muted: #666;
+        --subtle: #777;
+        --border: #eee;
+        --border-strong: #ddd;
+        --link: #006CFF;
+        --tag-bg: #eee;
+        --button-bg: #fff;
+        --button-primary-bg: #333;
+    }
+    @media (prefers-color-scheme: dark) {
+        :root:not([data-theme]) {
+            color-scheme: dark;
+            --page-bg: #111315;
+            --surface-bg: #1d2126;
+            --text: #e8eaed;
+            --muted: #aeb4bd;
+            --subtle: #9aa2ad;
+            --border: #30353d;
+            --border-strong: #454c56;
+            --link: #79b8ff;
+            --tag-bg: #2a3038;
+            --button-bg: #1d2126;
+            --button-primary-bg: #e8eaed;
+        }
+    }
+    html[data-theme="dark"] {
+        color-scheme: dark;
+        --page-bg: #111315;
+        --surface-bg: #1d2126;
+        --text: #e8eaed;
+        --muted: #aeb4bd;
+        --subtle: #9aa2ad;
+        --border: #30353d;
+        --border-strong: #454c56;
+        --link: #79b8ff;
+        --tag-bg: #2a3038;
+        --button-bg: #1d2126;
+        --button-primary-bg: #e8eaed;
+    }
+    html[data-theme="light"] {
+        color-scheme: light;
+        --page-bg: #fff;
+        --surface-bg: #f4f4f4;
+        --text: #222;
+        --muted: #666;
+        --subtle: #777;
+        --border: #eee;
+        --border-strong: #ddd;
+        --link: #006CFF;
+        --tag-bg: #eee;
+        --button-bg: #fff;
+        --button-primary-bg: #333;
+    }
+    body { background: var(--page-bg); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 860px; margin: 0 auto; padding: 20px; line-height: 1.7; color: var(--text); }
+    h1 { border-bottom: 2px solid var(--border-strong); padding-bottom: 10px; }
+    article > h1 { font-size: 2em; line-height: 1.3; margin-bottom: 12px; }
+    .post-list { list-style: none; padding: 0; }
+    .post-list li { margin: 15px 0; }
+    .post-list a { text-decoration: none; color: var(--text); font-size: 18px; }
+    .post-list a:hover { color: var(--link); }
+    .date { color: var(--muted); font-size: 14px; margin-right: 10px; }
+    .tags { margin-top: 8px; }
+    .tag { background: var(--tag-bg); padding: 2px 8px; border-radius: 3px; font-size: 12px; margin-right: 5px; display: inline-block; }
+    nav { margin-bottom: 18px; border-bottom: 1px solid var(--border); padding-bottom: 15px; }
+    nav a { margin-right: 20px; text-decoration: none; color: var(--text); font-size: 16px; }
+    nav a:hover { color: var(--link); }
+    .language-switcher { display: flex; align-items: center; gap: 10px; margin: -8px 0 26px; }
+    .language-switcher a { display: inline-block; padding: 4px 10px; border: 1px solid var(--border-strong); border-radius: 999px; color: var(--muted); text-decoration: none; font-size: 14px; }
+    .language-switcher a.active { background: var(--link); border-color: var(--link); color: #fff; }
+    .content { line-height: 1.8; }
+    .content code { background: var(--surface-bg); padding: 2px 5px; border-radius: 3px; }
+    .content pre { background: var(--surface-bg); padding: 15px; overflow-x: auto; border-radius: 5px; }
+    .content img { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+    .content .code-snippet__fix {
+        margin: 0 0 1.5em;
+    }
+    .content .code-snippet__fix .code-snippet__line-index {
+        display: none !important;
+    }
+    .meta { color: var(--muted); font-size: 14px; margin-bottom: 14px; }
+    .meta-separator { margin: 0 6px; color: var(--subtle); }
+    .site-stats { display: flex; flex-wrap: wrap; gap: 10px 18px; margin: 28px 0 8px; padding-top: 12px; border-top: 1px solid var(--border); color: var(--subtle); font-size: 12px; }
+    a { color: var(--link); }
+    .hero { padding: 12px 0 24px; }
+    .hero h1 { border-bottom: 2px solid #333; }
+    .eyebrow { color: var(--muted); font-size: 12px; letter-spacing: .12em; margin: 0 0 8px; }
+    .hero-tagline { font-size: 18px; margin: 12px 0 8px; }
+    .hero-copy { color: var(--muted); margin: 0 0 14px; }
+    .hero-actions { margin: 14px 0 4px; }
+    .button { display: inline-block; margin-right: 12px; border: 1px solid var(--border-strong); border-radius: 3px; padding: 4px 10px; text-decoration: none; color: var(--text); background: var(--button-bg); font-size: 14px; }
+    .button-primary { background: var(--button-primary-bg); border-color: var(--button-primary-bg); color: var(--page-bg); }
+    .theme-toggle { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 1px solid var(--border-strong); border-radius: 999px; background: var(--button-bg); color: var(--text); cursor: pointer; font: inherit; font-size: 16px; }
+    .theme-toggle:hover { border-color: var(--link); color: var(--link); }
+    .la-theme-widget { margin: 12px 0 20px; min-height: 24px; color: var(--text); }
+    .identity-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: 16px 0; }
+    .identity-grid div { display: flex; flex-direction: column; }
+    .identity-grid strong { font-size: 15px; }
+    .identity-grid span, .topic-card span, .featured-list small { color: var(--muted); font-size: 13px; }
+    .section-block { padding-top: 28px; }
+    .section-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+    .section-heading h2 { margin: 0; }
+    .section-heading a { font-size: 14px; }
+    .topic-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+    .topic-card { display: block; padding: 14px; border: 1px solid var(--border); text-decoration: none; color: var(--text); }
+    .topic-card:hover { border-color: var(--border-strong); }
+    .topic-card strong { display: block; margin: 4px 0; font-size: 17px; }
+    .topic-index, .featured-list > a > span { color: var(--muted) !important; font-size: 12px !important; }
+    .featured-list { border-top: 1px solid var(--border); }
+    .featured-list > a { display: flex; gap: 14px; padding: 12px 0; border-bottom: 1px solid var(--border); text-decoration: none; color: var(--text); }
+    .featured-list div { display: flex; flex-direction: column; }
+    .latest-block { max-width: 860px; }
+    @media (max-width: 680px) {
+        body { padding: 16px; }
+        nav a { display: inline-block; margin-right: 12px; margin-bottom: 8px; }
+        .identity-grid { grid-template-columns: repeat(2, 1fr); }
+        .topic-grid { grid-template-columns: 1fr; }
+    }
+</style>
+
+</head>
+<body>
+    <nav>
+  <a href="/en/">Home</a>
+  <a href="/en/start-here/">Start Here</a>
+  <a href="/en/career/">Portfolio</a>
+  <a href="/en/tag/ai/">AI Agent</a>
+  <a href="/en/tag/docker/">Self-hosting</a>
+  <a href="/en/tag/%e8%bf%90%e7%bb%b4/">Engineering</a>
+  <a href="/en/post/">Archive</a>
+  <a href="/en/tags/">Tags</a>
+  <a href="/en/about/">About</a>
+  <a href="https://github.com/margrop" target="_blank" rel="noopener">GitHub</a>
+</nav>
+
+    <div class="language-switcher">
+  <button class="theme-toggle" type="button" data-theme-toggle aria-label="切换到暗黑模式" aria-pressed="false">🌙</button>
+
+  
+  
+    <a href="/post/ai-gateway-routing-fallback-circuit-breaker/" class="">中文</a>
+  
+    <a href="/en/post/ai-gateway-routing-fallback-circuit-breaker/" class="active">English</a>
+  
+  
+</div>
+
+    
+    <article>
+        <h1>A 429 Does Not Mean ‘Switch Models’: How One AI Gateway Failure Can Become a Triple Bill</h1>
+        <div class="meta">
+            Published: 2026-08-23
+            <span class="meta-separator">·</span>
+            <span>阅读量 <span data-page-view-count>--</span></span>
+        </div>
+        
+<div class="tags">
+    
+    <a href="/en/tag/ai-agent/"><span class="tag">AI Agent</span></a>
+    
+    <a href="/en/tag/ai-gateway/"><span class="tag">AI Gateway</span></a>
+    
+    <a href="/en/tag/%E6%A8%A1%E5%9E%8B%E7%BD%91%E5%85%B3/"><span class="tag">模型网关</span></a>
+    
+    <a href="/en/tag/newapi/"><span class="tag">NewAPI</span></a>
+    
+    <a href="/en/tag/%E6%9E%B6%E6%9E%84/"><span class="tag">架构</span></a>
+    
+    <a href="/en/tag/%E5%B9%B3%E5%8F%B0%E5%B7%A5%E7%A8%8B/"><span class="tag">平台工程</span></a>
+    
+    <a href="/en/tag/%E5%8F%AF%E8%A7%82%E6%B5%8B%E6%80%A7/"><span class="tag">可观测性</span></a>
+    
+    <a href="/en/tag/%E5%B7%A5%E7%A8%8B%E5%AE%9E%E8%B7%B5/"><span class="tag">工程实践</span></a>
+    
+</div>
+
+
+        <div class="content">
+            <blockquote>
+<p><strong>The conclusion first</strong></p>
+<p>Switching models as soon as an upstream returns 429 looks like high availability. It can instead create three failures at once: turn brief congestion into a retry storm, send classified data to an ineligible region, and let several accepted model calls generate one useful answer but several bills. The answer is not to remove fallback. It is to route in the right order: <strong>apply hard capability, residency, data-classification, and budget constraints first; rank the eligible routes by health, latency, and cost second; then retry only normalized, recoverable failures inside one bounded budget.</strong> A transient rate-limit 429 or brief 5xx may be eligible for fallback. A 401, 403, exhausted balance, or compliance denial must stop and expose the real cause. I built a deterministic, standard-library Python lab with no network and no credentials to prove routing filters, bounded 429 fallback, circuit breaking, hedging cost, and audit budgets. All seven acceptance checks pass.</p>
+</blockquote>
+<p><img alt="Original cover: 429 does not mean retry everything; an AI Gateway must route, bound, and prove." src="/post-images/ai-gateway-routing-fallback-circuit-breaker/00-cover.png"></p>
+<p><em>Figure 1: original deterministic PNG cover. Every provider, price, latency, token count, and failure in this article is synthetic teaching data, not a real vendor price or SLA claim.</em></p>
+<h2 id="1-background-how-fallback-turns-from-a-safety-net-into-an-amplifier">1. Background: how fallback turns from a safety net into an amplifier</h2>
+<p>In my <a href="/en/post/ai-platform-production-reference-architecture/">production AI Platform reference architecture</a>, the AI Gateway sits in the control plane. It does not merely forward HTTP. It understands model capability, context, data boundaries, cost, and fallback eligibility. Yet a surprising number of implementations reduce that responsibility to this:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>try primary model
+</span></span><span style="display:flex;"><span>if error:
+</span></span><span style="display:flex;"><span>    try fallback A
+</span></span><span style="display:flex;"><span>if error:
+</span></span><span style="display:flex;"><span>    try fallback B
+</span></span></code></pre></div><p>The code is short; the incident can be very long. The primary route returns 429, the application retries twice, the SDK retries twice more, the gateway tries two other models, and the outer Agent reruns the complete turn after its deadline. Every layer believes it made one polite recovery attempt. Multiplied together, they behave like several children pressing the elevator button at once: the elevator does not arrive faster, but the controller receives much more work.</p>
+<p>Model traffic also is not an ordinary static-file request. One candidate may lack tool calling or strict JSON. Some data may be required to stay in one region. Context limits, input/output pricing, content rules, and streaming event formats vary. Once streaming has begun, swapping models can even splice two incompatible answers into one user-visible message. <strong>A route returning HTTP 200 proves that packets travelled; it does not prove that the route was suitable for this request.</strong></p>
+<h2 id="2-symptoms-six-production-disorders-grown-from-one-429">2. Symptoms: six production disorders grown from one 429</h2>
+<p>Bad routing rarely presents as a clean outage. It appears as several confusing symptoms:</p>
+<ol>
+<li><strong>Tail latency keeps growing.</strong> Every layer retries, so the user waits until the end to see failure. The dashboard shows only the final attempt and hides the time spent before it.</li>
+<li><strong>The bill grows faster than successful work.</strong> Hedging starts two or three calls and consumes only the fastest answer, while the other upstreams may already be generating tokens.</li>
+<li><strong>Quality changes silently.</strong> The fallback lacks the same tool, structured-output, or context contract. The HTTP call succeeds, but strict JSON becomes prose.</li>
+<li><strong>Safety boundaries are bypassed.</strong> The primary route refuses content for a compliance reason; the gateway sends the same data to a route with different rules. That is automated policy bypass, not resilience.</li>
+<li><strong>Configuration errors disappear.</strong> A 401 becomes “all models are busy.” Operators scale capacity while the invalid credential remains buried in a nested log.</li>
+<li><strong>The outage feeds itself.</strong> A failing upstream remains overloaded because new requests and retries keep knocking. Eventually fallback traffic overloads the healthy route too.</li>
+</ol>
+<p>Think of ride dispatch during a storm. If there is no nearby taxi, expanding the search radius may help. If the passenger&rsquo;s identity document is invalid, changing taxi companies cannot make it valid. If the destination is inside a restricted zone, a driver must not sneak around the checkpoint. An AI Gateway needs to be dispatcher, triage desk, and ledger—not an automatic phone dialler.</p>
+<h2 id="3-draw-the-boundary-first-ai-gateway-is-not-api-gateway">3. Draw the boundary first: AI Gateway is not API Gateway</h2>
+<p>An API Gateway and an AI Gateway can be adjacent and may share infrastructure, but they answer different questions.</p>
+<p><img alt="Original comparison: API Gateway and AI Gateway own adjacent but different decisions." src="/post-images/ai-gateway-routing-fallback-circuit-breaker/01-api-vs-ai-gateway.png"></p>
+<p><em>Figure 2: original diagram. An API Gateway is like the entrance to a shopping centre: identity, doorway, and crowd control. An AI Gateway is closer to hospital triage: speciality, severity, available capacity, distance, and price. A production system needs both responsibilities.</em></p>
+<p>An API Gateway typically owns ingress authentication, URL and protocol routing, tenant quota, edge rate limits, WAF controls, certificates, and ingress logs. The AI Gateway must additionally decide:</p>
+<ul>
+<li>whether a model supports tools, vision, audio, JSON Schema, or the required context length;</li>
+<li>whether the data class may enter a provider, region, or deployment type;</li>
+<li>how much deadline, token allowance, money, and quality budget remains;</li>
+<li>whether the error means temporary congestion, upstream failure, bad credentials, exhausted funds, or a policy denial;</li>
+<li>whether fallback is protocol-compatible and uses the same prompt and tool-schema contract;</li>
+<li>how much time and budget every attempt consumed, why candidates were excluded, and how the final choice can be audited.</li>
+</ul>
+<p>A <a href="/en/post/newapi-self-hosted-relay-station/">self-hosted NewAPI relay</a> is a useful foundation for consolidating models, channels, tokens, and usage. A single entrance, however, does not automatically create a complete routing policy. A production design still needs explicit ownership of the request envelope, normalized errors, total retry budget, circuit breaker, and decision evidence around that entrance.</p>
+<h2 id="4-route-correctly-hard-eligibility-first-weighted-preference-second">4. Route correctly: hard eligibility first, weighted preference second</h2>
+<p>Many routers immediately ask which model is cheapest or fastest. That order is wrong. Capability, residency, compliance, and task type are <strong>eligibility constraints</strong>. An ineligible route does not enter the race. Price and latency rank only the candidates that remain.</p>
+<p><img alt="Original routing funnel: capability, residency, and classification filter candidates before health, latency, and price scoring." src="/post-images/ai-gateway-routing-fallback-circuit-breaker/02-routing-funnel.png"></p>
+<p><em>Figure 3: original diagram. A hospital does not send a broken arm to dentistry because dentistry is cheaper today. A dispatcher cannot send a car parked in another city merely because it is idle. Hard constraints precede preference scoring.</em></p>
+<p>I recommend creating an immutable, structured envelope before routing. At minimum it contains:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-json" data-lang="json"><span style="display:flex;"><span>{
+</span></span><span style="display:flex;"><span>  <span style="color:#f92672">&#34;request_id&#34;</span>: <span style="color:#e6db74">&#34;req-demo-001&#34;</span>,
+</span></span><span style="display:flex;"><span>  <span style="color:#f92672">&#34;required_capabilities&#34;</span>: [<span style="color:#e6db74">&#34;tools&#34;</span>, <span style="color:#e6db74">&#34;json&#34;</span>],
+</span></span><span style="display:flex;"><span>  <span style="color:#f92672">&#34;allowed_regions&#34;</span>: [<span style="color:#e6db74">&#34;region-a&#34;</span>],
+</span></span><span style="display:flex;"><span>  <span style="color:#f92672">&#34;data_classification&#34;</span>: <span style="color:#e6db74">&#34;restricted&#34;</span>,
+</span></span><span style="display:flex;"><span>  <span style="color:#f92672">&#34;input_tokens_estimate&#34;</span>: <span style="color:#ae81ff">10000</span>,
+</span></span><span style="display:flex;"><span>  <span style="color:#f92672">&#34;max_output_tokens&#34;</span>: <span style="color:#ae81ff">2000</span>,
+</span></span><span style="display:flex;"><span>  <span style="color:#f92672">&#34;deadline_ms&#34;</span>: <span style="color:#ae81ff">1200</span>,
+</span></span><span style="display:flex;"><span>  <span style="color:#f92672">&#34;max_cost_usd&#34;</span>: <span style="color:#ae81ff">0.05</span>,
+</span></span><span style="display:flex;"><span>  <span style="color:#f92672">&#34;route_policy&#34;</span>: <span style="color:#e6db74">&#34;route-policy-v3&#34;</span>
+</span></span><span style="display:flex;"><span>}
+</span></span></code></pre></div><p>These are synthetic values with no real tenant, machine, address, or credential. The router first excludes missing capability, forbidden residency, insufficient classification allowance, and worst-case cost above the request cap. It then orders eligible candidates by rolling health, P95 latency, queue depth, price, and measured quality.</p>
+<p>The local lab puts four synthetic routes in one pool. One is in the wrong region, one lacks tool capability, and one exceeds the worst-case request budget. Only <code>route-fit</code> satisfies every hard constraint.</p>
+<p><img alt="Real local lab output: the router records every exclusion and selects the only eligible route." src="/post-images/ai-gateway-routing-fallback-circuit-breaker/10-real-routing-filter.png"></p>
+<p><em>Figure 4: real local stdout capture. The lab makes no network call. The winner is not “the first endpoint that answered”; it is the route left after capability, residency, classification, and cost filtering.</em></p>
+<h3 id="capability-routing-a-model-name-is-not-a-capability-contract">Capability routing: a model name is not a capability contract</h3>
+<p>Do not encode “model X always supports tools” in business code. Capabilities should be versioned registry data validated by small contract probes. Tool calls, strict JSON, multimodal inputs, context limits, output limits, and streaming event shapes can vary by provider, model revision, and compatibility adapter.</p>
+<h3 id="residency-and-data-class-the-shortest-route-may-be-illegal">Residency and data class: the shortest route may be illegal</h3>
+<p>Classify data as public, internal, restricted, or another local scheme. Declare the maximum class and allowed regions for each route. A restricted request must not leave its permitted region because the primary is congested. A compliance refusal must not be washed into success by fallback. If school records belong in the records office, an overcrowded classroom is not permission to store them in a shop across the street.</p>
+<h3 id="cost-routing-estimate-the-worst-case-not-only-the-input-price">Cost routing: estimate the worst case, not only the input price</h3>
+<p>An estimate should cover input tokens, permitted maximum output, cache rules, image or audio charges, and reserved retry capacity. “Price per million input tokens” alone underestimates long output and multimodal work. For an Agent, the meaningful unit is <strong>the total cost of one completed business outcome</strong>, not the price of one model invocation.</p>
+<h2 id="5-a-429-is-not-one-cause-read-status-and-provider-sub-code">5. A 429 is not one cause: read status and provider sub-code</h2>
+<p>RFC 6585 defines 429 Too Many Requests and allows a server to supply <code>Retry-After</code>. Model APIs may use the same HTTP status for different business conditions: a brief request-rate limit, an exhausted organisation quota, or insufficient funds. “If 429, switch” destroys that distinction.</p>
+<p><img alt="Original error decision: transient rate limits and 5xx may fall back; authentication, balance, and compliance failures stop." src="/post-images/ai-gateway-routing-fallback-circuit-breaker/03-error-decision.png"></p>
+<p><em>Figure 5: original diagram. The routing decision needs <code>HTTP status + provider code + local policy</code>. The same 429 can carry <code>rate_limited</code>, eligible for bounded fallback, or <code>insufficient_quota</code>, which must stop.</em></p>
+<p>Normalize provider-specific responses into a stable internal taxonomy before applying policy:</p>
+<table>
+<thead>
+<tr>
+<th>Normalized cause</th>
+<th>Typical signal</th>
+<th>Default action</th>
+<th>Reason</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Temporary rate limit</td>
+<td>429 + <code>rate_limited</code>, perhaps <code>Retry-After</code></td>
+<td>Bounded backoff or compatible fallback</td>
+<td>Capacity may recover quickly</td>
+</tr>
+<tr>
+<td>Transient upstream failure</td>
+<td>500/502/503/504 or connection timeout</td>
+<td>Bounded fallback; count toward breaker</td>
+<td>The request itself may be valid</td>
+</tr>
+<tr>
+<td>Authentication failure</td>
+<td>401 or <code>invalid_auth</code></td>
+<td>Stop and alert</td>
+<td>Switching hides a credential failure</td>
+</tr>
+<tr>
+<td>Permission failure</td>
+<td>403 or <code>permission_denied</code></td>
+<td>Stop</td>
+<td>A fallback must not bypass authorization</td>
+</tr>
+<tr>
+<td>Balance or organisation quota exhausted</td>
+<td><code>insufficient_quota</code>, <code>balance_exhausted</code></td>
+<td>Stop</td>
+<td>This is a budget fact, not congestion</td>
+</tr>
+<tr>
+<td>Compliance or residency denial</td>
+<td><code>compliance_denied</code> and similar</td>
+<td>Stop and audit</td>
+<td>Fallback may become policy bypass</td>
+</tr>
+<tr>
+<td>Invalid request or context</td>
+<td>400, schema/context error</td>
+<td>Repair request; do not retry</td>
+<td>The same bad request stays bad elsewhere</td>
+</tr>
+</tbody>
+</table>
+<p>“Stop” means no automatic provider fallback; it does not mean swallowing the error. The gateway should return a specific, redacted, actionable category and trigger control-plane repair. If an organisation truly wants to move spending after a provider balance is exhausted, that should be a pre-approved policy with an explicit total budget—not a generic 429 retry disguised as resilience.</p>
+<h2 id="6-bounded-retry-four-ledgers-not-merely-retry-twice">6. Bounded retry: four ledgers, not merely “retry twice”</h2>
+<p><code>max_retries=2</code> by itself is not enough. A reliable request needs four budgets that constrain one another:</p>
+<ol>
+<li><strong>Attempt budget.</strong> How many tries are allowed across the complete stack—not separately in every layer.</li>
+<li><strong>Time budget.</strong> Attempts, backoff, and fallback all consume the same deadline.</li>
+<li><strong>Token and money budget.</strong> Work produced before failure may be billable; reserve the next route&rsquo;s worst case before calling it.</li>
+<li><strong>Concurrency budget.</strong> Bound concurrent work per tenant, task, and upstream so hedging and retries cannot multiply freely.</li>
+</ol>
+<p>Backoff needs jitter so thousands of clients do not wake at the same boundary. <code>Retry-After</code> is useful but remains subordinate to the local deadline and budget. If an upstream asks for 30 seconds while an interactive request has 800 milliseconds left, the right result is a quick explicit failure or an eligible fallback—not a request that vanishes into the background.</p>
+<p>In the lab, the primary returns synthetic <code>429 rate_limited</code> after 80ms. The gateway applies a deterministic 100ms demonstration backoff; a compatible fallback succeeds in 450ms. Total time is 630ms inside a 1200ms deadline, and the unified attempt budget blocks a third call.</p>
+<p><img alt="Real local lab output: rate-limit 429 uses one backoff and compatible fallback; the budget blocks a third attempt." src="/post-images/ai-gateway-routing-fallback-circuit-breaker/11-real-bounded-429.png"></p>
+<p><em>Figure 6: real local stdout capture. Attempts, aggregate cost, and remaining time live in one evidence chain. <code>outbound_network_calls=0</code> confirms every provider is a local synthetic object.</em></p>
+<p>The opposite experiment injects 401, a balance-exhaustion 429, and a compliance 403. All three normalize to STOP, and the fallback call count remains zero.</p>
+<p><img alt="Real local lab output: 401, exhausted-balance 429, and compliance 403 all stop without fallback." src="/post-images/ai-gateway-routing-fallback-circuit-breaker/12-real-terminal-errors.png"></p>
+<p><em>Figure 7: real local stdout capture. Availability must not hide identity, budget, or compliance root causes. Those failures enter alerting and repair instead.</em></p>
+<h2 id="7-circuit-breaker-protect-the-route-not-only-one-request">7. Circuit breaker: protect the route, not only one request</h2>
+<p>A retry budget asks, “How many more attempts may this request make?” A circuit breaker asks, “Should everyone stop knocking on this broken door for a while?” Without a breaker, thousands of requests each perform their own polite retries and convert a local fault into platform-wide queuing.</p>
+<p><img alt="Original circuit states: CLOSED, OPEN, and HALF_OPEN transition through failure threshold, cooldown, and recovery probe." src="/post-images/ai-gateway-routing-fallback-circuit-breaker/04-circuit-breaker.png"></p>
+<p><em>Figure 8: original diagram. When a household circuit shorts, the breaker opens. It does not allow every appliance to try ten more times. After cooldown, one small probe determines whether full traffic is safe.</em></p>
+<p>A production breaker needs careful boundaries:</p>
+<ul>
+<li>measure per provider + deployment/model + region fault domain rather than disabling the world for one bad route;</li>
+<li>count transient upstream failure, timeout, and slow calls, not user validation errors, in the health window;</li>
+<li>mark 401/403 configuration or permission faults unavailable and alert, rather than repeatedly half-opening them;</li>
+<li>require a minimum sample volume and a rolling window so one unlucky failure does not open the breaker;</li>
+<li>while OPEN, fail fast or use an eligible fallback—do not continue hidden probes;</li>
+<li>allow very few HALF_OPEN probes; close on success and reopen on failure;</li>
+<li>emit state changes as metrics and audit events without placing credential identifiers in public labels.</li>
+</ul>
+<p>The local experiment makes one route return 503 three times. The third failure opens the breaker; request four fast-fails with zero upstream calls. Before cooldown expires it remains OPEN. At the boundary it admits one HALF_OPEN probe and returns to CLOSED only after that probe succeeds.</p>
+<p><img alt="Real local lab output: repeated 503 opens the circuit, cooldown fast-fails, and a successful half-open probe restores service." src="/post-images/ai-gateway-routing-fallback-circuit-breaker/13-real-circuit-breaker.png"></p>
+<p><em>Figure 9: real local stdout capture. A virtual clock makes transitions deterministic and removes real waiting, which is ideal for a CI release gate.</em></p>
+<h2 id="8-hedging-lower-tail-latency-or-three-invoices-for-one-answer">8. Hedging: lower tail latency, or three invoices for one answer</h2>
+<p>Hedging is not retry-after-failure. It starts an identical call after the first has remained incomplete for a delay and adopts the earliest valid result. That can help idempotent, read-only calls with expensive tail latency. It can also hide the largest waste behind a better average.</p>
+<p>The lab deliberately models a pessimistic case. Route A accepts at 0ms, B at 200ms, and C at 400ms. B completes first at 700ms, so the gateway uses B and cancels A and C. All three have already accepted work. At a synthetic $0.036 each, total cost moves from $0.036 to $0.108—exactly 3x.</p>
+<p><img alt="Real local lab output: three hedged routes accept work, one answer is used, and synthetic worst-case cost reaches 3x." src="/post-images/ai-gateway-routing-fallback-circuit-breaker/14-real-hedging-cost.png"></p>
+<p><em>Figure 10: real local stdout capture. This is a synthetic worst case designed to test the budget guard. It does not claim that every provider bills cancellation identically. By the time cancellation arrives, an upstream may have done no work, partial work, or all work; production accounting must use the provider&rsquo;s contract and usage receipt.</em></p>
+<p>If hedging is justified, I impose these gates: inference only, with no side effect; at most two routes by default; a dynamic delay based on historical P95/P99; worst-case cost reserved before the second call; immediate cancellation after the first valid answer; separate loser token, time, and charge metrics; never duplicate a tool execution. Streaming is even stricter. Once text is visible to the user, the gateway cannot silently splice another model into the unfinished answer.</p>
+<h2 id="9-budget-is-not-a-dashboard-it-must-stop-work-before-the-call">9. Budget is not a dashboard: it must stop work before the call</h2>
+<p>Many platforms have a cost dashboard that displays the curve after the invoice exists. That is a rear-view mirror, not a brake. Effective control uses <strong>reserve, then settle</strong>. Reserve from estimated input, maximum output, and the price table; settle with actual usage; release the difference. Recompute aggregate worst-case cost before every retry or fallback.</p>
+<p>Budgets should exist at four levels: model attempt, complete request, complete Agent task, and tenant/team time window. The first two stop a sudden outlier; the latter two stop slow chronic loss. Exhausted budget should produce BUDGET_EXCEEDED, not masquerade as model congestion.</p>
+<p><img alt="Original audit receipt: policy, candidates, exclusions, attempts, and cost are visible while credentials and raw prompt stay out." src="/post-images/ai-gateway-routing-fallback-circuit-breaker/05-audit-receipt.png"></p>
+<p><em>Figure 11: original diagram. A route receipt is like a taxi receipt: why this car was selected, which path it used, and what it cost. It does not need the passenger&rsquo;s card PIN or full private conversation.</em></p>
+<p>In the lab, the primary has already accumulated a synthetic $0.020 partial charge before returning 503. The fallback worst-case estimate is $0.042. Projected aggregate cost is $0.062, above the $0.050 request cap, so the gateway rejects fallback before calling it.</p>
+<p><img alt="Real local lab output: projected aggregate cost exceeds the request cap, so the premium fallback is never called." src="/post-images/ai-gateway-routing-fallback-circuit-breaker/15-real-budget-audit.png"></p>
+<p><em>Figure 12: real local stdout capture. The audit retains request ID, policy version, candidates, exclusions, attempts, and synthetic cost. Credentials are redacted, and the raw prompt is not part of the route log.</em></p>
+<p>This is why my article on <a href="/en/post/ai-hidden-bill-token-syndrome/">AI&rsquo;s hidden bill</a> focuses on cost per successful outcome. Lower unit price does not guarantee lower total cost. When context size is the dominant cost, <a href="/en/post/headroom-newapi-openclaw-hermesagent-token-compression-guide/">Headroom in front of NewAPI</a> may help, but compression savings and retry or hedging waste still belong in the same task ledger.</p>
+<h2 id="10-observability-and-audit-answer-why-this-route">10. Observability and audit: answer “why this route?”</h2>
+<p>An explainable route decision should record at least:</p>
+<ul>
+<li>request/trace ID, an irreversible tenant pseudonym, and data class;</li>
+<li>routing-policy and price-table versions, required capabilities, deadline, and cap;</li>
+<li>candidate set and a stable exclusion reason for every removed candidate;</li>
+<li>provider/model alias, status, normalized error, backoff, and duration for every attempt;</li>
+<li>input/output tokens, cache usage, estimated cost, and settled cost;</li>
+<li>fallback, circuit, hedge, and cancellation events;</li>
+<li>final business outcome, not merely the last HTTP 200.</li>
+</ul>
+<p>Do not log full prompts, responses, API keys, or authorization headers by default. Most investigations need structured metadata, content hashes, carefully sampled redacted excerpts, and controlled access to evidence. OpenTelemetry&rsquo;s GenAI semantic conventions are a useful starting point for spans and metrics, but they continue to evolve. Pin a version and define a low-cardinality local attribute policy.</p>
+<p>The dashboard I want includes fallback rate, terminal-stop rate, route P50/P95/P99, circuit-open duration, half-open result, hedge winner and loser tokens, usage after cancellation, cost per successful task, budget denials, and the number of ineligible routes correctly filtered. <strong>A correct safety refusal is a successful control outcome, not an availability failure.</strong></p>
+<h2 id="11-zero-network-fault-lab-what-seven-pass-results-prove">11. Zero-network fault lab: what seven PASS results prove</h2>
+<p>The downloadable <a href="/post-files/ai-gateway-routing-fallback-circuit-breaker/ai_gateway_fault_lab.py">standard-library Python lab</a> imports no vendor SDK, reads no credential, and calls no real model. It replaces <code>socket.socket</code> and <code>socket.create_connection</code> with a fail-closed guard, so an accidentally added outbound connection fails immediately. The current run reports zero outbound attempts.</p>
+<p>It proves six mechanisms and one global safety condition:</p>
+<ol>
+<li>capability, residency, classification, and budget eligibility filtering;</li>
+<li>rate-limit 429 fallback inside attempt, time, and cost budgets;</li>
+<li>no fallback for 401, 403, exhausted balance, or compliance refusal;</li>
+<li>repeated 503 opens a breaker and one half-open probe restores it;</li>
+<li>hedging&rsquo;s unused routes remain visible as cost risk;</li>
+<li>aggregate worst-case cost blocks fallback before a call;</li>
+<li>the complete lab uses no real credential and no outbound network.</li>
+</ol>
+<p><img alt="Real local lab output: all seven AI Gateway fault-lab acceptance checks pass." src="/post-images/ai-gateway-routing-fallback-circuit-breaker/16-real-acceptance.png"></p>
+<p><em>Figure 13: real local stdout capture. Seven PASS results prove that the control logic behaves as designed. They do not prove a real provider&rsquo;s quality, price, throughput, or SLA.</em></p>
+<p>Structured output is available as <a href="/post-files/ai-gateway-routing-fallback-circuit-breaker/lab-output/events.jsonl">events.jsonl</a> and <a href="/post-files/ai-gateway-routing-fallback-circuit-breaker/lab-output/summary.json">summary.json</a>. Every provider name, price, latency, token count, and response is synthetic. The dataset is suitable for teaching, regression tests, and CI—not a provider leaderboard.</p>
+<h2 id="12-one-click-runs-on-windows-11-ubuntu-2604-and-macos-26">12. One-click runs on Windows 11, Ubuntu 26.04, and macOS 26</h2>
+<p>The full instructions are in the <a href="/post-files/ai-gateway-routing-fallback-circuit-breaker/README.md">README</a>. Each wrapper needs only Python 3 on the machine. No Docker, database, or third-party service is required.</p>
+<h3 id="windows-11">Windows 11</h3>
+<p>Download the <a href="/post-files/ai-gateway-routing-fallback-circuit-breaker/run-windows11.ps1">PowerShell wrapper</a> with the lab files and run:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-powershell" data-lang="powershell"><span style="display:flex;"><span>powershell -ExecutionPolicy Bypass <span style="color:#f92672">-File</span> .\run-windows11.ps1
+</span></span></code></pre></div><p>The wrapper prefers <code>py -3</code>, then tries <code>python</code>. It parses <code>summary.json</code> and succeeds only when all seven checks pass and outbound attempts equal zero.</p>
+<h3 id="ubuntu-2604">Ubuntu 26.04</h3>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>bash run-ubuntu-2604.sh
+</span></span></code></pre></div><p>The <a href="/post-files/ai-gateway-routing-fallback-circuit-breaker/run-ubuntu-2604.sh">Ubuntu wrapper</a> uses <code>set -euo pipefail</code> and re-parses the acceptance file with the standard library.</p>
+<h3 id="macos-26">macOS 26</h3>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>bash run-macos-26.sh
+</span></span></code></pre></div><p>The <a href="/post-files/ai-gateway-routing-fallback-circuit-breaker/run-macos-26.sh">macOS wrapper</a> has identical acceptance semantics so results are easy to compare. I executed it in the local macOS Python environment while producing this article.</p>
+<h3 id="manual-scenario-execution">Manual scenario execution</h3>
+<p>To inspect scenarios one by one:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>python3 ai_gateway_fault_lab.py --scenario routing
+</span></span><span style="display:flex;"><span>python3 ai_gateway_fault_lab.py --scenario bounded-429
+</span></span><span style="display:flex;"><span>python3 ai_gateway_fault_lab.py --scenario terminal-errors
+</span></span><span style="display:flex;"><span>python3 ai_gateway_fault_lab.py --scenario circuit
+</span></span><span style="display:flex;"><span>python3 ai_gateway_fault_lab.py --scenario hedging
+</span></span><span style="display:flex;"><span>python3 ai_gateway_fault_lab.py --scenario budget-audit
+</span></span></code></pre></div><p>On Windows, replace <code>python3</code> with <code>py -3</code>. “One-click” here means one safe local simulation. The scripts do not discover, modify, or call a production gateway.</p>
+<h2 id="13-agent-driven-configuration-automate-execution-not-weaker-acceptance">13. Agent-driven configuration: automate execution, not weaker acceptance</h2>
+<p>I also include a downloadable <a href="/post-files/ai-gateway-routing-fallback-circuit-breaker/AGENT_TASK.md">AGENT_TASK.md</a>. Give the directory to a local Agent with this task:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>Work only inside the current AI Gateway fault-lab directory.
+</span></span><span style="display:flex;"><span>1. Read README, AGENT_TASK.md, and the Python lab.
+</span></span><span style="display:flex;"><span>2. Select exactly one wrapper for Windows 11, Ubuntu 26.04, or macOS 26.
+</span></span><span style="display:flex;"><span>3. Add no real endpoint, machine name, API key, or network access.
+</span></span><span style="display:flex;"><span>4. Run the wrapper and parse lab-output/summary.json.
+</span></span><span style="display:flex;"><span>5. Report success only if acceptance.passed=7 and outbound_attempts=0.
+</span></span><span style="display:flex;"><span>6. Report every failed check and stderr. Never “fix” a run by deleting an
+</span></span><span style="display:flex;"><span>   assertion, enlarging a budget, or skipping a scenario.
+</span></span></code></pre></div><p>The Agent gets no broader authority than a human operator. It selects the OS wrapper, parses structured output, and prepares the report. <strong>Automation must not be free to edit the acceptance standard.</strong> Moving a policy into a real gateway should be a separate controlled change: export and redact the current state, generate a diff, obtain approval, run shadow or canary traffic, and preserve rollback. This zero-network lab deliberately does not touch production.</p>
+<h2 id="14-pre-release-fault-injection-the-evidence-i-put-in-the-gate">14. Pre-release fault injection: the evidence I put in the gate</h2>
+<p>Before a real AI Gateway release, I would inject at least:</p>
+<ul>
+<li>primary 429 with <code>Retry-After</code>, verifying total attempts, deadline, and jitter;</li>
+<li>429 with exhausted-balance sub-code, verifying no automatic route switch;</li>
+<li>401, 403, and compliance refusal, verifying none becomes “busy”;</li>
+<li>repeated primary 5xx, verifying the rolling breaker opens and OPEN makes zero upstream calls;</li>
+<li>one failed and one successful half-open probe, verifying traffic does not flood back instantly;</li>
+<li>a healthy fallback missing tools or JSON, verifying it remains ineligible;</li>
+<li>restricted data with only an out-of-policy fallback, verifying explicit failure rather than boundary crossing;</li>
+<li>partial primary usage plus fallback worst case above the cap, verifying denial before the call;</li>
+<li>hedge losers returning before and after cancellation, verifying waste remains observable;</li>
+<li>a stream failing after visible output, verifying two model answers are never silently concatenated.</li>
+</ul>
+<p>The acceptance target is not “eventually returned some words.” It is: bounded total retries, bounded parallelism, no data-boundary violation, visible terminal causes, a breaker that stops pressure, attributable cost, and an explainable choice.</p>
+<h2 id="15-mapping-the-design-onto-newapi-headroom-and-an-ai-platform">15. Mapping the design onto NewAPI, Headroom, and an AI Platform</h2>
+<p>If NewAPI is already deployed, it can continue to own the unified entrance, channels, tokens, mappings, quota, and usage. Add the request envelope, normalized taxonomy, end-to-end retry budget, breaker, and decision audit in or around the layer that has the required context. Do not independently enable broad retries in the client SDK, Agent framework, and NewAPI. Choose one owner that sees the global deadline and aggregate cost; disable or sharply narrow the others.</p>
+<p>Headroom solves long-context compression, not error classification or circuit breaking. It is the vacuum-packing table at the warehouse entrance; the AI Gateway is dispatch. Re-estimating tokens after compression can improve the budget, but Anthropic-native traffic, OpenAI-compatible traffic, and tool contracts must not enter one fallback pool without contract tests. The <a href="/en/post/headroom-newapi-openclaw-hermesagent-token-compression-guide/">Headroom deployment article</a> covers that protocol boundary in detail.</p>
+<p>In a fuller AI Platform, Turn Manager owns the deadline and cancellation tree; AI Gateway owns model routing, error classification, and cost; Policy Engine owns data and compliance eligibility; Worker owns tool side effects. A model fallback must never duplicate Worker execution. That is why “retry inference” and “retry business action” are distinct policies. The <a href="/en/post/ai-platform-architecture-reading-map/">AI Platform architecture reading map</a> provides the broader series context.</p>
+<h2 id="16-qa">16. Q&amp;A</h2>
+<h3 id="q1-can-every-429-switch-models">Q1: Can every 429 switch models?</h3>
+<p>No. Read the provider sub-code, <code>Retry-After</code>, remaining request budget, and local policy. A temporary <code>rate_limited</code> condition may use bounded backoff or fallback. Exhausted funds or organisation quota should stop by default. HTTP 429 alone is not enough information.</p>
+<h3 id="q2-why-not-route-a-401-to-another-provider-with-independent-credentials">Q2: Why not route a 401 to another provider with independent credentials?</h3>
+<p>Automatic switching lets credential-rotation faults survive unnoticed and may move data away from the identity path intended for it. Stop and repair is the auditable default. If independent credential-pool disaster recovery is a real requirement, encode it as an explicit approved route policy with data and budget constraints—not a universal <code>if error</code> branch.</p>
+<h3 id="q3-how-many-retries-are-correct">Q3: How many retries are correct?</h3>
+<p>There is no universal count. It depends on total deadline, arrival rate, upstream capacity, expected failure duration, and cost. Interactive requests usually benefit from fewer, faster attempts; offline work may wait longer but still needs a shared total budget. More important than the number: one layer owns retry, uses exponential backoff with jitter, and records every attempt in one trace.</p>
+<h3 id="q4-does-open-mean-every-request-fails">Q4: Does OPEN mean every request fails?</h3>
+<p>It means calls to that route fail fast. An eligible fallback may be used inside the remaining total budget. If no candidate passes hard constraints, explicit failure is more correct than using an incompatible or non-compliant model.</p>
+<h3 id="q5-when-is-hedging-worthwhile">Q5: When is hedging worthwhile?</h3>
+<p>When the call is read-only and idempotent, tail latency is materially expensive, output is short, route contracts and quality are close, and the budget can pay for duplicates. Never hedge tool side effects. Do not deploy it without loser-usage metrics, and do not make three-way parallelism the default.</p>
+<h3 id="q6-does-cancelling-the-loser-guarantee-no-charge">Q6: Does cancelling the loser guarantee no charge?</h3>
+<p>No. Cancellation is best effort. The upstream may have started or completed work before receiving it, and providers differ in accounting. Reserve worst-case cost, settle against real usage receipts, and measure waste after cancellation.</p>
+<h3 id="q7-must-the-ai-gateway-be-a-separate-microservice">Q7: Must the AI Gateway be a separate microservice?</h3>
+<p>No. It can begin as a well-owned module in a modular monolith. What matters is one error taxonomy, one aggregate budget, and one decision record—not process count. Split it when scaling, privilege, team ownership, or failure domains truly differ.</p>
+<h3 id="q8-are-newapi-retries-and-channel-priorities-sufficient">Q8: Are NewAPI retries and channel priorities sufficient?</h3>
+<p>They may be sufficient for a small personal deployment. Restricted data, cross-region rules, multiple tool protocols, and strict budgets require verifying the exact deployed version&rsquo;s taxonomy, route granularity, breaker, total deadline, and audit evidence. Test with injected faults rather than guessing from a product label.</p>
+<h3 id="q9-why-does-the-lab-avoid-real-models">Q9: Why does the lab avoid real models?</h3>
+<p>It tests control mechanics. A real API introduces network variance, credentials, changing prices, and non-repeatable latency, making state-machine tests weaker. First prove deterministic boundaries offline; then add provider contract tests and canaries in an isolated environment. The evidence is complementary.</p>
+<h3 id="q10-which-three-controls-should-land-first">Q10: Which three controls should land first?</h3>
+<p>A normalized error taxonomy, one end-to-end retry/deadline budget, and an explainable route-decision record. They answer “may we retry?”, “what remains?”, and “why this path?” Add circuit breaking, hedging, and advanced scoring on top of that foundation.</p>
+<h2 id="17-references-and-the-final-rule">17. References and the final rule</h2>
+<ul>
+<li><a href="https://www.rfc-editor.org/rfc/rfc6585">RFC 6585: HTTP 429 Too Many Requests</a></li>
+<li><a href="https://aws.amazon.com/builders-library/timeouts-retries-and-backoff-with-jitter/">AWS Builders&rsquo; Library: Timeouts, retries, and backoff with jitter</a></li>
+<li><a href="https://learn.microsoft.com/azure/architecture/patterns/retry">Microsoft Azure Architecture Center: Retry pattern</a></li>
+<li><a href="https://learn.microsoft.com/azure/architecture/patterns/circuit-breaker">Microsoft Azure Architecture Center: Circuit Breaker pattern</a></li>
+<li><a href="https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-metrics/">OpenTelemetry: Generative AI metrics semantic conventions</a></li>
+</ul>
+<p>This is not an argument against fallback. I want fallback to remain a safety net instead of becoming a blanket over the root cause. The final rule is simple: <strong>decide whether a route is eligible before deciding whether it is attractive; retry only recoverable failure and only within total time and total cost; when identity, funds, or compliance says stop, no backup model is allowed to say continue.</strong></p>
+        </div>
+    </article>
+
+    
+  
+
+
+
+
+    
+<div class="site-stats" aria-label="访问统计">
+    <span>本文阅读量 <span data-page-view-count>--</span></span>
+</div>
+
+
+    
+    <script type="text/javascript" src="https://js.users.51.la/21044367.js"></script>
+    <script charset="UTF-8" id="LA_COLLECT" src="//sdk.51.la/js-sdk-pro.min.js"></script>
+    <script>LA.init({id: "1vVTUWl7zoRjnKXi",ck: "1vVTUWl7zoRjnKXi"})</script>
+    <script src="https://sdk.51.la/perf/js-sdk-perf.min.js" crossorigin="anonymous"></script>
+    <script>
+      new LingQue.Monitor().init({id:"202teQt8THXwqyve"});
+    </script>
+    <script defer src="/js/page-views.js"></script>
+    <div class="la-theme-widget" data-51la-widget aria-label="51.la 网站统计"></div>
+    <script defer src="/js/51la-theme-widget.js"></script>
+</body>
+</html>

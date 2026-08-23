@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>别只测“回答对不对”：我把限流、注入、崩溃和重复执行写进 AI Platform 发布闸门 - 魔都水滴</title>
+<meta name="description" content="先说结论 一组题回答得很好，不等于 AI Platform 可以上线。模型评测关注概率性的答案质量；生产发布还必须证明身份不会丢、401 不会被错误降级、429 重试有上限、高风险工具会等待审批、重复投递只产生一次副作用、过期记忆进不了 Prompt、策略拒绝不会被算成系统故障，以及每个决定都能用 Trace、审计和成 …">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://blog.margrop.net/post/ai-platform-production-release-gates/"><meta property="og:site_name" content="魔都水滴">
+<meta property="og:title" content="别只测“回答对不对”：我把限流、注入、崩溃和重复执行写进 AI Platform 发布闸门 - 魔都水滴">
+<meta property="og:description" content="先说结论 一组题回答得很好，不等于 AI Platform 可以上线。模型评测关注概率性的答案质量；生产发布还必须证明身份不会丢、401 不会被错误降级、429 重试有上限、高风险工具会等待审批、重复投递只产生一次副作用、过期记忆进不了 Prompt、策略拒绝不会被算成系统故障，以及每个决定都能用 Trace、审计和成 …">
+<meta property="og:url" content="https://blog.margrop.net/post/ai-platform-production-release-gates/">
+<meta property="og:locale" content="zh_CN"><meta property="og:type" content="article"><meta property="og:locale:alternate" content="en_US"><meta property="og:image" content="https://blog.margrop.net/images/avatar.png"><meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="别只测“回答对不对”：我把限流、注入、崩溃和重复执行写进 AI Platform 发布闸门 - 魔都水滴">
+<meta name="twitter:description" content="先说结论 一组题回答得很好，不等于 AI Platform 可以上线。模型评测关注概率性的答案质量；生产发布还必须证明身份不会丢、401 不会被错误降级、429 重试有上限、高风险工具会等待审批、重复投递只产生一次副作用、过期记忆进不了 Prompt、策略拒绝不会被算成系统故障，以及每个决定都能用 Trace、审计和成 …"><meta name="twitter:image" content="https://blog.margrop.net/images/avatar.png"><link rel="alternate" hreflang="zh-CN" href="https://blog.margrop.net/post/ai-platform-production-release-gates/"><link rel="alternate" hreflang="en-US" href="https://blog.margrop.net/en/post/ai-platform-production-release-gates/"><link rel="alternate" hreflang="x-default" href="https://blog.margrop.net/"><meta property="article:published_time" content="2026-08-23T20:40:00&#43;08:00">
+<meta property="article:modified_time" content="2026-08-23T20:40:00&#43;08:00"><meta property="article:tag" content="AI Agent"><meta property="article:tag" content="AI"><meta property="article:tag" content="架构"><meta property="article:tag" content="平台工程"><meta property="article:tag" content="评测"><meta property="article:tag" content="可观测性"><meta property="article:tag" content="SLO"><meta property="article:tag" content="工程实践"><script type="application/ld+json">{"@context":"https://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"魔都水滴"},"dateModified":"2026-08-23T20:40:00+08:00","datePublished":"2026-08-23T20:40:00+08:00","description":"先说结论 一组题回答得很好，不等于 AI Platform 可以上线。模型评测关注概率性的答案质量；生产发布还必须证明身份不会丢、401 不会被错误降级、429 重试有上限、高风险工具会等待审批、重复投递只产生一次副作用、过期记忆进不了 Prompt、策略拒绝不会被算成系统故障，以及每个决定都能用 Trace、审计和成 …","headline":"别只测“回答对不对”：我把限流、注入、崩溃和重复执行写进 AI Platform 发布闸门","mainEntityOfPage":"https://blog.margrop.net/post/ai-platform-production-release-gates/","url":"https://blog.margrop.net/post/ai-platform-production-release-gates/"}</script>
+    <meta name="baidu-site-verification" content="code-sVFZ8SER59" />
+    <script src="/js/theme-toggle.js"></script>
+
+    
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-3J2W592DHJ"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-3J2W592DHJ');
+    </script>
+
+    <style>
+    :root {
+        color-scheme: light;
+        --page-bg: #fff;
+        --surface-bg: #f4f4f4;
+        --text: #222;
+        --muted: #666;
+        --subtle: #777;
+        --border: #eee;
+        --border-strong: #ddd;
+        --link: #006CFF;
+        --tag-bg: #eee;
+        --button-bg: #fff;
+        --button-primary-bg: #333;
+    }
+    @media (prefers-color-scheme: dark) {
+        :root:not([data-theme]) {
+            color-scheme: dark;
+            --page-bg: #111315;
+            --surface-bg: #1d2126;
+            --text: #e8eaed;
+            --muted: #aeb4bd;
+            --subtle: #9aa2ad;
+            --border: #30353d;
+            --border-strong: #454c56;
+            --link: #79b8ff;
+            --tag-bg: #2a3038;
+            --button-bg: #1d2126;
+            --button-primary-bg: #e8eaed;
+        }
+    }
+    html[data-theme="dark"] {
+        color-scheme: dark;
+        --page-bg: #111315;
+        --surface-bg: #1d2126;
+        --text: #e8eaed;
+        --muted: #aeb4bd;
+        --subtle: #9aa2ad;
+        --border: #30353d;
+        --border-strong: #454c56;
+        --link: #79b8ff;
+        --tag-bg: #2a3038;
+        --button-bg: #1d2126;
+        --button-primary-bg: #e8eaed;
+    }
+    html[data-theme="light"] {
+        color-scheme: light;
+        --page-bg: #fff;
+        --surface-bg: #f4f4f4;
+        --text: #222;
+        --muted: #666;
+        --subtle: #777;
+        --border: #eee;
+        --border-strong: #ddd;
+        --link: #006CFF;
+        --tag-bg: #eee;
+        --button-bg: #fff;
+        --button-primary-bg: #333;
+    }
+    body { background: var(--page-bg); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 860px; margin: 0 auto; padding: 20px; line-height: 1.7; color: var(--text); }
+    h1 { border-bottom: 2px solid var(--border-strong); padding-bottom: 10px; }
+    article > h1 { font-size: 2em; line-height: 1.3; margin-bottom: 12px; }
+    .post-list { list-style: none; padding: 0; }
+    .post-list li { margin: 15px 0; }
+    .post-list a { text-decoration: none; color: var(--text); font-size: 18px; }
+    .post-list a:hover { color: var(--link); }
+    .date { color: var(--muted); font-size: 14px; margin-right: 10px; }
+    .tags { margin-top: 8px; }
+    .tag { background: var(--tag-bg); padding: 2px 8px; border-radius: 3px; font-size: 12px; margin-right: 5px; display: inline-block; }
+    nav { margin-bottom: 18px; border-bottom: 1px solid var(--border); padding-bottom: 15px; }
+    nav a { margin-right: 20px; text-decoration: none; color: var(--text); font-size: 16px; }
+    nav a:hover { color: var(--link); }
+    .language-switcher { display: flex; align-items: center; gap: 10px; margin: -8px 0 26px; }
+    .language-switcher a { display: inline-block; padding: 4px 10px; border: 1px solid var(--border-strong); border-radius: 999px; color: var(--muted); text-decoration: none; font-size: 14px; }
+    .language-switcher a.active { background: var(--link); border-color: var(--link); color: #fff; }
+    .content { line-height: 1.8; }
+    .content code { background: var(--surface-bg); padding: 2px 5px; border-radius: 3px; }
+    .content pre { background: var(--surface-bg); padding: 15px; overflow-x: auto; border-radius: 5px; }
+    .content img { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+    .content .code-snippet__fix {
+        margin: 0 0 1.5em;
+    }
+    .content .code-snippet__fix .code-snippet__line-index {
+        display: none !important;
+    }
+    .meta { color: var(--muted); font-size: 14px; margin-bottom: 14px; }
+    .meta-separator { margin: 0 6px; color: var(--subtle); }
+    .site-stats { display: flex; flex-wrap: wrap; gap: 10px 18px; margin: 28px 0 8px; padding-top: 12px; border-top: 1px solid var(--border); color: var(--subtle); font-size: 12px; }
+    a { color: var(--link); }
+    .hero { padding: 12px 0 24px; }
+    .hero h1 { border-bottom: 2px solid #333; }
+    .eyebrow { color: var(--muted); font-size: 12px; letter-spacing: .12em; margin: 0 0 8px; }
+    .hero-tagline { font-size: 18px; margin: 12px 0 8px; }
+    .hero-copy { color: var(--muted); margin: 0 0 14px; }
+    .hero-actions { margin: 14px 0 4px; }
+    .button { display: inline-block; margin-right: 12px; border: 1px solid var(--border-strong); border-radius: 3px; padding: 4px 10px; text-decoration: none; color: var(--text); background: var(--button-bg); font-size: 14px; }
+    .button-primary { background: var(--button-primary-bg); border-color: var(--button-primary-bg); color: var(--page-bg); }
+    .theme-toggle { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 1px solid var(--border-strong); border-radius: 999px; background: var(--button-bg); color: var(--text); cursor: pointer; font: inherit; font-size: 16px; }
+    .theme-toggle:hover { border-color: var(--link); color: var(--link); }
+    .la-theme-widget { margin: 12px 0 20px; min-height: 24px; color: var(--text); }
+    .identity-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: 16px 0; }
+    .identity-grid div { display: flex; flex-direction: column; }
+    .identity-grid strong { font-size: 15px; }
+    .identity-grid span, .topic-card span, .featured-list small { color: var(--muted); font-size: 13px; }
+    .section-block { padding-top: 28px; }
+    .section-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+    .section-heading h2 { margin: 0; }
+    .section-heading a { font-size: 14px; }
+    .topic-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+    .topic-card { display: block; padding: 14px; border: 1px solid var(--border); text-decoration: none; color: var(--text); }
+    .topic-card:hover { border-color: var(--border-strong); }
+    .topic-card strong { display: block; margin: 4px 0; font-size: 17px; }
+    .topic-index, .featured-list > a > span { color: var(--muted) !important; font-size: 12px !important; }
+    .featured-list { border-top: 1px solid var(--border); }
+    .featured-list > a { display: flex; gap: 14px; padding: 12px 0; border-bottom: 1px solid var(--border); text-decoration: none; color: var(--text); }
+    .featured-list div { display: flex; flex-direction: column; }
+    .latest-block { max-width: 860px; }
+    @media (max-width: 680px) {
+        body { padding: 16px; }
+        nav a { display: inline-block; margin-right: 12px; margin-bottom: 8px; }
+        .identity-grid { grid-template-columns: repeat(2, 1fr); }
+        .topic-grid { grid-template-columns: 1fr; }
+    }
+</style>
+
+</head>
+<body>
+    <nav>
+  <a href="/">首页</a>
+  <a href="/start-here/">开始这里</a>
+  <a href="/career/">Portfolio</a>
+  <a href="/tag/ai/">AI Agent</a>
+  <a href="/tag/docker/">Self-hosting</a>
+  <a href="/tag/%e8%bf%90%e7%bb%b4/">Engineering</a>
+  <a href="/post/">归档</a>
+  <a href="/tags/">标签</a>
+  <a href="/about/">关于</a>
+  <a href="https://github.com/margrop" target="_blank" rel="noopener">GitHub</a>
+</nav>
+
+    <div class="language-switcher">
+  <button class="theme-toggle" type="button" data-theme-toggle aria-label="切换到暗黑模式" aria-pressed="false">🌙</button>
+
+  
+  
+    <a href="/post/ai-platform-production-release-gates/" class="active">中文</a>
+  
+    <a href="/en/post/ai-platform-production-release-gates/" class="">English</a>
+  
+  
+</div>
+
+    
+    <article>
+        <h1>别只测“回答对不对”：我把限流、注入、崩溃和重复执行写进 AI Platform 发布闸门</h1>
+        <div class="meta">
+            发布时间: 2026-08-23
+            <span class="meta-separator">·</span>
+            <span>阅读量 <span data-page-view-count>--</span></span>
+        </div>
+        
+<div class="tags">
+    
+    <a href="/tag/ai-agent/"><span class="tag">AI Agent</span></a>
+    
+    <a href="/tag/ai/"><span class="tag">AI</span></a>
+    
+    <a href="/tag/%E6%9E%B6%E6%9E%84/"><span class="tag">架构</span></a>
+    
+    <a href="/tag/%E5%B9%B3%E5%8F%B0%E5%B7%A5%E7%A8%8B/"><span class="tag">平台工程</span></a>
+    
+    <a href="/tag/%E8%AF%84%E6%B5%8B/"><span class="tag">评测</span></a>
+    
+    <a href="/tag/%E5%8F%AF%E8%A7%82%E6%B5%8B%E6%80%A7/"><span class="tag">可观测性</span></a>
+    
+    <a href="/tag/slo/"><span class="tag">SLO</span></a>
+    
+    <a href="/tag/%E5%B7%A5%E7%A8%8B%E5%AE%9E%E8%B7%B5/"><span class="tag">工程实践</span></a>
+    
+</div>
+
+
+        <div class="content">
+            <blockquote>
+<p><strong>先说结论</strong></p>
+<p>一组题回答得很好，不等于 AI Platform 可以上线。模型评测关注概率性的答案质量；生产发布还必须证明身份不会丢、401 不会被错误降级、429 重试有上限、高风险工具会等待审批、重复投递只产生一次副作用、过期记忆进不了 Prompt、策略拒绝不会被算成系统故障，以及每个决定都能用 Trace、审计和成本记录解释。为了把「感觉差不多」变成发布条件，我写了一个零网络、零凭据、只用 Python 标准库的 30 道闸实验，覆盖身份、网关、策略、执行、记忆和证据六个故障边界。30/30 才显示 <code>RELEASE=PASS</code>；任何一项失败都必须阻断发布，而不是删掉测试让看板重新变绿。</p>
+</blockquote>
+<p><img alt="原创封面：一个流畅答案不是生产发布证书，候选版本必须通过三十道闸。" src="/post-images/ai-platform-production-release-gates/00-cover.svg"></p>
+<p><em>图 1：原创图。模型、Prompt、工具、策略和任务状态组成一个候选版本；只有身份、路由、权限、执行、记忆与证据共同通过，才允许扩大流量。</em></p>
+<h2 id="一问题背景demo-验收和生产验收不是同一张试卷">一、问题背景：Demo 验收和生产验收不是同一张试卷</h2>
+<p>很多 AI 项目的验收方式是准备几十个问题，运行新模型或新 Prompt，再让人看回答是否「更好」。这种方法有价值，但只覆盖了系统的一小部分。</p>
+<p>如果模型回答非常准确，却把另一个租户的记忆塞进上下文，不能上线；如果答案漂亮，却在队列重投后执行了两次付款，不能上线；如果正常路径全绿，但遇到 401 后连续切换三个模型、花三倍钱仍然失败，也不能上线。</p>
+<p>这像学校食堂推出一道新菜。试吃员觉得味道不错，只能证明「好吃」；它不能证明进货可追溯、冰箱温度正常、过敏原写清楚、刷卡只扣一次、停电后不会把隔夜菜当成新菜。<strong>答案质量是菜的味道，平台控制是整间厨房的食品安全。两者缺一不可。</strong></p>
+<h2 id="二问题表现上线前全绿上线后却出现七种意外">二、问题表现：上线前全绿，上线后却出现七种意外</h2>
+<ol>
+<li>离线题集得分上升，真实任务完成率没有变化；</li>
+<li>模型更新后多调用一次工具，成本和副作用一起翻倍；</li>
+<li>Provider 限流时无界重试，延迟和账单同时爆炸；</li>
+<li>Prompt Injection 被模型「识别」了十次，第十一次仍绕过策略；</li>
+<li>Worker 崩溃后队列重投，服务重启两次；</li>
+<li>正确拒绝危险请求，却被成功率看板计为失败；</li>
+<li>出事后只剩一段最终回答，无法证明身份、路由、批准和真实副作用。</li>
+</ol>
+<p>根因并不是「题集不够大」，而是把不同性质的问题压缩成了一个分数。</p>
+<h2 id="三问题根因确定性控制概率质量和业务结果被混在一起">三、问题根因：确定性控制、概率质量和业务结果被混在一起</h2>
+<p>生产验收至少有三层：</p>
+<p><img alt="原创分层图：确定性控制、概率质量、人工与业务结果回答三个不同问题。" src="/post-images/ai-platform-production-release-gates/01-three-test-layers.svg"></p>
+<p><em>图 2：原创图。事务和权限必须每次都正确；模型质量要比较分布与波动；最终还要确认用户的工作是否真的完成。不能用一个平均分互相抵消。</em></p>
+<ul>
+<li><strong>确定性控制层</strong>：身份、租户、参数 Schema、状态转换、幂等、审计必须每次通过。一百次里错一次也不能用平均值掩盖。</li>
+<li><strong>概率质量层</strong>：任务成功、事实依据、安全性、语言质量、延迟和成本会波动，需要固定数据集、多次采样和统计比较。</li>
+<li><strong>人工与业务结果层</strong>：用户是否解决问题、审批是否清楚、失败能否接管、回滚是否可用，必须结合真实工作流判断。</li>
+</ul>
+<p>模型评测不能替代平台测试，平台测试也不能证明答案一定有帮助。好的发布闸门会保留这三类证据，而不是把它们揉成一个「82 分」。</p>
+<h2 id="四三十道闸按故障边界分组而不是按团队分工">四、三十道闸：按故障边界分组，而不是按团队分工</h2>
+<p>本文实验把验收拆成六组，每组五项。</p>
+<p><img alt="原创总览：身份、网关、策略、执行、记忆和证据六组共三十道生产闸门。" src="/post-images/ai-platform-production-release-gates/03-thirty-gates.svg"></p>
+<p><em>图 3：原创图。分组依据是失败边界：谁在做、在哪里做、能不能做、是否只做一次、上下文是否仍真实、事后能否证明。</em></p>
+<h3 id="身份闸每次交接都不能掉身份证">身份闸：每次交接都不能掉身份证</h3>
+<p>身份组验证：请求封套是否包含租户、用户、角色和 request ID；缺少租户是否立即拒绝；跨租户记录是否隐藏；过期委托是否失效；同一 request ID 是否贯穿入口、网关、Worker 和审计。</p>
+<p><img alt="真实实验输出：身份封套、租户边界、委托过期和请求身份传播五项通过。" src="/post-images/ai-platform-production-release-gates/01-real-identity.webp"></p>
+<p><em>图 4：真实实验输出截图。把用户名写进 Prompt 不叫身份传播；策略需要不可由模型改写的结构化声明。</em></p>
+<h2 id="五网关闸429-可以降级401-必须停">五、网关闸：429 可以降级，401 必须停</h2>
+<p>网关组不是只看「备用模型能否回答」，而是验证失败是否被正确分类：</p>
+<ul>
+<li>合成 429 属于短暂容量问题，可以在预算内降级；</li>
+<li>401 是凭据或认证问题，换模型会掩盖根因，必须停止；</li>
+<li>重试预算最多一次，不能形成瀑布式账单；</li>
+<li>预估成本超过剩余预算时应在调用前阻断；</li>
+<li>数据区域不符合要求的候选模型必须先被排除。</li>
+</ul>
+<p><img alt="真实实验输出：429、401、重试预算、成本预算和数据区域五项网关闸通过。" src="/post-images/ai-platform-production-release-gates/02-real-gateway.webp"></p>
+<p><em>图 5：真实实验输出截图。降级不是「失败就换一个」，而是受错误类型、能力、数据分类、预算和最大尝试次数共同约束的决策。</em></p>
+<h2 id="六策略闸模型只能提议不能给自己盖章">六、策略闸：模型只能提议，不能给自己盖章</h2>
+<p>策略组检查只读工具可以正常通过，高风险操作进入等待批准；提示词注入在模型和工具执行前停止；工具参数中多出的 <code>shell</code> 字段被 Schema 拒绝；批准记录必须绑定规范化参数，目标改变后旧批准自动失效。</p>
+<p><img alt="真实实验输出：只读允许、高风险审批、注入前置拦截、Schema 和参数绑定五项通过。" src="/post-images/ai-platform-production-release-gates/03-real-policy.webp"></p>
+<p><em>图 6：真实实验输出截图。模型说「用户同意了」不是批准证据；批准应绑定工具、目标、参数版本、申请人、批准人、有效期和一次性 nonce。</em></p>
+<p>Prompt Injection 测试尤其不能只准备十句攻击文本，看模型是否回答「我不能照做」。真正的验收是：攻击内容有没有改变工具选择、参数、权限、Secret 访问、日志字段和最终副作用。平台策略应独立于模型输出工作。</p>
+<h2 id="七执行闸队列可以重复送信副作用不能重复发生">七、执行闸：队列可以重复送信，副作用不能重复发生</h2>
+<p>执行组验证合法状态转换、租约过期后的重投、幂等唯一约束、fencing token 拒绝旧 Worker，以及取消后不再启动新副作用。</p>
+<p><img alt="真实实验输出：两次投递只产生一条副作用，旧 Worker 被 fencing token 拒绝。" src="/post-images/ai-platform-production-release-gates/04-real-execution.webp"></p>
+<p><em>图 7：真实实验输出截图。实验用 SQLite 唯一键接收两次相同投递，最终副作用计数仍为 1。它验证控制逻辑，不假装端到端 Exactly-once 很容易。</em></p>
+<p>这里要区分「消息被送了几次」和「业务动作发生几次」。像快递员因为网络问题扫描同一个包裹两次，仓库可以接受两条扫描记录，但不能发出两个包裹。生产指标应分别记录 redelivery count 与 duplicate side-effect count，后者必须为零。</p>
+<h2 id="八记忆闸旧事实比没有事实更危险">八、记忆闸：旧事实比没有事实更危险</h2>
+<p>记忆组验证过期记录、其他租户记录、不可信检索文本、被旧版本取代的记录和已删除记录都无法进入上下文。</p>
+<p><img alt="真实实验输出：有效期、租户、来源、版本和删除状态五道记忆闸通过。" src="/post-images/ai-platform-production-release-gates/05-real-memory.webp"></p>
+<p><em>图 8：真实实验输出截图。向量相似度不在这五项中，因为它只负责候选排序；是否允许使用由确定性生命周期策略决定。</em></p>
+<p>如果想深入理解为什么一条「记得很牢」的旧目标会害人，可以继续阅读本系列的 <a href="/post/ai-structured-memory-lifecycle/">结构化记忆生命周期实战</a>。</p>
+<h2 id="九证据闸最终答案不能替代事故记录">九、证据闸：最终答案不能替代事故记录</h2>
+<p>证据组要求模型和工具 span 共享同一 trace，审计记录包含谁、对什么工具、作出什么决定以及原因；预估成本和实际成本能够对账；正确策略拒绝不会被算成平台故障；合成恢复时间满足定义好的 SLO。</p>
+<p><img alt="原创证据链：身份、路由、策略、执行、结果和成本由同一请求标识串起。" src="/post-images/ai-platform-production-release-gates/05-evidence-chain.svg"></p>
+<p><em>图 9：原创图。每个服务都有日志并不等于可观测；如果 request、trace、task 和 audit 无法关联，事故仍然拼不起来。</em></p>
+<p><img alt="真实实验输出：Trace、审计理由、成本对账、结果分类和恢复 SLO 五项通过。" src="/post-images/ai-platform-production-release-gates/06-real-evidence.webp"></p>
+<p><em>图 10：真实实验输出截图。「被策略拒绝」被分类为 correct-control，而不是 outage；否则团队会为了提高成功率而放松安全策略。</em></p>
+<h2 id="十成功率为什么最容易骗人">十、成功率为什么最容易骗人</h2>
+<p>假设一天有十个请求：七个完成、一个危险请求被正确拒绝、一个等待人工批准、一个 Provider 真故障。粗暴的成功率是 70%，但这个数字把三种完全不同的状态混在了一起。</p>
+<p><img alt="原创结果矩阵：COMPLETED、DENIED、WAITING_APPROVAL 和 FAILED 必须分别统计。" src="/post-images/ai-platform-production-release-gates/04-outcome-matrix.svg"></p>
+<p><em>图 11：原创图。正确拒绝说明刹车有效，等待审批说明任务被安全保存，真正的失败才是预期业务结果意外丢失。</em></p>
+<p>更好的看板至少分开：业务完成率、策略正确拒绝率、审批等待时间、技术故障率、恢复时间、重复副作用、每个完成任务的成本。这样才能防止「为了让一个百分比变绿」而误伤安全边界。</p>
+<h2 id="十一发布流程每一层通过后才扩大爆炸半径">十一、发布流程：每一层通过后才扩大爆炸半径</h2>
+<p>生产发布不应从本地改 Prompt 直接跳到 100% 流量。建议按下面顺序推进：</p>
+<ol>
+<li>静态检查 Schema、Secret、依赖和配置；</li>
+<li>固定黄金任务集，多次运行概率评测；</li>
+<li>执行限流、超时、注入、队列重投、Worker 崩溃和记忆过期实验；</li>
+<li>Shadow 只观察不产生副作用；</li>
+<li>Canary 从极小流量开始，设置自动回滚阈值；</li>
+<li>全量后持续观察业务、成本、安全和恢复 SLO。</li>
+</ol>
+<p><img alt="原创发布流水线：静态检查、离线评测、故障实验、Shadow/Canary 和生产 SLO 逐层放量。" src="/post-images/ai-platform-production-release-gates/02-release-pipeline.svg"></p>
+<p><em>图 12：原创图。任一闸失败都应停止、解释、修复并重跑；不能删除失败测试来换取绿色发布。</em></p>
+<p>闸门还要版本化。模型、Prompt、工具 Schema、策略、检索语料、路由和评测集只要任一改变，都要能回答「这次证据对应哪组版本」。否则今天的 PASS 无法证明明天的组合仍安全。</p>
+<h2 id="十二可复现实验3030-才允许-releasepass">十二、可复现实验：30/30 才允许 RELEASE=PASS</h2>
+<p>本文的 <a href="/post-files/ai-platform-production-release-gates/release_gate_lab.py">release gate 实验</a> 使用固定时钟、合成身份和本地 SQLite，不访问任何模型、工具或网络。它实际执行三十个布尔验收，而不是把 PASS 文本写死。</p>
+<p><img alt="真实实验输出：六个类别各 5/5，总计 30/30，发布结果为 PASS。" src="/post-images/ai-platform-production-release-gates/07-real-release.webp"></p>
+<p><em>图 13：真实实验输出截图。30/30 表示教学实验里的控制点全部通过；生产发布仍需要真实模型质量、业务结果、容量、安全和回滚证据。</em></p>
+<h3 id="windows-11-一键执行">Windows 11 一键执行</h3>
+<p>下载 <a href="/post-files/ai-platform-production-release-gates/release_gate_lab.py">实验脚本</a> 与 <a href="/post-files/ai-platform-production-release-gates/run_windows.ps1">Windows 启动器</a> 到同一目录：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-powershell" data-lang="powershell"><span style="display:flex;"><span>powershell -ExecutionPolicy Bypass <span style="color:#f92672">-File</span> .\run_windows.ps1
+</span></span></code></pre></div><h3 id="ubuntu-2604-一键执行">Ubuntu 26.04 一键执行</h3>
+<p>下载 <a href="/post-files/ai-platform-production-release-gates/run_ubuntu.sh">Ubuntu 启动器</a> 后运行：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>chmod +x ./run_ubuntu.sh
+</span></span><span style="display:flex;"><span>./run_ubuntu.sh
+</span></span></code></pre></div><h3 id="macos-26-一键执行">macOS 26 一键执行</h3>
+<p>下载 <a href="/post-files/ai-platform-production-release-gates/run_macos.sh">macOS 启动器</a> 后运行：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>chmod +x ./run_macos.sh
+</span></span><span style="display:flex;"><span>./run_macos.sh
+</span></span></code></pre></div><p>人工验收时，执行 <code>python3 release_gate_lab.py --clean</code>，依次阅读六份分类证据和最终 JSON，不要只看终端最后一行。Agent 自动验收时，把 <a href="/post-files/ai-platform-production-release-gates/agent-task.md">Agent 任务契约</a> 交给 Agent；它被禁止联网、安装依赖和弱化闸门，必须检查 <code>total=30</code>、<code>passed_count=30</code>、<code>release=PASS</code>，任何失败立即停止并报告具体类别。</p>
+<h2 id="十三如何把这套闸门接入真实-cicd">十三、如何把这套闸门接入真实 CI/CD</h2>
+<p>实验是单机教学版本，生产集成建议遵循四条原则：</p>
+<ul>
+<li><strong>确定性闸门硬阻断</strong>：跨租户、重复副作用、未批准高风险动作、审计缺失等不得用人工「忽略失败」放行；</li>
+<li><strong>概率指标比较置信区间</strong>：同一版本多次采样，比较任务成功、质量、延迟和成本分布，不用单次幸运结果；</li>
+<li><strong>高风险场景独立阈值</strong>：普通问答的平均分不能抵消付款、删除、生产控制等关键任务的失败；</li>
+<li><strong>证据绑定版本</strong>：记录模型、Prompt、策略、工具 Schema、数据集、代码提交和环境摘要。</li>
+</ul>
+<p>CI 可以快速跑标准库闸门，定时任务运行更贵的模型评测；发布系统消费两类结果，在 Shadow/Canary 阶段加入真实流量指标。若生产 SLO 越界，应自动暂停放量或回滚，而不是等用户在工单里完成故障注入。</p>
+<h2 id="十四qa">十四、Q&amp;A</h2>
+<h3 id="q1三十项是不是一个行业标准">Q1：三十项是不是一个行业标准？</h3>
+<p>不是。它们是一份可执行的最小教学基线，用来展示六类边界。真实系统还应根据医疗、金融、IoT、代码执行等风险增加专属场景。</p>
+<h3 id="q2模型升级后只重跑答案评测可以吗">Q2：模型升级后，只重跑答案评测可以吗？</h3>
+<p>不够。模型可能改变工具选择、参数格式、Token、延迟和拒绝行为，因此策略、路由、工具与成本闸也要重跑。</p>
+<h3 id="q3为什么策略拒绝不能算失败">Q3：为什么策略拒绝不能算失败？</h3>
+<p>因为它完成了安全目标。应单独统计「正确拒绝」和「错误拒绝」；把所有拒绝都算失败会诱导团队降低安全性。</p>
+<h3 id="q4shadow-流量能验证工具调用吗">Q4：Shadow 流量能验证工具调用吗？</h3>
+<p>可以验证计划和策略，但应阻断真实副作用，或将工具替换为沙盒/只读适配器。不要为了测试直接复制生产写操作。</p>
+<h3 id="q5离线黄金集会不会过拟合">Q5：离线黄金集会不会过拟合？</h3>
+<p>会，所以要保留隐藏集、定期加入生产失败案例、做对抗和变形测试，并结合 Canary 的真实业务结果。黄金集是体检表，不是免疫证书。</p>
+<h3 id="q6是不是-3030-就一定能上线">Q6：是不是 30/30 就一定能上线？</h3>
+<p>不是。它只说明这三十个确定性断言通过。上线还要满足模型质量、容量、隐私、法规、依赖健康、回滚和业务负责人确认。闸门的价值是明确「什么没证明就不能说已经证明」。</p>
+<h2 id="十五写在最后">十五、写在最后</h2>
+<p>AI Platform 最危险的发布方式，是拿几段漂亮回答当作整个系统的健康证明。模型会波动，Provider 会限流，攻击内容会出现，Worker 会崩溃，队列会重投，记忆会过期；发布工程的职责不是祈祷这些事情别发生，而是在上线前主动让它们发生一次。</p>
+<p>这篇文章是 <a href="/post/ai-platform-production-reference-architecture/">AI Platform 旗舰架构</a> 的发布验收篇。你也可以从 <a href="/post/ai-platform-architecture-reading-map/">架构实践阅读地图</a> 回看工具调用、网关、可观测性与安全文章，或继续阅读本系列的 Worker 幂等、Turn Manager、AI Gateway 和结构化记忆深挖。</p>
+<p>参考资料：</p>
+<ul>
+<li><a href="https://www.nist.gov/itl/ai-risk-management-framework">NIST AI Risk Management Framework</a></li>
+<li><a href="https://owasp.org/www-project-top-10-for-large-language-model-applications/">OWASP Top 10 for Large Language Model Applications</a></li>
+<li><a href="https://opentelemetry.io/docs/specs/semconv/gen-ai/">OpenTelemetry Generative AI semantic conventions</a></li>
+<li><a href="https://sre.google/workbook/canarying-releases/">Google SRE Workbook: Canarying Releases</a></li>
+</ul>
+        </div>
+    </article>
+
+    
+  
+
+
+
+
+    
+<div class="site-stats" aria-label="访问统计">
+    <span>本文阅读量 <span data-page-view-count>--</span></span>
+</div>
+
+
+    
+    <script type="text/javascript" src="https://js.users.51.la/21044367.js"></script>
+    <script charset="UTF-8" id="LA_COLLECT" src="//sdk.51.la/js-sdk-pro.min.js"></script>
+    <script>LA.init({id: "1vVTUWl7zoRjnKXi",ck: "1vVTUWl7zoRjnKXi"})</script>
+    <script src="https://sdk.51.la/perf/js-sdk-perf.min.js" crossorigin="anonymous"></script>
+    <script>
+      new LingQue.Monitor().init({id:"202teQt8THXwqyve"});
+    </script>
+    <script defer src="/js/page-views.js"></script>
+    <div class="la-theme-widget" data-51la-widget aria-label="51.la 网站统计"></div>
+    <script defer src="/js/51la-theme-widget.js"></script>
+</body>
+</html>

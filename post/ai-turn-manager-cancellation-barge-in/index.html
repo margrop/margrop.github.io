@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>你都喊「停」了，AI 为什么还在执行？我把 Turn Manager 的取消链路逐层掐断 - 魔都水滴</title>
+<meta name="description" content="先说结论 前端把“停止生成”按钮变灰，不代表 AI 真停了。模型流可能还在烧 Token，检索可能还在占连接，TTS 队列可能继续播放旧答案，工具甚至可能已经把不可逆提交发给外部系统。真正的停止不是一个按钮样式，也不是粗暴关闭一条 HTTP 连接，而是由 Turn Manager 管理的一次状态转换：它要识别同一轮对话 …">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://blog.margrop.net/post/ai-turn-manager-cancellation-barge-in/"><meta property="og:site_name" content="魔都水滴">
+<meta property="og:title" content="你都喊「停」了，AI 为什么还在执行？我把 Turn Manager 的取消链路逐层掐断 - 魔都水滴">
+<meta property="og:description" content="先说结论 前端把“停止生成”按钮变灰，不代表 AI 真停了。模型流可能还在烧 Token，检索可能还在占连接，TTS 队列可能继续播放旧答案，工具甚至可能已经把不可逆提交发给外部系统。真正的停止不是一个按钮样式，也不是粗暴关闭一条 HTTP 连接，而是由 Turn Manager 管理的一次状态转换：它要识别同一轮对话 …">
+<meta property="og:url" content="https://blog.margrop.net/post/ai-turn-manager-cancellation-barge-in/">
+<meta property="og:locale" content="zh_CN"><meta property="og:type" content="article"><meta property="og:locale:alternate" content="en_US"><meta property="og:image" content="https://blog.margrop.net/images/avatar.png"><meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="你都喊「停」了，AI 为什么还在执行？我把 Turn Manager 的取消链路逐层掐断 - 魔都水滴">
+<meta name="twitter:description" content="先说结论 前端把“停止生成”按钮变灰，不代表 AI 真停了。模型流可能还在烧 Token，检索可能还在占连接，TTS 队列可能继续播放旧答案，工具甚至可能已经把不可逆提交发给外部系统。真正的停止不是一个按钮样式，也不是粗暴关闭一条 HTTP 连接，而是由 Turn Manager 管理的一次状态转换：它要识别同一轮对话 …"><meta name="twitter:image" content="https://blog.margrop.net/images/avatar.png"><link rel="alternate" hreflang="zh-CN" href="https://blog.margrop.net/post/ai-turn-manager-cancellation-barge-in/"><link rel="alternate" hreflang="en-US" href="https://blog.margrop.net/en/post/ai-turn-manager-cancellation-barge-in/"><link rel="alternate" hreflang="x-default" href="https://blog.margrop.net/"><meta property="article:published_time" content="2026-08-23T20:10:00&#43;08:00">
+<meta property="article:modified_time" content="2026-08-23T20:10:00&#43;08:00"><meta property="article:tag" content="AI Agent"><meta property="article:tag" content="AI"><meta property="article:tag" content="架构"><meta property="article:tag" content="平台工程"><meta property="article:tag" content="可观测性"><meta property="article:tag" content="分布式"><meta property="article:tag" content="WebRTC"><meta property="article:tag" content="工程实践"><script type="application/ld+json">{"@context":"https://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"魔都水滴"},"dateModified":"2026-08-23T20:10:00+08:00","datePublished":"2026-08-23T20:10:00+08:00","description":"先说结论 前端把“停止生成”按钮变灰，不代表 AI 真停了。模型流可能还在烧 Token，检索可能还在占连接，TTS 队列可能继续播放旧答案，工具甚至可能已经把不可逆提交发给外部系统。真正的停止不是一个按钮样式，也不是粗暴关闭一条 HTTP 连接，而是由 Turn Manager 管理的一次状态转换：它要识别同一轮对话 …","headline":"你都喊「停」了，AI 为什么还在执行？我把 Turn Manager 的取消链路逐层掐断","mainEntityOfPage":"https://blog.margrop.net/post/ai-turn-manager-cancellation-barge-in/","url":"https://blog.margrop.net/post/ai-turn-manager-cancellation-barge-in/"}</script>
+    <meta name="baidu-site-verification" content="code-sVFZ8SER59" />
+    <script src="/js/theme-toggle.js"></script>
+
+    
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-3J2W592DHJ"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-3J2W592DHJ');
+    </script>
+
+    <style>
+    :root {
+        color-scheme: light;
+        --page-bg: #fff;
+        --surface-bg: #f4f4f4;
+        --text: #222;
+        --muted: #666;
+        --subtle: #777;
+        --border: #eee;
+        --border-strong: #ddd;
+        --link: #006CFF;
+        --tag-bg: #eee;
+        --button-bg: #fff;
+        --button-primary-bg: #333;
+    }
+    @media (prefers-color-scheme: dark) {
+        :root:not([data-theme]) {
+            color-scheme: dark;
+            --page-bg: #111315;
+            --surface-bg: #1d2126;
+            --text: #e8eaed;
+            --muted: #aeb4bd;
+            --subtle: #9aa2ad;
+            --border: #30353d;
+            --border-strong: #454c56;
+            --link: #79b8ff;
+            --tag-bg: #2a3038;
+            --button-bg: #1d2126;
+            --button-primary-bg: #e8eaed;
+        }
+    }
+    html[data-theme="dark"] {
+        color-scheme: dark;
+        --page-bg: #111315;
+        --surface-bg: #1d2126;
+        --text: #e8eaed;
+        --muted: #aeb4bd;
+        --subtle: #9aa2ad;
+        --border: #30353d;
+        --border-strong: #454c56;
+        --link: #79b8ff;
+        --tag-bg: #2a3038;
+        --button-bg: #1d2126;
+        --button-primary-bg: #e8eaed;
+    }
+    html[data-theme="light"] {
+        color-scheme: light;
+        --page-bg: #fff;
+        --surface-bg: #f4f4f4;
+        --text: #222;
+        --muted: #666;
+        --subtle: #777;
+        --border: #eee;
+        --border-strong: #ddd;
+        --link: #006CFF;
+        --tag-bg: #eee;
+        --button-bg: #fff;
+        --button-primary-bg: #333;
+    }
+    body { background: var(--page-bg); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 860px; margin: 0 auto; padding: 20px; line-height: 1.7; color: var(--text); }
+    h1 { border-bottom: 2px solid var(--border-strong); padding-bottom: 10px; }
+    article > h1 { font-size: 2em; line-height: 1.3; margin-bottom: 12px; }
+    .post-list { list-style: none; padding: 0; }
+    .post-list li { margin: 15px 0; }
+    .post-list a { text-decoration: none; color: var(--text); font-size: 18px; }
+    .post-list a:hover { color: var(--link); }
+    .date { color: var(--muted); font-size: 14px; margin-right: 10px; }
+    .tags { margin-top: 8px; }
+    .tag { background: var(--tag-bg); padding: 2px 8px; border-radius: 3px; font-size: 12px; margin-right: 5px; display: inline-block; }
+    nav { margin-bottom: 18px; border-bottom: 1px solid var(--border); padding-bottom: 15px; }
+    nav a { margin-right: 20px; text-decoration: none; color: var(--text); font-size: 16px; }
+    nav a:hover { color: var(--link); }
+    .language-switcher { display: flex; align-items: center; gap: 10px; margin: -8px 0 26px; }
+    .language-switcher a { display: inline-block; padding: 4px 10px; border: 1px solid var(--border-strong); border-radius: 999px; color: var(--muted); text-decoration: none; font-size: 14px; }
+    .language-switcher a.active { background: var(--link); border-color: var(--link); color: #fff; }
+    .content { line-height: 1.8; }
+    .content code { background: var(--surface-bg); padding: 2px 5px; border-radius: 3px; }
+    .content pre { background: var(--surface-bg); padding: 15px; overflow-x: auto; border-radius: 5px; }
+    .content img { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+    .content .code-snippet__fix {
+        margin: 0 0 1.5em;
+    }
+    .content .code-snippet__fix .code-snippet__line-index {
+        display: none !important;
+    }
+    .meta { color: var(--muted); font-size: 14px; margin-bottom: 14px; }
+    .meta-separator { margin: 0 6px; color: var(--subtle); }
+    .site-stats { display: flex; flex-wrap: wrap; gap: 10px 18px; margin: 28px 0 8px; padding-top: 12px; border-top: 1px solid var(--border); color: var(--subtle); font-size: 12px; }
+    a { color: var(--link); }
+    .hero { padding: 12px 0 24px; }
+    .hero h1 { border-bottom: 2px solid #333; }
+    .eyebrow { color: var(--muted); font-size: 12px; letter-spacing: .12em; margin: 0 0 8px; }
+    .hero-tagline { font-size: 18px; margin: 12px 0 8px; }
+    .hero-copy { color: var(--muted); margin: 0 0 14px; }
+    .hero-actions { margin: 14px 0 4px; }
+    .button { display: inline-block; margin-right: 12px; border: 1px solid var(--border-strong); border-radius: 3px; padding: 4px 10px; text-decoration: none; color: var(--text); background: var(--button-bg); font-size: 14px; }
+    .button-primary { background: var(--button-primary-bg); border-color: var(--button-primary-bg); color: var(--page-bg); }
+    .theme-toggle { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 1px solid var(--border-strong); border-radius: 999px; background: var(--button-bg); color: var(--text); cursor: pointer; font: inherit; font-size: 16px; }
+    .theme-toggle:hover { border-color: var(--link); color: var(--link); }
+    .la-theme-widget { margin: 12px 0 20px; min-height: 24px; color: var(--text); }
+    .identity-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: 16px 0; }
+    .identity-grid div { display: flex; flex-direction: column; }
+    .identity-grid strong { font-size: 15px; }
+    .identity-grid span, .topic-card span, .featured-list small { color: var(--muted); font-size: 13px; }
+    .section-block { padding-top: 28px; }
+    .section-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+    .section-heading h2 { margin: 0; }
+    .section-heading a { font-size: 14px; }
+    .topic-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+    .topic-card { display: block; padding: 14px; border: 1px solid var(--border); text-decoration: none; color: var(--text); }
+    .topic-card:hover { border-color: var(--border-strong); }
+    .topic-card strong { display: block; margin: 4px 0; font-size: 17px; }
+    .topic-index, .featured-list > a > span { color: var(--muted) !important; font-size: 12px !important; }
+    .featured-list { border-top: 1px solid var(--border); }
+    .featured-list > a { display: flex; gap: 14px; padding: 12px 0; border-bottom: 1px solid var(--border); text-decoration: none; color: var(--text); }
+    .featured-list div { display: flex; flex-direction: column; }
+    .latest-block { max-width: 860px; }
+    @media (max-width: 680px) {
+        body { padding: 16px; }
+        nav a { display: inline-block; margin-right: 12px; margin-bottom: 8px; }
+        .identity-grid { grid-template-columns: repeat(2, 1fr); }
+        .topic-grid { grid-template-columns: 1fr; }
+    }
+</style>
+
+</head>
+<body>
+    <nav>
+  <a href="/">首页</a>
+  <a href="/start-here/">开始这里</a>
+  <a href="/career/">Portfolio</a>
+  <a href="/tag/ai/">AI Agent</a>
+  <a href="/tag/docker/">Self-hosting</a>
+  <a href="/tag/%e8%bf%90%e7%bb%b4/">Engineering</a>
+  <a href="/post/">归档</a>
+  <a href="/tags/">标签</a>
+  <a href="/about/">关于</a>
+  <a href="https://github.com/margrop" target="_blank" rel="noopener">GitHub</a>
+</nav>
+
+    <div class="language-switcher">
+  <button class="theme-toggle" type="button" data-theme-toggle aria-label="切换到暗黑模式" aria-pressed="false">🌙</button>
+
+  
+  
+    <a href="/post/ai-turn-manager-cancellation-barge-in/" class="active">中文</a>
+  
+    <a href="/en/post/ai-turn-manager-cancellation-barge-in/" class="">English</a>
+  
+  
+</div>
+
+    
+    <article>
+        <h1>你都喊「停」了，AI 为什么还在执行？我把 Turn Manager 的取消链路逐层掐断</h1>
+        <div class="meta">
+            发布时间: 2026-08-23
+            <span class="meta-separator">·</span>
+            <span>阅读量 <span data-page-view-count>--</span></span>
+        </div>
+        
+<div class="tags">
+    
+    <a href="/tag/ai-agent/"><span class="tag">AI Agent</span></a>
+    
+    <a href="/tag/ai/"><span class="tag">AI</span></a>
+    
+    <a href="/tag/%E6%9E%B6%E6%9E%84/"><span class="tag">架构</span></a>
+    
+    <a href="/tag/%E5%B9%B3%E5%8F%B0%E5%B7%A5%E7%A8%8B/"><span class="tag">平台工程</span></a>
+    
+    <a href="/tag/%E5%8F%AF%E8%A7%82%E6%B5%8B%E6%80%A7/"><span class="tag">可观测性</span></a>
+    
+    <a href="/tag/%E5%88%86%E5%B8%83%E5%BC%8F/"><span class="tag">分布式</span></a>
+    
+    <a href="/tag/webrtc/"><span class="tag">WebRTC</span></a>
+    
+    <a href="/tag/%E5%B7%A5%E7%A8%8B%E5%AE%9E%E8%B7%B5/"><span class="tag">工程实践</span></a>
+    
+</div>
+
+
+        <div class="content">
+            <blockquote>
+<p><strong>先说结论</strong></p>
+<p>前端把“停止生成”按钮变灰，不代表 AI 真停了。模型流可能还在烧 Token，检索可能还在占连接，TTS 队列可能继续播放旧答案，工具甚至可能已经把不可逆提交发给外部系统。真正的停止不是一个按钮样式，也不是粗暴关闭一条 HTTP 连接，而是由 <strong>Turn Manager</strong> 管理的一次状态转换：它要识别同一轮对话里的全部子任务，把取消信号沿树传播，清空尚未播放的音频，用 generation 隔离迟到事件，在 deadline 到期前阻止新副作用，并诚实记录“已取消”“已完成”还是“需要对账”。我为此写了一个只用 Python 标准库的零网络实验，故意制造取消竞态、语音打断、截止时间、不可取消工具和断线重连，最终 8 个场景、24 条断言全部通过。</p>
+</blockquote>
+<p><img alt="原创封面：停止必须成为平台事件，而不是前端按钮样式。" src="/post-images/ai-turn-manager-cancellation-barge-in/00-cover.svg"></p>
+<p><em>图 1：原创封面。一次停止信号要同时管住模型流、检索、工具任务与音频输出；其中任何一条漏掉，用户都会遇到“明明喊停，AI 还在干活”。</em></p>
+<h2 id="一问题背景最危险的不是-ai-慢而是它假装已经停了">一、问题背景：最危险的不是 AI 慢，而是它假装已经停了</h2>
+<p>很多聊天产品的停止实现非常简单：用户点击按钮，浏览器中断当前请求，界面不再追加文字。对于一个只生成段落、没有工具、没有语音、没有后台任务的 Demo，这种实现似乎够用。但一旦接入生产 AI Platform，同一轮请求背后可能同时存在：</p>
+<ul>
+<li>一个仍在生成 Token 的模型流；</li>
+<li>一个正在访问知识库的检索任务；</li>
+<li>一个等待审批或正在执行的工具任务；</li>
+<li>一个已经缓存数百毫秒音频的 TTS 播放队列；</li>
+<li>一个保存事件、Trace、成本与最终状态的异步写入任务；</li>
+<li>一条可能随时断开并重连的 WebSocket、SSE 或 WebRTC 通道。</li>
+</ul>
+<p>如果停止只发生在浏览器，后台就像餐厅服务员把取餐屏幕关掉，却没有告诉后厨撤单。顾客看不到订单了，厨师仍在炒菜，收银系统仍可能扣款。更糟的是，顾客以为自己已经撤销，于是重新下单；系统最终产生两次动作，却只展示一次。</p>
+<p>常见表现并不神秘：文字停了但计费继续增加；用户插话后，扬声器又冒出半句旧回答；页面断线后重连，答案重复一段；用户连点三次停止，后台触发三次清理；一个“取消成功”的任务稍后仍发送邮件、创建工单或提交变更。这些都指向同一个根因：<strong>系统把传输连接当成了工作本身，没有一个组件真正拥有整轮工作的生命周期。</strong></p>
+<h2 id="二turn-不是-http-request一轮对话比一次请求活得更久">二、Turn 不是 HTTP Request：一轮对话比一次请求活得更久</h2>
+<p>HTTP request 是运输工具，Turn 才是业务单位。一次 Turn 表示“用户提出一个意图，系统为它生成、检索、调用工具、播放或持久化结果，直到进入唯一终态”的完整生命周期。它可能由一次 HTTP 请求启动，随后通过 WebSocket 发送增量事件，通过队列执行工具，最后在另一次重连请求里补发终态。</p>
+<p>把它想成老师让小明回答一道题：老师的一句提问是 Turn 的开始；小明查草稿、思考、举手和回答都是这轮任务的子步骤。教室广播相当于 HTTP 或 WebRTC——广播坏了，不代表题目自动作废；老师说“停，这道题换了”才是业务取消。<strong>连接断开是一条事实，是否取消是一项策略，二者不能偷偷画等号。</strong></p>
+<p><img alt="原创示意图：HTTP 只负责运输事件，Turn Manager 才拥有任务生命周期。" src="/post-images/ai-turn-manager-cancellation-barge-in/01-turn-vs-http.svg"></p>
+<p><em>图 2：浏览器断开后，模型、工具和音频由谁停止？如果答案是“没人知道”，系统就缺少 Turn Manager。Turn 可以先从模块化单体中的一个明确模块开始，不必为了名字立刻拆成微服务。</em></p>
+<p>一个生产可用的 Turn envelope 至少要有：</p>
+<ul>
+<li><code>turn_id</code>：整轮工作的稳定标识；</li>
+<li><code>parent_turn_id</code>：重问、澄清或语音插话与上一轮的关系；</li>
+<li><code>generation</code>：同一会话里当前有效的输出世代；</li>
+<li>经过验证的租户、用户、会话和设备声明；</li>
+<li><code>deadline</code> 与分阶段预算，而不只是各组件随意设置 timeout；</li>
+<li><code>cancel_reason</code>、取消发起者与幂等请求号；</li>
+<li>已确认的事件序号、重连续传游标与保存期限；</li>
+<li><code>ACCEPTED</code>、<code>RUNNING</code>、<code>CANCEL_REQUESTED</code>、<code>CANCELLED</code>、<code>COMPLETED</code>、<code>FAILED</code>、<code>RECONCILE_REQUIRED</code> 等状态。</li>
+</ul>
+<p>这里有一条必须写进数据库约束或状态机代码的硬规则：<strong>一个 Turn 只能写入一个终态。</strong> <code>COMPLETED</code> 之后迟到的 cancel 只能得到“已经结束”；<code>CANCELLED</code> 之后迟到的模型完成事件必须被丢弃；不可逆提交在取消后才返回成功时，不能为了界面好看把它伪装成 <code>CANCELLED</code>。</p>
+<h2 id="三正常流先立基线ttft-快不等于整轮已经完成">三、正常流先立基线：TTFT 快，不等于整轮已经完成</h2>
+<p>在讨论取消前，先看一条没有故障的本地合成流。Turn 被接受后，检索先完成，模型开始流式输出，61ms 出现首个 Token，110ms 写入唯一的 <code>COMPLETED</code> 终态。这个虚拟时钟不是性能跑分，而是给之后的竞态建立一条可重复的时间轴。</p>
+<p><img alt="真实本地实验截图：正常流在 deadline 内完成，只有一个终态。" src="/post-images/ai-turn-manager-cancellation-barge-in/07-real-baseline-stream.png"></p>
+<p><em>图 3：真实运行日志截图。脚本通过 socket guard 阻断网络，只执行本地合成事件；<code>provider=synthetic</code>、<code>real_models=0</code>。TTFT 与 E2E 都由同一 Turn 计算，但回答开始、回答结束和业务动作完成仍是三个不同时间点。</em></p>
+<p>为什么要先立基线？因为很多看板把 <code>HTTP 200</code> 或“收到第一个 Token”叫成功。对工具型 Agent，这最多证明它开始说话。用户问“帮我撤销预约”，首 Token 可能 300ms 到达，真正撤销需要 8 秒；如果第 2 秒用户喊停，平台需要知道停的是文字、计划、工具，还是四者全部。</p>
+<h2 id="四取消树不要广播一个布尔值然后祈祷大家看见">四、取消树：不要广播一个布尔值，然后祈祷大家看见</h2>
+<p>Turn Manager 接受取消请求后，应创建一次可审计的状态转换，再把信号传播给该 Turn 派生出来的所有子任务。比较稳妥的实现是<strong>结构化并发</strong>：父任务拥有子任务，子任务不能脱离父级悄悄变成孤儿。模型适配器、检索器、工具执行器与音频缓冲区各自注册取消回调或检查点，父级负责等待它们收敛到可解释状态。</p>
+<p><img alt="原创取消树：父 Turn 的取消令牌传播到四个子分支，交付门拦住迟到事件。" src="/post-images/ai-turn-manager-cancellation-barge-in/02-cancel-tree.svg"></p>
+<p><em>图 4：取消信号的传播只是前半段；后半段是 delivery gate。即使某个 provider 在取消后又吐出一个增量，旧 generation 也不能重新进入用户界面。</em></p>
+<p>取消树不是把同一个 <code>cancelled = true</code> 变量塞进全局内存。它至少要携带原因、发生时间、deadline、generation 和请求号，并遵守以下顺序：</p>
+<ol>
+<li>用比较并交换或事务把 Turn 从 <code>RUNNING</code> 改为 <code>CANCEL_REQUESTED</code>；</li>
+<li>立即关闭对用户的旧 generation 交付门，先阻止“幽灵输出”；</li>
+<li>通知检索、模型、工具和 TTS 子任务停止或进入清理；</li>
+<li>等待有限的 grace period，收集哪些分支已停、哪些仍在提交；</li>
+<li>根据事实写 <code>CANCELLED</code>、<code>FAILED</code> 或 <code>RECONCILE_REQUIRED</code>，而不是一律显示取消成功。</li>
+</ol>
+<p>本地实验在 75ms 注入 <code>turn.cancel</code>。检索、模型和 TTS 分别收到了信号；一个 82ms 才到的模型增量被交付门丢弃；83ms 时整轮进入 <code>CANCELLED</code>，传播耗时 8ms。</p>
+<p><img alt="真实本地实验截图：取消传播至三个子任务，迟到增量被 generation gate 丢弃。" src="/post-images/ai-turn-manager-cancellation-barge-in/08-real-cancel-tree.png"></p>
+<p><em>图 5：真实运行日志截图。这里的 8ms 是确定性虚拟时钟，用于验证事件顺序与 SLO 断言，不代表某个模型厂商的真实取消速度。生产验收应在真实链路统计 p50、p95 和 p99。</em></p>
+<h2 id="五deadline-不是每层各设一个-timeout要像分零花钱一样分预算">五、Deadline 不是每层各设一个 Timeout：要像分零花钱一样分预算</h2>
+<p><code>timeout=30s</code> 看起来简单，但如果检索、模型、工具每层都各自拥有 30 秒，整轮可能拖到 90 秒。更糟的是，上层剩 200ms 时仍启动一个可能花 20 秒的写工具，随后页面超时，副作用却继续发生。</p>
+<p>Deadline 是整轮的绝对截止时间；timeout 是某一步最多允许多久。Turn Manager 应把剩余时间当成一份有限预算：先给检索 25ms，再给模型 55ms，保留 10ms 用于收尾；任何子任务获得的是“自身上限”和“父级剩余时间”的较小值。就像家长给孩子 10 元零花钱，买铅笔用了 4 元，后面就不能假装还有 10 元去买本子。</p>
+<p><img alt="真实本地实验截图：总预算耗尽后模型被取消，工具没有启动。" src="/post-images/ai-turn-manager-cancellation-barge-in/10-real-deadline-budget.png"></p>
+<p><em>图 6：真实运行日志截图。90ms deadline 到达后，模型收到 <code>deadline_exceeded</code>，规划器明确记录 <code>tool.not_started reason=no_budget</code>，终态是 <code>FAILED/DEADLINE_EXCEEDED</code>，不是模糊的网络错误。</em></p>
+<p>生产中至少区分：用户主动停止、入口 deadline、模型首 Token 超时、流空闲超时、工具执行超时和平台关机排空。它们的重试资格完全不同。用户停止通常不应自动重试；模型首 Token 超时可能允许有界 fallback；已经提交的工具超时则需要按幂等键查询结果，不能盲目再执行。</p>
+<h2 id="六流式输出的真正难点已经在路上的事件不会听话">六、流式输出的真正难点：已经在路上的事件不会听话</h2>
+<p>向模型发送取消后，provider、SDK、代理层和本地缓冲中仍可能有数据在路上。仅仅 <code>close()</code> 当前 socket 有三个问题：连接可能被复用；关闭未必能取消远端计算；重连后旧事件仍可能从事件存储里补回来。</p>
+<p>更可靠的做法是让每个规范化事件都带上 <code>turn_id</code>、单调递增 <code>seq</code>、<code>generation</code>、事件类型和时间戳。Channel Adapter 可以把不同供应商、SSE、WebSocket 或 WebRTC 的事件映射成平台内部事件，但不能丢掉世代和序号。交付门只接受当前 generation；旧 generation 的增量可以保留为审计证据，却绝不能继续显示或播放。</p>
+<p>这很像老师改题后，小明已经写在纸上的旧答案不会自动消失。老师需要在黑板上标记“现在回答第 8 版题目”，任何拿着第 7 版答案走进来的同学都只能去资料箱，不能再上台朗读。<strong>取消传播解决“尽量让上游停”，generation fence 解决“即使没及时停也不能污染当前体验”。</strong> 两者缺一不可。</p>
+<h2 id="七语音-barge-in用户插话时要同时关麦克风以外的三扇门">七、语音 Barge-in：用户插话时，要同时关麦克风以外的三扇门</h2>
+<p>语音场景把取消问题放大了。模型生成文本、语音合成、音频编码、网络抖动缓冲和扬声器播放彼此都有队列。用户已经开口，旧回答还播放半秒，会让对话像两个不礼貌的人抢话；如果只静音播放器而不取消模型，后台还在生成一段永远不会播放的答案。</p>
+<p>Barge-in 不是一个单独事件，而是一条原子感很强的事件链：</p>
+<ol>
+<li>VAD 或按键检测到新的用户语音开始；</li>
+<li>Turn Manager 接受插话，当前 generation 递增；</li>
+<li>立即清空尚未播放的输出音频；</li>
+<li>向旧模型/语音响应发取消，并停止新增合成；</li>
+<li>delivery gate 丢弃旧 generation 的迟到音频包；</li>
+<li>为新语音创建 Turn，继续转写与回答。</li>
+</ol>
+<p><img alt="原创时间线：speech_started 后依次清音频、取消旧响应、隔离迟到包并创建新 Turn。" src="/post-images/ai-turn-manager-cancellation-barge-in/03-barge-in-timeline.svg"></p>
+<p><em>图 7：用户感知到的“成功插话”至少包含三件事：马上安静、旧工作停止、旧包不能复活。只做 <code>response.cancel</code> 而不做 <code>audio.clear</code>，缓冲里的声音仍会继续播放。</em></p>
+<p>实验让 generation 7 的语音先播放两个帧，70ms 注入合成的 <code>speech_started</code>。71ms 接受插话，72ms 清掉四个待播帧，73ms 取消旧响应，79ms 丢弃迟到的旧音频，随后 generation 8 完成新回答。</p>
+<p><img alt="真实本地实验截图：语音插话清空音频、取消旧 generation，并让新 Turn 继续。" src="/post-images/ai-turn-manager-cancellation-barge-in/09-real-barge-in.png"></p>
+<p><em>图 8：真实运行日志截图。没有录制真实声音，也没有连接语音供应商；事件用于验证 Barge-in 的最小协议语义。真实系统还要处理回声消除、VAD 误触发、半双工设备和移动端音频焦点。</em></p>
+<p>VAD 也不能一检测到声音就无条件取消。扬声器回声、键盘敲击、咳嗽都可能被误判。常见策略是把声学置信度、连续语音时长、是否按下说话键、当前回答是否可打断、用户偏好和设备回声状态组合起来；高风险工具不能因为一声咳嗽就取消到不一致状态。语音体验追求“快”，状态机追求“真”，两者要由 Turn Manager 对齐。</p>
+<h2 id="八停止请求必须幂等用户连点三次后台只能刹一次车">八、停止请求必须幂等：用户连点三次，后台只能刹一次车</h2>
+<p>移动网络会重传，前端会因为没收到确认而重试，用户也可能连续点击。若每个 cancel 都新建清理任务，可能重复撤销、重复发通知，甚至把新 Turn 误杀。取消请求应带稳定的 request ID；服务端对状态转换做事务性比较：只有第一次能从 <code>RUNNING</code> 进入 <code>CANCEL_REQUESTED</code>，后续请求返回相同终态，不再产生新的取消副作用。</p>
+<p><img alt="真实本地实验截图：三个停止请求只产生一次取消效果。" src="/post-images/ai-turn-manager-cancellation-barge-in/14-real-idempotent-stop.png"></p>
+<p><em>图 9：真实运行日志截图。第一次停止写入一次状态转换；相同 request ID 的重试和另一个迟到停止都得到 <code>already_terminal</code>，<code>cancel_effects</code> 仍为 1。幂等不等于忽略请求，而是重复请求得到一致结果。</em></p>
+<p>API 返回也应明确：<code>accepted</code> 表示平台开始取消，<code>already_terminal</code> 表示任务早已结束，<code>reconcile_required</code> 表示外部提交仍需确认。不要让所有分支都返回一个含糊的 200 和“操作成功”。</p>
+<h2 id="九工具取消边界能停止的任务要合作不能撤回的动作要诚实">九、工具取消边界：能停止的任务要合作，不能撤回的动作要诚实</h2>
+<p>操作系统和运行时通常只能“请求取消”，无法安全地把任意代码从中间切断。强杀线程可能让锁不释放、临时文件半写、数据库事务状态未知。可取消工具应设计检查点：读取完成后、写临时结果后、真正 publish 前检查 cancel token；收到取消后清理临时工作，并把未提交副作用保持为 0。</p>
+<p><img alt="原创工具边界：可合作工具可以回滚临时工作，已发出的外部提交只能对账。" src="/post-images/ai-turn-manager-cancellation-barge-in/04-tool-cancel-boundary.svg"></p>
+<p><em>图 10：取消不是时光机。commit 之前可以停，commit 已发出后只能停止继续交付、记录幂等键并查询最终结果。把未知结果写成“已取消”会制造比超时更危险的假确定性。</em></p>
+<p>实验里的可合作工具先读取输入，再写一个合成临时结果；65ms 用户停止，70ms 工具在 publish 前观察到信号，删除临时工作，最终副作用为 0。</p>
+<p><img alt="真实本地实验截图：可取消工具在 publish 前观察信号并清理临时工作。" src="/post-images/ai-turn-manager-cancellation-barge-in/11-real-cancellable-tool.png"></p>
+<p><em>图 11：真实运行日志截图。生产工具应明确声明 <code>cancellable</code>、检查点和 cleanup 结果；仅仅在工具 schema 写“支持取消”没有意义，Worker 必须能证明它在哪一步停下。</em></p>
+<p>另一个场景故意把取消注入到最棘手的窗口：外部 commit 已经带幂等键发出，但确认尚未返回。此时 Turn Manager 可以停止新文字、停止 TTS、拒绝后续工具，却不能保证那次提交没发生。105ms 合成确认返回，副作用为 1，终态因此是 <code>RECONCILE_REQUIRED</code>，而不是 <code>CANCELLED</code>。</p>
+<p><img alt="真实本地实验截图：取消发生在外部提交之后，平台诚实进入 RECONCILE_REQUIRED。" src="/post-images/ai-turn-manager-cancellation-barge-in/12-real-noncancellable-tool.png"></p>
+<p><em>图 12：真实运行日志截图。这不是取消失败，而是正确暴露物理边界。下一步应按 idempotency key 查询、补偿或请求人工确认；绝不能无条件重放。</em></p>
+<p>对工具按取消能力分类很实用：</p>
+<ul>
+<li><strong>纯读、短任务</strong>：检查 token 后直接丢弃结果，风险最低；</li>
+<li><strong>分阶段可提交</strong>：临时写入 + commit 前检查，可安全撤回临时阶段；</li>
+<li><strong>支持服务端取消</strong>：调用对方的 cancel API，但仍要查询最终状态；</li>
+<li><strong>外部不可逆提交</strong>：取消只阻止后续步骤，当前动作进入对账/补偿；</li>
+<li><strong>长时间人工流程</strong>：取消申请与取消完成是两个业务事件，不能合并。</li>
+</ul>
+<p>这也解释了为什么 <a href="/post/ai-tool-calling-mcp/">Tool Calling 与 MCP</a> 解决的是能力发现和调用协议，而不是自动解决取消、权限与事务。协议可以传递取消意图，平台仍要定义每个工具的真实边界。</p>
+<h2 id="十断线重连不要把继续显示变成再生成一次">十、断线重连：不要把“继续显示”变成“再生成一次”</h2>
+<p>移动端切网、浏览器休眠和 WebRTC 重协商都很普通。断线后若直接重新向模型提问，既浪费成本，又可能重复工具动作。Turn Manager 应把规范化输出事件先写入短期事件存储，再向客户端发送；客户端 ACK 最后成功处理的序号，重连时携带不可猜测的 resume token 与 <code>after_seq</code>。</p>
+<p><img alt="原创断线续传：客户端从最后确认的序号之后重放，重复序号只确认不重复渲染。" src="/post-images/ai-turn-manager-cancellation-barge-in/05-reconnect-replay.svg"></p>
+<p><em>图 13：事件序号负责顺序，resume token 负责授权，TTL 负责生命周期。只有 seq 没有鉴权会变成越权读取；只有 token 没有 seq 会造成重复展示。</em></p>
+<p>实验在客户端确认 seq 3 后断线，服务端继续持久化 seq 4、5 与终态 6。客户端用 <code>after_seq=3</code> 恢复，收到 4..6；一个重复的 seq 5 被忽略，最终文本恰好是一次 <code>The service is healthy.</code>。</p>
+<p><img alt="真实本地实验截图：断线后按游标重放，重复事件没有重复渲染。" src="/post-images/ai-turn-manager-cancellation-barge-in/13-real-reconnect-replay.png"></p>
+<p><em>图 14：真实运行日志截图。实验验证事件语义，不测试真实网络质量。生产还要限制 resume TTL、绑定用户/设备、压缩事件，并在存储不可用时明确选择“无法续传”而不是悄悄重新执行。</em></p>
+<p>如果用户在断线期间取消，重连后应先看到权威终态，再决定是否重放之前的文本。若 Turn 已 <code>CANCELLED</code>，旧流绝不能因为客户端拿着旧游标重新活过来。generation 与终态检查要发生在每一次 replay，而不只发生在初次连接。</p>
+<h2 id="十一可观测性别只统计取消接口-200">十一、可观测性：别只统计“取消接口 200”</h2>
+<p>一个可靠看板至少要把以下指标分开：</p>
+<ul>
+<li><strong>TTFT</strong>：用户多久看到/听到第一个有效输出；</li>
+<li><strong>E2E</strong>：Turn 多久进入权威终态；</li>
+<li><strong>cancel propagation latency</strong>：接受停止到所有可取消分支收敛的时间；</li>
+<li><strong>audible tail</strong>：用户插话后旧语音还播放多久；</li>
+<li><strong>late event delivered/dropped</strong>：旧 generation 是否被正确隔离；</li>
+<li><strong>side effect after cancel request</strong>：停止后仍确认的外部副作用数量与原因；</li>
+<li><strong>reconnect exactness</strong>：续传是否丢事件、乱序或重复渲染；</li>
+<li><strong>duplicate cancel effect</strong>：重复停止是否触发重复清理；</li>
+<li><strong>terminal conflict</strong>：同一 Turn 是否出现两个终态。</li>
+</ul>
+<p><img alt="原创验收看板：TTFT、取消传播、迟到事件、续传与副作用必须一起看。" src="/post-images/ai-turn-manager-cancellation-barge-in/06-release-metrics.svg"></p>
+<p><em>图 15：本文实验的数字来自虚拟时钟，作用是让发布闸门可重复；生产阈值要根据语音/文字渠道和工具风险分别制定。一次外部提交发生在 cancel 后不一定是 Bug，但没有被标记和对账一定是 Bug。</em></p>
+<p>Trace 中应以 Turn span 作为根，包含 transport、retrieval、model stream、policy、tool、TTS、cancel propagation 和 replay 子 span。cancel reason、generation、deadline、最后 ACK 序号、工具幂等键可作为受控属性；Prompt、音频和工具结果按数据分级处理，不能为了排障把秘密全部写进日志。若还没有完整观测栈，可以参考这篇 <a href="/post/mysql-prometheus-loki-grafana-ai-agent-hands-on/">MySQL + Prometheus + Loki + Grafana 接入 Agent 的实战</a>，但请记住仪表盘不能替代状态机。</p>
+<h2 id="十二可复现实验8-个场景如何证明停不是-ui-幻觉">十二、可复现实验：8 个场景如何证明“停”不是 UI 幻觉</h2>
+<p>本文提供的 <a href="/post-files/ai-turn-manager-cancellation-barge-in/turn_manager_lab.py">Python 标准库实验</a> 不访问网络、不调用真实模型或工具、不读取凭据。运行时会替换 socket 连接与 DNS 入口为 fail-closed 守卫；所有 Turn、工具和事件都是合成数据；虚拟时钟保证截图与事件顺序可重复。</p>
+<p>八个场景分别验证：正常流、取消树、语音插话、deadline 预算、可取消工具、不可取消提交、断线续传和幂等停止。输出包括逐场景日志、<code>events.jsonl</code>、<code>metrics.json</code>、<code>report.json</code> 与总验收日志。</p>
+<p><img alt="真实本地实验截图：8 个场景、24 条断言全部通过。" src="/post-images/ai-turn-manager-cancellation-barge-in/15-real-release-gate.png"></p>
+<p><em>图 16：真实运行总验收截图。24/24 PASS 证明脚本定义的控制语义一致，不代表通过生产安全认证，也不代表任意供应商都会及时响应取消。外部成本为 0。</em></p>
+<h3 id="人工一键执行">人工一键执行</h3>
+<p>将 <a href="/post-files/ai-turn-manager-cancellation-barge-in/turn-manager-lab.zip">实验文件包</a> 解压到一个新目录。Python 3 是唯一运行时前提，脚本不会安装软件或下载依赖。</p>
+<p>Windows 11：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-powershell" data-lang="powershell"><span style="display:flex;"><span>powershell -ExecutionPolicy Bypass <span style="color:#f92672">-File</span> .\run-windows11.ps1
+</span></span></code></pre></div><p>Ubuntu 26.04：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>bash ./run-ubuntu-2604.sh
+</span></span></code></pre></div><p>macOS 26：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>bash ./run-macos-26.sh
+</span></span></code></pre></div><p>三种入口都调用同一份 Python 核心，并在 <code>lab-output/report.json</code> 不是 <code>PASS</code> 时以非零状态退出。可以分别下载 <a href="/post-files/ai-turn-manager-cancellation-barge-in/run-windows11.ps1">Windows 11 脚本</a>、<a href="/post-files/ai-turn-manager-cancellation-barge-in/run-ubuntu-2604.sh">Ubuntu 26.04 脚本</a>、<a href="/post-files/ai-turn-manager-cancellation-barge-in/run-macos-26.sh">macOS 26 脚本</a> 与 <a href="/post-files/ai-turn-manager-cancellation-barge-in/README.md">完整说明</a>。</p>
+<h3 id="agent-自动配置与验收">Agent 自动配置与验收</h3>
+<p>把 <a href="/post-files/ai-turn-manager-cancellation-barge-in/agent-task.json">agent-task.json</a> 交给本地 Agent，并明确只允许它在解压目录内工作。配置声明了：禁止网络、禁止真实模型/工具、禁止读取 Secret、写入范围仅限 <code>lab-output/</code>，成功条件必须同时满足退出码 0、<code>report.status=PASS</code> 和 24/24 断言。</p>
+<p>可以直接给 Agent 下面这段任务：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>读取当前目录的 agent-task.json，识别操作系统并执行对应命令。
+</span></span><span style="display:flex;"><span>不得访问网络、不得安装依赖、不得读取环境凭据、不得扩大写入范围。
+</span></span><span style="display:flex;"><span>执行后解析 lab-output/report.json；只有 exit code 为 0、status 为 PASS、
+</span></span><span style="display:flex;"><span>assertions 为 24/24 才报告成功。失败时保存全部证据，指出具体 scenario
+</span></span><span style="display:flex;"><span>和 assertion，不要无限重试，也不要修改实验代码来让测试通过。
+</span></span></code></pre></div><p>Agent 模式命令在脚本后增加 <code>--agent</code>（PowerShell 使用 <code>-Agent</code>），会额外输出紧凑 JSON，适合自动收集。这里的“自动配置”是让 Agent 安全接入验收任务，不是授权它改生产 Turn Manager；生产变更仍应走代码审查、灰度和回滚。</p>
+<h2 id="十三上线前故障注入怎样才算真的通过">十三、上线前故障注入：怎样才算真的通过</h2>
+<p>把以下场景加入发布闸门，比手工点一次“停止生成”可靠得多：</p>
+<ol>
+<li>模型连续输出时在随机 Token 边界取消，确认旧 generation 不再交付；</li>
+<li>检索慢、模型快和模型慢、检索快两种顺序都取消，确认没有孤儿任务；</li>
+<li>TTS 缓冲 100ms、300ms、800ms 时插话，测 audible tail；</li>
+<li>cancel 与 <code>COMPLETED</code> 在同一毫秒竞争，确认只能写一个终态；</li>
+<li>commit 前、commit 中、commit 后分别取消，核对副作用与状态；</li>
+<li>cancel ACK 丢失，让客户端重试三次，确认取消效果仍只有一次；</li>
+<li>断线期间完成、取消或失败，再用旧游标恢复，确认权威终态优先；</li>
+<li>deadline 到期前只剩极小预算，确认平台不会启动新写工具；</li>
+<li>provider 不响应取消，确认 delivery gate 仍拦住迟到内容并记录浪费 Token；</li>
+<li>Turn Manager 实例重启，确认取消状态、generation 和 replay 游标不会只存在内存里。</li>
+</ol>
+<p>发布判定也要诚实：“所有可合作任务在 SLO 内停止”“不可取消动作进入对账”“用户不再收到旧输出”是三个独立结论。任何一个都不能替代另外两个。</p>
+<h2 id="十四人工落地顺序先装交付门再逐步拉通取消树">十四、人工落地顺序：先装交付门，再逐步拉通取消树</h2>
+<p>如果现有系统只有一个停止按钮，不必一夜重写全部服务。可以按风险从外向内演进：</p>
+<p><strong>第一步，给事件加 Turn ID、seq 和 generation。</strong> 先在出口建立 delivery gate，保证用户停止后旧事件不再显示。即使上游暂时还在浪费计算，至少不会污染新一轮。</p>
+<p><strong>第二步，持久化权威状态与 deadline。</strong> 用事务保证唯一终态，让断线和多实例不再依赖单机内存。区分 <code>CANCEL_REQUESTED</code> 与 <code>CANCELLED</code>。</p>
+<p><strong>第三步，接通模型、检索和 TTS 的合作取消。</strong> 每个适配器报告接受时间、停止时间和剩余缓冲；无法取消的 provider 也必须被 generation fence 隔离。</p>
+<p><strong>第四步，为工具定义取消能力。</strong> 在 schema 之外增加 cancellability、commit point、idempotency、compensation 与 reconciliation 说明；高风险工具在 deadline 不足时禁止启动。</p>
+<p><strong>第五步，做续传和故障注入。</strong> 事件持久化、ACK/seq、resume token、TTL 与权限绑定完成后，再把竞态测试纳入发布流程。</p>
+<p>这条路线与 <a href="/post/ai-platform-production-reference-architecture/">AI Platform 旗舰架构</a> 的分层一致：Turn Manager 位于体验平面，但取消信号要穿过控制和执行平面，证据最终落到数据与观测平面。想按主题继续阅读，可以回到 <a href="/post/ai-platform-architecture-reading-map/">AI Platform 架构实践阅读地图</a>。</p>
+<h2 id="十五qa">十五、Q&amp;A</h2>
+<h3 id="q1前端调用-abortcontrollerabort是否已经够了">Q1：前端调用 <code>AbortController.abort()</code>，是否已经够了？</h3>
+<p>它是很好的入口，但只保证本地消费方收到取消信号，不自动证明远端模型、队列 Worker、工具和 TTS 已停止。要把 abort 映射成带身份与 Turn ID 的服务端事件，再由取消树传播。</p>
+<h3 id="q2用户关闭网页要不要自动取消-turn">Q2：用户关闭网页，要不要自动取消 Turn？</h3>
+<p>取决于业务。纯聊天可以取消；长时间报告可能允许后台继续；写操作更不能靠连接断开决定。应把 <code>transport_disconnected</code> 记录为事件，再由产品策略选择继续、暂停或取消。</p>
+<h3 id="q3直接杀掉-worker-不是最快吗">Q3：直接杀掉 Worker 不是最快吗？</h3>
+<p>强杀只能作为隔离手段，不能替代协议。Worker 可能持锁、写了一半文件或已经提交外部请求。优先合作取消与 deadline；超过 grace period 再终止进程，并把未知副作用交给恢复与对账。</p>
+<h3 id="q4为什么需要-cancel_requested不能直接写-cancelled">Q4：为什么需要 <code>CANCEL_REQUESTED</code>，不能直接写 <code>CANCELLED</code>？</h3>
+<p>因为“用户提出停止”和“所有工作已安全收敛”不是同一时刻。中间态能让 UI 显示正在停止，让后台等待工具结果，也避免把不可逆提交误报为已撤回。</p>
+<h3 id="q5语音插话是否必须等转写完成">Q5：语音插话是否必须等转写完成？</h3>
+<p>通常不必。VAD 或按键可以先触发清音频和 generation 切换，转写随后补上新 Turn 内容。但要有回声/噪声策略，避免把系统自己的声音当成用户插话。</p>
+<h3 id="q6provider-不支持取消怎么办">Q6：provider 不支持取消怎么办？</h3>
+<p>立即停止向用户交付旧 generation，停止下游 TTS 和工具计划，记录 provider 仍消耗的 Token 与时长。可以关闭专用连接或调用供应商能力，但不要声称远端计算一定已停。</p>
+<h3 id="q7取消后已经发生的副作用怎么办">Q7：取消后已经发生的副作用怎么办？</h3>
+<p>按 idempotency key 查询权威结果。可补偿的执行反向动作，不可补偿的进入人工确认；审计记录谁在何时请求取消、commit 何时发出、最终何时确认。不要盲目重试。</p>
+<h3 id="q8ssewebsocket-和-webrtc-哪个更适合取消">Q8：SSE、WebSocket 和 WebRTC 哪个更适合取消？</h3>
+<p>它们只是不同传输。SSE 简单适合单向文本，WebSocket 适合双向事件，WebRTC 擅长低延迟媒体与数据通道；无论选择哪个，Turn ID、generation、seq、deadline 和权威状态都不能省。</p>
+<h3 id="q9取消传播-slo-应该设多少">Q9：取消传播 SLO 应该设多少？</h3>
+<p>没有通用数字。文字 UI 可以以几十到几百毫秒衡量；语音 audible tail 对人更敏感；外部工具可能需要数秒清理。分别定义“停止交付”“合作任务停止”“外部结果确认”的 SLO，不要混成一个平均数。</p>
+<h3 id="q10turn-manager-会不会成为单点">Q10：Turn Manager 会不会成为单点？</h3>
+<p>如果状态只放内存里，会。生产设计应让 API 实例无状态或可恢复，把 Turn 状态、终态版本、generation 和续传事件放在可靠存储中；多实例通过乐观锁、租约或单写者规则竞争，而不是各自宣布结果。</p>
+<h2 id="十六参考资料与最后一条底线">十六、参考资料与最后一条底线</h2>
+<ul>
+<li><a href="https://pkg.go.dev/context">Go <code>context</code>：deadline、取消信号与请求范围值</a></li>
+<li><a href="https://docs.python.org/3/library/asyncio-task.html#task-cancellation">Python <code>asyncio</code> Task Cancellation</a></li>
+<li><a href="https://developer.mozilla.org/en-US/docs/Web/API/AbortController">MDN：AbortController</a></li>
+<li><a href="https://grpc.io/docs/guides/cancellation/">gRPC Cancellation Guide</a></li>
+<li><a href="https://www.w3.org/TR/webrtc/">W3C WebRTC 1.0</a></li>
+<li><a href="https://opentelemetry.io/docs/concepts/signals/traces/">OpenTelemetry Traces</a></li>
+</ul>
+<p>Turn Manager 不是一个更大的 controller，也不是给每个请求加一个 cancel flag。它是对“这一轮工作由谁拥有、何时结束、迟到事件怎么办、不可逆动作如何交代”的明确回答。</p>
+<p>最后一条底线很简单：<strong>用户说停后，平台可以诚实地说“正在停止”或“提交已发出，正在确认”，但绝不能一边显示“已取消”，一边让旧回答、旧音频和旧副作用在后台继续发生。</strong></p>
+        </div>
+    </article>
+
+    
+  
+
+
+
+
+    
+<div class="site-stats" aria-label="访问统计">
+    <span>本文阅读量 <span data-page-view-count>--</span></span>
+</div>
+
+
+    
+    <script type="text/javascript" src="https://js.users.51.la/21044367.js"></script>
+    <script charset="UTF-8" id="LA_COLLECT" src="//sdk.51.la/js-sdk-pro.min.js"></script>
+    <script>LA.init({id: "1vVTUWl7zoRjnKXi",ck: "1vVTUWl7zoRjnKXi"})</script>
+    <script src="https://sdk.51.la/perf/js-sdk-perf.min.js" crossorigin="anonymous"></script>
+    <script>
+      new LingQue.Monitor().init({id:"202teQt8THXwqyve"});
+    </script>
+    <script defer src="/js/page-views.js"></script>
+    <div class="la-theme-widget" data-51la-widget aria-label="51.la 网站统计"></div>
+    <script defer src="/js/51la-theme-widget.js"></script>
+</body>
+</html>

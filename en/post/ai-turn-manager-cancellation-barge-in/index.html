@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="en-US">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>You Said “Stop”—So Why Is the AI Still Running? I Broke the Turn Manager’s Cancellation Chain on Purpose - Margrop Blog</title>
+<meta name="description" content="TL;DR A disabled “Stop generating” button does not prove that the AI stopped. The model stream may still consume tokens, retrieval may still hold a connection, …">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://blog.margrop.net/en/post/ai-turn-manager-cancellation-barge-in/"><meta property="og:site_name" content="Margrop Blog">
+<meta property="og:title" content="You Said “Stop”—So Why Is the AI Still Running? I Broke the Turn Manager’s Cancellation Chain on Purpose - Margrop Blog">
+<meta property="og:description" content="TL;DR A disabled “Stop generating” button does not prove that the AI stopped. The model stream may still consume tokens, retrieval may still hold a connection, …">
+<meta property="og:url" content="https://blog.margrop.net/en/post/ai-turn-manager-cancellation-barge-in/">
+<meta property="og:locale" content="en_US"><meta property="og:type" content="article"><meta property="og:locale:alternate" content="zh_CN"><meta property="og:image" content="https://blog.margrop.net/images/avatar.png"><meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="You Said “Stop”—So Why Is the AI Still Running? I Broke the Turn Manager’s Cancellation Chain on Purpose - Margrop Blog">
+<meta name="twitter:description" content="TL;DR A disabled “Stop generating” button does not prove that the AI stopped. The model stream may still consume tokens, retrieval may still hold a connection, …"><meta name="twitter:image" content="https://blog.margrop.net/images/avatar.png"><link rel="alternate" hreflang="zh-CN" href="https://blog.margrop.net/post/ai-turn-manager-cancellation-barge-in/"><link rel="alternate" hreflang="en-US" href="https://blog.margrop.net/en/post/ai-turn-manager-cancellation-barge-in/"><link rel="alternate" hreflang="x-default" href="https://blog.margrop.net/"><meta property="article:published_time" content="2026-08-23T20:10:00&#43;08:00">
+<meta property="article:modified_time" content="2026-08-23T20:10:00&#43;08:00"><meta property="article:tag" content="AI Agent"><meta property="article:tag" content="AI"><meta property="article:tag" content="架构"><meta property="article:tag" content="平台工程"><meta property="article:tag" content="可观测性"><meta property="article:tag" content="分布式"><meta property="article:tag" content="WebRTC"><meta property="article:tag" content="工程实践"><script type="application/ld+json">{"@context":"https://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"Margrop"},"dateModified":"2026-08-23T20:10:00+08:00","datePublished":"2026-08-23T20:10:00+08:00","description":"TL;DR A disabled “Stop generating” button does not prove that the AI stopped. The model stream may still consume tokens, retrieval may still hold a connection, …","headline":"You Said “Stop”—So Why Is the AI Still Running? I Broke the Turn Manager’s Cancellation Chain on Purpose","mainEntityOfPage":"https://blog.margrop.net/en/post/ai-turn-manager-cancellation-barge-in/","url":"https://blog.margrop.net/en/post/ai-turn-manager-cancellation-barge-in/"}</script>
+    <meta name="baidu-site-verification" content="code-sVFZ8SER59" />
+    <script src="/js/theme-toggle.js"></script>
+
+    
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-3J2W592DHJ"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-3J2W592DHJ');
+    </script>
+
+    <style>
+    :root {
+        color-scheme: light;
+        --page-bg: #fff;
+        --surface-bg: #f4f4f4;
+        --text: #222;
+        --muted: #666;
+        --subtle: #777;
+        --border: #eee;
+        --border-strong: #ddd;
+        --link: #006CFF;
+        --tag-bg: #eee;
+        --button-bg: #fff;
+        --button-primary-bg: #333;
+    }
+    @media (prefers-color-scheme: dark) {
+        :root:not([data-theme]) {
+            color-scheme: dark;
+            --page-bg: #111315;
+            --surface-bg: #1d2126;
+            --text: #e8eaed;
+            --muted: #aeb4bd;
+            --subtle: #9aa2ad;
+            --border: #30353d;
+            --border-strong: #454c56;
+            --link: #79b8ff;
+            --tag-bg: #2a3038;
+            --button-bg: #1d2126;
+            --button-primary-bg: #e8eaed;
+        }
+    }
+    html[data-theme="dark"] {
+        color-scheme: dark;
+        --page-bg: #111315;
+        --surface-bg: #1d2126;
+        --text: #e8eaed;
+        --muted: #aeb4bd;
+        --subtle: #9aa2ad;
+        --border: #30353d;
+        --border-strong: #454c56;
+        --link: #79b8ff;
+        --tag-bg: #2a3038;
+        --button-bg: #1d2126;
+        --button-primary-bg: #e8eaed;
+    }
+    html[data-theme="light"] {
+        color-scheme: light;
+        --page-bg: #fff;
+        --surface-bg: #f4f4f4;
+        --text: #222;
+        --muted: #666;
+        --subtle: #777;
+        --border: #eee;
+        --border-strong: #ddd;
+        --link: #006CFF;
+        --tag-bg: #eee;
+        --button-bg: #fff;
+        --button-primary-bg: #333;
+    }
+    body { background: var(--page-bg); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 860px; margin: 0 auto; padding: 20px; line-height: 1.7; color: var(--text); }
+    h1 { border-bottom: 2px solid var(--border-strong); padding-bottom: 10px; }
+    article > h1 { font-size: 2em; line-height: 1.3; margin-bottom: 12px; }
+    .post-list { list-style: none; padding: 0; }
+    .post-list li { margin: 15px 0; }
+    .post-list a { text-decoration: none; color: var(--text); font-size: 18px; }
+    .post-list a:hover { color: var(--link); }
+    .date { color: var(--muted); font-size: 14px; margin-right: 10px; }
+    .tags { margin-top: 8px; }
+    .tag { background: var(--tag-bg); padding: 2px 8px; border-radius: 3px; font-size: 12px; margin-right: 5px; display: inline-block; }
+    nav { margin-bottom: 18px; border-bottom: 1px solid var(--border); padding-bottom: 15px; }
+    nav a { margin-right: 20px; text-decoration: none; color: var(--text); font-size: 16px; }
+    nav a:hover { color: var(--link); }
+    .language-switcher { display: flex; align-items: center; gap: 10px; margin: -8px 0 26px; }
+    .language-switcher a { display: inline-block; padding: 4px 10px; border: 1px solid var(--border-strong); border-radius: 999px; color: var(--muted); text-decoration: none; font-size: 14px; }
+    .language-switcher a.active { background: var(--link); border-color: var(--link); color: #fff; }
+    .content { line-height: 1.8; }
+    .content code { background: var(--surface-bg); padding: 2px 5px; border-radius: 3px; }
+    .content pre { background: var(--surface-bg); padding: 15px; overflow-x: auto; border-radius: 5px; }
+    .content img { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+    .content .code-snippet__fix {
+        margin: 0 0 1.5em;
+    }
+    .content .code-snippet__fix .code-snippet__line-index {
+        display: none !important;
+    }
+    .meta { color: var(--muted); font-size: 14px; margin-bottom: 14px; }
+    .meta-separator { margin: 0 6px; color: var(--subtle); }
+    .site-stats { display: flex; flex-wrap: wrap; gap: 10px 18px; margin: 28px 0 8px; padding-top: 12px; border-top: 1px solid var(--border); color: var(--subtle); font-size: 12px; }
+    a { color: var(--link); }
+    .hero { padding: 12px 0 24px; }
+    .hero h1 { border-bottom: 2px solid #333; }
+    .eyebrow { color: var(--muted); font-size: 12px; letter-spacing: .12em; margin: 0 0 8px; }
+    .hero-tagline { font-size: 18px; margin: 12px 0 8px; }
+    .hero-copy { color: var(--muted); margin: 0 0 14px; }
+    .hero-actions { margin: 14px 0 4px; }
+    .button { display: inline-block; margin-right: 12px; border: 1px solid var(--border-strong); border-radius: 3px; padding: 4px 10px; text-decoration: none; color: var(--text); background: var(--button-bg); font-size: 14px; }
+    .button-primary { background: var(--button-primary-bg); border-color: var(--button-primary-bg); color: var(--page-bg); }
+    .theme-toggle { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 1px solid var(--border-strong); border-radius: 999px; background: var(--button-bg); color: var(--text); cursor: pointer; font: inherit; font-size: 16px; }
+    .theme-toggle:hover { border-color: var(--link); color: var(--link); }
+    .la-theme-widget { margin: 12px 0 20px; min-height: 24px; color: var(--text); }
+    .identity-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: 16px 0; }
+    .identity-grid div { display: flex; flex-direction: column; }
+    .identity-grid strong { font-size: 15px; }
+    .identity-grid span, .topic-card span, .featured-list small { color: var(--muted); font-size: 13px; }
+    .section-block { padding-top: 28px; }
+    .section-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+    .section-heading h2 { margin: 0; }
+    .section-heading a { font-size: 14px; }
+    .topic-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+    .topic-card { display: block; padding: 14px; border: 1px solid var(--border); text-decoration: none; color: var(--text); }
+    .topic-card:hover { border-color: var(--border-strong); }
+    .topic-card strong { display: block; margin: 4px 0; font-size: 17px; }
+    .topic-index, .featured-list > a > span { color: var(--muted) !important; font-size: 12px !important; }
+    .featured-list { border-top: 1px solid var(--border); }
+    .featured-list > a { display: flex; gap: 14px; padding: 12px 0; border-bottom: 1px solid var(--border); text-decoration: none; color: var(--text); }
+    .featured-list div { display: flex; flex-direction: column; }
+    .latest-block { max-width: 860px; }
+    @media (max-width: 680px) {
+        body { padding: 16px; }
+        nav a { display: inline-block; margin-right: 12px; margin-bottom: 8px; }
+        .identity-grid { grid-template-columns: repeat(2, 1fr); }
+        .topic-grid { grid-template-columns: 1fr; }
+    }
+</style>
+
+</head>
+<body>
+    <nav>
+  <a href="/en/">Home</a>
+  <a href="/en/start-here/">Start Here</a>
+  <a href="/en/career/">Portfolio</a>
+  <a href="/en/tag/ai/">AI Agent</a>
+  <a href="/en/tag/docker/">Self-hosting</a>
+  <a href="/en/tag/%e8%bf%90%e7%bb%b4/">Engineering</a>
+  <a href="/en/post/">Archive</a>
+  <a href="/en/tags/">Tags</a>
+  <a href="/en/about/">About</a>
+  <a href="https://github.com/margrop" target="_blank" rel="noopener">GitHub</a>
+</nav>
+
+    <div class="language-switcher">
+  <button class="theme-toggle" type="button" data-theme-toggle aria-label="切换到暗黑模式" aria-pressed="false">🌙</button>
+
+  
+  
+    <a href="/post/ai-turn-manager-cancellation-barge-in/" class="">中文</a>
+  
+    <a href="/en/post/ai-turn-manager-cancellation-barge-in/" class="active">English</a>
+  
+  
+</div>
+
+    
+    <article>
+        <h1>You Said “Stop”—So Why Is the AI Still Running? I Broke the Turn Manager’s Cancellation Chain on Purpose</h1>
+        <div class="meta">
+            Published: 2026-08-23
+            <span class="meta-separator">·</span>
+            <span>阅读量 <span data-page-view-count>--</span></span>
+        </div>
+        
+<div class="tags">
+    
+    <a href="/en/tag/ai-agent/"><span class="tag">AI Agent</span></a>
+    
+    <a href="/en/tag/ai/"><span class="tag">AI</span></a>
+    
+    <a href="/en/tag/%E6%9E%B6%E6%9E%84/"><span class="tag">架构</span></a>
+    
+    <a href="/en/tag/%E5%B9%B3%E5%8F%B0%E5%B7%A5%E7%A8%8B/"><span class="tag">平台工程</span></a>
+    
+    <a href="/en/tag/%E5%8F%AF%E8%A7%82%E6%B5%8B%E6%80%A7/"><span class="tag">可观测性</span></a>
+    
+    <a href="/en/tag/%E5%88%86%E5%B8%83%E5%BC%8F/"><span class="tag">分布式</span></a>
+    
+    <a href="/en/tag/webrtc/"><span class="tag">WebRTC</span></a>
+    
+    <a href="/en/tag/%E5%B7%A5%E7%A8%8B%E5%AE%9E%E8%B7%B5/"><span class="tag">工程实践</span></a>
+    
+</div>
+
+
+        <div class="content">
+            <blockquote>
+<p><strong>TL;DR</strong></p>
+<p>A disabled “Stop generating” button does not prove that the AI stopped. The model stream may still consume tokens, retrieval may still hold a connection, the TTS queue may keep playing an obsolete answer, and a tool may already have sent an irreversible commit to an external system. Real cancellation is neither a UI style nor a forcibly closed HTTP connection. It is a state transition owned by a <strong>Turn Manager</strong>: identify every child operation belonging to the turn, propagate a cancellation signal through that tree, clear audio that has not played, fence late events with a generation number, prevent new side effects when the deadline budget is exhausted, and honestly record whether the outcome is cancelled, completed, or requires reconciliation. I built a zero-network, standard-library Python lab that deliberately creates cancellation races, voice barge-in, deadline exhaustion, an uncancellable commit, and disconnect/reconnect. All eight scenarios and all 24 assertions pass.</p>
+</blockquote>
+<p><img alt="Original cover: stopping must be a platform event, not a button style." src="/post-images/ai-turn-manager-cancellation-barge-in/00-cover.svg"></p>
+<p><em>Figure 1: Original cover. One stop signal must govern the model stream, retrieval, tool work, and audio output. Missing any branch creates the experience of “I said stop, but the AI kept working.”</em></p>
+<h2 id="1-the-background-the-dangerous-part-is-not-a-slow-ai-but-one-that-pretends-to-have-stopped">1. The Background: The Dangerous Part Is Not a Slow AI, but One That Pretends to Have Stopped</h2>
+<p>The simplest chat UI implements Stop like this: when the user clicks the button, the browser aborts the current request and stops appending text. That can appear sufficient for a demo that only generates a paragraph. A production AI Platform, however, may have all of these operations behind one visible turn:</p>
+<ul>
+<li>a model stream that is still decoding and charging tokens;</li>
+<li>retrieval that is still holding database or search capacity;</li>
+<li>a tool task that is waiting for approval or already executing;</li>
+<li>a TTS queue with hundreds of milliseconds of audio buffered ahead;</li>
+<li>asynchronous writes for events, traces, cost, and the authoritative state;</li>
+<li>a WebSocket, SSE, or WebRTC transport that may disconnect and resume at any moment.</li>
+</ul>
+<p>Cancelling only in the browser is like turning off a restaurant’s pickup display without telling the kitchen to cancel the order. The customer can no longer see it, but the cook is still preparing it and the cashier may still capture payment. The customer assumes the order is gone and places another one; the business may produce two effects while showing only one.</p>
+<p>The symptoms are familiar. Text stops while token usage continues. A user interrupts a voice answer, yet half a sentence comes out of the speaker later. Reconnecting repeats a paragraph. Three clicks on Stop launch three cleanup operations. A task marked “cancelled” later sends an email, opens a ticket, or commits a change. These are not unrelated SDK bugs. They share one root cause: <strong>the system treats a transport connection as the work itself, and no component truly owns the lifecycle of the whole turn.</strong></p>
+<h2 id="2-a-turn-is-not-an-http-request">2. A Turn Is Not an HTTP Request</h2>
+<p>An HTTP request is a vehicle. A Turn is the unit of work. A Turn means: “a user supplied an intention; the system generated, retrieved, invoked, played, or persisted work for that intention until one authoritative terminal state was reached.” It may begin with one HTTP request, send incremental events over a WebSocket, execute tools through a queue, and finally replay its terminal event through a later reconnect request.</p>
+<p>Think of a teacher asking a child to answer one problem. The question starts the Turn. Reading notes, thinking, raising a hand, and speaking are child operations. The classroom loudspeaker is the transport. If the loudspeaker fails, the problem does not automatically cease to exist. The teacher saying “Stop, the question has changed” is the business cancellation. <strong>A disconnect is an observed fact; cancellation is a policy decision. The two must not be silently equated.</strong></p>
+<p><img alt="Original diagram: HTTP transports events; the Turn Manager owns the lifecycle." src="/post-images/ai-turn-manager-cancellation-barge-in/01-turn-vs-http.svg"></p>
+<p><em>Figure 2: After the browser disconnects, who stops the model, tool, and audio? If the answer is “nobody knows,” the system is missing a Turn Manager. It can begin as a well-defined module in a modular monolith; the name does not require an immediate microservice split.</em></p>
+<p>A production Turn envelope should carry at least:</p>
+<ul>
+<li>a stable <code>turn_id</code> for the complete unit of work;</li>
+<li><code>parent_turn_id</code> for retries, clarifications, and voice interruptions;</li>
+<li>a <code>generation</code> that identifies the output currently allowed to reach the user;</li>
+<li>verified tenant, user, session, and device claims;</li>
+<li>an absolute <code>deadline</code> and stage budgets, not unrelated component timeouts;</li>
+<li>a cancellation reason, initiator, and idempotent request ID;</li>
+<li>the last acknowledged event sequence, a resume cursor, and retention limits;</li>
+<li>explicit states such as <code>ACCEPTED</code>, <code>RUNNING</code>, <code>CANCEL_REQUESTED</code>, <code>CANCELLED</code>, <code>COMPLETED</code>, <code>FAILED</code>, and <code>RECONCILE_REQUIRED</code>.</li>
+</ul>
+<p>One invariant belongs in the state machine and, where possible, the database constraint: <strong>a Turn can acquire only one terminal state.</strong> A cancel arriving after <code>COMPLETED</code> receives “already completed.” A model-completed event arriving after <code>CANCELLED</code> is rejected. If an irreversible external commit succeeds after cancellation was requested, the platform must not relabel reality as <code>CANCELLED</code> merely to make the UI look tidy.</p>
+<h2 id="3-establish-the-happy-path-baseline-first-fast-ttft-is-not-turn-completion">3. Establish the Happy-Path Baseline First: Fast TTFT Is Not Turn Completion</h2>
+<p>Before injecting cancellation, the local lab establishes a normal synthetic stream. The Turn is accepted; retrieval completes; the model starts streaming; the first token becomes visible at 61ms; and exactly one <code>COMPLETED</code> state is recorded at 110ms. This virtual clock is not a performance benchmark. It creates a reproducible timeline against which races can be asserted.</p>
+<p><img alt="Real local lab capture: the baseline stream finishes within its deadline and writes one terminal state." src="/post-images/ai-turn-manager-cancellation-barge-in/07-real-baseline-stream.png"></p>
+<p><em>Figure 3: Real output from the local script. A socket guard blocks networking and every event is synthetic: <code>provider=synthetic</code>, <code>real_models=0</code>. TTFT and E2E belong to the same Turn, but “started answering,” “finished answering,” and “completed the business action” remain three different moments.</em></p>
+<p>Why bother with a baseline? Many dashboards call an HTTP 200 or the first token “success.” For a tool-using Agent, that proves only that it started talking. If the request is “cancel my reservation,” the first token may arrive in 300ms while the real cancellation takes eight seconds. When the user says stop at second two, the platform needs to know whether it stopped text, planning, the tool, or all of them.</p>
+<h2 id="4-the-cancellation-tree-do-not-broadcast-one-boolean-and-hope-everyone-notices">4. The Cancellation Tree: Do Not Broadcast One Boolean and Hope Everyone Notices</h2>
+<p>When a Turn Manager accepts a stop request, it should create an auditable state transition and then propagate the signal to every child operation derived from that Turn. A useful model is <strong>structured concurrency</strong>: the parent owns its children, and a child cannot quietly escape into an orphan task. Model adapters, retrievers, tool runners, and audio buffers register cancellation callbacks or cooperative checkpoints; the parent waits for them to converge on explainable outcomes.</p>
+<p><img alt="Original cancellation tree: one parent token reaches four child branches, while a delivery gate rejects late events." src="/post-images/ai-turn-manager-cancellation-barge-in/02-cancel-tree.svg"></p>
+<p><em>Figure 4: Propagating the signal is only the first half. The other half is the delivery gate. Even if a provider produces another delta after accepting cancellation, an obsolete generation must never re-enter the UI.</em></p>
+<p>A cancellation tree is not a global <code>cancelled = true</code> variable. Its signal needs a reason, time, deadline, generation, and request identity. A robust sequence looks like this:</p>
+<ol>
+<li>transactionally compare and move the Turn from <code>RUNNING</code> to <code>CANCEL_REQUESTED</code>;</li>
+<li>immediately close the old generation’s delivery gate to prevent ghost output;</li>
+<li>notify retrieval, model, tool, and TTS children to stop or clean up;</li>
+<li>wait for a bounded grace period and collect which branches stopped and which are committing;</li>
+<li>write <code>CANCELLED</code>, <code>FAILED</code>, or <code>RECONCILE_REQUIRED</code> from facts rather than always displaying “cancel succeeded.”</li>
+</ol>
+<p>The lab injects <code>turn.cancel</code> at 75ms. Retrieval, model, and TTS observe it. A model delta arriving at 82ms is discarded by the delivery gate. The Turn enters <code>CANCELLED</code> at 83ms, an 8ms propagation interval in the virtual timeline.</p>
+<p><img alt="Real local lab capture: cancellation drains three children and the generation gate drops a late delta." src="/post-images/ai-turn-manager-cancellation-barge-in/08-real-cancel-tree.png"></p>
+<p><em>Figure 5: Real lab output. The 8ms value is a deterministic virtual-clock assertion, not a claim about any model provider. Production acceptance should measure p50, p95, and p99 across the real chain.</em></p>
+<h2 id="5-a-deadline-is-not-a-separate-timeout-at-every-layer">5. A Deadline Is Not a Separate Timeout at Every Layer</h2>
+<p><code>timeout=30s</code> sounds simple. If retrieval, model, and tool each independently receive 30 seconds, however, the user may wait 90 seconds. Worse, a parent with only 200ms remaining can start a write tool likely to take 20 seconds; the page times out, but the side effect continues.</p>
+<p>A deadline is the absolute end of the Turn. A timeout limits one stage. The Turn Manager should allocate the remaining time like a finite allowance: 25ms for retrieval, 55ms for the model, and 10ms held back for shutdown. Every child receives the smaller of its own maximum and the parent’s remaining budget. If a child has ten dollars, spends four on a pencil, and then behaves as if it still owns ten for a notebook, its arithmetic is wrong. Layered timeouts make the same mistake.</p>
+<p><img alt="Real local lab capture: after the total budget expires, the model is cancelled and no tool starts." src="/post-images/ai-turn-manager-cancellation-barge-in/10-real-deadline-budget.png"></p>
+<p><em>Figure 6: Real lab output. At the 90ms deadline, the model observes <code>deadline_exceeded</code>; the planner records <code>tool.not_started reason=no_budget</code>; and the terminal result is the explicit <code>FAILED/DEADLINE_EXCEEDED</code>, not a vague network error.</em></p>
+<p>Production systems should distinguish user cancellation, the ingress deadline, time to first token, stream idle timeout, tool timeout, and platform shutdown drainage. Their retry policies differ. A user stop normally must not auto-retry. A first-token timeout might permit bounded fallback. A tool whose acknowledgement timed out after commit must be queried by idempotency key, never blindly executed again.</p>
+<h2 id="6-the-hard-part-of-streaming-events-already-in-flight-do-not-obey-you">6. The Hard Part of Streaming: Events Already in Flight Do Not Obey You</h2>
+<p>After sending cancel to a model, data may remain in the provider, SDK, reverse proxy, kernel, or local buffer. Closing the current socket has three problems: the connection may be pooled, close may not cancel remote computation, and a reconnect may replay old events from storage.</p>
+<p>A safer internal event has <code>turn_id</code>, monotonic <code>seq</code>, <code>generation</code>, event type, and time. A Channel Adapter can normalize provider-specific SSE, WebSocket, or WebRTC events, but it must preserve sequence and generation. The delivery gate accepts only the active generation. Obsolete deltas may be retained as audit evidence; they cannot be displayed or played.</p>
+<p>Return to the classroom analogy. When the teacher changes the question, an old answer already written on paper does not evaporate. The board now says “answer version 8.” A child arriving with version 7 can file it in the evidence folder but cannot read it aloud. <strong>Propagation asks upstream work to stop; generation fencing prevents contamination even when upstream stops late.</strong> Both are required.</p>
+<h2 id="7-voice-barge-in-interrupting-requires-more-than-muting-the-speaker">7. Voice Barge-in: Interrupting Requires More Than Muting the Speaker</h2>
+<p>Voice makes cancellation visible. Text generation, speech synthesis, audio encoding, jitter buffering, and physical playback all have queues. If an old answer plays for half a second after the user starts speaking, the system sounds like a rude person talking over someone. If it only mutes playback, the model may continue generating an answer nobody will hear.</p>
+<p>Barge-in is not one wire event. It is a tightly coordinated chain:</p>
+<ol>
+<li>VAD or push-to-talk detects new user speech;</li>
+<li>the Turn Manager accepts interruption and advances the generation;</li>
+<li>queued output audio is cleared immediately;</li>
+<li>the old model/speech response is cancelled and no new synthesis is scheduled;</li>
+<li>the delivery gate drops late audio from the obsolete generation;</li>
+<li>a new Turn is created for transcription and response.</li>
+</ol>
+<p><img alt="Original timeline: speech started, clear audio, cancel the old response, fence the late packet, and create a new Turn." src="/post-images/ai-turn-manager-cancellation-barge-in/03-barge-in-timeline.svg"></p>
+<p><em>Figure 7: User-perceived interruption requires at least three outcomes: immediate silence, old work asked to stop, and old packets unable to revive. Calling <code>response.cancel</code> without <code>audio.clear</code> still plays what is already buffered.</em></p>
+<p>In the lab, generation 7 plays two synthetic audio frames before <code>speech_started</code> is injected at 70ms. Barge-in is accepted at 71ms, four buffered frames are cleared at 72ms, the old response is cancelled at 73ms, and a late generation-7 packet is dropped at 79ms. Generation 8 then completes the new answer.</p>
+<p><img alt="Real local lab capture: voice barge-in clears audio, cancels the old generation, and lets the new Turn continue." src="/post-images/ai-turn-manager-cancellation-barge-in/09-real-barge-in.png"></p>
+<p><em>Figure 8: Real lab output. No microphone or speech provider is used; the events test the minimum protocol semantics. A real implementation must additionally handle echo cancellation, VAD false positives, half-duplex hardware, and mobile audio focus.</em></p>
+<p>VAD must not cancel every time it sees noise. Loudspeaker echo, keyboard clicks, and coughing can look like speech. Practical policy combines acoustic confidence, duration, push-to-talk state, whether the current response is interruptible, user preferences, and device echo state. A cough must not push a high-risk tool into an inconsistent state. Voice UX optimizes for speed; the state machine optimizes for truth. The Turn Manager reconciles the two.</p>
+<h2 id="8-stop-must-be-idempotent-three-clicks-may-apply-the-brake-only-once">8. Stop Must Be Idempotent: Three Clicks May Apply the Brake Only Once</h2>
+<p>Mobile networks retransmit. Frontends retry when acknowledgements vanish. Users click repeatedly. If every cancel launches a new cleanup task, the system may revoke twice, send duplicate notifications, or accidentally kill a newer Turn. A cancel carries a stable request ID, and the server compares state transactionally: only the first request can move <code>RUNNING</code> to <code>CANCEL_REQUESTED</code>. Later requests return the same terminal result without producing another cancellation effect.</p>
+<p><img alt="Real local lab capture: three stop requests create only one cancellation effect." src="/post-images/ai-turn-manager-cancellation-barge-in/14-real-idempotent-stop.png"></p>
+<p><em>Figure 9: Real lab output. The first stop writes one transition. A retry with the same request ID and a later stop with a different ID both receive <code>already_terminal</code>; <code>cancel_effects</code> remains 1. Idempotency does not mean ignoring requests—it means repeating one request yields one consistent result.</em></p>
+<p>The API response should be explicit. <code>accepted</code> means cancellation has begun. <code>already_terminal</code> means the Turn previously ended. <code>reconcile_required</code> means an external commit remains unresolved. Hiding all branches behind HTTP 200 and “operation successful” destroys the information the caller needs.</p>
+<h2 id="9-tool-cancellation-boundaries-cooperative-work-can-stop-committed-work-needs-honesty">9. Tool Cancellation Boundaries: Cooperative Work Can Stop; Committed Work Needs Honesty</h2>
+<p>Operating systems and runtimes generally let us request cancellation; they cannot safely cut arbitrary code at an arbitrary instruction. Killing a thread can strand a lock, leave a half-written file, or make transaction state unknowable. A cancellable tool therefore exposes checkpoints: after reading, after producing temporary output, and before publishing. On cancellation it cleans up temporary work and keeps committed side effects at zero.</p>
+<p><img alt="Original tool boundary: cooperative work rolls back temporary state; an external commit in flight requires reconciliation." src="/post-images/ai-turn-manager-cancellation-barge-in/04-tool-cancel-boundary.svg"></p>
+<p><em>Figure 10: Cancellation is not time travel. Before commit, work can stop. After a commit has been sent, the platform can stop further delivery, preserve the idempotency key, and query the outcome. Labeling an unknown commit “cancelled” creates more danger than an honest timeout.</em></p>
+<p>The cooperative lab tool reads its synthetic input and writes temporary output. The user cancels at 65ms. At 70ms, the tool observes the token before publish, removes temporary work, and finishes with zero committed side effects.</p>
+<p><img alt="Real local lab capture: a cooperative tool observes cancellation before publish and cleans temporary work." src="/post-images/ai-turn-manager-cancellation-barge-in/11-real-cancellable-tool.png"></p>
+<p><em>Figure 11: Real lab output. A production adapter should declare its cancellation capability, checkpoints, and cleanup result. Writing “supports cancellation” in a tool description is useless unless the Worker can prove where it stopped.</em></p>
+<p>The second scenario injects cancellation into the worst window: an external commit carrying an idempotency key has been sent, but the acknowledgement has not arrived. The Turn Manager can stop new text, TTS, and subsequent tools; it cannot promise that the commit did not happen. A synthetic acknowledgement arrives at 105ms with one side effect. The correct state is therefore <code>RECONCILE_REQUIRED</code>, not <code>CANCELLED</code>.</p>
+<p><img alt="Real local lab capture: cancellation follows an external commit, so the Turn honestly enters RECONCILE_REQUIRED." src="/post-images/ai-turn-manager-cancellation-barge-in/12-real-noncancellable-tool.png"></p>
+<p><em>Figure 12: Real lab output. This is not a failure to understand cancellation; it is an accurate physical boundary. The next step is to query by idempotency key, compensate, or ask a human—not to replay unconditionally.</em></p>
+<p>Classifying tools by cancellation behavior helps:</p>
+<ul>
+<li><strong>short, read-only work</strong> can check a token and discard its result;</li>
+<li><strong>staged commits</strong> can write temporary state and stop before commit;</li>
+<li><strong>server-cancellable operations</strong> may expose a cancel API, but still require an authoritative outcome query;</li>
+<li><strong>irreversible external commits</strong> can only stop later steps and enter compensation or reconciliation;</li>
+<li><strong>long human workflows</strong> have separate “cancellation requested” and “cancellation completed” business events.</li>
+</ul>
+<p>This is also why <a href="/en/post/ai-tool-calling-mcp/">Tool Calling and MCP</a> solve capability discovery and invocation protocol, not cancellation, authorization, and transactions automatically. A protocol may carry the intent to cancel; the platform still defines the tool’s physical boundary.</p>
+<h2 id="10-disconnect-and-reconnect-resume-display-do-not-regenerate-the-turn">10. Disconnect and Reconnect: Resume Display; Do Not Regenerate the Turn</h2>
+<p>Mobile network changes, browser sleep, and WebRTC renegotiation are normal. If reconnect asks the model the question again, it wastes cost and may repeat tools. The Turn Manager should persist normalized events briefly before sending them. The client acknowledges the highest sequence it has processed and later reconnects with a non-guessable resume token plus <code>after_seq</code>.</p>
+<p><img alt="Original reconnect flow: replay after the last acknowledged sequence and acknowledge duplicates without rendering them twice." src="/post-images/ai-turn-manager-cancellation-barge-in/05-reconnect-replay.svg"></p>
+<p><em>Figure 13: Sequence controls order, the resume token controls authorization, and TTL controls lifecycle. A sequence without authorization risks cross-user disclosure; a token without sequence creates duplicate rendering.</em></p>
+<p>The lab disconnects after the client has acknowledged sequence 3. The server persists sequences 4 and 5 plus terminal event 6. The client resumes with <code>after_seq=3</code>, receives 4..6, and ignores a duplicate sequence 5. The rendered text is exactly one <code>The service is healthy.</code></p>
+<p><img alt="Real local lab capture: cursor replay resumes after disconnect and does not render the duplicate event." src="/post-images/ai-turn-manager-cancellation-barge-in/13-real-reconnect-replay.png"></p>
+<p><em>Figure 14: Real lab output. The scenario tests event semantics, not real network quality. Production also needs resume TTL, user/device binding, event compaction, and an explicit “cannot resume” error if storage is unavailable rather than silently re-executing.</em></p>
+<p>If the Turn is cancelled while the client is disconnected, reconnect must receive the authoritative terminal state before deciding how much earlier text to replay. A <code>CANCELLED</code> Turn cannot be resurrected by an old cursor. Generation and terminal-state checks apply on every replay, not only the initial connection.</p>
+<h2 id="11-observability-the-cancel-endpoint-returned-200-is-not-a-useful-slo">11. Observability: “The Cancel Endpoint Returned 200” Is Not a Useful SLO</h2>
+<p>A trustworthy dashboard separates:</p>
+<ul>
+<li><strong>TTFT</strong>: time until the first valid text or audio reaches the user;</li>
+<li><strong>E2E</strong>: time until the Turn reaches an authoritative terminal state;</li>
+<li><strong>cancellation propagation latency</strong>: acceptance to convergence of cancellable children;</li>
+<li><strong>audible tail</strong>: old voice playback after the user begins interrupting;</li>
+<li><strong>late events delivered/dropped</strong>: whether generation fencing works;</li>
+<li><strong>side effects after cancel request</strong>: confirmed external effects and their reasons;</li>
+<li><strong>reconnect exactness</strong>: missing, out-of-order, or duplicate rendering;</li>
+<li><strong>duplicate cancellation effects</strong>: repeated cleanup from retried stop requests;</li>
+<li><strong>terminal conflict</strong>: two terminal states written for one Turn.</li>
+</ul>
+<p><img alt="Original acceptance dashboard: TTFT, cancellation, late events, resume, and side effects must be read together." src="/post-images/ai-turn-manager-cancellation-barge-in/06-release-metrics.svg"></p>
+<p><em>Figure 15: The article’s numbers use a virtual clock for a reproducible gate. Production thresholds must vary by text, voice, and tool risk. An external effect confirmed after cancel is not automatically a bug; failing to label and reconcile it is.</em></p>
+<p>Use the Turn span as the trace root, with transport, retrieval, model stream, policy, tool, TTS, cancellation propagation, and replay as children. Cancellation reason, generation, deadline, last acknowledged sequence, and tool idempotency key can be controlled attributes. Prompts, audio, and tool output still require data classification and redaction; observability must not become a new secret warehouse. If the telemetry stack itself is missing, the <a href="/en/post/mysql-prometheus-loki-grafana-ai-agent-hands-on/">MySQL + Prometheus + Loki + Grafana Agent lab</a> offers a starting point, but dashboards cannot replace a state machine.</p>
+<h2 id="12-the-reproducible-lab-eight-scenarios-proving-stop-is-not-a-ui-illusion">12. The Reproducible Lab: Eight Scenarios Proving Stop Is Not a UI Illusion</h2>
+<p>The downloadable <a href="/post-files/ai-turn-manager-cancellation-barge-in/turn_manager_lab.py">standard-library Python lab</a> performs no network request, invokes no real model or tool, and reads no credential. While scenarios execute, it replaces socket connection and DNS entry points with fail-closed guards. Every identity, tool, and event is synthetic, and a virtual clock keeps event order and captures repeatable.</p>
+<p>The eight scenarios cover baseline streaming, a cancellation tree, voice barge-in, deadline budgeting, a cancellable tool, a commit that cannot be recalled, reconnect replay, and idempotent stop. Evidence includes a log per scenario, <code>events.jsonl</code>, <code>metrics.json</code>, <code>report.json</code>, and the aggregate release gate.</p>
+<p><img alt="Real local lab capture: all eight scenarios and all 24 assertions pass." src="/post-images/ai-turn-manager-cancellation-barge-in/15-real-release-gate.png"></p>
+<p><em>Figure 16: Real local acceptance output. 24/24 PASS proves the control semantics defined by this lab are internally consistent. It is not a production security certification and does not promise that every provider stops promptly. External cost is zero.</em></p>
+<h3 id="one-command-manual-run">One-Command Manual Run</h3>
+<p>Download and extract the <a href="/post-files/ai-turn-manager-cancellation-barge-in/turn-manager-lab.zip">lab bundle</a> into a new directory. Python 3 is the only runtime prerequisite. The scripts install and download nothing.</p>
+<p>Windows 11:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-powershell" data-lang="powershell"><span style="display:flex;"><span>powershell -ExecutionPolicy Bypass <span style="color:#f92672">-File</span> .\run-windows11.ps1
+</span></span></code></pre></div><p>Ubuntu 26.04:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>bash ./run-ubuntu-2604.sh
+</span></span></code></pre></div><p>macOS 26:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>bash ./run-macos-26.sh
+</span></span></code></pre></div><p>All three wrappers invoke the same Python core and exit nonzero unless <code>lab-output/report.json</code> says <code>PASS</code>. Individual downloads are also available for <a href="/post-files/ai-turn-manager-cancellation-barge-in/run-windows11.ps1">Windows 11</a>, <a href="/post-files/ai-turn-manager-cancellation-barge-in/run-ubuntu-2604.sh">Ubuntu 26.04</a>, <a href="/post-files/ai-turn-manager-cancellation-barge-in/run-macos-26.sh">macOS 26</a>, and the <a href="/post-files/ai-turn-manager-cancellation-barge-in/README.md">full README</a>.</p>
+<h3 id="agent-driven-configuration-and-acceptance">Agent-Driven Configuration and Acceptance</h3>
+<p>Give <a href="/post-files/ai-turn-manager-cancellation-barge-in/agent-task.json">agent-task.json</a> to a local Agent and restrict it to the extracted directory. The task declares: deny network, forbid real models and tools, forbid secrets, and limit writes to <code>lab-output/</code>. Success requires exit code 0, <code>report.status=PASS</code>, and 24/24 assertions together.</p>
+<p>This prompt is intentionally portable:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>Read agent-task.json in the current directory, identify the operating system,
+</span></span><span style="display:flex;"><span>and run its matching command. Do not access the network, install dependencies,
+</span></span><span style="display:flex;"><span>read environment credentials, or expand the write scope. Then parse
+</span></span><span style="display:flex;"><span>lab-output/report.json. Report success only if exit code is 0, status is PASS,
+</span></span><span style="display:flex;"><span>and assertions are 24/24. On failure, preserve all evidence, name the scenario
+</span></span><span style="display:flex;"><span>and assertion, do not retry forever, and do not edit the lab to make it pass.
+</span></span></code></pre></div><p>Agent mode adds <code>--agent</code> to the shell wrappers (<code>-Agent</code> in PowerShell) and emits compact JSON for automation. “Agent-driven configuration” here means safely wiring an Agent into the acceptance task. It does not authorize production Turn Manager changes; those still require review, staged deployment, and rollback.</p>
+<h2 id="13-pre-release-fault-injection-what-passed-should-mean">13. Pre-Release Fault Injection: What “Passed” Should Mean</h2>
+<p>Add these races to a release gate instead of manually clicking Stop once:</p>
+<ol>
+<li>cancel at random token boundaries and prove the obsolete generation is no longer delivered;</li>
+<li>cancel both slow-retrieval/fast-model and fast-retrieval/slow-model orders, leaving no orphan;</li>
+<li>barge in with 100ms, 300ms, and 800ms TTS buffers and measure audible tail;</li>
+<li>race cancel against <code>COMPLETED</code> in the same scheduling window and permit one terminal state;</li>
+<li>cancel before, during, and after commit and reconcile state with side effects;</li>
+<li>drop the cancel acknowledgement and retry three times, producing one cancellation effect;</li>
+<li>complete, cancel, or fail while disconnected, then resume with an old cursor and prioritize authority;</li>
+<li>leave almost no deadline budget and verify that a new write tool cannot start;</li>
+<li>make the provider ignore cancel and prove the delivery gate still blocks late content while measuring wasted tokens;</li>
+<li>restart a Turn Manager instance and prove state, generation, and replay cursor were not memory-only.</li>
+</ol>
+<p>The release verdict must remain precise. “All cooperative work stopped within SLO,” “the irreversible operation entered reconciliation,” and “the user received no obsolete output” are separate statements. None substitutes for another.</p>
+<h2 id="14-a-practical-migration-path-install-the-delivery-gate-before-rewiring-everything">14. A Practical Migration Path: Install the Delivery Gate Before Rewiring Everything</h2>
+<p>If today’s system owns only a Stop button, it does not need a one-night rewrite. Move inward by risk:</p>
+<p><strong>First, add Turn ID, sequence, and generation to events.</strong> Build the delivery gate at the edge so obsolete output cannot reach users. Upstream work may temporarily waste compute, but it cannot contaminate a new Turn.</p>
+<p><strong>Second, persist authority and deadline.</strong> Use a transaction for one terminal state, allowing reconnect and multiple instances without relying on one process’s memory. Distinguish <code>CANCEL_REQUESTED</code> from <code>CANCELLED</code>.</p>
+<p><strong>Third, wire cooperative cancellation into models, retrieval, and TTS.</strong> Each adapter reports acceptance time, stop time, and remaining buffer. A provider that cannot cancel is still isolated by the generation fence.</p>
+<p><strong>Fourth, define cancellation capability for every tool.</strong> Alongside schema, document cancellability, commit point, idempotency, compensation, and reconciliation. Block high-risk tools when remaining deadline is insufficient.</p>
+<p><strong>Fifth, implement replay and fault injection.</strong> Once persistence, ACK/sequence, resume token, TTL, and authorization binding are present, add the races to continuous release testing.</p>
+<p>This path follows the layers in the <a href="/en/post/ai-platform-production-reference-architecture/">production AI Platform reference architecture</a>: the Turn Manager sits in the experience plane, but its cancellation signal crosses control and execution, and its evidence lands in the data and observability plane. Use the <a href="/en/post/ai-platform-architecture-reading-map/">AI Platform architecture reading map</a> to continue by responsibility.</p>
+<h2 id="15-qa">15. Q&amp;A</h2>
+<h3 id="q1-is-abortcontrollerabort-in-the-frontend-enough">Q1: Is <code>AbortController.abort()</code> in the frontend enough?</h3>
+<p>It is an excellent entry point, but it proves only that a local consumer received a signal. It does not prove that a remote model, queue Worker, tool, or TTS stopped. Map the abort to an authenticated server event with Turn ID, then propagate it through the tree.</p>
+<h3 id="q2-should-closing-the-browser-automatically-cancel-a-turn">Q2: Should closing the browser automatically cancel a Turn?</h3>
+<p>It depends. Pure chat may cancel; a long report may continue in the background; a write operation must not use disconnect as its decision. Record <code>transport_disconnected</code>, then apply explicit product policy to continue, pause, or cancel.</p>
+<h3 id="q3-is-killing-the-worker-not-the-fastest-solution">Q3: Is killing the Worker not the fastest solution?</h3>
+<p>It is an isolation last resort, not a protocol. The Worker may hold a lock, have half-written a file, or already have sent an external request. Prefer cooperative cancellation and deadlines. After a grace period, terminate the process if needed and hand unknown effects to recovery and reconciliation.</p>
+<h3 id="q4-why-keep-cancel_requested-instead-of-writing-cancelled-immediately">Q4: Why keep <code>CANCEL_REQUESTED</code> instead of writing <code>CANCELLED</code> immediately?</h3>
+<p>“The user asked to stop” and “all work converged safely” are different moments. The intermediate state lets UI show stopping, allows the backend to await tool facts, and prevents an irreversible commit from being falsely reported as recalled.</p>
+<h3 id="q5-must-voice-barge-in-wait-for-transcription-to-finish">Q5: Must voice barge-in wait for transcription to finish?</h3>
+<p>Usually not. VAD or push-to-talk can clear audio and advance generation first; transcription then supplies the new Turn’s content. Echo and noise policy is still necessary so the system does not interpret its own speaker as user interruption.</p>
+<h3 id="q6-what-if-the-model-provider-does-not-support-cancel">Q6: What if the model provider does not support cancel?</h3>
+<p>Stop delivery of the old generation immediately, stop downstream TTS and tool planning, and record the tokens and time the provider continues consuming. Close a dedicated connection or use a provider API if available, but do not claim remote compute definitely stopped.</p>
+<h3 id="q7-what-happens-to-a-side-effect-that-completes-after-cancellation">Q7: What happens to a side effect that completes after cancellation?</h3>
+<p>Query the authoritative result by idempotency key. Compensate if possible or request human confirmation if not. Audit when cancel was requested, when commit was sent, and when the outcome became known. Never blindly retry.</p>
+<h3 id="q8-which-transport-is-best-sse-websocket-or-webrtc">Q8: Which transport is best: SSE, WebSocket, or WebRTC?</h3>
+<p>They serve different needs. SSE is simple for one-way text, WebSocket for bidirectional events, and WebRTC for low-latency media and data channels. None eliminates the need for Turn ID, generation, sequence, deadline, and authoritative state.</p>
+<h3 id="q9-what-should-the-cancellation-propagation-slo-be">Q9: What should the cancellation-propagation SLO be?</h3>
+<p>There is no universal number. Text UI can tolerate tens to a few hundred milliseconds; people notice voice audible tail more sharply; an external tool may need seconds to clean up. Define separate SLOs for stopping delivery, stopping cooperative work, and confirming external outcomes.</p>
+<h3 id="q10-does-the-turn-manager-become-a-single-point-of-failure">Q10: Does the Turn Manager become a single point of failure?</h3>
+<p>It does if authority lives only in memory. Keep API instances stateless or recoverable, persist Turn state, terminal version, generation, and replay events, and coordinate instances through optimistic locking, leases, or a single-writer rule rather than letting each announce its own outcome.</p>
+<h2 id="16-references-and-the-final-boundary">16. References and the Final Boundary</h2>
+<ul>
+<li><a href="https://pkg.go.dev/context">Go <code>context</code>: deadlines, cancellation signals, and request-scoped values</a></li>
+<li><a href="https://docs.python.org/3/library/asyncio-task.html#task-cancellation">Python <code>asyncio</code> Task Cancellation</a></li>
+<li><a href="https://developer.mozilla.org/en-US/docs/Web/API/AbortController">MDN: AbortController</a></li>
+<li><a href="https://grpc.io/docs/guides/cancellation/">gRPC Cancellation Guide</a></li>
+<li><a href="https://www.w3.org/TR/webrtc/">W3C WebRTC 1.0</a></li>
+<li><a href="https://opentelemetry.io/docs/concepts/signals/traces/">OpenTelemetry Traces</a></li>
+</ul>
+<p>A Turn Manager is not a larger controller and not a cancel flag added to every request. It is the explicit answer to four questions: who owns this turn, when does it end, what happens to late events, and how are irreversible actions accounted for?</p>
+<p>The final boundary is simple: <strong>after a user says stop, the platform may honestly say “stopping” or “the commit was already sent; confirming its outcome.” It must never display “cancelled” while obsolete text, old audio, and hidden side effects continue behind the screen.</strong></p>
+        </div>
+    </article>
+
+    
+  
+
+
+
+
+    
+<div class="site-stats" aria-label="访问统计">
+    <span>本文阅读量 <span data-page-view-count>--</span></span>
+</div>
+
+
+    
+    <script type="text/javascript" src="https://js.users.51.la/21044367.js"></script>
+    <script charset="UTF-8" id="LA_COLLECT" src="//sdk.51.la/js-sdk-pro.min.js"></script>
+    <script>LA.init({id: "1vVTUWl7zoRjnKXi",ck: "1vVTUWl7zoRjnKXi"})</script>
+    <script src="https://sdk.51.la/perf/js-sdk-perf.min.js" crossorigin="anonymous"></script>
+    <script>
+      new LingQue.Monitor().init({id:"202teQt8THXwqyve"});
+    </script>
+    <script defer src="/js/page-views.js"></script>
+    <div class="la-theme-widget" data-51la-widget aria-label="51.la 网站统计"></div>
+    <script defer src="/js/51la-theme-widget.js"></script>
+</body>
+</html>
