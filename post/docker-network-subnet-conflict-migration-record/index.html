@@ -229,7 +229,7 @@
 <p>家里的现象很像“某个设备开始乱发包”或者“某条链路出现了奇怪的路由回流”：部分设备能上网，部分设备不能互访，甚至在同一个局域网里，两个本该能直连的设备会突然访问失败。因为家里同时跑着 NAS、软路由、交换机、AP、几套 Docker 服务，所以第一反应通常不会是“Docker 网络池坏了”，而是“是不是某个物理设备又出幺蛾子了”。</p>
 <p>这种排查很容易走弯路，因为 Docker 的问题经常不是“挂了”，而是“还能跑，但跑得不对”。它不会像磁盘坏块那样直接报错，也不会像网卡掉线那样一眼能看出异常。它更像是一种慢性污染：新网络越建越多，默认地址池越用越深，直到某一天，宿主机和局域网的地址规划开始打架。</p>
 <p>我在 NAS 上看到的，就是这种慢性污染累积到临界点后的结果。</p>
-<p><img alt="Docker network conflict before and after" src="/post-images/docker-network-conflict/01-before-after.svg"></p>
+<p><img src="/post-images/docker-network-conflict/01-before-after.svg" alt="Docker network conflict before and after"></p>
 <p>图里左边是问题状态：Docker 的自动网络已经挤进了 <code>192.168.x.x</code>，而家里的 LAN 也在 <code>192.168</code> 这一大类里，两边都在同一个大类里，哪怕不是完全相同的子网，也足够让路由和访问关系变得复杂。右边是修正后的状态：Docker 自动网络统一收敛到 <code>172.16.0.0/12</code>，它和家里的 LAN 明确隔离开，宿主机、容器、局域网之间的关系也会干净很多。</p>
 <h1 id="docker-为什么会自己分到-192168">Docker 为什么会自己分到 192.168</h1>
 <p>很多人第一次遇到这个问题时，会下意识以为 Docker 是“随机乱选”了一个网段。其实不是，Docker 的 user-defined network 背后是有地址池策略的。</p>
@@ -247,60 +247,60 @@
 <li>和外部 VPN、公司网络、常见默认网段也拉开距离。</li>
 </ol>
 <p>所以这次我把 Docker 的默认网络池统一收敛到 172 段，本质上是做了一次“网络命名空间的重新划界”。</p>
-<p><img alt="Default pool migration" src="/post-images/docker-network-conflict/02-default-pools.svg"></p>
+<p><img src="/post-images/docker-network-conflict/02-default-pools.svg" alt="Default pool migration"></p>
 <p>上面这张图的意思很直接：不是让 Docker 自己继续猜，而是给它一个明确的边界。Docker 以后只在 <code>172.16.0.0/12</code> 里工作，容器网段就不会再跑到家里 LAN 旁边去碰瓷。</p>
 <h1 id="先看现状再改规则">先看现状，再改规则</h1>
 <p>真正动手之前，我先做了两件检查。</p>
 <p>第一件是看 Docker 当前到底用的是什么默认地址池：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>docker info --format <span style="color:#e6db74">&#39;{{json .DefaultAddressPools}}&#39;</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>docker info --format <span style="color:#e6db74">&#39;{{json .DefaultAddressPools}}&#39;</span>
 </span></span></code></pre></div><p>在 NAS 上，修正后的结果如下：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-json" data-lang="json"><span style="display:flex;"><span>[{<span style="color:#f92672">&#34;Base&#34;</span>:<span style="color:#e6db74">&#34;172.16.0.0/12&#34;</span>,<span style="color:#f92672">&#34;Size&#34;</span>:<span style="color:#ae81ff">20</span>}]
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-json" data-lang="json"><span style="display:flex;"><span>[{<span style="color:#f92672">&#34;Base&#34;</span>:<span style="color:#e6db74">&#34;172.16.0.0/12&#34;</span>,<span style="color:#f92672">&#34;Size&#34;</span>:<span style="color:#ae81ff">20</span>}]
 </span></span></code></pre></div><p>这个结果很重要，因为它说明 Docker 后续自动创建的网络，都会从 <code>172.16.0.0/12</code> 里按 <code>20</code> 位掩码去切分。<code>size=20</code> 的意思并不是“固定一个网段”，而是把一整块大池子切成很多个可重复分配的小网段。对于大量容器、多个 compose 项目、Portainer stack、Dockhand 项目来说，这种切分方式足够实用。</p>
 <p>第二件事是扫一遍已经存在的网络，确认到底有哪些网络还在用旧网段。</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>docker network ls
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>docker network ls
 </span></span><span style="display:flex;"><span>docker network inspect &lt;network-name&gt;
 </span></span></code></pre></div><p>我最终找到的旧网络里，最典型的是这些：</p>
 <table>
-<thead>
-<tr>
-<th>旧网络</th>
-<th>旧网段</th>
-<th>新网段</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>dockhand_central_data_default</code></td>
-<td><code>192.168.*</code></td>
-<td><code>172.16.16.0/20</code></td>
-</tr>
-<tr>
-<td><code>dockhand_data_default</code></td>
-<td><code>192.168.*</code></td>
-<td><code>172.16.32.0/20</code></td>
-</tr>
-<tr>
-<td><code>gopeed_default</code></td>
-<td><code>192.168.*</code></td>
-<td><code>172.16.48.0/20</code></td>
-</tr>
-<tr>
-<td><code>hawser_data_default</code></td>
-<td><code>192.168.*</code></td>
-<td><code>172.16.64.0/20</code></td>
-</tr>
-<tr>
-<td><code>gsmonitor_gs_monitor_net</code></td>
-<td><code>172.x</code></td>
-<td><code>172.16.80.0/20</code></td>
-</tr>
-</tbody>
+	<thead>
+			<tr>
+					<th>旧网络</th>
+					<th>旧网段</th>
+					<th>新网段</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td><code>dockhand_central_data_default</code></td>
+					<td><code>192.168.*</code></td>
+					<td><code>172.16.16.0/20</code></td>
+			</tr>
+			<tr>
+					<td><code>dockhand_data_default</code></td>
+					<td><code>192.168.*</code></td>
+					<td><code>172.16.32.0/20</code></td>
+			</tr>
+			<tr>
+					<td><code>gopeed_default</code></td>
+					<td><code>192.168.*</code></td>
+					<td><code>172.16.48.0/20</code></td>
+			</tr>
+			<tr>
+					<td><code>hawser_data_default</code></td>
+					<td><code>192.168.*</code></td>
+					<td><code>172.16.64.0/20</code></td>
+			</tr>
+			<tr>
+					<td><code>gsmonitor_gs_monitor_net</code></td>
+					<td><code>172.x</code></td>
+					<td><code>172.16.80.0/20</code></td>
+			</tr>
+	</tbody>
 </table>
 <p>这里有一个关键经验：<strong>不要只盯着“看起来像 192.168 的网络”</strong>。如果你已经决定把 Docker 网络统一纳入私有范围，那么任何落在 RFC1918 之外的网段，哪怕它不是 <code>192.168</code>，也值得一起清理掉。因为你真正想要的不是“少一个冲突”，而是“让地址规划可控”。</p>
 <h1 id="修改-docker-默认地址池">修改 Docker 默认地址池</h1>
 <p>NAS 上用的是群晖的 Container Manager / Docker 运行环境，所以配置文件路径和普通 Linux 服务器略有差异。但思路是一样的：把 Docker daemon 的默认地址池改掉。</p>
 <p>我做的事情本质上只有一段配置：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-json" data-lang="json"><span style="display:flex;"><span>{
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-json" data-lang="json"><span style="display:flex;"><span>{
 </span></span><span style="display:flex;"><span>  <span style="color:#f92672">&#34;default-address-pools&#34;</span>: [
 </span></span><span style="display:flex;"><span>    {
 </span></span><span style="display:flex;"><span>      <span style="color:#f92672">&#34;base&#34;</span>: <span style="color:#e6db74">&#34;172.16.0.0/12&#34;</span>,
@@ -332,7 +332,7 @@
 <li><code>gsmonitor_gs_monitor_net</code> -&gt; <code>172.16.80.0/20</code></li>
 </ul>
 <p>对外界看起来，这只是几个 subnet 的迁移；但对我来说，这一步的意义在于：<strong>整个 Docker 生态里，终于没有 <code>192.168.*</code> 这种会和家里 LAN 混淆的地址了。</strong></p>
-<p><img alt="Migration path from old networks to private range" src="/post-images/docker-network-conflict/03-migration-path.svg"></p>
+<p><img src="/post-images/docker-network-conflict/03-migration-path.svg" alt="Migration path from old networks to private range"></p>
 <p>这张图更像是迁移流程图：先识别旧网段，再停掉相关 stack，然后以新的 172 段重建网络，最后恢复容器。它看起来简单，但实际执行时最怕两类问题：</p>
 <p>第一类是“网络删早了”。如果你在容器还在运行时就把 network 删了，服务会直接中断。</p>
 <p>第二类是“配置还写死着旧 subnet”。你把运行时网络迁过去了，但 Portainer stack、Dockhand 模板、compose 文件里还写着旧的 <code>ipam.config.subnet</code>，下次重新部署时它还会把你拉回老坑里。</p>
@@ -355,7 +355,7 @@
 <h1 id="我最后是怎么验收的">我最后是怎么验收的</h1>
 <p>迁移完之后，我做了几层确认。</p>
 <p>第一层，确认 Docker 的默认地址池已经生效：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>docker info --format <span style="color:#e6db74">&#39;{{json .DefaultAddressPools}}&#39;</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>docker info --format <span style="color:#e6db74">&#39;{{json .DefaultAddressPools}}&#39;</span>
 </span></span></code></pre></div><p>第二层，确认当前网络里已经没有 <code>192.168.*</code> 和 <code>10.*</code> 这类会跟家庭或办公网络产生碰撞的 Docker 网络残留。</p>
 <p>第三层，确认被迁移的容器全部恢复正常，尤其是 <code>gsmonitor</code> 这一组服务，迁移之后还要确保：</p>
 <ul>

@@ -208,16 +208,16 @@
 
         <div class="content">
             <p>This incident looked like a model-provider outage at first. OpenClaw had just received three NewAPI-backed fallback models, but gateway-based model calls started failing with a provider authentication error. After peeling back the outer message, the real error was much more specific:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>missing scope: operator.write
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>missing scope: operator.write
 </span></span></code></pre></div><p>That string changed the direction of the investigation. The provider key was not the root problem. The NewAPI endpoint was not the root problem. The model names were not the root problem either. The failure lived inside OpenClaw&rsquo;s gateway authorization path: when a model override was used, the gateway call switched into a backend/gateway-client mode, but did not force the request to use the already paired stored device identity. The device had <code>operator.write</code>; the request simply did not carry the identity that could prove it.</p>
 <p>The shortest version is this: <strong>the badge existed, but this entrance did not scan it.</strong></p>
-<p><img alt="AI-generated cover showing a gateway protected by two authorization locks" src="/post-images/openclaw-missing-operator-write-scope/cover.png"></p>
+<p><img src="/post-images/openclaw-missing-operator-write-scope/cover.png" alt="AI-generated cover showing a gateway protected by two authorization locks"></p>
 <h2 id="1-the-background-it-was-just-a-fallback-model-change">1. The Background: It Was &ldquo;Just&rdquo; a Fallback Model Change</h2>
 <p>The original task was routine: add several NewAPI-backed fallback models so that OpenClaw and adjacent agents would not stop responding when the primary model became unavailable. The local model path worked. The provider configuration looked valid. A direct NewAPI model call returned normally.</p>
 <p>Then the gateway path failed.</p>
 <p>The first visible message was <code>Provider authentication failed</code>, which naturally points people toward API keys, base URLs, model aliases, and upstream provider availability. But the deeper gateway error was <code>missing scope: operator.write</code>, and that meant the request had crossed from provider authentication into local authorization.</p>
 <p>The screenshot below is sanitized. It keeps the important command shape and error text, but removes private addresses, host names, device identifiers, and secrets.</p>
-<p><img alt="Real terminal screenshot: gateway model call failing with missing scope: operator.write" src="/post-images/openclaw-missing-operator-write-scope/01-failure-missing-scope.png"></p>
+<p><img src="/post-images/openclaw-missing-operator-write-scope/01-failure-missing-scope.png" alt="Real terminal screenshot: gateway model call failing with missing scope: operator.write"></p>
 <p>This kind of error is easy to misread because both layers are present. The outer wrapper says provider authentication. The inner failure says local operator scope. If you only follow the first message, you rotate keys. If you only follow the second message, you may re-pair devices unnecessarily. The useful move is to compare call paths.</p>
 <h2 id="2-first-prove-it-is-not-a-provider-problem">2. First, Prove It Is Not a Provider Problem</h2>
 <p>Before changing code, I split the investigation into three checks:</p>
@@ -233,7 +233,7 @@
 <p><code>scope</code> is not an OpenClaw-only idea. OAuth 2.0 uses scopes to describe the access range requested by a client and granted by an authorization server. The relevant standard text is RFC 6749 section 3.3: <a href="https://www.rfc-editor.org/rfc/rfc6749#section-3.3">https://www.rfc-editor.org/rfc/rfc6749#section-3.3</a>. Bearer token usage also defines an insufficient-scope style failure, documented in RFC 6750 section 3.1: <a href="https://www.rfc-editor.org/rfc/rfc6750#section-3.1">https://www.rfc-editor.org/rfc/rfc6750#section-3.1</a>.</p>
 <p>In this incident, <code>operator.write</code> represented an OpenClaw operator-level write permission. A model gateway call may look like &ldquo;send a prompt and receive text&rdquo;, but internally it can travel through an agent RPC path that performs an operation. That path requires more than read access.</p>
 <p>The authorization design is reasonable. The OWASP Authorization Cheat Sheet recommends least privilege and deny-by-default thinking: <a href="https://cheatsheetseries.owasp.org/cheatsheets/Authorization_Cheat_Sheet.html">https://cheatsheetseries.owasp.org/cheatsheets/Authorization_Cheat_Sheet.html</a>. The bug was not that OpenClaw was too strict. The bug was that a valid device identity was not used by one special gateway branch.</p>
-<p><img alt="Diagram: provider authentication and operator scope are two different locks" src="/post-images/openclaw-missing-operator-write-scope/06-two-locks-auth-model.svg"></p>
+<p><img src="/post-images/openclaw-missing-operator-write-scope/06-two-locks-auth-model.svg" alt="Diagram: provider authentication and operator scope are two different locks"></p>
 <p>The diagram is intentionally simple:</p>
 <ol>
 <li>The provider lock is NewAPI&rsquo;s base URL, key, and model identifier.</li>
@@ -251,7 +251,7 @@
 <li><code>operator.talk.secrets</code></li>
 </ul>
 <p>That changed the investigation. The device was authorized. The request was not using that authorized device identity.</p>
-<p><img alt="Real terminal screenshot: paired operator device includes operator.write" src="/post-images/openclaw-missing-operator-write-scope/02-device-list-has-scopes.png"></p>
+<p><img src="/post-images/openclaw-missing-operator-write-scope/02-device-list-has-scopes.png" alt="Real terminal screenshot: paired operator device includes operator.write"></p>
 <p>This is the part that often wastes the most time. A missing-scope error does not always mean the database lacks the scope. It can also mean the active request did not bind to the entity that owns the scope.</p>
 <p>Tracing the gateway code showed a helper that decides whether a gateway call should omit device identity. The intent is understandable: certain loopback backend calls authenticated by a shared token or password may not need a full device identity. But the model override path was being classified in a way that triggered the identity omission while still needing operator authorization later.</p>
 <p>In practical terms, when a command explicitly selected a model such as <code>newapi/glm-latest</code>, the CLI followed a model override branch. That branch called the gateway as a gateway client in backend mode and requested admin scope, but it did not explicitly say: use stored device authentication for this call. The server then treated the request as unbound, cleared unbound scopes, and the later agent RPC reached the authorization check without <code>operator.write</code>.</p>
@@ -262,41 +262,41 @@
 </blockquote>
 <p>The actual patch was small. The branch kept the existing admin scope and added two flags telling the call to use stored device auth and require admin-capable stored device auth.</p>
 <p>The shape of the change is:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-diff" data-lang="diff"><span style="display:flex;"><span> ...hasModelOverride ? {
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-diff" data-lang="diff"><span style="display:flex;"><span> ...hasModelOverride ? {
 </span></span><span style="display:flex;"><span><span style="color:#f92672">-    scopes: [ADMIN_SCOPE]
-</span></span></span><span style="display:flex;"><span><span style="color:#f92672"></span><span style="color:#a6e22e">+    scopes: [ADMIN_SCOPE],
+</span></span></span><span style="display:flex;"><span><span style="color:#a6e22e">+    scopes: [ADMIN_SCOPE],
 </span></span></span><span style="display:flex;"><span><span style="color:#a6e22e">+    useStoredDeviceAuth: true,
 </span></span></span><span style="display:flex;"><span><span style="color:#a6e22e">+    requiredStoredDeviceAuthScopes: [ADMIN_SCOPE]
-</span></span></span><span style="display:flex;"><span><span style="color:#a6e22e"></span> } : {}
-</span></span></code></pre></div><p><img alt="Diagram: investigation and fix path from failing gateway call to stored device auth" src="/post-images/openclaw-missing-operator-write-scope/07-fix-path.svg"></p>
+</span></span></span><span style="display:flex;"><span> } : {}
+</span></span></code></pre></div><p><img src="/post-images/openclaw-missing-operator-write-scope/07-fix-path.svg" alt="Diagram: investigation and fix path from failing gateway call to stored device auth"></p>
 <p>After changing a compiled JavaScript bundle, a syntax check is mandatory. A tiny patch can still break runtime loading if it leaves a comma or bracket wrong.</p>
-<p><img alt="Real terminal screenshot: patch applied and node &ndash;check passed" src="/post-images/openclaw-missing-operator-write-scope/03-patch-check.png"></p>
+<p><img src="/post-images/openclaw-missing-operator-write-scope/03-patch-check.png" alt="Real terminal screenshot: patch applied and node –check passed"></p>
 <h2 id="6-manual-fix-procedure">6. Manual Fix Procedure</h2>
 <p>Do not start by editing files. First confirm that your system has the same shape of failure.</p>
 <p>Check local and gateway behavior:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>openclaw infer model run --local --model newapi/glm-latest --prompt <span style="color:#e6db74">&#34;reply OK only&#34;</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>openclaw infer model run --local --model newapi/glm-latest --prompt <span style="color:#e6db74">&#34;reply OK only&#34;</span>
 </span></span><span style="display:flex;"><span>openclaw infer model run --gateway --model newapi/glm-latest --prompt <span style="color:#e6db74">&#34;reply OK only&#34;</span>
 </span></span></code></pre></div><p>Then check device scopes:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>openclaw devices list
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>openclaw devices list
 </span></span></code></pre></div><p>If the operator device does not include <code>operator.write</code>, fix device authorization first. If the device does include <code>operator.write</code> and only the gateway path fails, back up the relevant bundle before patching:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>OPENCLAW_DIST<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;&lt;openclaw-install&gt;/dist&#34;</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>OPENCLAW_DIST<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;&lt;openclaw-install&gt;/dist&#34;</span>
 </span></span><span style="display:flex;"><span>BACKUP_DIR<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span>$HOME<span style="color:#e6db74">/.openclaw/backups/operator-write-scope-</span><span style="color:#66d9ef">$(</span>date +%Y%m%d-%H%M%S<span style="color:#66d9ef">)</span><span style="color:#e6db74">&#34;</span>
 </span></span><span style="display:flex;"><span>mkdir -p <span style="color:#e6db74">&#34;</span>$BACKUP_DIR<span style="color:#e6db74">&#34;</span>
 </span></span><span style="display:flex;"><span>cp <span style="color:#e6db74">&#34;</span>$OPENCLAW_DIST<span style="color:#e6db74">&#34;</span>/capability-cli-*.js <span style="color:#e6db74">&#34;</span>$BACKUP_DIR<span style="color:#e6db74">&#34;</span>/
 </span></span></code></pre></div><p>Find the model override gateway call in <code>capability-cli-*.js</code> and expand:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-js" data-lang="js"><span style="display:flex;"><span><span style="color:#a6e22e">scopes</span><span style="color:#f92672">:</span> [<span style="color:#a6e22e">ADMIN_SCOPE</span>]
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-js" data-lang="js"><span style="display:flex;"><span><span style="color:#a6e22e">scopes</span><span style="color:#f92672">:</span> [<span style="color:#a6e22e">ADMIN_SCOPE</span>]
 </span></span></code></pre></div><p>into:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-js" data-lang="js"><span style="display:flex;"><span><span style="color:#a6e22e">scopes</span><span style="color:#f92672">:</span> [<span style="color:#a6e22e">ADMIN_SCOPE</span>],
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-js" data-lang="js"><span style="display:flex;"><span><span style="color:#a6e22e">scopes</span><span style="color:#f92672">:</span> [<span style="color:#a6e22e">ADMIN_SCOPE</span>],
 </span></span><span style="display:flex;"><span><span style="color:#a6e22e">useStoredDeviceAuth</span><span style="color:#f92672">:</span> <span style="color:#66d9ef">true</span>,
 </span></span><span style="display:flex;"><span><span style="color:#a6e22e">requiredStoredDeviceAuthScopes</span><span style="color:#f92672">:</span> [<span style="color:#a6e22e">ADMIN_SCOPE</span>]
 </span></span></code></pre></div><p>Then verify syntax and the original symptom:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>node --check <span style="color:#e6db74">&#34;</span>$OPENCLAW_DIST<span style="color:#e6db74">&#34;</span>/capability-cli-*.js
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>node --check <span style="color:#e6db74">&#34;</span>$OPENCLAW_DIST<span style="color:#e6db74">&#34;</span>/capability-cli-*.js
 </span></span><span style="display:flex;"><span>openclaw infer model run --gateway --model newapi/glm-latest --prompt <span style="color:#e6db74">&#34;reply OK only&#34;</span>
 </span></span></code></pre></div><p>In my environment, the gateway path returned <code>OK</code> after the patch.</p>
-<p><img alt="Real terminal screenshot: gateway model call returns OK after the fix" src="/post-images/openclaw-missing-operator-write-scope/04-gateway-success.png"></p>
+<p><img src="/post-images/openclaw-missing-operator-write-scope/04-gateway-success.png" alt="Real terminal screenshot: gateway model call returns OK after the fix"></p>
 <h2 id="7-one-click-script-for-windows-11">7. One-Click Script for Windows 11</h2>
 <p>This PowerShell script uses only built-in PowerShell behavior plus Node. It searches common global npm locations, creates a backup, patches the bundle, runs <code>node --check</code>, and verifies one gateway call.</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-powershell" data-lang="powershell"><span style="display:flex;"><span>$ErrorActionPreference = <span style="color:#e6db74">&#34;Stop&#34;</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-powershell" data-lang="powershell"><span style="display:flex;"><span>$ErrorActionPreference = <span style="color:#e6db74">&#34;Stop&#34;</span>
 </span></span><span style="display:flex;"><span>
 </span></span><span style="display:flex;"><span>$candidates = @(
 </span></span><span style="display:flex;"><span>  <span style="color:#e6db74">&#34;</span>$env:APPDATA<span style="color:#e6db74">\npm\node_modules\openclaw\dist&#34;</span>,
@@ -334,15 +334,15 @@
 </span></span><span style="display:flex;"><span>node --check $file.FullName
 </span></span><span style="display:flex;"><span>openclaw infer model run --gateway --model newapi/glm-latest --prompt <span style="color:#e6db74">&#34;reply OK only&#34;</span>
 </span></span></code></pre></div><h2 id="8-one-click-script-for-ubuntu-2604">8. One-Click Script for Ubuntu 26.04</h2>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e">#!/usr/bin/env bash
-</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>set -euo pipefail
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e">#!/usr/bin/env bash
+</span></span></span><span style="display:flex;"><span>set -euo pipefail
 </span></span><span style="display:flex;"><span>
 </span></span><span style="display:flex;"><span>DIST<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>OPENCLAW_DIST<span style="color:#66d9ef">:-</span><span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
 </span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> <span style="color:#f92672">[[</span> -z <span style="color:#e6db74">&#34;</span>$DIST<span style="color:#e6db74">&#34;</span> <span style="color:#f92672">]]</span>; <span style="color:#66d9ef">then</span>
 </span></span><span style="display:flex;"><span>  <span style="color:#66d9ef">for</span> p in <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>    /usr/local/lib/node_modules/openclaw/dist <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>    /usr/lib/node_modules/openclaw/dist <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>    /opt/openclaw/dist; <span style="color:#66d9ef">do</span>
+</span></span></span><span style="display:flex;"><span>    /usr/local/lib/node_modules/openclaw/dist <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span>    /usr/lib/node_modules/openclaw/dist <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span>    /opt/openclaw/dist; <span style="color:#66d9ef">do</span>
 </span></span><span style="display:flex;"><span>    <span style="color:#f92672">[[</span> -d <span style="color:#e6db74">&#34;</span>$p<span style="color:#e6db74">&#34;</span> <span style="color:#f92672">]]</span> <span style="color:#f92672">&amp;&amp;</span> DIST<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span>$p<span style="color:#e6db74">&#34;</span> <span style="color:#f92672">&amp;&amp;</span> break
 </span></span><span style="display:flex;"><span>  <span style="color:#66d9ef">done</span>
 </span></span><span style="display:flex;"><span><span style="color:#66d9ef">fi</span>
@@ -377,16 +377,16 @@
 </span></span><span style="display:flex;"><span>node --check <span style="color:#e6db74">&#34;</span>$FILE<span style="color:#e6db74">&#34;</span>
 </span></span><span style="display:flex;"><span>openclaw infer model run --gateway --model newapi/glm-latest --prompt <span style="color:#e6db74">&#34;reply OK only&#34;</span>
 </span></span></code></pre></div><h2 id="9-one-click-script-for-macos-26">9. One-Click Script for macOS 26</h2>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e">#!/usr/bin/env bash
-</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>set -euo pipefail
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e">#!/usr/bin/env bash
+</span></span></span><span style="display:flex;"><span>set -euo pipefail
 </span></span><span style="display:flex;"><span>
 </span></span><span style="display:flex;"><span>DIST<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>OPENCLAW_DIST<span style="color:#66d9ef">:-</span><span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
 </span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> <span style="color:#f92672">[[</span> -z <span style="color:#e6db74">&#34;</span>$DIST<span style="color:#e6db74">&#34;</span> <span style="color:#f92672">]]</span>; <span style="color:#66d9ef">then</span>
 </span></span><span style="display:flex;"><span>  NPM_PREFIX<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#66d9ef">$(</span>npm prefix -g 2&gt;/dev/null <span style="color:#f92672">||</span> true<span style="color:#66d9ef">)</span><span style="color:#e6db74">&#34;</span>
 </span></span><span style="display:flex;"><span>  <span style="color:#66d9ef">for</span> p in <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>    <span style="color:#e6db74">&#34;</span>$NPM_PREFIX<span style="color:#e6db74">/lib/node_modules/openclaw/dist&#34;</span> <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>    /opt/homebrew/lib/node_modules/openclaw/dist <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>    /usr/local/lib/node_modules/openclaw/dist; <span style="color:#66d9ef">do</span>
+</span></span></span><span style="display:flex;"><span>    <span style="color:#e6db74">&#34;</span>$NPM_PREFIX<span style="color:#e6db74">/lib/node_modules/openclaw/dist&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span>    /opt/homebrew/lib/node_modules/openclaw/dist <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span>    /usr/local/lib/node_modules/openclaw/dist; <span style="color:#66d9ef">do</span>
 </span></span><span style="display:flex;"><span>    <span style="color:#f92672">[[</span> -d <span style="color:#e6db74">&#34;</span>$p<span style="color:#e6db74">&#34;</span> <span style="color:#f92672">]]</span> <span style="color:#f92672">&amp;&amp;</span> DIST<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span>$p<span style="color:#e6db74">&#34;</span> <span style="color:#f92672">&amp;&amp;</span> break
 </span></span><span style="display:flex;"><span>  <span style="color:#66d9ef">done</span>
 </span></span><span style="display:flex;"><span><span style="color:#66d9ef">fi</span>
@@ -409,7 +409,7 @@
 </span></span><span style="display:flex;"><span>openclaw infer model run --gateway --model newapi/glm-latest --prompt <span style="color:#e6db74">&#34;reply OK only&#34;</span>
 </span></span></code></pre></div><h2 id="10-agent-based-automatic-configuration">10. Agent-Based Automatic Configuration</h2>
 <p>If you ask an agent to apply this fix, do not simply say &ldquo;fix OpenClaw.&rdquo; Give it a bounded runbook:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>Investigate OpenClaw gateway model calls failing with missing scope: operator.write.
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>Investigate OpenClaw gateway model calls failing with missing scope: operator.write.
 </span></span><span style="display:flex;"><span>Do not reveal private addresses, host names, device identifiers, or secrets.
 </span></span><span style="display:flex;"><span>Steps:
 </span></span><span style="display:flex;"><span>1. Compare local model calls with gateway model calls.
@@ -428,7 +428,7 @@
 <li><code>newapi/glm-fallback</code></li>
 </ul>
 <p>The status output showed the configured fallback list and a healthy gateway probe.</p>
-<p><img alt="Real terminal screenshot: fallback model status and gateway connectivity after the fix" src="/post-images/openclaw-missing-operator-write-scope/05-models-status-fallbacks.png"></p>
+<p><img src="/post-images/openclaw-missing-operator-write-scope/05-models-status-fallbacks.png" alt="Real terminal screenshot: fallback model status and gateway connectivity after the fix"></p>
 <p>This is the broader lesson: a fallback model is not truly usable just because its name appears in configuration. It is usable only when the provider authentication, model alias resolution, gateway identity, and local operator authorization all succeed together.</p>
 <h2 id="12-qa">12. Q&amp;A</h2>
 <p><strong>Q: If the UI says provider authentication failed, should I rotate the API key first?</strong></p>

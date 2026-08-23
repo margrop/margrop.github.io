@@ -224,7 +224,7 @@
 <p>这台远端机器是家里那台 24 小时开机的代理机,系统一直停在 Ubuntu 22.04.4 LTS(jammy),内核 5.15。一句&quot;帮我把 192.168.103.182 升级到 ubuntu24.04&quot;,Claude 就替我拆开了旧柜子,在另一个房间装上了新柜子,过程中它自己开了 tmux 守夜、自己起了 fallback sshd 备胎、自己用 <code>do-release-upgrade -f DistUpgradeViewNonInteractive</code> 跑完了整段流水线。25 分钟后主机回来,内核已经是 6.8.0-124,所有服务依旧在听。</p>
 <p>本文不是讲 do-release-upgrade 怎么用,那是 Ubuntu 官方文档的事;本文是讲&quot;当 Agent 拿到 SSH 之后,它在做什么、为什么这么做、以及哪些坑你必须提前排&quot;。</p>
 </blockquote>
-<p><img alt="Ubuntu 24.04 LTS 桌面默认样子(来自 Wikimedia Commons 公开截图)" src="/post-images/upgrade-ubuntu-via-agent/zh/05-noble-desktop.png"></p>
+<p><img src="/post-images/upgrade-ubuntu-via-agent/zh/05-noble-desktop.png" alt="Ubuntu 24.04 LTS 桌面默认样子(来自 Wikimedia Commons 公开截图)"></p>
 <p><em>封面:Ubuntu 24.04 LTS(Noble Numbat)官方桌面截图,这就是升级完成后那位&quot;管家&quot;坐镇的房间长什么样。</em></p>
 <hr>
 <h2 id="一为什么我把升级交给-agent">一、为什么我把升级交给 Agent</h2>
@@ -238,12 +238,12 @@
 </ol>
 <p>把这三件事拼在一起,答案就是:<strong>让 Agent 去做,我只审结果。</strong> 我给它一句话,它把 tmux 守夜、fallback sshd、<code>do-release-upgrade</code>、监控日志这些事自动串起来。如果出错,我能回看;如果顺利,我就喝杯茶等通知。</p>
 <p>下面这张图是整件事的&quot;鸟瞰&quot;:</p>
-<p><img alt="一句话升级:你坐在沙发上,Agent 在另一个房间拆旧柜子装新柜子" src="/post-images/upgrade-ubuntu-via-agent/zh/01-couch-to-server-metaphor.svg"></p>
+<p><img src="/post-images/upgrade-ubuntu-via-agent/zh/01-couch-to-server-metaphor.svg" alt="一句话升级:你坐在沙发上,Agent 在另一个房间拆旧柜子装新柜子"></p>
 <p><em>图 1:你(左)说一句话,Agent 通过 ssh + tmux 跑到远端机器(右)。远端机器从 jammy 22.04 升级到 noble 24.04。tmux 负责&quot;断线不杀进程&quot;,fallback sshd 负责&quot;主 sshd 挂了走它&quot;。整个过程你没有离开沙发。</em></p>
 <hr>
 <h2 id="二agent-做的第一件事先看清对方是谁">二、Agent 做的第一件事:先看清对方是谁</h2>
 <p>老规矩,Agent 接到任务,先 SSH 探活。探活不是&quot;能不能 ping 通&quot;,而是<strong>把对方的底细摸一遍</strong>:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>ssh root@host <span style="color:#e6db74">&#39;cat /etc/os-release; uname -a; uptime; df -h /; free -h; ss -tlnp | head -20&#39;</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>ssh root@host <span style="color:#e6db74">&#39;cat /etc/os-release; uname -a; uptime; df -h /; free -h; ss -tlnp | head -20&#39;</span>
 </span></span></code></pre></div><p>返回内容里 Agent 会重点看这几样:</p>
 <ul>
 <li><strong>发行版和 codename</strong>:<code>Ubuntu 22.04.4 LTS (jammy)</code>,目标 <code>noble</code>。</li>
@@ -263,7 +263,7 @@
 <p>这就像你请搬家公司在搬家,你下楼买杯咖啡,门铃没人按,搬家师傅就走了。<strong>你需要一个人在家门口一直守着,哪怕你出门了也守着。</strong></p>
 </blockquote>
 <p><code>tmux</code> 就是这位&quot;看门的&quot;。Agent 在远端起一个 detached session:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>tmux new-session -d -s upg -c /root <span style="color:#e6db74">&#39;bash -lc &#34;echo tmux-ready; bash&#34;&#39;</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>tmux new-session -d -s upg -c /root <span style="color:#e6db74">&#39;bash -lc &#34;echo tmux-ready; bash&#34;&#39;</span>
 </span></span></code></pre></div><p>之后所有操作,包括 <code>do-release-upgrade</code>,都通过 <code>tmux send-keys</code> 投递到这个 session 里。<code>tmux</code> 是服务端进程,不依赖 SSH 连接。Agent 的 SSH 断了 10 次都没事,只要 <code>tmux attach -t upg</code> 就能续上。</p>
 <p>为什么必须 <code>tmux</code>,而不是 <code>nohup</code> + <code>&amp;</code>?因为 <code>tmux</code> 还提供了<strong>可重连的回放</strong>:你可以滚回去看之前 dpkg 跑到哪一行、哪个包卡住、journalctl 倒数到哪一句。这在排错时是命根子。</p>
 <hr>
@@ -280,7 +280,7 @@
 <p>这就像电梯换钢丝绳,主电梯停了,备用电梯得同时在旁边立着。不能让乘客在 20 楼悬空。</p>
 </blockquote>
 <p>解决方法是:Agent 在升级之前,手动起一个<strong>独立于 systemd 的 sshd</strong>,监听 1022 端口:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>ssh-keygen -A
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>ssh-keygen -A
 </span></span><span style="display:flex;"><span>/usr/sbin/sshd -D -p <span style="color:#ae81ff">1022</span> -o PidFile<span style="color:#f92672">=</span>/run/sshd-extra/sshd-1022.pid &amp;
 </span></span></code></pre></div><p>这条 sshd 不受 systemd 控制,<strong>绝对不会被 <code>dpkg</code> 替换影响</strong>——它加载的是已经被复制到内存里的二进制,文件被改写也不会影响已经在跑的进程。</p>
 <p>之后 Agent 任何时候 SSH 断了,先试 22,再试 1022。1022 是真正的逃生通道。</p>
@@ -288,7 +288,7 @@
 <hr>
 <h2 id="五agent-做的第四件事实际跑升级">五、Agent 做的第四件事:实际跑升级</h2>
 <p>万事俱备,开跑。Agent 投到 tmux 里的是这一行:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>DEBIAN_FRONTEND<span style="color:#f92672">=</span>noninteractive <span style="color:#66d9ef">do</span>-release-upgrade -f DistUpgradeViewNonInteractive 2&gt;&amp;<span style="color:#ae81ff">1</span> | tee /var/log/dist-upgrade.log
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>DEBIAN_FRONTEND<span style="color:#f92672">=</span>noninteractive <span style="color:#66d9ef">do</span>-release-upgrade -f DistUpgradeViewNonInteractive 2&gt;&amp;<span style="color:#ae81ff">1</span> | tee /var/log/dist-upgrade.log
 </span></span></code></pre></div><p>两个关键开关:</p>
 <ul>
 <li><code>-f DistUpgradeViewNonInteractive</code>:<strong>完全不弹交互</strong>。默认情况下 <code>do-release-upgrade</code> 会问很多&quot;是否保留这个 conffile / 是否重启服务&quot;,无人值守会卡住。<code>-f DistUpgradeViewNonInteractive</code> 走&quot;安全默认&quot;分支。</li>
@@ -296,10 +296,10 @@
 </ul>
 <p>然后 Agent 自己就变成&quot;观察者&quot;:不再发指令,而是每隔 30 秒 <code>journalctl</code> + <code>tmux capture-pane</code> + <code>ps -ef | grep dpkg</code> 看一次,确认进展。</p>
 <p>整段流程大致分成这几段:</p>
-<p><img alt="Agent 升级的五步流水线" src="/post-images/upgrade-ubuntu-via-agent/zh/02-five-step-flow.svg"></p>
+<p><img src="/post-images/upgrade-ubuntu-via-agent/zh/02-five-step-flow.svg" alt="Agent 升级的五步流水线"></p>
 <p><em>图 2:把升级拆成五段,每段都有&quot;输出信号&quot;,Agent 看到信号就知道下一段该不该走。</em></p>
 <p>具体每段发生什么,以下是 Agent 在远端日志里抓到的心电图:</p>
-<p><img alt="真实时间线:从探活到新内核上线 25 分钟" src="/post-images/upgrade-ubuntu-via-agent/zh/03-timeline.svg"></p>
+<p><img src="/post-images/upgrade-ubuntu-via-agent/zh/03-timeline.svg" alt="真实时间线:从探活到新内核上线 25 分钟"></p>
 <p><em>图 3:同一次升级的 journalctl 时间线节选。10:14 进入 dpkg,10:21 udev 255(对应 noble)上线,10:24 autoremove 释放旧包,10:28 重启,10:35 新内核 6.8.0-124 上线,sshd PID 805 接管 22 端口。整段心跳很整齐,没有&quot;卡住&quot;的迹象。</em></p>
 <p>如果你看官方文档,会告诉你&quot;升级可能耗时 1 到数小时&quot;。在我这台机器上,<strong>从 10:08 SSH 探活到 10:35 内核上线,共 27 分钟</strong>。其中下载包占了大约 6 分钟(全网百兆带宽),dpkg 阶段占了 14 分钟,剩下的是探测和重启。</p>
 <hr>
@@ -312,9 +312,9 @@
 <li>等待主机 SSH 回来(up)</li>
 <li>回来后立即跑:</li>
 </ol>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>ssh root@host <span style="color:#e6db74">&#39;cat /etc/os-release; uname -r; uptime; ss -tlnp; systemctl is-active ssh&#39;</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>ssh root@host <span style="color:#e6db74">&#39;cat /etc/os-release; uname -r; uptime; ss -tlnp; systemctl is-active ssh&#39;</span>
 </span></span></code></pre></div><p>期望的输出是:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>PRETTY_NAME=&#34;Ubuntu 24.04.4 LTS (Noble Numbat)&#34;
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>PRETTY_NAME=&#34;Ubuntu 24.04.4 LTS (Noble Numbat)&#34;
 </span></span><span style="display:flex;"><span>VERSION_ID=&#34;24.04&#34;
 </span></span><span style="display:flex;"><span>VERSION_CODENAME=noble
 </span></span><span style="display:flex;"><span>6.8.0-124-generic
@@ -325,7 +325,7 @@
 </span></span><span style="display:flex;"><span>active
 </span></span></code></pre></div><p>这一步就是&quot;你怎么证明升级真的成功了&quot;。光看 dpkg 跑完不算——内核不换,systemd 不切,都不算。<strong>真正说了算的是 cat 出来的版本号和 uname 出来的内核号</strong>。</p>
 <p>下面是 Agent 抓到的 <code>os-release</code> 输出(脱敏过):</p>
-<p><img alt="验证 /etc/os-release" src="/post-images/upgrade-ubuntu-via-agent/zh/04-os-release.svg"></p>
+<p><img src="/post-images/upgrade-ubuntu-via-agent/zh/04-os-release.svg" alt="验证 /etc/os-release"></p>
 <p><em>图 4:升级完成的&quot;体检报告&quot;。VERSION_CODENAME=noble 是终极判定,VERSION_ID=24.04 是次级判定,uname -r=6.8.0-124-generic 是内核判定。三项都对,才算真的升级了。</em></p>
 <p>到这里,Agent 给我交差。</p>
 <hr>
@@ -372,7 +372,7 @@
 <li>Ubuntu Wiki - ReleaseUpgrade SOP:<a href="https://wiki.ubuntu.com/SystemMaintenance/ReleaseUpgrades">https://wiki.ubuntu.com/SystemMaintenance/ReleaseUpgrades</a></li>
 <li><code>tmux</code> 官方手册与最佳实践:<a href="https://github.com/tmux/tmux/wiki">https://github.com/tmux/tmux/wiki</a></li>
 <li>systemd <code>service.d</code> 机制(drop-in override):<a href="https://www.freedesktop.org/software/systemd/man/latest/systemd.unit.html">https://www.freedesktop.org/software/systemd/man/latest/systemd.unit.html</a></li>
-<li>SSH Fallback Port on Upgrade(launchpad bug 1192476,记录了 22→1022 fallback 的官方缘由):<a href="https://bugs.launchpad.net/ubuntu-release-upgrader/+bug/1192476">https://bugs.launchpad.net/ubuntu-release-upgrader/+bug/1192476</a></li>
+<li>SSH Fallback Port on Upgrade(launchpad bug 1192476,记录了 22→1022 fallback 的官方缘由):<a href="https://bugs.launchpad.net/ubuntu-release-upgrader/&#43;bug/1192476">https://bugs.launchpad.net/ubuntu-release-upgrader/+bug/1192476</a></li>
 <li>Ubuntu 24.04 LTS Noble Numbat 桌面截图来源:Wikimedia Commons(CC BY-SA 4.0):<a href="https://commons.wikimedia.org/wiki/Category:Ubuntu_24.04">https://commons.wikimedia.org/wiki/Category:Ubuntu_24.04</a></li>
 </ol>
 <blockquote>

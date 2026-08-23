@@ -212,12 +212,12 @@
 <p>After upgrading Siyuan (SiYuan Note) from v3.6.x to v3.7.0, the Docker container entered an infinite restart loop. <code>docker logs</code> showed <code>Error: unknown flag: --accessAuthCode</code>. The root cause: v3.7.0 introduced a CLI subcommand architecture. The old top-level flags now require a <code>serve</code> subcommand. The fix is adding one word — <code>'serve'</code> — to the beginning of the <code>command</code> array in docker-compose.yml. Seven characters. From crash loop to running.</p>
 <p>This article covers the complete troubleshooting process, one-command fix scripts for Windows 11, Ubuntu 26.04, and macOS 26, plus both manual and AI Agent approaches. All scripts use only Docker CLI and SSH — no third-party services required.</p>
 </blockquote>
-<p><img alt="AI-generated cover: Docker container restart loop troubleshooting and fix." src="/post-images/siyuan-v370-docker-restart-loop-fix/00-ai-cover.png"></p>
+<p><img src="/post-images/siyuan-v370-docker-restart-loop-fix/00-ai-cover.png" alt="AI-generated cover: Docker container restart loop troubleshooting and fix."></p>
 <p><em>Figure 1: AI-generated cover. Sometimes a container crash loop needs only a one-line fix.</em></p>
 <h2 id="1-background-siyuan-and-docker-deployment">1. Background: Siyuan and Docker Deployment</h2>
 <p><a href="https://github.com/siyuan-note/siyuan">SiYuan Note</a> is an open-source personal knowledge management system with Markdown editing, bidirectional linking, data sync, and Docker support. Many users run it in Docker on a home server or VPS to access their notes from any device via a browser.</p>
 <p>A typical Docker Compose configuration looks like this:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-yaml" data-lang="yaml"><span style="display:flex;"><span><span style="color:#f92672">version</span>: <span style="color:#e6db74">&#34;3.9&#34;</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-yaml" data-lang="yaml"><span style="display:flex;"><span><span style="color:#f92672">version</span>: <span style="color:#e6db74">&#34;3.9&#34;</span>
 </span></span><span style="display:flex;"><span><span style="color:#f92672">services</span>:
 </span></span><span style="display:flex;"><span>  <span style="color:#f92672">main</span>:
 </span></span><span style="display:flex;"><span>    <span style="color:#f92672">image</span>: <span style="color:#ae81ff">b3log/siyuan:v3.7.0</span>
@@ -242,22 +242,22 @@
 <li><strong>AI knowledge base</strong>: SiYuan Agent and vector embedding search in public testing</li>
 </ul>
 <p>Item four — the CLI — is our &ldquo;culprit.&rdquo; It brings powerful automation capabilities but also introduces a breaking change.</p>
-<p><img alt="Siyuan v3.7.0 architecture overview." src="/post-images/siyuan-v370-docker-restart-loop-fix/04-architecture-overview.png"></p>
+<p><img src="/post-images/siyuan-v370-docker-restart-loop-fix/04-architecture-overview.png" alt="Siyuan v3.7.0 architecture overview."></p>
 <p><em>Figure 2: Siyuan Docker deployment architecture. Portainer manages the stack; entrypoint.sh launches kernel inside the container; kernel needs the <code>serve</code> subcommand to start the HTTP server.</em></p>
 <h2 id="2-symptoms-infinite-restart-loop">2. Symptoms: Infinite Restart Loop</h2>
 <p>After upgrading the Siyuan image from <code>v3.6.1</code> to <code>v3.7.0</code> in Portainer and clicking &ldquo;Re-deploy,&rdquo; the container status looked wrong:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>$ docker ps --filter name<span style="color:#f92672">=</span>siyuan
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>$ docker ps --filter name<span style="color:#f92672">=</span>siyuan
 </span></span><span style="display:flex;"><span>NAMES          STATUS
 </span></span><span style="display:flex;"><span>siyuan-qiniu   Restarting <span style="color:#f92672">(</span>1<span style="color:#f92672">)</span> <span style="color:#ae81ff">8</span> seconds ago
 </span></span></code></pre></div><p>The container cycled endlessly through <strong>start → exit (code 1) → Docker auto-restart → exit again</strong>. The port mapping existed but the service was unreachable. The browser just spun.</p>
-<p><img alt="docker ps showing container restart loop." src="/post-images/siyuan-v370-docker-restart-loop-fix/shot-01-docker-restarting.png"></p>
+<p><img src="/post-images/siyuan-v370-docker-restart-loop-fix/shot-01-docker-restarting.png" alt="docker ps showing container restart loop."></p>
 <p><em>Figure 3: Real terminal screenshot — docker ps shows the Siyuan container in Restarting state.</em></p>
 <h3 id="understanding-the-restart-loop-with-an-analogy">Understanding the Restart Loop with an Analogy</h3>
 <p>Think of it like a <strong>car that won&rsquo;t start</strong>:</p>
 <p>You swapped in a new engine (upgraded the image), but the ignition sequence changed. Every time you turn the key, the engine coughs once and dies. The onboard computer auto-retries (<code>restart: always</code>), so you hear &ldquo;cough-cough-cough&rdquo; on repeat. To fix it, don&rsquo;t just pull the battery — read the error codes. For containers, error codes are <code>docker logs</code>.</p>
 <h2 id="3-analysis-docker-logs-is-your-first-clue">3. Analysis: docker logs Is Your First Clue</h2>
 <p>When a container misbehaves, the first instinct should not be to restart, roll back, or reinstall. It should be: <strong>read the logs</strong>.</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>$ docker logs --tail <span style="color:#ae81ff">40</span> siyuan-qiniu
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>$ docker logs --tail <span style="color:#ae81ff">40</span> siyuan-qiniu
 </span></span><span style="display:flex;"><span>Error: unknown flag: --accessAuthCode
 </span></span><span style="display:flex;"><span>Usage:
 </span></span><span style="display:flex;"><span>  kernel <span style="color:#f92672">[</span>command<span style="color:#f92672">]</span>
@@ -275,9 +275,9 @@
 </span></span><span style="display:flex;"><span>      --dry-run            dry run mode
 </span></span><span style="display:flex;"><span>  -h, --help               help <span style="color:#66d9ef">for</span> kernel
 </span></span><span style="display:flex;"><span>  -w, --workspace string   workspace path
-</span></span></code></pre></div><p><img alt="Real error log from docker logs." src="/post-images/siyuan-v370-docker-restart-loop-fix/shot-06-real-error-log.png"></p>
+</span></span></code></pre></div><p><img src="/post-images/siyuan-v370-docker-restart-loop-fix/shot-06-real-error-log.png" alt="Real error log from docker logs."></p>
 <p><em>Figure 4: Real screenshot — docker logs showing the kernel CLI error with available subcommands.</em></p>
-<p><img alt="Siyuan v3.7.0 lock screen login page." src="/post-images/siyuan-v370-docker-restart-loop-fix/shot-05-siyuan-real-login.png"></p>
+<p><img src="/post-images/siyuan-v370-docker-restart-loop-fix/shot-05-siyuan-real-login.png" alt="Siyuan v3.7.0 lock screen login page."></p>
 <p><em>Figure 5: Real screenshot — Siyuan v3.7.0 lock screen after the fix. Enter your accessAuthCode to access your notes.</em></p>
 <p>The log tells us clearly: <strong><code>--accessAuthCode</code> is an unknown flag</strong>. And kernel lists all the <strong>subcommands</strong> it recognizes — <code>serve</code>, <code>asset</code>, <code>block</code>, etc. — with <code>serve</code> described as &ldquo;Start kernel HTTP server.&rdquo;</p>
 <p>This output is a giant hint: kernel expects the first argument to be a <strong>subcommand</strong>, not a <code>--workspace</code> or <code>--accessAuthCode</code> flag.</p>
@@ -289,7 +289,7 @@
 <li>Read official README → v3.7.0 requires explicit <code>serve</code> subcommand</li>
 <li>Root cause identified → <code>command</code> is missing <code>serve</code></li>
 </ol>
-<p><img alt="Troubleshooting flow." src="/post-images/siyuan-v370-docker-restart-loop-fix/03-troubleshooting-flow.png"></p>
+<p><img src="/post-images/siyuan-v370-docker-restart-loop-fix/03-troubleshooting-flow.png" alt="Troubleshooting flow."></p>
 <p><em>Figure 6: Standard Docker container troubleshooting flow. docker logs is the first clue — don&rsquo;t just stare at docker ps.</em></p>
 <h2 id="4-root-cause-v370-cli-subcommand-architecture">4. Root Cause: v3.7.0 CLI Subcommand Architecture</h2>
 <h3 id="the-restaurant-analogy">The Restaurant Analogy</h3>
@@ -303,9 +303,9 @@
 <pre tabindex="0"><code>kernel serve --workspace=/siyuan/workspace/ --accessAuthCode=xxx
 </code></pre><p>The Docker image&rsquo;s <code>ENTRYPOINT</code> is <code>/opt/siyuan/entrypoint.sh</code>. This script sets PUID/PGID and then calls <code>kernel</code>. But it does not automatically add <code>serve</code> — that responsibility falls on <code>CMD</code> or the compose <code>command</code> field.</p>
 <p>In docker-compose.yml, the original config was:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-yaml" data-lang="yaml"><span style="display:flex;"><span><span style="color:#f92672">command</span>: [<span style="color:#e6db74">&#39;--workspace=/siyuan/workspace/&#39;</span>, <span style="color:#e6db74">&#39;--accessAuthCode=xxx&#39;</span>]
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-yaml" data-lang="yaml"><span style="display:flex;"><span><span style="color:#f92672">command</span>: [<span style="color:#e6db74">&#39;--workspace=/siyuan/workspace/&#39;</span>, <span style="color:#e6db74">&#39;--accessAuthCode=xxx&#39;</span>]
 </span></span></code></pre></div><p>These arguments were passed to <code>entrypoint.sh</code>, then to <code>kernel</code>. Kernel tried to parse <code>--workspace</code> as a subcommand name, failed, and exited with an error. Docker&rsquo;s <code>restart: always</code> policy pulled it back up, and the cycle repeated.</p>
-<p><img alt="CLI breaking change comparison." src="/post-images/siyuan-v370-docker-restart-loop-fix/02-cli-breaking-change.png"></p>
+<p><img src="/post-images/siyuan-v370-docker-restart-loop-fix/02-cli-breaking-change.png" alt="CLI breaking change comparison."></p>
 <p><em>Figure 7: v3.6.x vs v3.7.0 CLI argument structure comparison. The new <code>serve</code> subcommand is the only difference.</em></p>
 <blockquote>
 <p><strong>Note</strong>: The official README (line 216) explicitly documents this change:
@@ -315,10 +315,10 @@
 <h2 id="5-how-to-fix-it">5. How to Fix It</h2>
 <h3 id="51-the-fix">5.1 The Fix</h3>
 <p>The fix is trivial: add <code>'serve'</code> to the beginning of the <code>command</code> array in your compose file.</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-diff" data-lang="diff"><span style="display:flex;"><span><span style="color:#f92672">- command: [&#39;--workspace=/siyuan/workspace/&#39;, &#39;--accessAuthCode=xxx&#39;]
-</span></span></span><span style="display:flex;"><span><span style="color:#f92672"></span><span style="color:#a6e22e">+ command: [&#39;serve&#39;, &#39;--workspace=/siyuan/workspace/&#39;, &#39;--accessAuthCode=xxx&#39;]
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-diff" data-lang="diff"><span style="display:flex;"><span><span style="color:#f92672">- command: [&#39;--workspace=/siyuan/workspace/&#39;, &#39;--accessAuthCode=xxx&#39;]
+</span></span></span><span style="display:flex;"><span><span style="color:#a6e22e">+ command: [&#39;serve&#39;, &#39;--workspace=/siyuan/workspace/&#39;, &#39;--accessAuthCode=xxx&#39;]
 </span></span></span></code></pre></div><p>Seven characters. From infinite restart loop to running normally.</p>
-<p><img alt="Compose file diff." src="/post-images/siyuan-v370-docker-restart-loop-fix/05-compose-fix-diff.png"></p>
+<p><img src="/post-images/siyuan-v370-docker-restart-loop-fix/05-compose-fix-diff.png" alt="Compose file diff."></p>
 <p><em>Figure 8: The docker-compose.yml change — just add &lsquo;serve&rsquo; at the beginning of the command array.</em></p>
 <h3 id="52-one-click-fix-scripts">5.2 One-Click Fix Scripts</h3>
 <p>The following scripts work on three operating systems. They SSH into the Docker host, auto-detect the Siyuan container, back up the original config, patch the <code>command</code> field, and recreate the container.</p>
@@ -326,7 +326,7 @@
 <p><strong>Safety note</strong>: The scripts auto-backup the original docker-compose.yml (with timestamp). They never touch the data volume. Safe to roll back.</p>
 </blockquote>
 <h4 id="windows-11-powershell">Windows 11 (PowerShell)</h4>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-powershell" data-lang="powershell"><span style="display:flex;"><span><span style="color:#75715e"># siyuan-fix.ps1 — Siyuan v3.7.0 container fix script</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-powershell" data-lang="powershell"><span style="display:flex;"><span><span style="color:#75715e"># siyuan-fix.ps1 — Siyuan v3.7.0 container fix script</span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># Usage: .\siyuan-fix.ps1 -ServerHost &lt;docker-host&gt; -ServerUser root -StackName siyuan-note-qiniu</span>
 </span></span><span style="display:flex;"><span><span style="color:#66d9ef">param</span>(
 </span></span><span style="display:flex;"><span>    [Parameter(<span style="color:#a6e22e">Mandatory</span>=$true)][<span style="color:#66d9ef">string</span>]$ServerHost,
@@ -394,8 +394,8 @@
 </span></span><span style="display:flex;"><span>Write-Host <span style="color:#e6db74">&#34;HTTP status: </span>$healthCheck<span style="color:#e6db74"> (401 = healthy, access code active)&#34;</span>
 </span></span><span style="display:flex;"><span>Write-Host <span style="color:#e6db74">&#34;</span><span style="color:#ae81ff">`n</span><span style="color:#e6db74">✅ Fix complete!&#34;</span> -ForegroundColor Green
 </span></span></code></pre></div><h4 id="ubuntu-2604--debian">Ubuntu 26.04 / Debian</h4>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e">#!/usr/bin/env bash
-</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span><span style="color:#75715e"># siyuan-fix.sh — Siyuan v3.7.0 container fix script</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e">#!/usr/bin/env bash
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"># siyuan-fix.sh — Siyuan v3.7.0 container fix script</span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># Usage: bash siyuan-fix.sh &lt;docker-host&gt; [ssh-user] [stack-name]</span>
 </span></span><span style="display:flex;"><span>set -euo pipefail
 </span></span><span style="display:flex;"><span>
@@ -456,8 +456,8 @@
 </span></span><span style="display:flex;"><span>echo -e <span style="color:#e6db74">&#34;HTTP status: </span><span style="color:#e6db74">${</span>HTTP_CODE<span style="color:#e6db74">}</span><span style="color:#e6db74"> (401 = healthy, access code active)&#34;</span>
 </span></span><span style="display:flex;"><span>echo -e <span style="color:#e6db74">&#34;\n</span><span style="color:#e6db74">${</span>GREEN<span style="color:#e6db74">}</span><span style="color:#e6db74">✅ Fix complete!</span><span style="color:#e6db74">${</span>NC<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
 </span></span></code></pre></div><h4 id="macos-26">macOS 26</h4>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e">#!/usr/bin/env bash
-</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span><span style="color:#75715e"># siyuan-fix-mac.sh — Siyuan v3.7.0 container fix script (macOS)</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e">#!/usr/bin/env bash
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"># siyuan-fix-mac.sh — Siyuan v3.7.0 container fix script (macOS)</span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># Usage: bash siyuan-fix-mac.sh &lt;docker-host&gt; [ssh-user] [stack-name]</span>
 </span></span><span style="display:flex;"><span>
 </span></span><span style="display:flex;"><span>set -euo pipefail
@@ -521,7 +521,7 @@
 </span></span><span style="display:flex;"><span>echo -e <span style="color:#e6db74">&#34;\n</span><span style="color:#e6db74">${</span>GREEN<span style="color:#e6db74">}</span><span style="color:#e6db74">✅ Fix complete!</span><span style="color:#e6db74">${</span>NC<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
 </span></span></code></pre></div><h3 id="53-manual-fix-no-scripts">5.3 Manual Fix (No Scripts)</h3>
 <p>If you prefer to do it by hand:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># 1. SSH to the Docker host</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># 1. SSH to the Docker host</span>
 </span></span><span style="display:flex;"><span>ssh root@&lt;your-docker-host&gt;
 </span></span><span style="display:flex;"><span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># 2. Find the compose file (usually in Portainer&#39;s data directory)</span>
@@ -548,7 +548,7 @@
 </span></span><span style="display:flex;"><span>docker ps --filter name<span style="color:#f92672">=</span>siyuan
 </span></span><span style="display:flex;"><span>curl -o /dev/null -w <span style="color:#e6db74">&#34;%{http_code}\n&#34;</span> http://127.0.0.1:6001/
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># 401 = access code is active, service is healthy!</span>
-</span></span></code></pre></div><p><img alt="docker compose up success output." src="/post-images/siyuan-v370-docker-restart-loop-fix/shot-03-compose-up-success.png"></p>
+</span></span></code></pre></div><p><img src="/post-images/siyuan-v370-docker-restart-loop-fix/shot-03-compose-up-success.png" alt="docker compose up success output."></p>
 <p><em>Figure 9: Real terminal screenshot — after recreating the container, Status shows Up, and curl returns 401 (access code active).</em></p>
 <h2 id="6-manual-vs-ai-agent-fix">6. Manual vs. AI Agent Fix</h2>
 <h3 id="61-manual-fix">6.1 Manual Fix</h3>
@@ -564,7 +564,7 @@
 <p>In practice, most of the time is spent on &ldquo;what does this error mean?&rdquo; The <code>unknown flag</code> message is not immediately intuitive for someone unfamiliar with CLI subcommand design.</p>
 <h3 id="62-ai-agent-fix">6.2 AI Agent Fix</h3>
 <p>If you let an AI Agent handle it, the prompt might look like:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>My Siyuan Docker container keeps restarting. Please diagnose and fix it.
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>My Siyuan Docker container keeps restarting. Please diagnose and fix it.
 </span></span><span style="display:flex;"><span>
 </span></span><span style="display:flex;"><span>Constraints:
 </span></span><span style="display:flex;"><span>1. Do not perform major OS upgrades
@@ -581,50 +581,50 @@
 <li>Backs up → patches compose → recreates container → verifies</li>
 </ol>
 <p><strong>Real-world result</strong>: From start to fix, the Agent took about <strong>10 minutes</strong>. A human, accounting for searching, reading docs, and understanding CLI architecture changes, would typically need 20–30 minutes.</p>
-<p><img alt="AI Agent fix workflow." src="/post-images/siyuan-v370-docker-restart-loop-fix/06-agent-workflow.png"></p>
+<p><img src="/post-images/siyuan-v370-docker-restart-loop-fix/06-agent-workflow.png" alt="AI Agent fix workflow."></p>
 <p><em>Figure 10: Complete AI Agent workflow for remote Docker container troubleshooting.</em></p>
 <h3 id="63-guardrails-for-the-agent">6.3 Guardrails for the Agent</h3>
 <p>When letting an Agent operate on production, these guardrails are essential:</p>
 <table>
-<thead>
-<tr>
-<th>Guardrail</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Backup first</td>
-<td>Always back up config files before modifying</td>
-</tr>
-<tr>
-<td>No OS upgrades</td>
-<td>Agent operates at container level only</td>
-</tr>
-<tr>
-<td>No privacy leaks</td>
-<td>Never output real IPs, domains, or keys in logs or configs</td>
-</tr>
-<tr>
-<td>Diagnose before acting</td>
-<td>Confirm root cause via logs/inspect before making changes</td>
-</tr>
-<tr>
-<td>Verify the fix</td>
-<td>Check container status and HTTP reachability after the fix</td>
-</tr>
-<tr>
-<td>Rollback-ready</td>
-<td>Keep backup files and rollback commands available</td>
-</tr>
-</tbody>
+	<thead>
+			<tr>
+					<th>Guardrail</th>
+					<th>Description</th>
+			</tr>
+	</thead>
+	<tbody>
+			<tr>
+					<td>Backup first</td>
+					<td>Always back up config files before modifying</td>
+			</tr>
+			<tr>
+					<td>No OS upgrades</td>
+					<td>Agent operates at container level only</td>
+			</tr>
+			<tr>
+					<td>No privacy leaks</td>
+					<td>Never output real IPs, domains, or keys in logs or configs</td>
+			</tr>
+			<tr>
+					<td>Diagnose before acting</td>
+					<td>Confirm root cause via logs/inspect before making changes</td>
+			</tr>
+			<tr>
+					<td>Verify the fix</td>
+					<td>Check container status and HTTP reachability after the fix</td>
+			</tr>
+			<tr>
+					<td>Rollback-ready</td>
+					<td>Keep backup files and rollback commands available</td>
+			</tr>
+	</tbody>
 </table>
 <h2 id="7-post-fix-verification">7. Post-Fix Verification</h2>
 <p>After the fix, Siyuan should be running normally. Visiting <code>http://&lt;your-host&gt;:&lt;port&gt;/</code> (port 6001 in this example) will show the Siyuan lock screen:</p>
-<p><img alt="Siyuan lock screen login page." src="/post-images/siyuan-v370-docker-restart-loop-fix/shot-07-real-siyuan-login-large.png"></p>
+<p><img src="/post-images/siyuan-v370-docker-restart-loop-fix/shot-07-real-siyuan-login-large.png" alt="Siyuan lock screen login page."></p>
 <p><em>Figure 11: Real screenshot — Siyuan v3.7.0 lock screen (full size). Enter your accessAuthCode to access your notes.</em></p>
 <p>Enter the password set in <code>--accessAuthCode</code> to access your notes. An HTTP 401 response (when testing with curl) is actually good — it means the access control is working.</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>$ curl -o /dev/null -w <span style="color:#e6db74">&#34;%{http_code}\n&#34;</span> http://&lt;host&gt;:&lt;port&gt;/
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>$ curl -o /dev/null -w <span style="color:#e6db74">&#34;%{http_code}\n&#34;</span> http://&lt;host&gt;:&lt;port&gt;/
 </span></span><span style="display:flex;"><span><span style="color:#ae81ff">401</span>
 </span></span></code></pre></div><p><strong>HTTP 401 is not an error here</strong> — it means Siyuan&rsquo;s access control is active. Only users with the correct password can enter.</p>
 <h2 id="8-qa">8. Q&amp;A</h2>
@@ -640,13 +640,13 @@
 <p>No. Data lives in <code>/siyuan/workspace</code> (or your mounted directory). The fix only changes the <code>command</code> field in the compose file — it never touches the data volume. Plus, the script backs up the compose file before making changes.</p>
 <p><strong>Q6: Is there an easier fix than editing the compose file?</strong></p>
 <p>If you use <code>docker run</code> instead of compose, just add <code>serve</code> to the command:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>docker run -d <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  -v /siyuan/workspace:/siyuan/workspace <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  -p 6806:6806 <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  b3log/siyuan <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  serve <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  --workspace<span style="color:#f92672">=</span>/siyuan/workspace/ <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  --accessAuthCode<span style="color:#f92672">=</span>xxx
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>docker run -d <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span>  -v /siyuan/workspace:/siyuan/workspace <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span>  -p 6806:6806 <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span>  b3log/siyuan <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span>  serve <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span>  --workspace<span style="color:#f92672">=</span>/siyuan/workspace/ <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span>  --accessAuthCode<span style="color:#f92672">=</span>xxx
 </span></span></code></pre></div><p><strong>Q7: Can this happen with other Docker images?</strong></p>
 <p>Yes. Any software that transitions from a flat CLI to a subcommand-based CLI can cause similar issues. Before upgrading, check the CHANGELOG for keywords like &ldquo;CLI,&rdquo; &ldquo;command,&rdquo; or &ldquo;breaking change.&rdquo;</p>
 <h2 id="9-conclusion">9. Conclusion</h2>

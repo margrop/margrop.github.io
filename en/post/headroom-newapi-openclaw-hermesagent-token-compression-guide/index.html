@@ -220,7 +220,7 @@
 <p>I did not replace NewAPI, and I did not point OpenClaw or HermesAgent at an unproven gateway. The actual design is simpler: place Headroom in front of NewAPI, then move only the already validated OpenAI-compatible providers to <code>http://&lt;headroom-host&gt;:8787/v1</code>. The original NewAPI endpoint stays available. Long agent context now goes through Headroom first, gets compressed, then continues to NewAPI for the same routing and model management as before.</p>
 <p>The rule that kept the rollout boring was: <strong>test first, edit second; migrate only OpenAI-compatible providers that pass; leave non-OpenAI fallbacks alone.</strong> This post is both a write-up and a runbook you can hand to an Agent or follow manually.</p>
 </blockquote>
-<p><img alt="Headroom as the context compression layer before agent traffic enters NewAPI" src="/post-images/headroom-newapi-openclaw-hermesagent-token-compression-guide/01-hero.png"></p>
+<p><img src="/post-images/headroom-newapi-openclaw-hermesagent-token-compression-guide/01-hero.png" alt="Headroom as the context compression layer before agent traffic enters NewAPI"></p>
 <p><em>Cover: agent traffic passes through Headroom before entering NewAPI. The image contains no real hostnames, internal addresses, or secrets.</em></p>
 <hr>
 <h2 id="1-background-agents-are-smart-but-they-eat-tokens">1. Background: agents are smart, but they eat tokens</h2>
@@ -228,24 +228,24 @@
 <p>The problem is how agents work. They read files, collect logs, list directories, explain errors, keep conversation history, and feed tool output back into the next model call. A simple “please investigate why this service failed” can quickly turn into tens of thousands of tokens. In everyday terms, you ask a classmate to bring you a homework notebook, and they bring the notebook, the whole backpack, the desk drawer, and yesterday&rsquo;s chat history.</p>
 <p>Headroom fits exactly at that point. It is not another model provider and it does not need to replace NewAPI. It is a context compression layer. Its own documentation describes several modes: library, proxy, MCP, and agent wrapping. For this environment, proxy mode is the cleanest: OpenClaw and HermesAgent continue speaking OpenAI-compatible API; only their <code>base_url</code> changes from NewAPI to Headroom.</p>
 <p>Think of NewAPI as the warehouse gate. Behind it are many delivery companies. Headroom is a packing table in front of that gate. Previously, the agent carried bulky blankets directly into the warehouse. Now the blankets are vacuum-packed first, labelled, and handed to the same warehouse. The warehouse stays the same. The delivery companies stay the same. The package gets smaller.</p>
-<p><img alt="Headroom sidecar flow: keep NewAPI, insert compression before OpenAI-compatible traffic" src="/post-images/headroom-newapi-openclaw-hermesagent-token-compression-guide/02-sidecar-flow.png"></p>
+<p><img src="/post-images/headroom-newapi-openclaw-hermesagent-token-compression-guide/02-sidecar-flow.png" alt="Headroom sidecar flow: keep NewAPI, insert compression before OpenAI-compatible traffic"></p>
 <p><em>Figure 1: Headroom is a sidecar, not a NewAPI replacement. The old endpoint remains available; the new endpoint handles only validated OpenAI-compatible traffic.</em></p>
 <hr>
 <h2 id="2-symptoms-two-traps-before-the-happy-path">2. Symptoms: two traps before the happy path</h2>
 <p>The first real trap was that the existing image failed on the old VM placement. The container log showed <code>Fatal Python error: Illegal instruction</code>, and the exit code was <code>132</code>. This was not a port issue and not a missing environment variable. It was a CPU instruction-set mismatch: a native extension inside the image tried to use an instruction the current virtual CPU did not expose.</p>
-<p><img alt="Sanitized screenshot of the Illegal instruction failure on the old host placement" src="/post-images/headroom-newapi-openclaw-hermesagent-token-compression-guide/04-illegal-instruction-terminal.png"></p>
+<p><img src="/post-images/headroom-newapi-openclaw-hermesagent-token-compression-guide/04-illegal-instruction-terminal.png" alt="Sanitized screenshot of the Illegal instruction failure on the old host placement"></p>
 <p><em>Figure 2: sanitized real terminal output. <code>Illegal instruction</code> points below Python syntax and into CPU capability territory.</em></p>
 <p>The everyday analogy: you bought an appliance that requires a three-prong outlet, then tried to use it in an old room with only a two-prong outlet. The appliance is not broken, and the room is not broken; they just do not match. After the VM was moved to a newer host and the virtual CPU type was exposed as host, <code>headroom._core</code> loaded correctly and <code>headroom-proxy --version</code> printed a version. The existing image was fine; rebuilding it was unnecessary.</p>
 <p>The second trap was subtler. Headroom listened on port <code>3000</code> inside the container, but the first stack published and health-checked <code>8787</code>. The service was waiting in room 3000, while I kept knocking on room 8787. No wonder nobody answered.</p>
-<p><img alt="Sanitized screenshot of the port mismatch and the final fix" src="/post-images/headroom-newapi-openclaw-hermesagent-token-compression-guide/05-port-mismatch-terminal.png"></p>
+<p><img src="/post-images/headroom-newapi-openclaw-hermesagent-token-compression-guide/05-port-mismatch-terminal.png" alt="Sanitized screenshot of the port mismatch and the final fix"></p>
 <p><em>Figure 3: sanitized real terminal output. The final setup maps host <code>8787</code> to container <code>3000</code>, and the healthcheck also targets container port <code>3000</code>.</em></p>
 <p>After fixing that, Headroom readiness returned healthy, version <code>0.26.0</code>, with the Rust core loaded. More importantly, dummy-token requests to <code>/v1/chat/completions</code>, <code>/v1/responses</code>, and <code>/v1/completions</code> reached NewAPI through Headroom and returned NewAPI authentication errors with Headroom headers. That proves we were not just looking at a green health page; the OpenAI-compatible forwarding path was actually alive.</p>
-<p><img alt="Sanitized Headroom readyz / livez screenshot" src="/post-images/headroom-newapi-openclaw-hermesagent-token-compression-guide/03-readyz-terminal.png"></p>
+<p><img src="/post-images/headroom-newapi-openclaw-hermesagent-token-compression-guide/03-readyz-terminal.png" alt="Sanitized Headroom readyz / livez screenshot"></p>
 <p><em>Figure 4: sanitized real readiness check. <code>ready=true</code> proves Headroom itself is up; a real OpenAI-compatible request proves the business path.</em></p>
 <hr>
 <h2 id="3-deploying-headroom-a-minimal-portainer-stack">3. Deploying Headroom: a minimal Portainer Stack</h2>
 <p>This is the sanitized Stack shape. Replace the registry, network name, and NewAPI target for your own environment. Do not commit internal addresses, tokens, or private hostnames to a public repo.</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-yaml" data-lang="yaml"><span style="display:flex;"><span><span style="color:#f92672">services</span>:
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-yaml" data-lang="yaml"><span style="display:flex;"><span><span style="color:#f92672">services</span>:
 </span></span><span style="display:flex;"><span>  <span style="color:#f92672">headroom</span>:
 </span></span><span style="display:flex;"><span>    <span style="color:#f92672">image</span>: <span style="color:#ae81ff">registry.example.local/chopratejas/headroom:latest</span>
 </span></span><span style="display:flex;"><span>    <span style="color:#f92672">restart</span>: <span style="color:#ae81ff">unless-stopped</span>
@@ -271,12 +271,12 @@
 <p>Second, the port mapping is <code>8787:3000</code>, not <code>8787:8787</code>. I want clients to use <code>http://&lt;headroom-host&gt;:8787/v1</code>, but the process inside the container listens on <code>3000</code>.</p>
 <p>Third, the healthcheck must hit the real port from the container&rsquo;s point of view. Inside the container, <code>127.0.0.1</code> is the container itself, not the host. If you check <code>127.0.0.1:8787</code> from inside, it fails forever.</p>
 <p>After deploying, do not edit clients yet. Run three layers of checks:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>curl -fsS http://&lt;headroom-host&gt;:8787/readyz
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>curl -fsS http://&lt;headroom-host&gt;:8787/readyz
 </span></span><span style="display:flex;"><span>curl -fsS http://&lt;headroom-host&gt;:8787/livez
 </span></span><span style="display:flex;"><span>curl -sS http://&lt;headroom-host&gt;:8787/v1/chat/completions <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  -H <span style="color:#e6db74">&#34;Authorization: Bearer </span>$API_KEY<span style="color:#e6db74">&#34;</span> <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  -H <span style="color:#e6db74">&#34;Content-Type: application/json&#34;</span> <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  -d <span style="color:#e6db74">&#39;{&#34;model&#34;:&#34;&lt;model&gt;&#34;,&#34;messages&#34;:[{&#34;role&#34;:&#34;user&#34;,&#34;content&#34;:&#34;reply OK&#34;}],&#34;max_tokens&#34;:8}&#39;</span>
+</span></span></span><span style="display:flex;"><span>  -H <span style="color:#e6db74">&#34;Authorization: Bearer </span>$API_KEY<span style="color:#e6db74">&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span>  -H <span style="color:#e6db74">&#34;Content-Type: application/json&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span>  -d <span style="color:#e6db74">&#39;{&#34;model&#34;:&#34;&lt;model&gt;&#34;,&#34;messages&#34;:[{&#34;role&#34;:&#34;user&#34;,&#34;content&#34;:&#34;reply OK&#34;}],&#34;max_tokens&#34;:8}&#39;</span>
 </span></span></code></pre></div><p><code>readyz</code> and <code>livez</code> are service checkups. <code>chat/completions</code> is the business-path check. The first two are like taking someone&rsquo;s temperature; the third asks them to get out of bed and walk.</p>
 <hr>
 <h2 id="4-migration-strategy-test-the-old-road-test-the-new-road-then-edit">4. Migration strategy: test the old road, test the new road, then edit</h2>
@@ -291,20 +291,20 @@
 <li>Do not migrate Anthropic-mode fallbacks unless you have separately deployed and verified a compatible route for that protocol.</li>
 </ol>
 <p>This is like adding filters to a row of water pipes. You do not cut every pipe at once. You first confirm a pipe has water, attach the filter, test again, and only then move to the next pipe. Pipes that had no water before get labelled, not mixed into the success report.</p>
-<p><img alt="Sanitized provider verification matrix after migration" src="/post-images/headroom-newapi-openclaw-hermesagent-token-compression-guide/06-rollout-matrix-terminal.png"></p>
+<p><img src="/post-images/headroom-newapi-openclaw-hermesagent-token-compression-guide/06-rollout-matrix-terminal.png" alt="Sanitized provider verification matrix after migration"></p>
 <p><em>Figure 5: sanitized real verification matrix. Only 200-returning OpenAI-compatible providers moved. Broken old providers and Anthropic-mode fallbacks stayed in place.</em></p>
 <hr>
 <h2 id="5-openclaw-changes-same-idea-locally-and-remotely-different-paths">5. OpenClaw changes: same idea locally and remotely, different paths</h2>
 <p>OpenClaw&rsquo;s model/provider state is JSON. Locally it is usually here:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>~/.openclaw/openclaw.json
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>~/.openclaw/openclaw.json
 </span></span></code></pre></div><p>On Linux nodes it is usually here:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>/root/.openclaw/openclaw.json
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>/root/.openclaw/openclaw.json
 </span></span></code></pre></div><p>Back it up first:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>cp ~/.openclaw/openclaw.json ~/.openclaw/openclaw.json.bak-headroom-<span style="color:#66d9ef">$(</span>date +%Y%m%d-%H%M%S<span style="color:#66d9ef">)</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>cp ~/.openclaw/openclaw.json ~/.openclaw/openclaw.json.bak-headroom-<span style="color:#66d9ef">$(</span>date +%Y%m%d-%H%M%S<span style="color:#66d9ef">)</span>
 </span></span></code></pre></div><p>Then change only the providers that passed testing, replacing the old NewAPI <code>base_url</code> with:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>http://&lt;headroom-host&gt;:8787/v1
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>http://&lt;headroom-host&gt;:8787/v1
 </span></span></code></pre></div><p>If you want an Agent to do this safely, give it this prompt:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>Read the OpenClaw config and list every OpenAI-compatible provider.
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>Read the OpenClaw config and list every OpenAI-compatible provider.
 </span></span><span style="display:flex;"><span>For each provider, first call /chat/completions using its current base_url, key, and model.
 </span></span><span style="display:flex;"><span>Then temporarily test the same key/model against http://&lt;headroom-host&gt;:8787/v1.
 </span></span><span style="display:flex;"><span>Modify only providers where both calls return 200.
@@ -312,19 +312,19 @@
 </span></span><span style="display:flex;"><span>Do not modify Anthropic-mode providers and do not print or save secrets.
 </span></span><span style="display:flex;"><span>After editing, restart OpenClaw gateway and re-test every modified provider.
 </span></span></code></pre></div><p>Manual operators can inspect providers with <code>jq</code> and edit the JSON directly. Restart with:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>openclaw gateway restart
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>openclaw gateway restart
 </span></span><span style="display:flex;"><span>openclaw gateway status --json
 </span></span></code></pre></div><p>On systemd-managed Linux nodes, use:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>systemctl restart openclaw-gateway
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>systemctl restart openclaw-gateway
 </span></span><span style="display:flex;"><span>systemctl is-active openclaw-gateway
 </span></span><span style="display:flex;"><span>openclaw status --json
 </span></span></code></pre></div><p>In this rollout, local OpenClaw and several remote OpenClaw nodes were migrated this way. One legacy provider already returned 503 from the old endpoint and 502 through Headroom, so it stayed unchanged. That distinction matters: <strong>migration is not a magic repair pass for every historical provider. It only moves healthy paths into the compression layer.</strong></p>
 <hr>
 <h2 id="6-hermesagent-changes-watch-api_mode">6. HermesAgent changes: watch <code>api_mode</code></h2>
 <p>HermesAgent usually keeps its configuration in YAML, for example:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>/root/.hermes/config.yaml
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>/root/.hermes/config.yaml
 </span></span></code></pre></div><p>The fields to inspect are usually these:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-yaml" data-lang="yaml"><span style="display:flex;"><span><span style="color:#f92672">model</span>:
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-yaml" data-lang="yaml"><span style="display:flex;"><span><span style="color:#f92672">model</span>:
 </span></span><span style="display:flex;"><span>  <span style="color:#f92672">provider</span>: <span style="color:#ae81ff">custom</span>
 </span></span><span style="display:flex;"><span>  <span style="color:#f92672">default</span>: <span style="color:#ae81ff">&lt;model&gt;</span>
 </span></span><span style="display:flex;"><span>  <span style="color:#f92672">base_url</span>: <span style="color:#ae81ff">http://&lt;headroom-host&gt;:8787/v1</span>
@@ -340,23 +340,23 @@
 </span></span><span style="display:flex;"><span>    <span style="color:#f92672">api_mode</span>: <span style="color:#ae81ff">chat_completions</span>
 </span></span></code></pre></div><p>The important field is <code>api_mode</code>. If a fallback is explicitly <code>anthropic</code>, or points to a native Anthropic endpoint, do not force it into this Headroom endpoint. That is like asking someone who speaks Chinese to take an English listening test; the failure is not because they are foolish, it is because the question is in the wrong language.</p>
 <p>Backup first:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>cp /root/.hermes/config.yaml /root/.hermes/config.yaml.bak-headroom-<span style="color:#66d9ef">$(</span>date +%Y%m%d-%H%M%S<span style="color:#66d9ef">)</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>cp /root/.hermes/config.yaml /root/.hermes/config.yaml.bak-headroom-<span style="color:#66d9ef">$(</span>date +%Y%m%d-%H%M%S<span style="color:#66d9ef">)</span>
 </span></span></code></pre></div><p>Restart after editing:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>systemctl restart hermes-gateway
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>systemctl restart hermes-gateway
 </span></span><span style="display:flex;"><span>systemctl is-active hermes-gateway
 </span></span><span style="display:flex;"><span>hermes fallback list
 </span></span></code></pre></div><p>If the host uses a user service:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>systemctl --user restart hermes-gateway
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>systemctl --user restart hermes-gateway
 </span></span><span style="display:flex;"><span>systemctl --user is-active hermes-gateway
 </span></span></code></pre></div><p>In this rollout, I moved only <code>chat_completions</code> / OpenAI-compatible main models, custom providers, and verified fallbacks. Anthropic-mode fallbacks stayed untouched. The result is a narrower but safer change: Headroom handles traffic it has actually proven it can handle, and the existing fallback chain remains intact.</p>
-<p><img alt="Agent runbook and manual runbook for the same migration" src="/post-images/headroom-newapi-openclaw-hermesagent-token-compression-guide/07-agent-manual-checklist.png"></p>
+<p><img src="/post-images/headroom-newapi-openclaw-hermesagent-token-compression-guide/07-agent-manual-checklist.png" alt="Agent runbook and manual runbook for the same migration"></p>
 <p><em>Figure 6: the same operation can be agent-driven or manual. The center rule is the same: test before editing.</em></p>
 <hr>
 <h2 id="7-rollback-change-base_url-back">7. Rollback: change <code>base_url</code> back</h2>
 <p>The biggest advantage of this sidecar design is rollback simplicity. NewAPI did not change. Keys did not change. Models did not change. Clients moved from:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>http://&lt;newapi-host&gt;:3000/v1
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>http://&lt;newapi-host&gt;:3000/v1
 </span></span></code></pre></div><p>to:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>http://&lt;headroom-host&gt;:8787/v1
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>http://&lt;headroom-host&gt;:8787/v1
 </span></span></code></pre></div><p>If a client misbehaves, restore the backup or switch <code>base_url</code> back. Do not remove the old endpoint. Do not clean up NewAPI. Do not change models in the same operation. Change one variable at a time, or debugging becomes blindfolded.</p>
 <p>Keep two things on every node:</p>
 <ul>
@@ -381,7 +381,7 @@
 <hr>
 <h2 id="9-one-prompt-you-can-give-to-an-agent">9. One prompt you can give to an Agent</h2>
 <p>If you already run NewAPI, OpenClaw, and HermesAgent, this is the prompt I would give an Agent:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>Deploy Headroom as an OpenAI-compatible proxy in front of NewAPI.
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>Deploy Headroom as an OpenAI-compatible proxy in front of NewAPI.
 </span></span><span style="display:flex;"><span>Use the existing Headroom image and deploy it with Portainer/Docker Compose.
 </span></span><span style="display:flex;"><span>Expose http://&lt;headroom-host&gt;:8787/v1 externally.
 </span></span><span style="display:flex;"><span>If the container listens on 3000, the port mapping must be 8787:3000 and the healthcheck must target container port 3000.

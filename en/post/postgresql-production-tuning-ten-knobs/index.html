@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="en-US">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>128MB of RAM in Production? The 10 Switches Every New PostgreSQL Home Needs - Margrop Blog</title>
+<meta name="description" content="TL;DR In the previous post we migrated data from MySQL into PostgreSQL with pgloader. This one delivers on the promise made back then: the “renovation” after …">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://blog.margrop.net/en/post/postgresql-production-tuning-ten-knobs/"><meta property="og:site_name" content="Margrop Blog">
+<meta property="og:title" content="128MB of RAM in Production? The 10 Switches Every New PostgreSQL Home Needs - Margrop Blog">
+<meta property="og:description" content="TL;DR In the previous post we migrated data from MySQL into PostgreSQL with pgloader. This one delivers on the promise made back then: the “renovation” after …">
+<meta property="og:url" content="https://blog.margrop.net/en/post/postgresql-production-tuning-ten-knobs/">
+<meta property="og:locale" content="en_US"><meta property="og:type" content="article"><meta property="og:locale:alternate" content="zh_CN"><meta property="og:image" content="https://blog.margrop.net/images/avatar.png"><meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="128MB of RAM in Production? The 10 Switches Every New PostgreSQL Home Needs - Margrop Blog">
+<meta name="twitter:description" content="TL;DR In the previous post we migrated data from MySQL into PostgreSQL with pgloader. This one delivers on the promise made back then: the “renovation” after …"><meta name="twitter:image" content="https://blog.margrop.net/images/avatar.png"><link rel="alternate" hreflang="zh-CN" href="https://blog.margrop.net/post/postgresql-production-tuning-ten-knobs/"><link rel="alternate" hreflang="en-US" href="https://blog.margrop.net/en/post/postgresql-production-tuning-ten-knobs/"><link rel="alternate" hreflang="x-default" href="https://blog.margrop.net/"><meta property="article:published_time" content="2026-08-23T09:00:00&#43;08:00">
+<meta property="article:modified_time" content="2026-08-23T09:00:00&#43;08:00"><meta property="article:tag" content="PostgreSQL"><meta property="article:tag" content="数据库"><meta property="article:tag" content="database"><meta property="article:tag" content="性能调优"><meta property="article:tag" content="performance-tuning"><meta property="article:tag" content="教程"><script type="application/ld+json">{"@context":"https://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"Margrop"},"dateModified":"2026-08-23T09:00:00+08:00","datePublished":"2026-08-23T09:00:00+08:00","description":"TL;DR In the previous post we migrated data from MySQL into PostgreSQL with pgloader. This one delivers on the promise made back then: the “renovation” after …","headline":"128MB of RAM in Production? The 10 Switches Every New PostgreSQL Home Needs","mainEntityOfPage":"https://blog.margrop.net/en/post/postgresql-production-tuning-ten-knobs/","url":"https://blog.margrop.net/en/post/postgresql-production-tuning-ten-knobs/"}</script>
+    <meta name="baidu-site-verification" content="code-sVFZ8SER59" />
+    <script src="/js/theme-toggle.js"></script>
+
+    
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-3J2W592DHJ"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-3J2W592DHJ');
+    </script>
+
+    <style>
+    :root {
+        color-scheme: light;
+        --page-bg: #fff;
+        --surface-bg: #f4f4f4;
+        --text: #222;
+        --muted: #666;
+        --subtle: #777;
+        --border: #eee;
+        --border-strong: #ddd;
+        --link: #006CFF;
+        --tag-bg: #eee;
+        --button-bg: #fff;
+        --button-primary-bg: #333;
+    }
+    @media (prefers-color-scheme: dark) {
+        :root:not([data-theme]) {
+            color-scheme: dark;
+            --page-bg: #111315;
+            --surface-bg: #1d2126;
+            --text: #e8eaed;
+            --muted: #aeb4bd;
+            --subtle: #9aa2ad;
+            --border: #30353d;
+            --border-strong: #454c56;
+            --link: #79b8ff;
+            --tag-bg: #2a3038;
+            --button-bg: #1d2126;
+            --button-primary-bg: #e8eaed;
+        }
+    }
+    html[data-theme="dark"] {
+        color-scheme: dark;
+        --page-bg: #111315;
+        --surface-bg: #1d2126;
+        --text: #e8eaed;
+        --muted: #aeb4bd;
+        --subtle: #9aa2ad;
+        --border: #30353d;
+        --border-strong: #454c56;
+        --link: #79b8ff;
+        --tag-bg: #2a3038;
+        --button-bg: #1d2126;
+        --button-primary-bg: #e8eaed;
+    }
+    html[data-theme="light"] {
+        color-scheme: light;
+        --page-bg: #fff;
+        --surface-bg: #f4f4f4;
+        --text: #222;
+        --muted: #666;
+        --subtle: #777;
+        --border: #eee;
+        --border-strong: #ddd;
+        --link: #006CFF;
+        --tag-bg: #eee;
+        --button-bg: #fff;
+        --button-primary-bg: #333;
+    }
+    body { background: var(--page-bg); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 860px; margin: 0 auto; padding: 20px; line-height: 1.7; color: var(--text); }
+    h1 { border-bottom: 2px solid var(--border-strong); padding-bottom: 10px; }
+    article > h1 { font-size: 2em; line-height: 1.3; margin-bottom: 12px; }
+    .post-list { list-style: none; padding: 0; }
+    .post-list li { margin: 15px 0; }
+    .post-list a { text-decoration: none; color: var(--text); font-size: 18px; }
+    .post-list a:hover { color: var(--link); }
+    .date { color: var(--muted); font-size: 14px; margin-right: 10px; }
+    .tags { margin-top: 8px; }
+    .tag { background: var(--tag-bg); padding: 2px 8px; border-radius: 3px; font-size: 12px; margin-right: 5px; display: inline-block; }
+    nav { margin-bottom: 18px; border-bottom: 1px solid var(--border); padding-bottom: 15px; }
+    nav a { margin-right: 20px; text-decoration: none; color: var(--text); font-size: 16px; }
+    nav a:hover { color: var(--link); }
+    .language-switcher { display: flex; align-items: center; gap: 10px; margin: -8px 0 26px; }
+    .language-switcher a { display: inline-block; padding: 4px 10px; border: 1px solid var(--border-strong); border-radius: 999px; color: var(--muted); text-decoration: none; font-size: 14px; }
+    .language-switcher a.active { background: var(--link); border-color: var(--link); color: #fff; }
+    .content { line-height: 1.8; }
+    .content code { background: var(--surface-bg); padding: 2px 5px; border-radius: 3px; }
+    .content pre { background: var(--surface-bg); padding: 15px; overflow-x: auto; border-radius: 5px; }
+    .content img { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+    .content .code-snippet__fix {
+        margin: 0 0 1.5em;
+    }
+    .content .code-snippet__fix .code-snippet__line-index {
+        display: none !important;
+    }
+    .meta { color: var(--muted); font-size: 14px; margin-bottom: 14px; }
+    .meta-separator { margin: 0 6px; color: var(--subtle); }
+    .site-stats { display: flex; flex-wrap: wrap; gap: 10px 18px; margin: 28px 0 8px; padding-top: 12px; border-top: 1px solid var(--border); color: var(--subtle); font-size: 12px; }
+    a { color: var(--link); }
+    .hero { padding: 12px 0 24px; }
+    .hero h1 { border-bottom: 2px solid #333; }
+    .eyebrow { color: var(--muted); font-size: 12px; letter-spacing: .12em; margin: 0 0 8px; }
+    .hero-tagline { font-size: 18px; margin: 12px 0 8px; }
+    .hero-copy { color: var(--muted); margin: 0 0 14px; }
+    .hero-actions { margin: 14px 0 4px; }
+    .button { display: inline-block; margin-right: 12px; border: 1px solid var(--border-strong); border-radius: 3px; padding: 4px 10px; text-decoration: none; color: var(--text); background: var(--button-bg); font-size: 14px; }
+    .button-primary { background: var(--button-primary-bg); border-color: var(--button-primary-bg); color: var(--page-bg); }
+    .theme-toggle { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 1px solid var(--border-strong); border-radius: 999px; background: var(--button-bg); color: var(--text); cursor: pointer; font: inherit; font-size: 16px; }
+    .theme-toggle:hover { border-color: var(--link); color: var(--link); }
+    .la-theme-widget { margin: 12px 0 20px; min-height: 24px; color: var(--text); }
+    .identity-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: 16px 0; }
+    .identity-grid div { display: flex; flex-direction: column; }
+    .identity-grid strong { font-size: 15px; }
+    .identity-grid span, .topic-card span, .featured-list small { color: var(--muted); font-size: 13px; }
+    .section-block { padding-top: 28px; }
+    .section-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+    .section-heading h2 { margin: 0; }
+    .section-heading a { font-size: 14px; }
+    .topic-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+    .topic-card { display: block; padding: 14px; border: 1px solid var(--border); text-decoration: none; color: var(--text); }
+    .topic-card:hover { border-color: var(--border-strong); }
+    .topic-card strong { display: block; margin: 4px 0; font-size: 17px; }
+    .topic-index, .featured-list > a > span { color: var(--muted) !important; font-size: 12px !important; }
+    .featured-list { border-top: 1px solid var(--border); }
+    .featured-list > a { display: flex; gap: 14px; padding: 12px 0; border-bottom: 1px solid var(--border); text-decoration: none; color: var(--text); }
+    .featured-list div { display: flex; flex-direction: column; }
+    .latest-block { max-width: 860px; }
+    @media (max-width: 680px) {
+        body { padding: 16px; }
+        nav a { display: inline-block; margin-right: 12px; margin-bottom: 8px; }
+        .identity-grid { grid-template-columns: repeat(2, 1fr); }
+        .topic-grid { grid-template-columns: 1fr; }
+    }
+</style>
+
+</head>
+<body>
+    <nav>
+  <a href="/en/">Home</a>
+  <a href="/en/start-here/">Start Here</a>
+  <a href="/en/career/">Portfolio</a>
+  <a href="/en/tag/ai/">AI Agent</a>
+  <a href="/en/tag/docker/">Self-hosting</a>
+  <a href="/en/tag/%e8%bf%90%e7%bb%b4/">Engineering</a>
+  <a href="/en/post/">Archive</a>
+  <a href="/en/tags/">Tags</a>
+  <a href="/en/about/">About</a>
+  <a href="https://github.com/margrop" target="_blank" rel="noopener">GitHub</a>
+</nav>
+
+    <div class="language-switcher">
+  <button class="theme-toggle" type="button" data-theme-toggle aria-label="切换到暗黑模式" aria-pressed="false">🌙</button>
+
+  
+  
+    <a href="/post/postgresql-production-tuning-ten-knobs/" class="">中文</a>
+  
+    <a href="/en/post/postgresql-production-tuning-ten-knobs/" class="active">English</a>
+  
+  
+</div>
+
+    
+    <article>
+        <h1>128MB of RAM in Production? The 10 Switches Every New PostgreSQL Home Needs</h1>
+        <div class="meta">
+            Published: 2026-08-23
+            <span class="meta-separator">·</span>
+            <span>阅读量 <span data-page-view-count>--</span></span>
+        </div>
+        
+<div class="tags">
+    
+    <a href="/en/tag/postgresql/"><span class="tag">PostgreSQL</span></a>
+    
+    <a href="/en/tag/%E6%95%B0%E6%8D%AE%E5%BA%93/"><span class="tag">数据库</span></a>
+    
+    <a href="/en/tag/database/"><span class="tag">database</span></a>
+    
+    <a href="/en/tag/%E6%80%A7%E8%83%BD%E8%B0%83%E4%BC%98/"><span class="tag">性能调优</span></a>
+    
+    <a href="/en/tag/performance-tuning/"><span class="tag">performance-tuning</span></a>
+    
+    <a href="/en/tag/%E6%95%99%E7%A8%8B/"><span class="tag">教程</span></a>
+    
+</div>
+
+
+        <div class="content">
+            <blockquote>
+<p><strong>TL;DR</strong></p>
+<p>In the previous post we <a href="/en/post/mysql-to-postgresql-migration-guide/">migrated data from MySQL into PostgreSQL</a> with pgloader. This one delivers on the promise made back then: the &ldquo;renovation&rdquo; after moving in — production tuning. I ran a factory physical exam on a fresh PostgreSQL 18 install, and the results are startling: <strong>shared_buffers defaults to 128MB, work_mem to 4MB, and 150 concurrent connections get flat-out rejected</strong>. The defaults are not &ldquo;recommended values&rdquo; — they are a compatibility floor that guarantees PostgreSQL starts on any ancient machine. Using a real 2-core / 2GB Docker sandbox, this article benchmarks 10 switches across four fronts — memory, connections, writes, and cleanup: a live demo of a sort spilling to disk and losing half its speed, the FATAL error when connections hit the wall, and a tuned instance serving 852 TPS at 150 concurrency. Everything is reproducible, with one-click sandbox scripts for Windows 11 / Ubuntu 26.04 / macOS 26.</p>
+</blockquote>
+<p><img src="/post-images/postgresql-production-tuning-ten-knobs/00-cover.svg" alt="Cover: the tuning switch panel for your new PostgreSQL home."></p>
+<p><em>Figure 1: Cover (self-made). Moving in is just the beginning; renovation decides how comfortable the home is.</em></p>
+<h2 id="1-background-the-move-succeeded-but-the-new-home-feels-cramped">1. Background: The Move Succeeded, but the New Home Feels Cramped</h2>
+<p>A reader left a comment on the last post that speaks for many:</p>
+<blockquote>
+<p>&ldquo;The pgloader move went smoothly and all data checked out. But after cutting over to PG, on the same hardware, evening-peak report queries are nearly twice as slow as MySQL, and when connections climb it throws errors outright. Wasn&rsquo;t PG supposed to be better?&rdquo;</p>
+</blockquote>
+<p>This is not an isolated case. Nearly every team that migrates from MySQL to PostgreSQL goes through a &ldquo;performance disillusionment&rdquo; in the first month after go-live. It&rsquo;s not that PG is slow — it&rsquo;s that <strong>you are running production on factory default settings</strong>.</p>
+<p>An analogy: you bought a powerful off-road vehicle, but the dealership delivered it in &ldquo;learner mode&rdquo; — speed capped at 40, AC on minimum, suspension on softest. Nothing wrong with the car; the settings were never unlocked. PostgreSQL&rsquo;s default configuration is exactly that learner mode.</p>
+<h2 id="2-symptoms-the-factory-physical-exam">2. Symptoms: The Factory Physical Exam</h2>
+<p>I started a fresh PostgreSQL 18.6 container in a sandbox (capped at 2GB RAM to simulate a small production box) and pulled the 12 performance-critical parameters first thing:</p>
+<p><img src="/post-images/postgresql-production-tuning-ten-knobs/shot-01-defaults.webp" alt="Real terminal capture: PostgreSQL 18 default parameters."></p>
+<p><em>Figure 2: Real capture. Reading the report card: shared_buffers 16384×8kB = <strong>128MB</strong> (in 2026, your phone has 100x that); work_mem = <strong>4MB</strong> (any serious sort spills to temp files); max_connections = <strong>100</strong> (one mid-size app&rsquo;s connection pool can exhaust it); random_page_cost = <strong>4</strong> (still living in the spinning-disk era).</em></p>
+<p>Then I loaded 5 million rows with pgbench (scale 50, ~750MB) and ran a 16-client baseline:</p>
+<p><img src="/post-images/postgresql-production-tuning-ten-knobs/shot-02-pgbench-before.webp" alt="Real terminal capture: pgbench baseline on defaults, 735 TPS at 16 clients."></p>
+<p><em>Figure 3: Real capture. 16 clients, 30 seconds: 735 TPS, 21.8ms average latency. Looks acceptable? Hold that thought.</em></p>
+<p>Then I raised concurrency to 150 — a perfectly normal peak for a mid-size application:</p>
+<p><img src="/post-images/postgresql-production-tuning-ten-knobs/shot-03-150-default-fail.webp" alt="Real terminal capture: 150-client pgbench fails on defaults."></p>
+<p><em>Figure 4: Real capture. <code>FATAL: sorry, too many clients already</code> — every connection past 100 is turned away, and the benchmark never even starts. This is not a performance problem; it&rsquo;s an availability problem: your database hangs a &ldquo;FULL&rdquo; sign on the door during rush hour.</em></p>
+<p>Exam conclusion: <strong>a default-configured PostgreSQL is not merely slow — it may refuse patients at peak hour.</strong></p>
+<h2 id="3-analysis-why-is-postgresql-so-stingy-by-default">3. Analysis: Why Is PostgreSQL So Stingy by Default?</h2>
+<p>To understand this stingy report card, look at its origins. PostgreSQL&rsquo;s defaults must satisfy one harsh goal: <strong>successful startup on any machine that can run at all</strong> — including 512MB VMs, shared hosts, even a developer&rsquo;s old laptop. If defaults were aggressive, initdb would fail at the very first step and new users would churn immediately.</p>
+<p><img src="/post-images/postgresql-production-tuning-ten-knobs/shot-pgdocs.webp" alt="Real capture: the Resource Consumption chapter of the official PostgreSQL docs."></p>
+<p><em>Figure 5: Real capture (postgresql.org). The official docs say it plainly: shared_buffers defaults to 128MB, immediately followed by &ldquo;a reasonable starting value is 25% of the memory in your system&rdquo; — the default is the pass line; 25% is the official starting line.</em></p>
+<p>It&rsquo;s like the &ldquo;temporary utilities&rdquo; in a newly delivered house: the developer only guarantees you can light a bulb and boil a kettle. Whether three air conditioners trip the breaker is a renovation-stage question. <strong>Installation complete ≠ renovation complete.</strong></p>
+<h2 id="4-root-cause-defaults-are-a-floor-not-a-recommendation">4. Root Cause: Defaults Are a &ldquo;Floor,&rdquo; Not a &ldquo;Recommendation&rdquo;</h2>
+<p>This is the single most important sentence in this article: <strong>PostgreSQL&rsquo;s defaults are a compatibility floor, not a performance recommendation.</strong></p>
+<p>MySQL veterans are easily misled here, because InnoDB&rsquo;s defaults have grown increasingly &ldquo;adaptive&rdquo; under Oracle (innodb_buffer_pool_size auto-sizes in newer versions), creating the illusion that databases ship pre-tuned. PostgreSQL&rsquo;s community philosophy is the opposite: parameters are your responsibility. The toolchain is all there — docs, PGTune, countless tuning guides — but the hand on the knob must be yours.</p>
+<p>And tuning, broken down, is a resource-budgeting problem on four fronts. Think of the database as a restaurant:</p>
+<p><img src="/post-images/postgresql-production-tuning-ten-knobs/01-four-dimensions.svg" alt="Self-made diagram: the four tuning fronts — memory, connections, writes, cleanup."></p>
+<p><em>Figure 6: Self-made diagram. Memory is the prep station, connections are the waitstaff, writes are receipts and inventory counts, cleanup is the janitor. Sections 5 through 8 fight each front in turn.</em></p>
+<h2 id="5-memory-four-area-questions-in-a-hotpot-restaurant">5. Memory: Four Area Questions in a Hotpot Restaurant</h2>
+<p>Memory is the main battlefield — 4 of the 10 switches live here. In hotpot-restaurant terms:</p>
+<p><img src="/post-images/postgresql-production-tuning-ten-knobs/02-memory-hotpot.svg" alt="Self-made diagram: the memory four-piece set as a hotpot restaurant."></p>
+<p><em>Figure 7: Self-made diagram. Recommended values assume a 16GB dedicated database server. One core principle: give the public area (shared_buffers) generously, budget each table&rsquo;s condiment tray (work_mem) carefully.</em></p>
+<p><strong>Switch 1: shared_buffers (the shared warming station).</strong> The hot-data cache shared by the whole restaurant. Default 128MB; the official docs suggest 25% of physical RAM, with diminishing returns past 40%. On a 16GB box, start with 4GB.</p>
+<p><strong>Switch 2: work_mem (each table&rsquo;s condiment tray).</strong> Scratch space for sorts and hashes. Mind how it&rsquo;s billed: <strong>one allocation per connection, per sort/hash step</strong>. With 100 connections running sort-heavy reports, real usage can be 100 × 2 steps × work_mem. So bigger is not better — budget it as &ldquo;memory budget ÷ concurrent connections ÷ 2&rdquo;, typically 16~64MB to start. The cost of a too-small tray, measured live — a 5-million-row sort at 4MB vs 256MB:</p>
+<p><img src="/post-images/postgresql-production-tuning-ten-knobs/shot-04-workmem.webp" alt="Real terminal capture: sort spills to disk at work_mem=4MB, pure in-memory quicksort at 256MB."></p>
+<p><em>Figure 8: Real capture. Same SQL: at <code>work_mem = 4MB</code> the Sort Method is <code>external merge Disk: 164976kB</code> (161MB spilled to disk, 7.3 seconds); at 256MB it becomes <code>quicksort Memory: 230056kB</code> (pure in-memory, 3.7 seconds). <strong>A 2x difference from one parameter.</strong> Seeing <code>external merge Disk</code> in your slow-query plan is the tell that the tray is too small.</em></p>
+<p><strong>Switch 3: effective_cache_size (telling the headwaiter how big the warehouse is).</strong> It occupies zero memory; it&rsquo;s a &ldquo;statement&rdquo; to the planner about how much cache exists in total (PostgreSQL&rsquo;s plus the OS page cache). Understate it and the planner assumes the warehouse is tiny, shies away from indexes, and prefers full table scans. Set it to 50%~75% of physical RAM.</p>
+<p><strong>Switch 4: maintenance_work_mem (the after-hours deep-clean area).</strong> Used by VACUUM, CREATE INDEX, ALTER TABLE; it doesn&rsquo;t affect everyday queries, so feel free to give 512MB~2GB. It&rsquo;s the single most visible speedup for building indexes on big tables.</p>
+<h2 id="6-connections-more-waiters-isnt-better">6. Connections: More Waiters Isn&rsquo;t Better</h2>
+<p>The second wall is connection count. PostgreSQL&rsquo;s connection model is &ldquo;one connection, one process&rdquo; — every guest gets a dedicated waiter. Waiters are loyal, but <strong>each takes headcount (5~10MB of memory) and a seat on the schedule (CPU context switches)</strong>.</p>
+<p>What happens when 1,000 guests flood in? The boss&rsquo;s instinct is &ldquo;hire more waiters&rdquo; (raise max_connections), which is precisely the classic rookie trap: 1,000 processes fighting over CPUs spend most of their time context-switching, and throughput drops instead of rising. The right answer is hiring a <strong>headwaiter</strong> — PgBouncer:</p>
+<p><img src="/post-images/postgresql-production-tuning-ten-knobs/03-connection-pool.svg" alt="Self-made diagram: no pooling vs PgBouncer’s ticket-queue model."></p>
+<p><em>Figure 9: Self-made diagram. Left: one waiter per guest, 1,000 guests wreck the restaurant. Right: a headwaiter hands out queue tickets; 30 waiters serve 1,000 guests in rotation.</em></p>
+<p>I reproduced the wall live. Simulating a connection storm against the default <code>max_connections = 100</code>:</p>
+<p><img src="/post-images/postgresql-production-tuning-ten-knobs/shot-05-toomany.webp" alt="Real terminal capture: new connections refused after the limit."></p>
+<p><em>Figure 10: Real capture. Once <code>pg_stat_activity</code> shows 105 active entries, every new connection — including the DBA&rsquo;s own psql — gets <code>FATAL: sorry, too many clients already</code>. <strong>The scariest part isn&rsquo;t that the business can&rsquo;t connect; it&rsquo;s that the firefighter can&rsquo;t get through the door.</strong></em></p>
+<p><strong>Switch 5: max_connections + PgBouncer combo.</strong> The correct posture is &ldquo;one up, one down&rdquo;: raise max_connections moderately to 200~300 (headroom for the pool and for operations), and put PgBouncer in front in transaction mode, folding thousands of external connections into a few dozen real ones. The app talks to PgBouncer; PgBouncer talks to PG — guests see queue tickets, never the kitchen.</p>
+<h2 id="7-writes-receipts-and-inventory-counts">7. Writes: Receipts and Inventory Counts</h2>
+<p>PG&rsquo;s write path writes the WAL (write-ahead log) before data pages — exactly like a cashier&rsquo;s workflow:</p>
+<p><img src="/post-images/postgresql-production-tuning-ten-knobs/04-wal-checkpoint.svg" alt="Self-made diagram: WAL as receipts, checkpoint as the closing inventory count."></p>
+<p><em>Figure 11: Self-made diagram. Every sale gets a receipt first (WAL sequential write — fast); periodically the receipts are copied into the ledger (checkpoint — concentrated random writes, slow). Count inventory too often and peak hours stutter.</em></p>
+<p>Under defaults, a checkpoint fires every 5 minutes or whenever receipts pile up to 1GB (max_wal_size). With heavy writes, counts become dense and each is an I/O spike — on monitoring, a sawtooth latency pattern.</p>
+<p><strong>Switch 6: wal_compression = on.</strong> Compress the receipts; write volume drops immediately, CPU cost is barely noticeable. On PG18 it shows as <code>pglz</code> once active.</p>
+<p><strong>Switch 7: max_wal_size, 1GB → 4GB+.</strong> Save up more receipts before counting, thinning out the spikes. The cost: crash recovery reads a few more pages of receipts (a few to tens of seconds longer) — a worthwhile trade for most systems.</p>
+<p><strong>Switch 8: checkpoint_timeout, 5min → 15~30min.</strong> Stretch the timed counts too; the two switches work together.</p>
+<h2 id="8-cleanup-old-clothes-in-the-wardrobe">8. Cleanup: Old Clothes in the Wardrobe</h2>
+<p>The fourth front is the one MySQL veterans most easily miss, because InnoDB has no equivalent. PG&rsquo;s MVCC means DELETE and UPDATE don&rsquo;t free space immediately — old row versions (dead tuples) stay in place until the autovacuum janitor shows up:</p>
+<p><img src="/post-images/postgresql-production-tuning-ten-knobs/05-vacuum.svg" alt="Self-made diagram: table bloat and the autovacuum trigger line."></p>
+<p><em>Figure 12: Self-made diagram. The default trigger line is &ldquo;dead tuples exceed 20%&rdquo; — diligent on small tables, lazy on big ones, exactly backwards: a 100GB table accumulates 20GB of garbage before a single cleanup.</em></p>
+<p><strong>Switch 9: autovacuum_vacuum_scale_factor, 0.2 → 0.05.</strong> Lower the janitor&rsquo;s trigger line for big tables; for individual giant tables, <code>ALTER TABLE ... SET (...)</code> can push it to 0.01. Keep an eye on <code>n_dead_tup</code> in <code>pg_stat_user_tables</code> to know whether the janitor is keeping up.</p>
+<h2 id="9-perception-telling-pg-you-have-an-ssd">9. Perception: Telling PG You Have an SSD</h2>
+<p>The last switch fixes an &ldquo;era bias.&rdquo; PG&rsquo;s query planner decides by cost model, and the disk price list in that model still dates from the spinning-disk era:</p>
+<p><img src="/post-images/postgresql-production-tuning-ten-knobs/shot-pgconf.webp" alt="Real capture: the shared_buffers page on postgresqlco.nf."></p>
+<p><em>Figure 13: Real capture (postgresqlco.nf). This site catalogs every parameter&rsquo;s default, range, and restart requirement — e.g. shared_buffers is marked Restart: true. Checking here before turning a knob avoids half the rookie mistakes.</em></p>
+<p><strong>Switch 10: random_page_cost 4 → 1.1, effective_io_concurrency 16 → 200.</strong> <code>random_page_cost = 4</code> means &ldquo;a random read costs 4x a sequential read&rdquo; — pricing from the seek-time era. On NVMe SSDs, random and sequential reads cost nearly the same; after setting 1.1, the planner dares to choose index scans when appropriate. Pair it with <code>effective_io_concurrency = 200</code> so PG 18&rsquo;s new I/O subsystem can prefetch concurrently. As a bonus, PG 18 defaults to <code>io_method = worker</code> (background I/O workers), and on Linux kernel 5.1+ you can try <code>io_uring</code> — one of the secret weapons behind PG 18&rsquo;s performance leap.</p>
+<h2 id="10-the-lazy-starting-point-pgtune-drafts-your-quote">10. The Lazy Starting Point: PGTune Drafts Your Quote</h2>
+<p>If calculating 10 switches one by one feels tedious, the community has a ready-made &ldquo;renovation quoter&rdquo; — PGTune. Fill in your hardware and workload type, and it generates a configuration draft:</p>
+<p><img src="/post-images/postgresql-production-tuning-ten-knobs/shot-pgtune.webp" alt="Real capture: the PGTune parameter generator."></p>
+<p><em>Figure 14: Real capture (pgtune.leopard.in.ua). Pick version, OS, workload type (Web/OLTP/DW), RAM, CPUs, storage type — one click generates a draft. Its values are a sensible starting point, not the finish line — only your monitoring knows your real workload.</em></p>
+<h2 id="11-one-click-sandbox-turn-the-10-switches-yourself">11. One-Click Sandbox: Turn the 10 Switches Yourself</h2>
+<p>Reading is believing nothing. The three scripts below reproduce every experiment in this article on your own machine with Docker: start PG 18 → load 5M rows → inspect the default report card → baseline benchmark → experience 150-client rejection → apply 11 ALTER SYSTEM statements → restart → rematch at 150 clients. They depend only on local Docker and touch no third-party service.</p>
+<h3 id="111-manual-execution">11.1 Manual execution</h3>
+<p><strong>Windows 11</strong> (PowerShell, Docker Desktop running) — save as <code>Start-PgTuningLab.ps1</code>:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-powershell" data-lang="powershell"><span style="display:flex;"><span><span style="color:#75715e"># Start-PgTuningLab.ps1 — PostgreSQL tuning sandbox (Windows 11)</span>
+</span></span><span style="display:flex;"><span>$ErrorActionPreference = <span style="color:#e6db74">&#34;Stop&#34;</span>
+</span></span><span style="display:flex;"><span>docker info | Out-Null
+</span></span><span style="display:flex;"><span>docker rm <span style="color:#f92672">-f</span> pg-tune-demo <span style="color:#ae81ff">2</span>&gt;$null | Out-Null
+</span></span><span style="display:flex;"><span>docker run -d --name pg-tune-demo -m 2g -e POSTGRES_PASSWORD=<span style="color:#e6db74">&#39;LabOnly!123&#39;</span> postgres<span style="color:#960050;background-color:#1e0010">:</span><span style="color:#ae81ff">18</span> | Out-Null
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">do</span> { Start-Sleep <span style="color:#ae81ff">2</span>; docker exec pg-tune-demo pg_isready -U postgres <span style="color:#ae81ff">2</span>&gt;$null } <span style="color:#66d9ef">until</span> ($LASTEXITCODE <span style="color:#f92672">-eq</span> <span style="color:#ae81ff">0</span>)
+</span></span><span style="display:flex;"><span>docker exec pg-tune-demo psql -U postgres -c <span style="color:#e6db74">&#34;CREATE DATABASE bench;&#34;</span> | Out-Null
+</span></span><span style="display:flex;"><span>docker exec pg-tune-demo pgbench -i -s <span style="color:#ae81ff">50</span> --quiet -U postgres bench
+</span></span><span style="display:flex;"><span>Write-Host <span style="color:#e6db74">&#34;== Default report card ==&#34;</span>
+</span></span><span style="display:flex;"><span>docker exec pg-tune-demo psql -U postgres -d bench -c <span style="color:#e6db74">&#34;SELECT name,setting,unit FROM pg_settings WHERE name IN (&#39;shared_buffers&#39;,&#39;work_mem&#39;,&#39;max_connections&#39;,&#39;max_wal_size&#39;,&#39;random_page_cost&#39;) ORDER BY name;&#34;</span>
+</span></span><span style="display:flex;"><span>Write-Host <span style="color:#e6db74">&#34;== Defaults, 150 clients (will be refused) ==&#34;</span>
+</span></span><span style="display:flex;"><span>docker exec pg-tune-demo pgbench -c <span style="color:#ae81ff">150</span> -j <span style="color:#ae81ff">4</span> -T <span style="color:#ae81ff">20</span> -U postgres bench
+</span></span><span style="display:flex;"><span>$Tune = <span style="color:#e6db74">@&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">ALTER SYSTEM SET shared_buffers=&#39;512MB&#39;; ALTER SYSTEM SET effective_cache_size=&#39;1536MB&#39;;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">ALTER SYSTEM SET work_mem=&#39;16MB&#39;; ALTER SYSTEM SET maintenance_work_mem=&#39;256MB&#39;;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">ALTER SYSTEM SET max_connections=&#39;300&#39;; ALTER SYSTEM SET wal_compression=&#39;on&#39;;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">ALTER SYSTEM SET max_wal_size=&#39;2GB&#39;; ALTER SYSTEM SET checkpoint_timeout=&#39;15min&#39;;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">ALTER SYSTEM SET random_page_cost=&#39;1.1&#39;; ALTER SYSTEM SET effective_io_concurrency=&#39;200&#39;;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">ALTER SYSTEM SET autovacuum_vacuum_scale_factor=&#39;0.05&#39;;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">&#34;@</span>
+</span></span><span style="display:flex;"><span>$Tune | docker exec -i pg-tune-demo psql -U postgres -d bench
+</span></span><span style="display:flex;"><span>docker restart pg-tune-demo | Out-Null
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">do</span> { Start-Sleep <span style="color:#ae81ff">2</span>; docker exec pg-tune-demo pg_isready -U postgres <span style="color:#ae81ff">2</span>&gt;$null } <span style="color:#66d9ef">until</span> ($LASTEXITCODE <span style="color:#f92672">-eq</span> <span style="color:#ae81ff">0</span>)
+</span></span><span style="display:flex;"><span>Write-Host <span style="color:#e6db74">&#34;== Tuned, 150 clients rematch ==&#34;</span>
+</span></span><span style="display:flex;"><span>docker exec pg-tune-demo pgbench -c <span style="color:#ae81ff">150</span> -j <span style="color:#ae81ff">4</span> -T <span style="color:#ae81ff">20</span> -U postgres bench
+</span></span><span style="display:flex;"><span>Write-Host <span style="color:#e6db74">&#34;Done! Cleanup: docker rm -f pg-tune-demo&#34;</span>
+</span></span></code></pre></div><p><strong>Ubuntu 26.04</strong> (Bash, Docker installed) — save as <code>start-pg-tuning-lab.sh</code>:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e">#!/usr/bin/env bash
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"># start-pg-tuning-lab.sh — PostgreSQL tuning sandbox (Ubuntu 26.04)</span>
+</span></span><span style="display:flex;"><span>set -euo pipefail
+</span></span><span style="display:flex;"><span>docker info &gt;/dev/null
+</span></span><span style="display:flex;"><span>docker rm -f pg-tune-demo 2&gt;/dev/null <span style="color:#f92672">||</span> true
+</span></span><span style="display:flex;"><span>docker run -d --name pg-tune-demo -m 2g -e POSTGRES_PASSWORD<span style="color:#f92672">=</span><span style="color:#e6db74">&#39;LabOnly!123&#39;</span> postgres:18 &gt;/dev/null
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">until</span> docker exec pg-tune-demo pg_isready -U postgres &gt;/dev/null 2&gt;&amp;1; <span style="color:#66d9ef">do</span> sleep 2; <span style="color:#66d9ef">done</span>
+</span></span><span style="display:flex;"><span>docker exec pg-tune-demo psql -U postgres -c <span style="color:#e6db74">&#34;CREATE DATABASE bench;&#34;</span> &gt;/dev/null
+</span></span><span style="display:flex;"><span>docker exec pg-tune-demo pgbench -i -s <span style="color:#ae81ff">50</span> --quiet -U postgres bench
+</span></span><span style="display:flex;"><span>echo <span style="color:#e6db74">&#34;== Default report card ==&#34;</span>
+</span></span><span style="display:flex;"><span>docker exec pg-tune-demo psql -U postgres -d bench -c <span style="color:#e6db74">&#34;SELECT name,setting,unit FROM pg_settings WHERE name IN (&#39;shared_buffers&#39;,&#39;work_mem&#39;,&#39;max_connections&#39;,&#39;max_wal_size&#39;,&#39;random_page_cost&#39;) ORDER BY name;&#34;</span>
+</span></span><span style="display:flex;"><span>echo <span style="color:#e6db74">&#34;== Defaults, 150 clients (will be refused) ==&#34;</span>
+</span></span><span style="display:flex;"><span>docker exec pg-tune-demo pgbench -c <span style="color:#ae81ff">150</span> -j <span style="color:#ae81ff">4</span> -T <span style="color:#ae81ff">20</span> -U postgres bench <span style="color:#f92672">||</span> true
+</span></span><span style="display:flex;"><span>docker exec -i pg-tune-demo psql -U postgres -d bench <span style="color:#e6db74">&lt;&lt;&#39;SQL&#39;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">ALTER SYSTEM SET shared_buffers=&#39;512MB&#39;; ALTER SYSTEM SET effective_cache_size=&#39;1536MB&#39;;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">ALTER SYSTEM SET work_mem=&#39;16MB&#39;; ALTER SYSTEM SET maintenance_work_mem=&#39;256MB&#39;;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">ALTER SYSTEM SET max_connections=&#39;300&#39;; ALTER SYSTEM SET wal_compression=&#39;on&#39;;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">ALTER SYSTEM SET max_wal_size=&#39;2GB&#39;; ALTER SYSTEM SET checkpoint_timeout=&#39;15min&#39;;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">ALTER SYSTEM SET random_page_cost=&#39;1.1&#39;; ALTER SYSTEM SET effective_io_concurrency=&#39;200&#39;;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">ALTER SYSTEM SET autovacuum_vacuum_scale_factor=&#39;0.05&#39;;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">SQL</span>
+</span></span><span style="display:flex;"><span>docker restart pg-tune-demo &gt;/dev/null
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">until</span> docker exec pg-tune-demo pg_isready -U postgres &gt;/dev/null 2&gt;&amp;1; <span style="color:#66d9ef">do</span> sleep 2; <span style="color:#66d9ef">done</span>
+</span></span><span style="display:flex;"><span>echo <span style="color:#e6db74">&#34;== Tuned, 150 clients rematch ==&#34;</span>
+</span></span><span style="display:flex;"><span>docker exec pg-tune-demo pgbench -c <span style="color:#ae81ff">150</span> -j <span style="color:#ae81ff">4</span> -T <span style="color:#ae81ff">20</span> -U postgres bench
+</span></span><span style="display:flex;"><span>echo <span style="color:#e6db74">&#34;Done! Cleanup: docker rm -f pg-tune-demo&#34;</span>
+</span></span></code></pre></div><p><strong>macOS 26</strong> (zsh, Docker Desktop or colima running) — save as <code>start-pg-tuning-lab.zsh</code>; almost identical to the Ubuntu version, with the first line changed to <code>#!/bin/zsh</code> plus a startup check:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-zsh" data-lang="zsh"><span style="display:flex;"><span><span style="color:#75715e">#!/bin/zsh
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"># start-pg-tuning-lab.zsh — PostgreSQL tuning sandbox (macOS 26)</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> ! docker info &gt;/dev/null 2&gt;&amp;1; <span style="color:#66d9ef">then</span>
+</span></span><span style="display:flex;"><span>  echo <span style="color:#e6db74">&#34;Docker not ready: start Docker Desktop, or brew install colima &amp;&amp; colima start&#34;</span>
+</span></span><span style="display:flex;"><span>  exit <span style="color:#ae81ff">1</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">fi</span>
+</span></span><span style="display:flex;"><span>set -euo pipefail
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># ... the rest is identical to the Ubuntu script ...</span>
+</span></span></code></pre></div><p>The sandbox values are sized for the 2GB container; on a real production box, scale them by the ratios in sections 5–9 (e.g. on 16GB, give shared_buffers 4GB).</p>
+<h3 id="112-agent-auto-configuration">11.2 Agent auto-configuration</h3>
+<p>If you have Kimi Code, Claude Code, Codex, or any agent that can run local commands, hand it this instruction directly:</p>
+<blockquote>
+<p>Build a PostgreSQL 18 tuning sandbox on my machine with Docker and run a before/after tuning comparison. Requirements: 1) start a postgres:18 container (2GB memory limit, lab-only weak password), create a bench database and load pgbench scale 50 data; 2) show the default values of shared_buffers, work_mem, max_connections, max_wal_size, random_page_cost; 3) run pgbench -c 150 -j 4 -T 20 on defaults and record the outcome; 4) apply these via ALTER SYSTEM: shared_buffers=512MB, effective_cache_size=1536MB, work_mem=16MB, maintenance_work_mem=256MB, max_connections=300, wal_compression=on, max_wal_size=2GB, checkpoint_timeout=15min, random_page_cost=1.1, effective_io_concurrency=200, autovacuum_vacuum_scale_factor=0.05; restart the container and rerun the same pgbench command; 5) compare TPS and explain the difference; 6) never use any real business data from the host, and never print internal addresses, hostnames, or secrets; 7) when done, tell me the container name and the cleanup command.</p>
+</blockquote>
+<p>The key to this prompt, again, is the constraints: Docker-only sandbox, no real data, and a required cleanup deliverable. Tuning experiments are like taste-testing — do them freely in your home kitchen (sandbox), never in the restaurant&rsquo;s back of house (production).</p>
+<h2 id="12-the-safe-tuning-loop-test-the-water-like-adjusting-a-shower">12. The Safe Tuning Loop: Test the Water Like Adjusting a Shower</h2>
+<p>Finally, methodology. The biggest tuning risk isn&rsquo;t a wrong parameter — it&rsquo;s <strong>changing five at once and never knowing whose fault the outage was</strong>. The right posture is a closed loop:</p>
+<p><img src="/post-images/postgresql-production-tuning-ten-knobs/06-tuning-loop.svg" alt="Self-made diagram: the four-step safe tuning loop."></p>
+<p><em>Figure 15: Self-made diagram. Baseline first, change one thing, re-measure, keep a retreat path. Every ALTER SYSTEM change can be withdrawn with <code>ALTER SYSTEM RESET parameter</code> (or RESET ALL) — PostgreSQL&rsquo;s regret pill for DBAs.</em></p>
+<p>I walked the full loop in the sandbox. After applying the 11 ALTER SYSTEM statements and restarting, the new report card:</p>
+<p><img src="/post-images/postgresql-production-tuning-ten-knobs/shot-06-tuned.webp" alt="Real terminal capture: the tuned parameters."></p>
+<p><em>Figure 16: Real capture. All parameters in effect: shared_buffers 512MB, max_connections 300, wal_compression showing pglz (compression active), random_page_cost down to 1.1.</em></p>
+<p>The same 150-client benchmark command went from &ldquo;refused outright&rdquo; to:</p>
+<p><img src="/post-images/postgresql-production-tuning-ten-knobs/shot-07-pgbench-after.webp" alt="Real terminal capture: 852 TPS at 150 clients after tuning."></p>
+<p><em>Figure 17: Real capture. 150 clients, 30 seconds, 25,663 transactions, 852 TPS. Compare with Figure 4&rsquo;s &ldquo;couldn&rsquo;t even start&rdquo; — that&rsquo;s the value of a single max_connections parameter.</em></p>
+<p>An honest footnote: at 16 clients the tuned instance was only ~4% faster (735 → 767 TPS). <strong>Tuning is not magic that turns 60 points into 100; it turns &ldquo;hovering around the pass line&rdquo; into &ldquo;a stable 85 under any weather&rdquo;</strong> — its battlefield is peaks, big queries, and connection storms, not calm-water benchmarks.</p>
+<h2 id="13-qa">13. Q&amp;A</h2>
+<p><strong>Q1: Can I copy these values straight to production?</strong>
+Don&rsquo;t copy the values; copy the method. The sandbox&rsquo;s 512MB is sized for a 2GB container. Recalculate for production using &ldquo;shared_buffers 25%, effective_cache_size 50%~75%, work_mem by concurrency budget,&rdquo; and verify each change through the loop in section 12.</p>
+<p><strong>Q2: Can tuning break the database? What&rsquo;s the worst case?</strong>
+The classic accident is memory oversubscription: shared_buffers + max_connections × work_mem × 2 exceeds physical RAM, and the OOM killer shoots the database. Do the arithmetic on paper before you start and you&rsquo;ll be fine. And if you do mis-set something, ALTER SYSTEM RESET rolls back in one command.</p>
+<p><strong>Q3: Which parameters need a restart, and which apply live?</strong>
+shared_buffers and max_connections require a restart; work_mem, effective_cache_size, wal_compression, and the autovacuum family only need a reload (some apply instantly). Check a parameter&rsquo;s Context on postgresqlco.nf: postmaster = restart, sighup = reload.</p>
+<p><strong>Q4: Can I change these on cloud RDS?</strong>
+Mostly yes — the vendor&rsquo;s parameter group exposes them, and many RDS defaults are already saner than upstream. But business-specific knobs like random_page_cost and autovacuum thresholds remain conservative in the cloud and deserve a pass with this article&rsquo;s approach.</p>
+<p><strong>Q5: Is bigger work_mem always better?</strong>
+Quite the opposite. It&rsquo;s billed per connection per operation; a 10x increase can multiply peak memory by dozens. Give slow report queries a session-level <code>SET LOCAL work_mem = '256MB'</code> treat, and keep the global value restrained.</p>
+<p><strong>Q6: Am I done after tuning parameters?</strong>
+No. Parameters set the &ldquo;resource budget,&rdquo; but the bulk of slow queries are unreasonable SQL and missing indexes. Next post we&rsquo;ll cover pg_stat_statements — finding the 10 queries most worth optimizing beats blind knob-turning every time.</p>
+<h2 id="14-closing">14. Closing</h2>
+<p>And with that, the PostgreSQL trilogy is complete: part one covered <a href="/en/post/why-projects-switch-from-mysql-to-postgresql/">why move</a>, part two <a href="/en/post/mysql-to-postgresql-migration-guide/">how to move</a>, and this one <strong>how to renovate after moving in</strong>.</p>
+<p>Looking back across the series, the most interesting pattern is that PostgreSQL&rsquo;s &ldquo;defaults&rdquo; mirror its governance — <strong>it hands you the choice and the responsibility together</strong>. No vendor picks your defaults for you, just as no vendor can take the project away. The price of freedom is learning these 10 switches; the reward is a database that breathes to your business&rsquo;s rhythm instead of 1996&rsquo;s hardware spec.</p>
+<p>A week to move, a day to renovate, years of comfortable living.</p>
+<hr>
+<p><em>References: <a href="https://www.postgresql.org/docs/current/runtime-config-resource.html">PostgreSQL Docs: Resource Consumption</a>, <a href="https://postgresqlco.nf/">postgresqlco.nf parameter encyclopedia</a>, <a href="https://pgtune.leopard.in.ua/">PGTune</a>, <a href="https://www.pgbouncer.org/">PgBouncer</a>, <a href="https://www.postgresql.org/docs/current/pgbench.html">pgbench documentation</a>, <a href="https://www.postgresql.org/about/news/postgresql-18-released-3142/">PostgreSQL 18 release announcement</a>.</em></p>
+        </div>
+    </article>
+
+    
+  
+
+
+
+
+    
+<div class="site-stats" aria-label="访问统计">
+    <span>本文阅读量 <span data-page-view-count>--</span></span>
+</div>
+
+
+    
+    <script type="text/javascript" src="https://js.users.51.la/21044367.js"></script>
+    <script charset="UTF-8" id="LA_COLLECT" src="//sdk.51.la/js-sdk-pro.min.js"></script>
+    <script>LA.init({id: "1vVTUWl7zoRjnKXi",ck: "1vVTUWl7zoRjnKXi"})</script>
+    <script src="https://sdk.51.la/perf/js-sdk-perf.min.js" crossorigin="anonymous"></script>
+    <script>
+      new LingQue.Monitor().init({id:"202teQt8THXwqyve"});
+    </script>
+    <script defer src="/js/page-views.js"></script>
+    <div class="la-theme-widget" data-51la-widget aria-label="51.la 网站统计"></div>
+    <script defer src="/js/51la-theme-widget.js"></script>
+</body>
+</html>

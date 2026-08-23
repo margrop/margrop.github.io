@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>128MB 内存也想跑生产？PostgreSQL 搬进新家后必调的 10 个开关 - 魔都水滴</title>
+<meta name="description" content="先说结论 上一篇我们用 pgloader 把数据从 MySQL 搬进了 PostgreSQL，这一篇兑现当时的预告：聊聊搬进新家之后的「装修」——生产调优。我在测试环境对一份全新安装的 PostgreSQL 18 做了「出厂体检」，结果触目惊心：shared_buffers 默认 128MB、work_mem 默认 …">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://blog.margrop.net/post/postgresql-production-tuning-ten-knobs/"><meta property="og:site_name" content="魔都水滴">
+<meta property="og:title" content="128MB 内存也想跑生产？PostgreSQL 搬进新家后必调的 10 个开关 - 魔都水滴">
+<meta property="og:description" content="先说结论 上一篇我们用 pgloader 把数据从 MySQL 搬进了 PostgreSQL，这一篇兑现当时的预告：聊聊搬进新家之后的「装修」——生产调优。我在测试环境对一份全新安装的 PostgreSQL 18 做了「出厂体检」，结果触目惊心：shared_buffers 默认 128MB、work_mem 默认 …">
+<meta property="og:url" content="https://blog.margrop.net/post/postgresql-production-tuning-ten-knobs/">
+<meta property="og:locale" content="zh_CN"><meta property="og:type" content="article"><meta property="og:locale:alternate" content="en_US"><meta property="og:image" content="https://blog.margrop.net/images/avatar.png"><meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="128MB 内存也想跑生产？PostgreSQL 搬进新家后必调的 10 个开关 - 魔都水滴">
+<meta name="twitter:description" content="先说结论 上一篇我们用 pgloader 把数据从 MySQL 搬进了 PostgreSQL，这一篇兑现当时的预告：聊聊搬进新家之后的「装修」——生产调优。我在测试环境对一份全新安装的 PostgreSQL 18 做了「出厂体检」，结果触目惊心：shared_buffers 默认 128MB、work_mem 默认 …"><meta name="twitter:image" content="https://blog.margrop.net/images/avatar.png"><link rel="alternate" hreflang="zh-CN" href="https://blog.margrop.net/post/postgresql-production-tuning-ten-knobs/"><link rel="alternate" hreflang="en-US" href="https://blog.margrop.net/en/post/postgresql-production-tuning-ten-knobs/"><link rel="alternate" hreflang="x-default" href="https://blog.margrop.net/"><meta property="article:published_time" content="2026-08-23T09:00:00&#43;08:00">
+<meta property="article:modified_time" content="2026-08-23T09:00:00&#43;08:00"><meta property="article:tag" content="PostgreSQL"><meta property="article:tag" content="数据库"><meta property="article:tag" content="database"><meta property="article:tag" content="性能调优"><meta property="article:tag" content="performance-tuning"><meta property="article:tag" content="教程"><script type="application/ld+json">{"@context":"https://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"魔都水滴"},"dateModified":"2026-08-23T09:00:00+08:00","datePublished":"2026-08-23T09:00:00+08:00","description":"先说结论 上一篇我们用 pgloader 把数据从 MySQL 搬进了 PostgreSQL，这一篇兑现当时的预告：聊聊搬进新家之后的「装修」——生产调优。我在测试环境对一份全新安装的 PostgreSQL 18 做了「出厂体检」，结果触目惊心：shared_buffers 默认 128MB、work_mem 默认 …","headline":"128MB 内存也想跑生产？PostgreSQL 搬进新家后必调的 10 个开关","mainEntityOfPage":"https://blog.margrop.net/post/postgresql-production-tuning-ten-knobs/","url":"https://blog.margrop.net/post/postgresql-production-tuning-ten-knobs/"}</script>
+    <meta name="baidu-site-verification" content="code-sVFZ8SER59" />
+    <script src="/js/theme-toggle.js"></script>
+
+    
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-3J2W592DHJ"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-3J2W592DHJ');
+    </script>
+
+    <style>
+    :root {
+        color-scheme: light;
+        --page-bg: #fff;
+        --surface-bg: #f4f4f4;
+        --text: #222;
+        --muted: #666;
+        --subtle: #777;
+        --border: #eee;
+        --border-strong: #ddd;
+        --link: #006CFF;
+        --tag-bg: #eee;
+        --button-bg: #fff;
+        --button-primary-bg: #333;
+    }
+    @media (prefers-color-scheme: dark) {
+        :root:not([data-theme]) {
+            color-scheme: dark;
+            --page-bg: #111315;
+            --surface-bg: #1d2126;
+            --text: #e8eaed;
+            --muted: #aeb4bd;
+            --subtle: #9aa2ad;
+            --border: #30353d;
+            --border-strong: #454c56;
+            --link: #79b8ff;
+            --tag-bg: #2a3038;
+            --button-bg: #1d2126;
+            --button-primary-bg: #e8eaed;
+        }
+    }
+    html[data-theme="dark"] {
+        color-scheme: dark;
+        --page-bg: #111315;
+        --surface-bg: #1d2126;
+        --text: #e8eaed;
+        --muted: #aeb4bd;
+        --subtle: #9aa2ad;
+        --border: #30353d;
+        --border-strong: #454c56;
+        --link: #79b8ff;
+        --tag-bg: #2a3038;
+        --button-bg: #1d2126;
+        --button-primary-bg: #e8eaed;
+    }
+    html[data-theme="light"] {
+        color-scheme: light;
+        --page-bg: #fff;
+        --surface-bg: #f4f4f4;
+        --text: #222;
+        --muted: #666;
+        --subtle: #777;
+        --border: #eee;
+        --border-strong: #ddd;
+        --link: #006CFF;
+        --tag-bg: #eee;
+        --button-bg: #fff;
+        --button-primary-bg: #333;
+    }
+    body { background: var(--page-bg); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 860px; margin: 0 auto; padding: 20px; line-height: 1.7; color: var(--text); }
+    h1 { border-bottom: 2px solid var(--border-strong); padding-bottom: 10px; }
+    article > h1 { font-size: 2em; line-height: 1.3; margin-bottom: 12px; }
+    .post-list { list-style: none; padding: 0; }
+    .post-list li { margin: 15px 0; }
+    .post-list a { text-decoration: none; color: var(--text); font-size: 18px; }
+    .post-list a:hover { color: var(--link); }
+    .date { color: var(--muted); font-size: 14px; margin-right: 10px; }
+    .tags { margin-top: 8px; }
+    .tag { background: var(--tag-bg); padding: 2px 8px; border-radius: 3px; font-size: 12px; margin-right: 5px; display: inline-block; }
+    nav { margin-bottom: 18px; border-bottom: 1px solid var(--border); padding-bottom: 15px; }
+    nav a { margin-right: 20px; text-decoration: none; color: var(--text); font-size: 16px; }
+    nav a:hover { color: var(--link); }
+    .language-switcher { display: flex; align-items: center; gap: 10px; margin: -8px 0 26px; }
+    .language-switcher a { display: inline-block; padding: 4px 10px; border: 1px solid var(--border-strong); border-radius: 999px; color: var(--muted); text-decoration: none; font-size: 14px; }
+    .language-switcher a.active { background: var(--link); border-color: var(--link); color: #fff; }
+    .content { line-height: 1.8; }
+    .content code { background: var(--surface-bg); padding: 2px 5px; border-radius: 3px; }
+    .content pre { background: var(--surface-bg); padding: 15px; overflow-x: auto; border-radius: 5px; }
+    .content img { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+    .content .code-snippet__fix {
+        margin: 0 0 1.5em;
+    }
+    .content .code-snippet__fix .code-snippet__line-index {
+        display: none !important;
+    }
+    .meta { color: var(--muted); font-size: 14px; margin-bottom: 14px; }
+    .meta-separator { margin: 0 6px; color: var(--subtle); }
+    .site-stats { display: flex; flex-wrap: wrap; gap: 10px 18px; margin: 28px 0 8px; padding-top: 12px; border-top: 1px solid var(--border); color: var(--subtle); font-size: 12px; }
+    a { color: var(--link); }
+    .hero { padding: 12px 0 24px; }
+    .hero h1 { border-bottom: 2px solid #333; }
+    .eyebrow { color: var(--muted); font-size: 12px; letter-spacing: .12em; margin: 0 0 8px; }
+    .hero-tagline { font-size: 18px; margin: 12px 0 8px; }
+    .hero-copy { color: var(--muted); margin: 0 0 14px; }
+    .hero-actions { margin: 14px 0 4px; }
+    .button { display: inline-block; margin-right: 12px; border: 1px solid var(--border-strong); border-radius: 3px; padding: 4px 10px; text-decoration: none; color: var(--text); background: var(--button-bg); font-size: 14px; }
+    .button-primary { background: var(--button-primary-bg); border-color: var(--button-primary-bg); color: var(--page-bg); }
+    .theme-toggle { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 1px solid var(--border-strong); border-radius: 999px; background: var(--button-bg); color: var(--text); cursor: pointer; font: inherit; font-size: 16px; }
+    .theme-toggle:hover { border-color: var(--link); color: var(--link); }
+    .la-theme-widget { margin: 12px 0 20px; min-height: 24px; color: var(--text); }
+    .identity-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: 16px 0; }
+    .identity-grid div { display: flex; flex-direction: column; }
+    .identity-grid strong { font-size: 15px; }
+    .identity-grid span, .topic-card span, .featured-list small { color: var(--muted); font-size: 13px; }
+    .section-block { padding-top: 28px; }
+    .section-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+    .section-heading h2 { margin: 0; }
+    .section-heading a { font-size: 14px; }
+    .topic-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+    .topic-card { display: block; padding: 14px; border: 1px solid var(--border); text-decoration: none; color: var(--text); }
+    .topic-card:hover { border-color: var(--border-strong); }
+    .topic-card strong { display: block; margin: 4px 0; font-size: 17px; }
+    .topic-index, .featured-list > a > span { color: var(--muted) !important; font-size: 12px !important; }
+    .featured-list { border-top: 1px solid var(--border); }
+    .featured-list > a { display: flex; gap: 14px; padding: 12px 0; border-bottom: 1px solid var(--border); text-decoration: none; color: var(--text); }
+    .featured-list div { display: flex; flex-direction: column; }
+    .latest-block { max-width: 860px; }
+    @media (max-width: 680px) {
+        body { padding: 16px; }
+        nav a { display: inline-block; margin-right: 12px; margin-bottom: 8px; }
+        .identity-grid { grid-template-columns: repeat(2, 1fr); }
+        .topic-grid { grid-template-columns: 1fr; }
+    }
+</style>
+
+</head>
+<body>
+    <nav>
+  <a href="/">首页</a>
+  <a href="/start-here/">开始这里</a>
+  <a href="/career/">Portfolio</a>
+  <a href="/tag/ai/">AI Agent</a>
+  <a href="/tag/docker/">Self-hosting</a>
+  <a href="/tag/%e8%bf%90%e7%bb%b4/">Engineering</a>
+  <a href="/post/">归档</a>
+  <a href="/tags/">标签</a>
+  <a href="/about/">关于</a>
+  <a href="https://github.com/margrop" target="_blank" rel="noopener">GitHub</a>
+</nav>
+
+    <div class="language-switcher">
+  <button class="theme-toggle" type="button" data-theme-toggle aria-label="切换到暗黑模式" aria-pressed="false">🌙</button>
+
+  
+  
+    <a href="/post/postgresql-production-tuning-ten-knobs/" class="active">中文</a>
+  
+    <a href="/en/post/postgresql-production-tuning-ten-knobs/" class="">English</a>
+  
+  
+</div>
+
+    
+    <article>
+        <h1>128MB 内存也想跑生产？PostgreSQL 搬进新家后必调的 10 个开关</h1>
+        <div class="meta">
+            发布时间: 2026-08-23
+            <span class="meta-separator">·</span>
+            <span>阅读量 <span data-page-view-count>--</span></span>
+        </div>
+        
+<div class="tags">
+    
+    <a href="/tag/postgresql/"><span class="tag">PostgreSQL</span></a>
+    
+    <a href="/tag/%E6%95%B0%E6%8D%AE%E5%BA%93/"><span class="tag">数据库</span></a>
+    
+    <a href="/tag/database/"><span class="tag">database</span></a>
+    
+    <a href="/tag/%E6%80%A7%E8%83%BD%E8%B0%83%E4%BC%98/"><span class="tag">性能调优</span></a>
+    
+    <a href="/tag/performance-tuning/"><span class="tag">performance-tuning</span></a>
+    
+    <a href="/tag/%E6%95%99%E7%A8%8B/"><span class="tag">教程</span></a>
+    
+</div>
+
+
+        <div class="content">
+            <blockquote>
+<p><strong>先说结论</strong></p>
+<p>上一篇我们用 pgloader 把数据<a href="/post/mysql-to-postgresql-migration-guide/">从 MySQL 搬进了 PostgreSQL</a>，这一篇兑现当时的预告：聊聊搬进新家之后的「装修」——生产调优。我在测试环境对一份全新安装的 PostgreSQL 18 做了「出厂体检」，结果触目惊心：<strong>shared_buffers 默认 128MB、work_mem 默认 4MB、150 个并发连接直接被拒收</strong>。默认参数不是「推荐值」，而是「保证在任何老爷机上都能启动」的兼容底线。本文用一台 2 核 2GB 的真实 Docker 沙盒，实测了内存、连接、写入、清理四条战线上的 10 个开关：排序溢出磁盘变慢一半的现场、连接撞墙的 FATAL 报错、调优后 150 并发跑出 852 TPS 的对照，全部可复现，并附 Windows 11 / Ubuntu 26.04 / macOS 26 三套一键沙盒脚本。</p>
+</blockquote>
+<p><img src="/post-images/postgresql-production-tuning-ten-knobs/00-cover.svg" alt="自制封面：PostgreSQL 新家的调优开关面板。"></p>
+<p><em>图 1：本文封面（自制）。搬完家只是开始，装修才决定住得舒不舒服。</em></p>
+<h2 id="一问题背景搬家成功了新家却住得憋屈">一、问题背景：搬家成功了，新家却住得憋屈</h2>
+<p>上一篇文章发出来后，一位读者的留言很有代表性：</p>
+<blockquote>
+<p>「pgloader 搬家很顺利，数据都对上了。但切流到 PG 之后，同样的硬件，晚高峰报表查询比 MySQL 慢了快一倍，连接数一高还直接报错。说好的 PG 更香呢？」</p>
+</blockquote>
+<p>这不是个例。几乎每个从 MySQL 迁到 PostgreSQL 的团队，都会在上线后第一个月经历一次「性能幻灭」：不是 PG 不行，而是<strong>你正在用出厂默认配置跑生产</strong>。</p>
+<p>打个比方：你买了一辆动力很强的越野车，但 4S 店交车时，ECU 被设在「新手保护模式」——限速 40、空调最小风、悬挂最软。车没问题，是设置没解开。PostgreSQL 的默认配置，就是这个「新手保护模式」。</p>
+<h2 id="二问题表现出厂体检报告单">二、问题表现：出厂体检报告单</h2>
+<p>我在沙盒里起了一个全新的 PostgreSQL 18.6 容器（限制 2GB 内存，模拟一台小规格生产机），第一件事就是把和性能相关的 12 个关键参数拉出来看：</p>
+<p><img src="/post-images/postgresql-production-tuning-ten-knobs/shot-01-defaults.webp" alt="真实终端截图：PostgreSQL 18 的默认参数一览。"></p>
+<p><em>图 2：真实截图。翻译一下这张体检单：shared_buffers 16384×8kB = <strong>128MB</strong>（2026 年了，手机内存都是它的 100 倍）；work_mem = <strong>4MB</strong>（排个稍大的序就要写临时文件）；max_connections = <strong>100</strong>（一个中型应用的连接池就能打满）；random_page_cost = <strong>4</strong>（还活在机械硬盘时代）。</em></p>
+<p>接着用 pgbench 灌入 500 万行数据（scale 50，约 750MB），先跑个 16 并发的基线：</p>
+<p><img src="/post-images/postgresql-production-tuning-ten-knobs/shot-02-pgbench-before.webp" alt="真实终端截图：默认参数下 pgbench 基线，16 并发 735 TPS。"></p>
+<p><em>图 3：真实截图。16 并发、30 秒：735 TPS，平均延迟 21.8ms。看起来还行？别急着下结论。</em></p>
+<p>然后我把并发加到 150——对一个中型应用来说再正常不过的峰值：</p>
+<p><img src="/post-images/postgresql-production-tuning-ten-knobs/shot-03-150-default-fail.webp" alt="真实终端截图：默认参数下 150 并发压测直接失败。"></p>
+<p><em>图 4：真实截图。<code>FATAL: sorry, too many clients already</code>——第 100 个之后的连接全部被拒之门外，压测直接没跑起来。这不是性能问题，是可用性问题：你的数据库在早高峰挂上了「客满」的牌子。</em></p>
+<p>体检结论：<strong>默认配置的 PostgreSQL，不是跑得慢的问题，是随时可能在高峰期「拒诊」的问题。</strong></p>
+<h2 id="三问题分析postgresql-为什么默认这么抠">三、问题分析：PostgreSQL 为什么默认这么抠</h2>
+<p>要理解这份抠门的体检单，得回到它的出身。PostgreSQL 的默认参数要满足一个苛刻的目标：<strong>在任何能跑起来的机器上都能成功启动</strong>——包括内存只有 512MB 的虚拟机、共享宿主机、甚至开发者的旧笔记本。如果默认值设得太激进，initdb 之后第一步就起不来，新用户直接流失。</p>
+<p><img src="/post-images/postgresql-production-tuning-ten-knobs/shot-pgdocs.webp" alt="真实截图：PostgreSQL 官方文档的资源消耗章节。"></p>
+<p><em>图 5：真实截图（postgresql.org）。官方文档其实把话挑明了：shared_buffers 默认 128MB，然后紧接着一句「a reasonable starting value is 25% of the memory in your system」——默认值只是及格线，25% 才是官方建议的起跑线。</em></p>
+<p>这就像新房子交付时的「临时水电」：开发商只保证你能点亮灯泡、能烧一壶水，至于同时开三台空调会不会跳闸——那是装修阶段的事。<strong>安装完成 ≠ 装修完成。</strong></p>
+<h2 id="四问题根因默认值是底线不是推荐值">四、问题根因：默认值是「底线」，不是「推荐值」</h2>
+<p>这是本文最需要记住的一句话：<strong>PostgreSQL 的默认参数是兼容性底线，不是性能推荐值。</strong></p>
+<p>MySQL 老兵容易在这里产生错觉，因为 InnoDB 的默认值这些年被 Oracle 调得越来越「自适应」（比如 innodb_buffer_pool_size 在新版本里会根据内存自动调整），让人误以为数据库出厂就是调好的。PostgreSQL 的社区哲学相反：参数是你的责任，工具链（文档、PGTune、无数调优指南）都备好了，但拧旋钮的手必须是你自己的。</p>
+<p>而调优这件事，拆解开来其实是四条战线上的资源预算问题。把数据库想成一家餐厅，四条战线一目了然：</p>
+<p><img src="/post-images/postgresql-production-tuning-ten-knobs/01-four-dimensions.svg" alt="自制图解：调优四线作战图——内存、连接、写入、清理。"></p>
+<p><em>图 6：自制图解。内存是备菜区，连接是服务员编制，写入是小票与盘点，清理是保洁——后面五到八节，我们一条战线一条战线地打。</em></p>
+<h2 id="五解决内存战线火锅店的四个面积问题">五、解决·内存战线：火锅店的四个面积问题</h2>
+<p>内存是调优的主战场，10 个开关里有 4 个在这里。用火锅店打比方：</p>
+<p><img src="/post-images/postgresql-production-tuning-ten-knobs/02-memory-hotpot.svg" alt="自制图解：内存四件套与火锅店的类比。"></p>
+<p><em>图 7：自制图解。以 16GB 专用数据库服务器为例的推荐值；核心原则只有一句：公共面积（shared_buffers）大胆给，每桌小料台（work_mem）精打细算。</em></p>
+<p><strong>开关 1：shared_buffers（大堂公共保温台）。</strong> 全店共用的热数据缓存区，默认 128MB，官方建议给到物理内存的 25%，超过 40% 收益递减。16GB 机器先给 4GB。</p>
+<p><strong>开关 2：work_mem（每桌的小料台）。</strong> 排序、哈希操作的临时空间。注意它的计费方式：<strong>每个连接、每一步排序/哈希各算一份</strong>。100 个连接同时跑带排序的报表，实际占用可能是 100 × 2 步 × work_mem。所以它不是越大越好，而是要按「内存预算 ÷ 并发连接 ÷ 2」精打细算下来，一般 16~64MB 起步。台面太小的代价，我实测给你看——500 万行排序，4MB 和 256MB 的差别：</p>
+<p><img src="/post-images/postgresql-production-tuning-ten-knobs/shot-04-workmem.webp" alt="真实终端截图：work_mem 4MB 时排序溢出磁盘，256MB 时纯内存快排。"></p>
+<p><em>图 8：真实截图。同一条 SQL：<code>work_mem = 4MB</code> 时 Sort Method 是 <code>external merge Disk: 164976kB</code>（溢出 161MB 到磁盘，耗时 7.3 秒）；调到 256MB 后变成 <code>quicksort Memory: 230056kB</code>（纯内存快排，3.7 秒）。<strong>一倍差距，只改了一个参数。</strong> 慢查询日志里看到 <code>external merge Disk</code> 字样，就是小料台不够用的信号。</em></p>
+<p><strong>开关 3：effective_cache_size（告诉领班仓库多大）。</strong> 它不占一平米内存，只是一句告诉优化器的「口供」：系统里大概有多少缓存可用（PG 自己的 + 操作系统 page cache）。报小了，优化器会误以为仓库很小，不敢走索引，宁可全表扫描。建议设为物理内存的 50%~75%。</p>
+<p><strong>开关 4：maintenance_work_mem（打烊后大扫除的施工面积）。</strong> VACUUM、CREATE INDEX、ALTER TABLE 专用，不影响日常查询，可以放心给到 512MB~2GB。大表建索引提速最明显的一项。</p>
+<h2 id="六解决连接战线服务员不是越多越好">六、解决·连接战线：服务员不是越多越好</h2>
+<p>第二堵墙是连接数。PostgreSQL 的连接模型是「一个连接一个进程」——每个客人配一名专属服务员。服务员忠诚可靠，但<strong>每个都要占编制（内存 5~10MB）和排班表（CPU 调度）</strong>。</p>
+<p>1000 个客人涌进来怎么办？老板的直觉是「扩招服务员」（调大 max_connections），但这恰恰是新手最容易踩的坑：1000 个进程互相抢 CPU，大部分时间花在切换上下文上，吞吐量不升反降。正确的解法是雇一个<strong>领班</strong>——PgBouncer：</p>
+<p><img src="/post-images/postgresql-production-tuning-ten-knobs/03-connection-pool.svg" alt="自制图解：没有连接池 vs PgBouncer 领班模式。"></p>
+<p><em>图 9：自制图解。左：1 客 1 服务员，1000 客人挤爆餐厅；右：领班发号码牌，30 名服务员轮流服务 1000 位客人。</em></p>
+<p>撞墙现场我也实测了。在默认 <code>max_connections = 100</code> 的沙盒里模拟连接风暴：</p>
+<p><img src="/post-images/postgresql-production-tuning-ten-knobs/shot-05-toomany.webp" alt="真实终端截图：连接数打满后新连接被拒。"></p>
+<p><em>图 10：真实截图。<code>pg_stat_activity</code> 里活动记录冲到 105 条之后，任何新连接——包括 DBA 自己的 psql——都只能吃到 <code>FATAL: sorry, too many clients already</code>。<strong>最可怕的不是连不上业务，是连救火的人都进不了门。</strong></em></p>
+<p><strong>开关 5：max_connections + PgBouncer 组合。</strong> 正确姿势是「一升一降」：max_connections 适度上调到 200~300（给连接池和运维留余量），同时在前面架 PgBouncer 用 transaction 模式，把成千上万的外部连接折叠成几十个真实连接。应用连 PgBouncer，PgBouncer 连 PG——客人只见号码牌，不见后厨。</p>
+<h2 id="七解决写入战线小票与盘点">七、解决·写入战线：小票与盘点</h2>
+<p>PG 的写入路径是先写 WAL（预写日志）再落数据页，这就像收银台的工作流：</p>
+<p><img src="/post-images/postgresql-production-tuning-ten-knobs/04-wal-checkpoint.svg" alt="自制图解：WAL 是收银小票，checkpoint 是打烊盘点。"></p>
+<p><em>图 11：自制图解。每笔交易先记小票（WAL 顺序写，快），定期把小票抄进账本（checkpoint 集中随机写，慢）。盘点太频繁，高峰期就会一卡一卡。</em></p>
+<p>默认配置下，checkpoint 每 5 分钟触发一次，或者小票攒满 1GB（max_wal_size）就强制盘点。写入量一大，盘点就密集，每次都是一波 I/O 尖峰——监控上就是规律性的「延迟锯齿」。</p>
+<p><strong>开关 6：wal_compression = on。</strong> 小票压缩，写盘量立减，CPU 开销几乎无感。PG18 实测生效后显示为 <code>pglz</code>。</p>
+<p><strong>开关 7：max_wal_size，1GB → 4GB+。</strong> 多攒点小票再盘，摊薄盘点次数。代价是崩溃恢复时要多翻几页小票（恢复时间多几秒到几十秒），对绝大多数系统是值得的交换。</p>
+<p><strong>开关 8：checkpoint_timeout，5min → 15~30min。</strong> 把「定时盘点」也拉长，双管齐下。</p>
+<h2 id="八解决清理战线衣柜里的旧衣服">八、解决·清理战线：衣柜里的旧衣服</h2>
+<p>第四条战线最容易被 MySQL 老兵忽视，因为 InnoDB 没有对应物。PG 的 MVCC 决定了 DELETE 和 UPDATE 不会立刻腾地方——旧版本行（死元组）留在原地，等 autovacuum 保洁上门：</p>
+<p><img src="/post-images/postgresql-production-tuning-ten-knobs/05-vacuum.svg" alt="自制图解：表膨胀与 autovacuum 触发线。"></p>
+<p><em>图 12：自制图解。默认触发线是「死元组超过 20%」——小表勤、大表懒，恰好反了：100GB 的表要攒够 20GB 垃圾才打扫一次。</em></p>
+<p><strong>开关 9：autovacuum_vacuum_scale_factor，0.2 → 0.05。</strong> 让大表的保洁触发线降下来；对个别超大表，还可以用 <code>ALTER TABLE ... SET (...)</code> 单独设到 0.01。日常盯一眼 <code>pg_stat_user_tables</code> 里的 <code>n_dead_tup</code>，就知道保洁跟没跟上。</p>
+<h2 id="九解决认知战线告诉-pg-你用的是-ssd">九、解决·认知战线：告诉 PG 你用的是 SSD</h2>
+<p>最后一个开关修复的是一个「时代偏见」。PG 的查询优化器靠成本模型做决策，而成本模型里的磁盘价格表，还停留在机械硬盘时代：</p>
+<p><img src="/post-images/postgresql-production-tuning-ten-knobs/shot-pgconf.webp" alt="真实截图：postgresqlco.nf 的 shared_buffers 参数页。"></p>
+<p><em>图 13：真实截图（postgresqlco.nf）。这个网站把每个参数的默认值、取值范围、是否需要重启整理得清清楚楚——比如 shared_buffers 标注 Restart: true，改动必须重启数据库。调参之前先查这里，能避开一半的新手坑。</em></p>
+<p><strong>开关 10：random_page_cost 4 → 1.1，effective_io_concurrency 16 → 200。</strong> <code>random_page_cost = 4</code> 的意思是「随机读比顺序读贵 4 倍」——这是机械硬盘寻道时代的物价。在 NVMe SSD 上随机读和顺序读几乎一个价，调成 1.1 后，优化器才敢于在合适的场景选择索引扫描。配套把 <code>effective_io_concurrency</code> 调到 200，让 PG 18 的新 I/O 子系统放开手脚并发预取。顺带一提，PG 18 默认 <code>io_method = worker</code>（后台 I/O 工人），Linux 内核 5.1+ 的环境还可以试 <code>io_uring</code>，这是 PG 18 性能跃升的秘密武器之一。</p>
+<h2 id="十懒人起点pgtune-先给个底稿">十、懒人起点：PGTune 先给个底稿</h2>
+<p>如果你觉得 10 个开关一个个算太麻烦，社区有现成的「装修报价器」——PGTune，填上硬件配置和负载类型，直接生成一份配置底稿：</p>
+<p><img src="/post-images/postgresql-production-tuning-ten-knobs/shot-pgtune.webp" alt="真实截图：PGTune 参数生成器。"></p>
+<p><em>图 14：真实截图（pgtune.leopard.in.ua）。选版本、系统、负载类型（Web/OLTP/数仓）、内存、CPU、存储类型，一键生成。它给出的值是合理的起点，但不是终点——真实的负载只有你的监控知道。</em></p>
+<h2 id="十一一键沙盒亲手把这-10-个开关拧一遍">十一、一键沙盒：亲手把这 10 个开关拧一遍</h2>
+<p>纸上得来终觉浅。下面三套脚本在你自己的机器上用 Docker 一键复现本文全部实验：起 PG 18 → 灌 500 万行数据 → 看默认体检单 → 跑基线压测 → 体验 150 并发被拒 → 应用 11 条 ALTER SYSTEM → 重启 → 150 并发再战。只依赖本机 Docker，不连任何第三方服务。</p>
+<h3 id="111-人工执行">11.1 人工执行</h3>
+<p><strong>Windows 11</strong>（PowerShell，需 Docker Desktop 已启动），保存为 <code>Start-PgTuningLab.ps1</code>：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-powershell" data-lang="powershell"><span style="display:flex;"><span><span style="color:#75715e"># Start-PgTuningLab.ps1 — PostgreSQL 调优沙盒（Windows 11）</span>
+</span></span><span style="display:flex;"><span>$ErrorActionPreference = <span style="color:#e6db74">&#34;Stop&#34;</span>
+</span></span><span style="display:flex;"><span>docker info | Out-Null
+</span></span><span style="display:flex;"><span>docker rm <span style="color:#f92672">-f</span> pg-tune-demo <span style="color:#ae81ff">2</span>&gt;$null | Out-Null
+</span></span><span style="display:flex;"><span>docker run -d --name pg-tune-demo -m 2g -e POSTGRES_PASSWORD=<span style="color:#e6db74">&#39;LabOnly!123&#39;</span> postgres<span style="color:#960050;background-color:#1e0010">:</span><span style="color:#ae81ff">18</span> | Out-Null
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">do</span> { Start-Sleep <span style="color:#ae81ff">2</span>; docker exec pg-tune-demo pg_isready -U postgres <span style="color:#ae81ff">2</span>&gt;$null } <span style="color:#66d9ef">until</span> ($LASTEXITCODE <span style="color:#f92672">-eq</span> <span style="color:#ae81ff">0</span>)
+</span></span><span style="display:flex;"><span>docker exec pg-tune-demo psql -U postgres -c <span style="color:#e6db74">&#34;CREATE DATABASE bench;&#34;</span> | Out-Null
+</span></span><span style="display:flex;"><span>docker exec pg-tune-demo pgbench -i -s <span style="color:#ae81ff">50</span> --quiet -U postgres bench
+</span></span><span style="display:flex;"><span>Write-Host <span style="color:#e6db74">&#34;== 默认体检单 ==&#34;</span>
+</span></span><span style="display:flex;"><span>docker exec pg-tune-demo psql -U postgres -d bench -c <span style="color:#e6db74">&#34;SELECT name,setting,unit FROM pg_settings WHERE name IN (&#39;shared_buffers&#39;,&#39;work_mem&#39;,&#39;max_connections&#39;,&#39;max_wal_size&#39;,&#39;random_page_cost&#39;) ORDER BY name;&#34;</span>
+</span></span><span style="display:flex;"><span>Write-Host <span style="color:#e6db74">&#34;== 默认参数,150 并发(会被拒) ==&#34;</span>
+</span></span><span style="display:flex;"><span>docker exec pg-tune-demo pgbench -c <span style="color:#ae81ff">150</span> -j <span style="color:#ae81ff">4</span> -T <span style="color:#ae81ff">20</span> -U postgres bench
+</span></span><span style="display:flex;"><span>$Tune = <span style="color:#e6db74">@&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">ALTER SYSTEM SET shared_buffers=&#39;512MB&#39;; ALTER SYSTEM SET effective_cache_size=&#39;1536MB&#39;;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">ALTER SYSTEM SET work_mem=&#39;16MB&#39;; ALTER SYSTEM SET maintenance_work_mem=&#39;256MB&#39;;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">ALTER SYSTEM SET max_connections=&#39;300&#39;; ALTER SYSTEM SET wal_compression=&#39;on&#39;;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">ALTER SYSTEM SET max_wal_size=&#39;2GB&#39;; ALTER SYSTEM SET checkpoint_timeout=&#39;15min&#39;;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">ALTER SYSTEM SET random_page_cost=&#39;1.1&#39;; ALTER SYSTEM SET effective_io_concurrency=&#39;200&#39;;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">ALTER SYSTEM SET autovacuum_vacuum_scale_factor=&#39;0.05&#39;;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">&#34;@</span>
+</span></span><span style="display:flex;"><span>$Tune | docker exec -i pg-tune-demo psql -U postgres -d bench
+</span></span><span style="display:flex;"><span>docker restart pg-tune-demo | Out-Null
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">do</span> { Start-Sleep <span style="color:#ae81ff">2</span>; docker exec pg-tune-demo pg_isready -U postgres <span style="color:#ae81ff">2</span>&gt;$null } <span style="color:#66d9ef">until</span> ($LASTEXITCODE <span style="color:#f92672">-eq</span> <span style="color:#ae81ff">0</span>)
+</span></span><span style="display:flex;"><span>Write-Host <span style="color:#e6db74">&#34;== 调优后,150 并发再战 ==&#34;</span>
+</span></span><span style="display:flex;"><span>docker exec pg-tune-demo pgbench -c <span style="color:#ae81ff">150</span> -j <span style="color:#ae81ff">4</span> -T <span style="color:#ae81ff">20</span> -U postgres bench
+</span></span><span style="display:flex;"><span>Write-Host <span style="color:#e6db74">&#34;完成！清理：docker rm -f pg-tune-demo&#34;</span>
+</span></span></code></pre></div><p><strong>Ubuntu 26.04</strong>（Bash，需已装 Docker），保存为 <code>start-pg-tuning-lab.sh</code>：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e">#!/usr/bin/env bash
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"># start-pg-tuning-lab.sh — PostgreSQL 调优沙盒（Ubuntu 26.04）</span>
+</span></span><span style="display:flex;"><span>set -euo pipefail
+</span></span><span style="display:flex;"><span>docker info &gt;/dev/null
+</span></span><span style="display:flex;"><span>docker rm -f pg-tune-demo 2&gt;/dev/null <span style="color:#f92672">||</span> true
+</span></span><span style="display:flex;"><span>docker run -d --name pg-tune-demo -m 2g -e POSTGRES_PASSWORD<span style="color:#f92672">=</span><span style="color:#e6db74">&#39;LabOnly!123&#39;</span> postgres:18 &gt;/dev/null
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">until</span> docker exec pg-tune-demo pg_isready -U postgres &gt;/dev/null 2&gt;&amp;1; <span style="color:#66d9ef">do</span> sleep 2; <span style="color:#66d9ef">done</span>
+</span></span><span style="display:flex;"><span>docker exec pg-tune-demo psql -U postgres -c <span style="color:#e6db74">&#34;CREATE DATABASE bench;&#34;</span> &gt;/dev/null
+</span></span><span style="display:flex;"><span>docker exec pg-tune-demo pgbench -i -s <span style="color:#ae81ff">50</span> --quiet -U postgres bench
+</span></span><span style="display:flex;"><span>echo <span style="color:#e6db74">&#34;== 默认体检单 ==&#34;</span>
+</span></span><span style="display:flex;"><span>docker exec pg-tune-demo psql -U postgres -d bench -c <span style="color:#e6db74">&#34;SELECT name,setting,unit FROM pg_settings WHERE name IN (&#39;shared_buffers&#39;,&#39;work_mem&#39;,&#39;max_connections&#39;,&#39;max_wal_size&#39;,&#39;random_page_cost&#39;) ORDER BY name;&#34;</span>
+</span></span><span style="display:flex;"><span>echo <span style="color:#e6db74">&#34;== 默认参数,150 并发(会被拒) ==&#34;</span>
+</span></span><span style="display:flex;"><span>docker exec pg-tune-demo pgbench -c <span style="color:#ae81ff">150</span> -j <span style="color:#ae81ff">4</span> -T <span style="color:#ae81ff">20</span> -U postgres bench <span style="color:#f92672">||</span> true
+</span></span><span style="display:flex;"><span>docker exec -i pg-tune-demo psql -U postgres -d bench <span style="color:#e6db74">&lt;&lt;&#39;SQL&#39;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">ALTER SYSTEM SET shared_buffers=&#39;512MB&#39;; ALTER SYSTEM SET effective_cache_size=&#39;1536MB&#39;;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">ALTER SYSTEM SET work_mem=&#39;16MB&#39;; ALTER SYSTEM SET maintenance_work_mem=&#39;256MB&#39;;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">ALTER SYSTEM SET max_connections=&#39;300&#39;; ALTER SYSTEM SET wal_compression=&#39;on&#39;;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">ALTER SYSTEM SET max_wal_size=&#39;2GB&#39;; ALTER SYSTEM SET checkpoint_timeout=&#39;15min&#39;;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">ALTER SYSTEM SET random_page_cost=&#39;1.1&#39;; ALTER SYSTEM SET effective_io_concurrency=&#39;200&#39;;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">ALTER SYSTEM SET autovacuum_vacuum_scale_factor=&#39;0.05&#39;;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">SQL</span>
+</span></span><span style="display:flex;"><span>docker restart pg-tune-demo &gt;/dev/null
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">until</span> docker exec pg-tune-demo pg_isready -U postgres &gt;/dev/null 2&gt;&amp;1; <span style="color:#66d9ef">do</span> sleep 2; <span style="color:#66d9ef">done</span>
+</span></span><span style="display:flex;"><span>echo <span style="color:#e6db74">&#34;== 调优后,150 并发再战 ==&#34;</span>
+</span></span><span style="display:flex;"><span>docker exec pg-tune-demo pgbench -c <span style="color:#ae81ff">150</span> -j <span style="color:#ae81ff">4</span> -T <span style="color:#ae81ff">20</span> -U postgres bench
+</span></span><span style="display:flex;"><span>echo <span style="color:#e6db74">&#34;完成！清理：docker rm -f pg-tune-demo&#34;</span>
+</span></span></code></pre></div><p><strong>macOS 26</strong>（zsh，需 Docker Desktop 或 colima 已启动），保存为 <code>start-pg-tuning-lab.zsh</code>，内容与 Ubuntu 版几乎相同，首行换成 <code>#!/bin/zsh</code>，并加一句启动检测：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-zsh" data-lang="zsh"><span style="display:flex;"><span><span style="color:#75715e">#!/bin/zsh
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"># start-pg-tuning-lab.zsh — PostgreSQL 调优沙盒（macOS 26）</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> ! docker info &gt;/dev/null 2&gt;&amp;1; <span style="color:#66d9ef">then</span>
+</span></span><span style="display:flex;"><span>  echo <span style="color:#e6db74">&#34;Docker 未就绪：请启动 Docker Desktop，或 brew 装 colima 后执行 colima start&#34;</span>
+</span></span><span style="display:flex;"><span>  exit <span style="color:#ae81ff">1</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">fi</span>
+</span></span><span style="display:flex;"><span>set -euo pipefail
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># ……余下部分与 Ubuntu 脚本完全相同……</span>
+</span></span></code></pre></div><p>沙盒里的数值是按 2GB 容器算的小灶；真实生产机请按第五至九节的比例放大（比如 16GB 机器 shared_buffers 给 4GB）。</p>
+<h3 id="112-agent-自动配置">11.2 Agent 自动配置</h3>
+<p>如果你有 Kimi Code、Claude Code、Codex 或其他能执行本机命令的 Agent，直接把下面这段指令给它：</p>
+<blockquote>
+<p>请在我的本机用 Docker 搭建一个 PostgreSQL 18 调优练习沙盒并做一次调优前后对比。要求：1) 用 postgres:18 镜像启动容器（内存上限 2GB，密码仅用实验室弱口令），创建 bench 库并用 pgbench 灌入 scale 50 的数据；2) 展示 shared_buffers、work_mem、max_connections、max_wal_size、random_page_cost 的默认值；3) 先用默认参数跑 pgbench -c 150 -j 4 -T 20 并记录结果；4) 通过 ALTER SYSTEM 应用这组调优项：shared_buffers=512MB、effective_cache_size=1536MB、work_mem=16MB、maintenance_work_mem=256MB、max_connections=300、wal_compression=on、max_wal_size=2GB、checkpoint_timeout=15min、random_page_cost=1.1、effective_io_concurrency=200、autovacuum_vacuum_scale_factor=0.05，重启容器后用同样的 pgbench 命令再跑一次；5) 对比两次 TPS 并解释差异；6) 全程不要使用宿主机的真实业务数据，不要输出任何内网地址、机器名或密钥；7) 完成后告诉我容器名称和清理命令。</p>
+</blockquote>
+<p>这段 prompt 的关键依然是约束条件：限定 Docker 沙盒、禁用真实数据、要求交付清理命令——调参实验像试菜，在自家厨房（沙盒）里随便试，别直接进餐厅后厨（生产）。</p>
+<h2 id="十二安全调参闭环像试水温一样调数据库">十二、安全调参闭环：像试水温一样调数据库</h2>
+<p>最后说方法论。调参最大的风险不是改错参数，而是<strong>一次改五个参数，出了问题不知道是谁的锅</strong>。正确的姿势是一个闭环：</p>
+<p><img src="/post-images/postgresql-production-tuning-ten-knobs/06-tuning-loop.svg" alt="自制图解：安全调参四步闭环。"></p>
+<p><em>图 15：自制图解。先测基线、一次只改一个、再测验证、留好退路。ALTER SYSTEM 的所有改动都可以用 <code>ALTER SYSTEM RESET 参数名</code>（或 RESET ALL）一条命令撤回——这是 PostgreSQL 给 DBA 的后悔药。</em></p>
+<p>我在沙盒里完整走了一遍这个闭环。应用 11 条 ALTER SYSTEM、重启容器后的新体检单：</p>
+<p><img src="/post-images/postgresql-production-tuning-ten-knobs/shot-06-tuned.webp" alt="真实终端截图：调优后的参数一览。"></p>
+<p><em>图 16：真实截图。12 个参数全部生效：shared_buffers 512MB、max_connections 300、wal_compression 显示 pglz（压缩已启用）、random_page_cost 降到 1.1。</em></p>
+<p>同样的 150 并发压测命令，结果从「直接被拒」变成了：</p>
+<p><img src="/post-images/postgresql-production-tuning-ten-knobs/shot-07-pgbench-after.webp" alt="真实终端截图：调优后 150 并发跑出 852 TPS。"></p>
+<p><em>图 17：真实截图。150 并发、30 秒、25663 笔事务、852 TPS。对比图 4 的「压测都起不来」，这就是 max_connections 一个参数的价值。</em></p>
+<p>也要诚实地说另一组数字：16 并发的小负载下，调优前后 TPS 只差 4%（735 → 767）。<strong>调优不是把 60 分变 100 分的魔法，而是把「及格线上下飘忽」变成「任何工况都稳定 85 分」</strong>——它的主战场在高峰、在大查询、在连接风暴，不在风平浪静的跑分。</p>
+<h2 id="十三qa">十三、Q&amp;A</h2>
+<p><strong>Q1：这些参数可以直接抄到生产环境吗？</strong>
+数值不能抄，方法可以抄。沙盒里的 512MB 是按 2GB 容器算的；生产机请按「shared_buffers 25%、effective_cache_size 50%~75%、work_mem 按并发预算」的比例重新计算，并走第十二节的闭环逐项验证。</p>
+<p><strong>Q2：调参会把数据库搞坏吗？最坏情况是什么？</strong>
+最常见的事故是内存超卖：shared_buffers + max_connections × work_mem × 2 超过物理内存，OOM Killer 会直接杀掉数据库进程。动手前把这笔账算在纸上，就不会有事。改错了也不怕，ALTER SYSTEM RESET 一条命令回滚。</p>
+<p><strong>Q3：哪些参数要重启，哪些改了就生效？</strong>
+shared_buffers、max_connections 必须重启；work_mem、effective_cache_size、wal_compression、autovacuum 系列只需 reload（甚至改完即生效）。去 postgresqlco.nf 查参数的 Context 字段一目了然：postmaster=重启，sighup=reload。</p>
+<p><strong>Q4：云数据库 RDS 能改这些参数吗？</strong>
+大部分能改（云厂商的参数组里都有），而且很多 RDS 的默认值已经比原生 PG 合理。但 random_page_cost、autovacuum 阈值这类「业务相关」的参数，云上默认值依然偏保守，值得按本文思路过一遍。</p>
+<p><strong>Q5：work_mem 是不是越大越好？</strong>
+恰恰相反。它是「每连接每步操作一份」，调大 10 倍，高峰期内存占用可能放大几十倍。报表类慢查询可以用会话级 <code>SET LOCAL work_mem = '256MB'</code> 单独开小灶，全局值保持克制。</p>
+<p><strong>Q6：调完参数就完事了吗？</strong>
+没有。参数决定「资源预算」，但慢查询的大头往往是不合理的 SQL 和缺失的索引。下一篇我们会聊 pg_stat_statements——先找到最该优化的 10 条 SQL，比盲调参数值钱得多。</p>
+<h2 id="十四结尾">十四、结尾</h2>
+<p>到这里，PostgreSQL 三部曲就完整了：第一篇讲<a href="/post/why-projects-switch-from-mysql-to-postgresql/">为什么搬家</a>，第二篇讲<a href="/post/mysql-to-postgresql-migration-guide/">怎么搬家</a>，这一篇讲<strong>搬完之后怎么装修</strong>。</p>
+<p>回顾这个系列，最有意思的发现是：PostgreSQL 的「默认参数」和它的「治理结构」一脉相承——<strong>它把选择权连同责任一起交给了你</strong>。没有厂商替你拍板默认值，正如没有厂商能撤回这个项目。自由的代价，是你要学会拧这 10 个开关；而回报是，你的数据库从此按你的业务呼吸，而不是按 1996 年的硬件规格喘气。</p>
+<p>搬家一周，装修一天，住得舒服很多年。</p>
+<hr>
+<p><em>参考资料：<a href="https://www.postgresql.org/docs/current/runtime-config-resource.html">PostgreSQL 官方文档：Resource Consumption</a>、<a href="https://postgresqlco.nf/">postgresqlco.nf 参数百科</a>、<a href="https://pgtune.leopard.in.ua/">PGTune 配置生成器</a>、<a href="https://www.pgbouncer.org/">PgBouncer 官方站点</a>、<a href="https://www.postgresql.org/docs/current/pgbench.html">pgbench 官方文档</a>、<a href="https://www.postgresql.org/about/news/postgresql-18-released-3142/">PostgreSQL 18 发布公告</a>。</em></p>
+        </div>
+    </article>
+
+    
+  
+
+
+
+
+    
+<div class="site-stats" aria-label="访问统计">
+    <span>本文阅读量 <span data-page-view-count>--</span></span>
+</div>
+
+
+    
+    <script type="text/javascript" src="https://js.users.51.la/21044367.js"></script>
+    <script charset="UTF-8" id="LA_COLLECT" src="//sdk.51.la/js-sdk-pro.min.js"></script>
+    <script>LA.init({id: "1vVTUWl7zoRjnKXi",ck: "1vVTUWl7zoRjnKXi"})</script>
+    <script src="https://sdk.51.la/perf/js-sdk-perf.min.js" crossorigin="anonymous"></script>
+    <script>
+      new LingQue.Monitor().init({id:"202teQt8THXwqyve"});
+    </script>
+    <script defer src="/js/page-views.js"></script>
+    <div class="la-theme-widget" data-51la-widget aria-label="51.la 网站统计"></div>
+    <script defer src="/js/51la-theme-widget.js"></script>
+</body>
+</html>

@@ -213,7 +213,7 @@
 <p><strong>TL;DR:</strong></p>
 <p>When two VPNs run side-by-side on macOS (e.g. <code>utun0</code> and <code>utun15</code>), an aggregate <code>10.0.0.0/8</code> route pushed by one of them can silently &ldquo;swallow&rdquo; every address in the 10.x.x.x range — including the one you actually wanted to reach on the other VPN. DNS resolves fine; TCP/ICMP just hangs. <strong><code>route -n get</code> is the first knife you should reach for.</strong></p>
 </blockquote>
-<p><img alt="macOS Routing Lookup: Longest Prefix Match Flow" src="/post-images/macos-routing-table-vpn-troubleshooting/01-routing-flow.svg"></p>
+<p><img src="/post-images/macos-routing-table-vpn-troubleshooting/01-routing-flow.svg" alt="macOS Routing Lookup: Longest Prefix Match Flow"></p>
 <p><em>Figure 1: macOS kernel route lookup flow. An application sends a packet toward a destination IP. The kernel walks the routing table by &ldquo;longest prefix match&rdquo; — a match on <code>10.0.0.0/8</code> selects <code>utun0</code>, while a more specific /32 host route selects <code>utun15</code>.</em></p>
 <hr>
 <h2 id="background-vpn-is-up-but-internal-hostnames-are-dead">Background: VPN Is Up, but Internal Hostnames Are Dead</h2>
@@ -241,7 +241,7 @@ Request timeout for icmp_seq 1
 <hr>
 <h2 id="investigation-looking-through-the-routing-table">Investigation: Looking Through the Routing Table</h2>
 <p>When in doubt, dump the routing table. SSH into the box and run:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>netstat -rn
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>netstat -rn
 </span></span></code></pre></div><p>Truncated output (the lines that matter):</p>
 <pre tabindex="0"><code>Internet:
 Destination        Gateway            Flags     Netif
@@ -277,12 +277,12 @@ default            10.255.255.1      UGScg     utun15
 <p><code>utun0</code> is established at the system level and automatically pushes that /8 aggregate into the routing table every time it connects — the user is never informed.</p>
 <p>Meanwhile, <code>utun15</code> is dialed on demand, and the routes it pushes simply don&rsquo;t include the 10.99.0.0/16 segment. <strong>The client does not auto-fill the gap.</strong></p>
 <p>Stack the two together, and the destination IP is quietly hijacked by utun0.</p>
-<p><img alt="Dual-VPN Routing Conflict: utun0 pushes /8 aggregate, utun15 lacks /16 subnet route, 10.99.99.99 hits the wrong interface" src="/post-images/macos-routing-table-vpn-troubleshooting/02-dual-vpn-topology.svg"></p>
+<p><img src="/post-images/macos-routing-table-vpn-troubleshooting/02-dual-vpn-topology.svg" alt="Dual-VPN Routing Conflict: utun0 pushes /8 aggregate, utun15 lacks /16 subnet route, 10.99.99.99 hits the wrong interface"></p>
 <p><em>Figure 2: Routing conflict when two VPNs coexist. utun0 pushes a <code>10.0.0.0/8</code> aggregate that shadows the entire range; utun15 has no <code>10.99.0.0/16</code> route. Result: 10.99.99.99 ends up on utun0 instead of utun15.</em></p>
 <hr>
 <h2 id="verification-route--n-get-is-the-most-direct-diagnostic">Verification: <code>route -n get</code> Is the Most Direct Diagnostic</h2>
 <p>When you suspect routing is wrong, don&rsquo;t guess. Let the kernel tell you with <code>route -n get &lt;target&gt;</code>:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>$ route -n get 10.99.99.99
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>$ route -n get 10.99.99.99
 </span></span><span style="display:flex;"><span>
 </span></span><span style="display:flex;"><span>   route to: 10.99.99.99
 </span></span><span style="display:flex;"><span>destination: 10.99.99.99
@@ -290,7 +290,7 @@ default            10.255.255.1      UGScg     utun15
 </span></span><span style="display:flex;"><span>      flags: &lt;UP,HOST,DONE,WASCLONED,IFSCOPE,IFREF&gt;
 </span></span></code></pre></div><p>If the <code>interface</code> here is not what you expected (we wanted <code>utun15</code>), you&rsquo;ve confirmed the routing went to the wrong place.</p>
 <p>Then cross-check the table to see why utun0 matched:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>$ netstat -rn | grep -E <span style="color:#e6db74">&#34;^10 |utun15|default&#34;</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>$ netstat -rn | grep -E <span style="color:#e6db74">&#34;^10 |utun15|default&#34;</span>
 </span></span><span style="display:flex;"><span>default            10.255.255.1      UGScg     utun15
 </span></span><span style="display:flex;"><span><span style="color:#ae81ff">10</span>                 utun0             USc       utun0
 </span></span><span style="display:flex;"><span>10.19.180.31/32    10.255.255.1      UGHS      utun15
@@ -299,7 +299,7 @@ default            10.255.255.1      UGScg     utun15
 <h2 id="the-fix-add-a-more-specific-route">The Fix: Add a More-Specific Route</h2>
 <p><strong>The idea:</strong> give the kernel a route for 10.99.99.99 with a prefix length longer than /8 (even a /32 will do) so it outranks utun0&rsquo;s aggregate.</p>
 <p>macOS uses <code>route -n add</code> to add a static route:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># A single IP via utun15</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># A single IP via utun15</span>
 </span></span><span style="display:flex;"><span>sudo route -n add -host 10.99.99.99 -interface utun15
 </span></span><span style="display:flex;"><span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># The whole 10.99.0.0/16 subnet via utun15</span>
@@ -311,7 +311,7 @@ default            10.255.255.1      UGScg     utun15
 <li>The <code>-n</code> flag means &ldquo;do not resolve names.&rdquo; It affects display only, not behavior</li>
 </ul>
 <p>After running the command, verify again:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>$ route -n get 10.99.99.99
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>$ route -n get 10.99.99.99
 </span></span><span style="display:flex;"><span>
 </span></span><span style="display:flex;"><span>   route to: 10.99.99.99
 </span></span><span style="display:flex;"><span>destination: 10.99.99.99
@@ -326,14 +326,14 @@ default            10.255.255.1      UGScg     utun15
 </span></span><span style="display:flex;"><span>--- 10.99.99.99 ping statistics ---
 </span></span><span style="display:flex;"><span><span style="color:#ae81ff">3</span> packets transmitted, <span style="color:#ae81ff">3</span> received, 0% packet loss
 </span></span></code></pre></div><p>It works.</p>
-<p><img alt="Before-and-After Routing Table and Ping Comparison: left in red / right in green" src="/post-images/macos-routing-table-vpn-troubleshooting/03-route-fix-compare.svg"></p>
+<p><img src="/post-images/macos-routing-table-vpn-troubleshooting/03-route-fix-compare.svg" alt="Before-and-After Routing Table and Ping Comparison: left in red / right in green"></p>
 <p><em>Figure 3: Side-by-side comparison of <code>route -n get</code> and <code>ping</code> output before and after the fix. Left: packets are sent to utun0, 100% packet loss. Right: after adding the /32 host route, packets successfully reach the destination through utun15.</em></p>
 <hr>
 <h2 id="making-it-permanent-launchd-startup-items">Making It Permanent: launchd Startup Items</h2>
 <p><code>route -n add</code> is session-scoped — it lives only in the current kernel routing table. <strong>A reboot, a network event, or a VPN reconnect will wipe it.</strong> To rebuild the route automatically at startup, you have several options.</p>
 <h3 id="option-1-a-launchd-task-recommended">Option 1: A launchd Task (Recommended)</h3>
 <p>The most reliable approach on macOS is to drop a launchd plist into <code>/Library/LaunchDaemons/</code>:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>sudo tee /Library/LaunchDaemons/com.local.vpn-route-fix.plist <span style="color:#e6db74">&lt;&lt;&#39;PLIST&#39;
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>sudo tee /Library/LaunchDaemons/com.local.vpn-route-fix.plist <span style="color:#e6db74">&lt;&lt;&#39;PLIST&#39;
 </span></span></span><span style="display:flex;"><span><span style="color:#e6db74">&lt;?xml version=&#34;1.0&#34; encoding=&#34;UTF-8&#34;?&gt;
 </span></span></span><span style="display:flex;"><span><span style="color:#e6db74">&lt;!DOCTYPE plist PUBLIC &#34;-//Apple//DTD PLIST</span> 1.0//EN<span style="color:#e6db74">&#34; &#34;</span>http://www.apple.com/DTDs/PropertyList-1.0.dtd<span style="color:#e6db74">&#34;&gt;
 </span></span></span><span style="display:flex;"><span><span style="color:#e6db74">&lt;plist version=&#34;</span>1.0<span style="color:#e6db74">&#34;&gt;
@@ -367,7 +367,7 @@ default            10.255.255.1      UGScg     utun15
 <p><strong>Caveat:</strong> launchd runs the task at system boot — but utun15 may not be up yet. A more robust pattern is to wrap the command in a shell script that waits for the interface to appear.</p>
 </blockquote>
 <p>A more resilient version with a wrapper script:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># /usr/local/bin/vpn-route-fix.sh</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># /usr/local/bin/vpn-route-fix.sh</span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e">#!/bin/sh</span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># Wait up to 30s for utun15 to come up</span>
 </span></span><span style="display:flex;"><span><span style="color:#66d9ef">for</span> i in <span style="color:#66d9ef">$(</span>seq <span style="color:#ae81ff">1</span> 30<span style="color:#66d9ef">)</span>; <span style="color:#66d9ef">do</span>
@@ -380,7 +380,7 @@ default            10.255.255.1      UGScg     utun15
 </span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> ifconfig utun15 &gt;/dev/null 2&gt;&amp;1; <span style="color:#66d9ef">then</span>
 </span></span><span style="display:flex;"><span>    /sbin/route -n add -host 10.99.99.99 -interface utun15
 </span></span><span style="display:flex;"><span><span style="color:#66d9ef">fi</span>
-</span></span></code></pre></div><div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>sudo chmod +x /usr/local/bin/vpn-route-fix.sh
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>sudo chmod +x /usr/local/bin/vpn-route-fix.sh
 </span></span></code></pre></div><p>Then update the plist&rsquo;s <code>ProgramArguments</code> to call this script.</p>
 <h3 id="option-2-rclocal--startupitem">Option 2: rc.local / StartupItem</h3>
 <p>The legacy approach. <code>/etc/rc.local</code> is deprecated on modern macOS — not recommended.</p>
@@ -398,7 +398,7 @@ default            10.255.255.1      UGScg     utun15
 <h2 id="macos-routing-table-command-cheat-sheet">macOS Routing Table Command Cheat-Sheet</h2>
 <p>A quick reference of the commands you&rsquo;ll reach for the most:</p>
 <h3 id="inspect-the-routing-table">Inspect the Routing Table</h3>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># Default format (IPv4 + IPv6; flags as letters, more readable)</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># Default format (IPv4 + IPv6; flags as letters, more readable)</span>
 </span></span><span style="display:flex;"><span>netstat -rn
 </span></span><span style="display:flex;"><span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># Numeric form, no DNS resolution</span>
@@ -410,7 +410,7 @@ default            10.255.255.1      UGScg     utun15
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># See which exit a specific destination uses</span>
 </span></span><span style="display:flex;"><span>route -n get 8.8.8.8
 </span></span></code></pre></div><h3 id="add--delete--change-routes">Add / Delete / Change Routes</h3>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># Add a /32 host route</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># Add a /32 host route</span>
 </span></span><span style="display:flex;"><span>sudo route -n add -host 10.99.99.99 -interface utun15
 </span></span><span style="display:flex;"><span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># Add a /24 subnet route (with explicit gateway)</span>
@@ -426,22 +426,22 @@ default            10.255.255.1      UGScg     utun15
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># &#34;Change&#34; a route (effectively delete + add)</span>
 </span></span><span style="display:flex;"><span>sudo route -n change -host 10.99.99.99 -interface utun0
 </span></span></code></pre></div><h3 id="temporarily-disable-an-interface">Temporarily Disable an Interface</h3>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># Bring utun0 down so all 10.x falls through to utun15</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># Bring utun0 down so all 10.x falls through to utun15</span>
 </span></span><span style="display:flex;"><span>sudo ifconfig utun0 down
 </span></span><span style="display:flex;"><span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># Bring it back up</span>
 </span></span><span style="display:flex;"><span>sudo ifconfig utun0 up
 </span></span></code></pre></div><h3 id="watch-routing-changes-live">Watch Routing Changes Live</h3>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># Refresh the table once a second (handy when debugging VPN route pushes)</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># Refresh the table once a second (handy when debugging VPN route pushes)</span>
 </span></span><span style="display:flex;"><span>watch -n <span style="color:#ae81ff">1</span> <span style="color:#e6db74">&#39;netstat -rn -f inet&#39;</span>
 </span></span></code></pre></div><h3 id="clear-all-manually-added-routes">Clear All Manually-Added Routes</h3>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># Safest: just reboot. The system rebuilds the table from scratch.</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># Safest: just reboot. The system rebuilds the table from scratch.</span>
 </span></span><span style="display:flex;"><span>sudo reboot
 </span></span></code></pre></div><hr>
 <h2 id="qa">Q&amp;A</h2>
 <h3 id="q1-can-i-just-delete-utun0s-100008-route">Q1: Can I just delete utun0&rsquo;s <code>10.0.0.0/8</code> route?</h3>
 <p>Technically yes:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>sudo route -n delete -net 10.0.0.0/8 -interface utun0
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>sudo route -n delete -net 10.0.0.0/8 -interface utun0
 </span></span></code></pre></div><p>But <strong>this is usually a bad idea</strong>, because:</p>
 <ul>
 <li>Other normally-reachable IPs (10.19.x, 10.20.x, 10.127.x) will lose their route</li>
@@ -476,7 +476,7 @@ Pushed routes:
   10.0.0.0/8 via 10.255.255.1
   ...
 </code></pre><p>You can also diff the routing table before/after the connection. For continuous visibility, use:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>sudo route -n monitor
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>sudo route -n monitor
 </span></span></code></pre></div><p>This prints every change to the kernel routing table in real time — extremely useful when debugging a flaky VPN client.</p>
 <h3 id="q6-why-are-utun-numbers-dynamic">Q6: Why are <code>utun</code> numbers dynamic?</h3>
 <p>macOS assigns a fresh <code>utun&lt;N&gt;</code> number every time a new tunnel/VPN comes up. <strong>The number is not stable.</strong> Today it might be utun15; tomorrow after connecting a different VPN it could be utun16.</p>
@@ -499,7 +499,7 @@ Pushed routes:
 <p><strong>Just write a launchd plist.</strong></p>
 <h3 id="q9-whats-metric-and-how-does-it-affect-route-selection">Q9: What&rsquo;s &ldquo;metric&rdquo; and how does it affect route selection?</h3>
 <p>Metric is a &ldquo;cost&rdquo; assigned to a route — lower is better. You can see it (and <code>rtt,msec</code>, <code>hopcount</code>, etc.) in <code>route -n get</code> output:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>$ route -n get 8.8.8.8
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>$ route -n get 8.8.8.8
 </span></span><span style="display:flex;"><span>...
 </span></span><span style="display:flex;"><span>      flags: &lt;UP,GATEWAY,IFSCOPE&gt;
 </span></span><span style="display:flex;"><span>   recvpipe  sendpipe  ssthresh  rtt,msec    rttvar  hopcount
@@ -507,7 +507,7 @@ Pushed routes:
 </span></span></code></pre></div><p>When two routes have <strong>the same prefix length</strong>, the one with the lower metric wins. The trailing letters in the <code>Flags</code> column (e.g. <code>S</code> for static, <code>D</code> for dynamic) just identify where the route came from; they don&rsquo;t influence the metric.</p>
 <h3 id="q10-do-i-need-to-look-at-the-ipv6-routing-table-separately">Q10: Do I need to look at the IPv6 routing table separately?</h3>
 <p>Yes. <code>netstat -rn</code> mixes IPv4 and IPv6 by default. Filter with <code>-f</code>:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>netstat -rn -f inet     <span style="color:#75715e"># IPv4 only</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>netstat -rn -f inet     <span style="color:#75715e"># IPv4 only</span>
 </span></span><span style="display:flex;"><span>netstat -rn -f inet6    <span style="color:#75715e"># IPv6 only</span>
 </span></span></code></pre></div><p>If your services are pure IPv4, you can usually ignore IPv6. But if your intranet is dual-stack, a wrong IPv6 route can also manifest as &ldquo;webpages don&rsquo;t open&rdquo; — same root cause, different family.</p>
 <hr>

@@ -208,15 +208,15 @@
 
         <div class="content">
             <p>这次问题表面上很像“模型供应商挂了”：OpenClaw 刚加完 NewAPI 的几个 fallback 模型，命令一跑，直接报 <code>Provider authentication failed</code>；进一步看网关调用，真正的错误是：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>missing scope: operator.write
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>missing scope: operator.write
 </span></span></code></pre></div><p>如果只看第一层现象，很容易把锅甩给模型密钥、NewAPI 地址、模型名、网络连通性。但这次真正的问题不在模型，也不在 NewAPI，而在 OpenClaw 走网关调用 fallback 模型时，某个 model override 分支把“设备身份”省掉了。结果服务端虽然看到了一个被授权的请求，却没有把它绑定到那台已经配对、已经拥有 <code>operator.write</code> 的设备上，最终在执行 agent RPC 时被权限系统拦下。</p>
 <p>先说结论：<strong>这是一个典型的“令牌有了，钥匙串没带上”的问题。</strong> 模型直连能成功，网关调用失败；设备列表里明明能看到 <code>operator.write</code>，但真正发起网关请求时没有使用那份已配对设备身份，于是权限检查按未绑定请求处理，报出 <code>missing scope: operator.write</code>。</p>
-<p><img alt="AI 生成封面：一个网关前的双锁权限系统" src="/post-images/openclaw-missing-operator-write-scope/cover.png"></p>
+<p><img src="/post-images/openclaw-missing-operator-write-scope/cover.png" alt="AI 生成封面：一个网关前的双锁权限系统"></p>
 <h2 id="1-问题背景一次只是加-fallback的小改动">1. 问题背景：一次“只是加 fallback”的小改动</h2>
 <p>当时的目标很简单：给 OpenClaw 和 HermesAgent 使用的模型配置都加上几个来自 NewAPI 的 fallback 模型，避免主模型不可用时整个机器人接入链路中断。配置完成后，常规的本地模型调用可以跑通，<code>newapi/glm-latest</code> 之类的模型也能返回结果。</p>
 <p>但是只要通过 OpenClaw gateway 走模型调用，就出现了认证失败。尤其是在已经修过供应商地址和密钥之后，这个错误就更迷惑：供应商本身能通，模型本身也能跑，为什么 gateway 一介入就说没有 <code>operator.write</code>？</p>
 <p>第一张证据就是失败输出。注意截图已经脱敏，不包含真实内网地址、真实设备 ID、真实主机名或密钥。</p>
-<p><img alt="真实终端截图：gateway 调用失败，报 missing scope: operator.write" src="/post-images/openclaw-missing-operator-write-scope/01-failure-missing-scope.png"></p>
+<p><img src="/post-images/openclaw-missing-operator-write-scope/01-failure-missing-scope.png" alt="真实终端截图：gateway 调用失败，报 missing scope: operator.write"></p>
 <p>这类错误最容易误导人。<code>Provider authentication failed</code> 听起来像模型供应商鉴权失败；<code>missing scope</code> 又像设备没有权限。两个方向都能查很久，但都不是最后的根因。</p>
 <h2 id="2-先把模型供应商问题排除掉">2. 先把“模型供应商问题”排除掉</h2>
 <p>排障第一步不是改代码，而是把事实链拉直。这里我做了三个对照：</p>
@@ -231,7 +231,7 @@
 <p><code>scope</code> 不是 OpenClaw 独有概念。OAuth 2.0 里就把 scope 当作访问令牌的权限范围，客户端可以请求某些 scope，授权服务器也可以决定最终给哪些 scope。RFC 6749 对 scope 的定义可以参考：<a href="https://www.rfc-editor.org/rfc/rfc6749#section-3.3">https://www.rfc-editor.org/rfc/rfc6749#section-3.3</a>。Bearer Token 规范里也有 <code>insufficient_scope</code> 这类错误语义，参考：<a href="https://www.rfc-editor.org/rfc/rfc6750#section-3.1">https://www.rfc-editor.org/rfc/rfc6750#section-3.1</a>。</p>
 <p>OpenClaw 这里的 <code>operator.write</code> 可以粗略理解为“允许操作型写入动作”的权限。模型 gateway 调用表面上只是“问模型一句话”，但在系统内部可能需要通过 agent RPC 执行一次带状态、带操作语义的请求。只读权限不够，普通用户权限也不够，必须有 operator 级别写权限。</p>
 <p>安全设计上，这其实是好事。OWASP 的授权建议也强调最小权限和默认拒绝：<a href="https://cheatsheetseries.owasp.org/cheatsheets/Authorization_Cheat_Sheet.html">https://cheatsheetseries.owasp.org/cheatsheets/Authorization_Cheat_Sheet.html</a>。问题不在于它拦得太严，而在于我们要搞清楚：<strong>明明设备有权限，为什么这次请求没有用上这份权限？</strong></p>
-<p><img alt="权限双锁示意：供应商认证和 operator scope 是两把不同的锁" src="/post-images/openclaw-missing-operator-write-scope/06-two-locks-auth-model.svg"></p>
+<p><img src="/post-images/openclaw-missing-operator-write-scope/06-two-locks-auth-model.svg" alt="权限双锁示意：供应商认证和 operator scope 是两把不同的锁"></p>
 <p>图里这两把锁非常重要：</p>
 <ol>
 <li>第一把锁是模型供应商认证，例如 NewAPI 的 base URL、API key、模型名。</li>
@@ -249,7 +249,7 @@
 <li><code>operator.talk.secrets</code></li>
 </ul>
 <p>也就是说，设备本身没有缺权限。</p>
-<p><img alt="真实终端截图：设备列表里可以看到 operator.write 已存在" src="/post-images/openclaw-missing-operator-write-scope/02-device-list-has-scopes.png"></p>
+<p><img src="/post-images/openclaw-missing-operator-write-scope/02-device-list-has-scopes.png" alt="真实终端截图：设备列表里可以看到 operator.write 已存在"></p>
 <p>这就是整个排障里最关键的转折点。因为如果设备表里没有 <code>operator.write</code>，那问题很简单：重新授权或重新配对即可。但现在设备有权限，调用仍然缺权限，说明权限不是“没发”，而是“请求没有绑定到这台设备”。</p>
 <p>继续顺着代码查，OpenClaw 的 gateway 调用里有一个逻辑会判断是否省略设备身份。它本来的设计意图可以理解：当后端或 gateway-client 使用 loopback 和共享 token/password 发起请求时，某些情况下不必携带设备身份。但在 model override 的分支上，这个优化踩到了权限边界。</p>
 <p>model override 是什么？简单说，就是你在命令里明确指定 <code>--model newapi/glm-latest</code> 这类模型时，CLI 会走一个和默认模型不同的调用路径。这个路径把请求标记成 gateway-client/backend 模式，同时只带了 admin scope 请求，却没有强制使用已存储的设备认证。服务端拿到请求后发现它没有绑定设备，于是清掉未绑定 scope，最终 agent RPC 阶段缺少 <code>operator.write</code>。</p>
@@ -261,41 +261,41 @@
 </blockquote>
 <p>修复点也很小：在这个分支里保留原来的 admin scope，同时要求使用 stored device auth，并声明这个 stored device auth 至少要具备 admin scope。</p>
 <p>核心补丁形态如下，路径和文件名请以自己的安装环境为准：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-diff" data-lang="diff"><span style="display:flex;"><span> ...hasModelOverride ? {
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-diff" data-lang="diff"><span style="display:flex;"><span> ...hasModelOverride ? {
 </span></span><span style="display:flex;"><span><span style="color:#f92672">-    scopes: [ADMIN_SCOPE]
-</span></span></span><span style="display:flex;"><span><span style="color:#f92672"></span><span style="color:#a6e22e">+    scopes: [ADMIN_SCOPE],
+</span></span></span><span style="display:flex;"><span><span style="color:#a6e22e">+    scopes: [ADMIN_SCOPE],
 </span></span></span><span style="display:flex;"><span><span style="color:#a6e22e">+    useStoredDeviceAuth: true,
 </span></span></span><span style="display:flex;"><span><span style="color:#a6e22e">+    requiredStoredDeviceAuthScopes: [ADMIN_SCOPE]
-</span></span></span><span style="display:flex;"><span><span style="color:#a6e22e"></span> } : {}
-</span></span></code></pre></div><p><img alt="修复路径示意：从失败复现到补丁验证" src="/post-images/openclaw-missing-operator-write-scope/07-fix-path.svg"></p>
+</span></span></span><span style="display:flex;"><span> } : {}
+</span></span></code></pre></div><p><img src="/post-images/openclaw-missing-operator-write-scope/07-fix-path.svg" alt="修复路径示意：从失败复现到补丁验证"></p>
 <p>补丁后还需要做语法检查，避免直接改编译产物时留下低级错误。</p>
-<p><img alt="真实终端截图：补丁检查和语法检查通过" src="/post-images/openclaw-missing-operator-write-scope/03-patch-check.png"></p>
+<p><img src="/post-images/openclaw-missing-operator-write-scope/03-patch-check.png" alt="真实终端截图：补丁检查和语法检查通过"></p>
 <h2 id="6-手工修复方法">6. 手工修复方法</h2>
 <p>如果你也遇到类似问题，建议按下面顺序操作。不要一上来就改代码。</p>
 <p>第一步，确认是不是同一个症状：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>openclaw infer model run --local --model newapi/glm-latest --prompt <span style="color:#e6db74">&#34;只回复 OK&#34;</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>openclaw infer model run --local --model newapi/glm-latest --prompt <span style="color:#e6db74">&#34;只回复 OK&#34;</span>
 </span></span><span style="display:flex;"><span>openclaw infer model run --gateway --model newapi/glm-latest --prompt <span style="color:#e6db74">&#34;只回复 OK&#34;</span>
 </span></span></code></pre></div><p>如果 local 成功、gateway 失败，并且失败里出现 <code>missing scope: operator.write</code>，再继续。</p>
 <p>第二步，确认设备确实有权限：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>openclaw devices list
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>openclaw devices list
 </span></span></code></pre></div><p>你要看到对应 operator 设备包含 <code>operator.write</code>。如果设备没有这个 scope，请先重新配对或重新授权，不要直接套补丁。</p>
 <p>第三步，备份 OpenClaw 编译产物：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>OPENCLAW_DIST<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;&lt;openclaw-install&gt;/dist&#34;</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>OPENCLAW_DIST<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;&lt;openclaw-install&gt;/dist&#34;</span>
 </span></span><span style="display:flex;"><span>BACKUP_DIR<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span>$HOME<span style="color:#e6db74">/.openclaw/backups/operator-write-scope-</span><span style="color:#66d9ef">$(</span>date +%Y%m%d-%H%M%S<span style="color:#66d9ef">)</span><span style="color:#e6db74">&#34;</span>
 </span></span><span style="display:flex;"><span>mkdir -p <span style="color:#e6db74">&#34;</span>$BACKUP_DIR<span style="color:#e6db74">&#34;</span>
 </span></span><span style="display:flex;"><span>cp <span style="color:#e6db74">&#34;</span>$OPENCLAW_DIST<span style="color:#e6db74">&#34;</span>/capability-cli-*.js <span style="color:#e6db74">&#34;</span>$BACKUP_DIR<span style="color:#e6db74">&#34;</span>/
 </span></span></code></pre></div><p>第四步，在 <code>capability-cli-*.js</code> 里找到 model override 调用 <code>callGateway</code> 的分支，将 <code>scopes: [ADMIN_SCOPE]</code> 扩展为：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-js" data-lang="js"><span style="display:flex;"><span><span style="color:#a6e22e">scopes</span><span style="color:#f92672">:</span> [<span style="color:#a6e22e">ADMIN_SCOPE</span>],
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-js" data-lang="js"><span style="display:flex;"><span><span style="color:#a6e22e">scopes</span><span style="color:#f92672">:</span> [<span style="color:#a6e22e">ADMIN_SCOPE</span>],
 </span></span><span style="display:flex;"><span><span style="color:#a6e22e">useStoredDeviceAuth</span><span style="color:#f92672">:</span> <span style="color:#66d9ef">true</span>,
 </span></span><span style="display:flex;"><span><span style="color:#a6e22e">requiredStoredDeviceAuthScopes</span><span style="color:#f92672">:</span> [<span style="color:#a6e22e">ADMIN_SCOPE</span>]
 </span></span></code></pre></div><p>第五步，检查语法并验证 gateway：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>node --check <span style="color:#e6db74">&#34;</span>$OPENCLAW_DIST<span style="color:#e6db74">&#34;</span>/capability-cli-*.js
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>node --check <span style="color:#e6db74">&#34;</span>$OPENCLAW_DIST<span style="color:#e6db74">&#34;</span>/capability-cli-*.js
 </span></span><span style="display:flex;"><span>openclaw infer model run --gateway --model newapi/glm-latest --prompt <span style="color:#e6db74">&#34;只回复 OK&#34;</span>
 </span></span></code></pre></div><p>修复后，我这里的 gateway 调用已经能稳定返回 <code>OK</code>。</p>
-<p><img alt="真实终端截图：gateway 调用修复后返回 OK" src="/post-images/openclaw-missing-operator-write-scope/04-gateway-success.png"></p>
+<p><img src="/post-images/openclaw-missing-operator-write-scope/04-gateway-success.png" alt="真实终端截图：gateway 调用修复后返回 OK"></p>
 <h2 id="7-一键自动修复脚本windows-11">7. 一键自动修复脚本：Windows 11</h2>
 <p>下面脚本只使用系统自带 PowerShell 和 Node，不依赖第三方服务。它会自动查找常见 npm 全局安装目录，备份目标文件，再做文本补丁。建议先在测试环境或快照环境执行。</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-powershell" data-lang="powershell"><span style="display:flex;"><span>$ErrorActionPreference = <span style="color:#e6db74">&#34;Stop&#34;</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-powershell" data-lang="powershell"><span style="display:flex;"><span>$ErrorActionPreference = <span style="color:#e6db74">&#34;Stop&#34;</span>
 </span></span><span style="display:flex;"><span>
 </span></span><span style="display:flex;"><span>$candidates = @(
 </span></span><span style="display:flex;"><span>  <span style="color:#e6db74">&#34;</span>$env:APPDATA<span style="color:#e6db74">\npm\node_modules\openclaw\dist&#34;</span>,
@@ -333,15 +333,15 @@
 </span></span><span style="display:flex;"><span>node --check $file.FullName
 </span></span><span style="display:flex;"><span>openclaw infer model run --gateway --model newapi/glm-latest --prompt <span style="color:#e6db74">&#34;只回复 OK&#34;</span>
 </span></span></code></pre></div><h2 id="8-一键自动修复脚本ubuntu-2604">8. 一键自动修复脚本：Ubuntu 26.04</h2>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e">#!/usr/bin/env bash
-</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>set -euo pipefail
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e">#!/usr/bin/env bash
+</span></span></span><span style="display:flex;"><span>set -euo pipefail
 </span></span><span style="display:flex;"><span>
 </span></span><span style="display:flex;"><span>DIST<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>OPENCLAW_DIST<span style="color:#66d9ef">:-</span><span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
 </span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> <span style="color:#f92672">[[</span> -z <span style="color:#e6db74">&#34;</span>$DIST<span style="color:#e6db74">&#34;</span> <span style="color:#f92672">]]</span>; <span style="color:#66d9ef">then</span>
 </span></span><span style="display:flex;"><span>  <span style="color:#66d9ef">for</span> p in <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>    /usr/local/lib/node_modules/openclaw/dist <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>    /usr/lib/node_modules/openclaw/dist <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>    /opt/openclaw/dist; <span style="color:#66d9ef">do</span>
+</span></span></span><span style="display:flex;"><span>    /usr/local/lib/node_modules/openclaw/dist <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span>    /usr/lib/node_modules/openclaw/dist <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span>    /opt/openclaw/dist; <span style="color:#66d9ef">do</span>
 </span></span><span style="display:flex;"><span>    <span style="color:#f92672">[[</span> -d <span style="color:#e6db74">&#34;</span>$p<span style="color:#e6db74">&#34;</span> <span style="color:#f92672">]]</span> <span style="color:#f92672">&amp;&amp;</span> DIST<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span>$p<span style="color:#e6db74">&#34;</span> <span style="color:#f92672">&amp;&amp;</span> break
 </span></span><span style="display:flex;"><span>  <span style="color:#66d9ef">done</span>
 </span></span><span style="display:flex;"><span><span style="color:#66d9ef">fi</span>
@@ -376,16 +376,16 @@
 </span></span><span style="display:flex;"><span>node --check <span style="color:#e6db74">&#34;</span>$FILE<span style="color:#e6db74">&#34;</span>
 </span></span><span style="display:flex;"><span>openclaw infer model run --gateway --model newapi/glm-latest --prompt <span style="color:#e6db74">&#34;只回复 OK&#34;</span>
 </span></span></code></pre></div><h2 id="9-一键自动修复脚本macos-26">9. 一键自动修复脚本：macOS 26</h2>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e">#!/usr/bin/env bash
-</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>set -euo pipefail
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e">#!/usr/bin/env bash
+</span></span></span><span style="display:flex;"><span>set -euo pipefail
 </span></span><span style="display:flex;"><span>
 </span></span><span style="display:flex;"><span>DIST<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>OPENCLAW_DIST<span style="color:#66d9ef">:-</span><span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
 </span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> <span style="color:#f92672">[[</span> -z <span style="color:#e6db74">&#34;</span>$DIST<span style="color:#e6db74">&#34;</span> <span style="color:#f92672">]]</span>; <span style="color:#66d9ef">then</span>
 </span></span><span style="display:flex;"><span>  NPM_PREFIX<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#66d9ef">$(</span>npm prefix -g 2&gt;/dev/null <span style="color:#f92672">||</span> true<span style="color:#66d9ef">)</span><span style="color:#e6db74">&#34;</span>
 </span></span><span style="display:flex;"><span>  <span style="color:#66d9ef">for</span> p in <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>    <span style="color:#e6db74">&#34;</span>$NPM_PREFIX<span style="color:#e6db74">/lib/node_modules/openclaw/dist&#34;</span> <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>    /opt/homebrew/lib/node_modules/openclaw/dist <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>    /usr/local/lib/node_modules/openclaw/dist; <span style="color:#66d9ef">do</span>
+</span></span></span><span style="display:flex;"><span>    <span style="color:#e6db74">&#34;</span>$NPM_PREFIX<span style="color:#e6db74">/lib/node_modules/openclaw/dist&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span>    /opt/homebrew/lib/node_modules/openclaw/dist <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span>    /usr/local/lib/node_modules/openclaw/dist; <span style="color:#66d9ef">do</span>
 </span></span><span style="display:flex;"><span>    <span style="color:#f92672">[[</span> -d <span style="color:#e6db74">&#34;</span>$p<span style="color:#e6db74">&#34;</span> <span style="color:#f92672">]]</span> <span style="color:#f92672">&amp;&amp;</span> DIST<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span>$p<span style="color:#e6db74">&#34;</span> <span style="color:#f92672">&amp;&amp;</span> break
 </span></span><span style="display:flex;"><span>  <span style="color:#66d9ef">done</span>
 </span></span><span style="display:flex;"><span><span style="color:#66d9ef">fi</span>
@@ -408,7 +408,7 @@
 </span></span><span style="display:flex;"><span>openclaw infer model run --gateway --model newapi/glm-latest --prompt <span style="color:#e6db74">&#34;只回复 OK&#34;</span>
 </span></span></code></pre></div><h2 id="10-agent-自动配置方法">10. Agent 自动配置方法</h2>
 <p>如果你是让 Agent 自动处理，建议不要只给一句“修一下 OpenClaw”。更稳的提示词可以这样写：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>请在不泄露任何密钥、内网地址、主机名的前提下，排查 OpenClaw gateway 调用模型时报 missing scope: operator.write 的问题。
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>请在不泄露任何密钥、内网地址、主机名的前提下，排查 OpenClaw gateway 调用模型时报 missing scope: operator.write 的问题。
 </span></span><span style="display:flex;"><span>要求：
 </span></span><span style="display:flex;"><span>1. 先验证 local 模型调用和 gateway 模型调用的差异；
 </span></span><span style="display:flex;"><span>2. 检查 openclaw devices list 中 operator 设备是否包含 operator.write；
@@ -426,7 +426,7 @@
 <li><code>newapi/glm-fallback</code></li>
 </ul>
 <p>状态里可以看到 fallback 列表已经生效，gateway 连通性也恢复正常。</p>
-<p><img alt="真实终端截图：fallback 模型列表和 gateway 状态检查" src="/post-images/openclaw-missing-operator-write-scope/05-models-status-fallbacks.png"></p>
+<p><img src="/post-images/openclaw-missing-operator-write-scope/05-models-status-fallbacks.png" alt="真实终端截图：fallback 模型列表和 gateway 状态检查"></p>
 <p>这里有一个经验：fallback 不只是“配置几行模型名”。真正可用的 fallback 要同时满足三件事：</p>
 <ol>
 <li>模型供应商能通。</li>

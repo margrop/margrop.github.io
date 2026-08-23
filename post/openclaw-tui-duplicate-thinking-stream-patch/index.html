@@ -215,7 +215,7 @@
 <p>临时解决思路很简单：备份本地安装文件，在 OpenClaw 的运行聚合层增加一个非常保守的去重保护；它只处理“同一轮、同一模型、完全重复的 text/thinking 块”，然后重启 gateway，用 marker 测试确认 TUI 和 session 落盘都只剩一份内容。</p>
 </blockquote>
 <p>本文是一份可复用的临时修复记录。所有路径、模型名、网关地址和 Token 都做了脱敏处理，真实环境请用自己的安装路径和模型名替换。不要把本文里的占位符当成真实配置直接复制。</p>
-<p><img alt="OpenClaw TUI duplicate reply patch" src="/post-images/openclaw-tui-duplicate-thinking-stream-patch/01-cover.svg"></p>
+<p><img src="/post-images/openclaw-tui-duplicate-thinking-stream-patch/01-cover.svg" alt="OpenClaw TUI duplicate reply patch"></p>
 <p><em>图 1：本文关注的是 OpenClaw TUI/agent 输出重复，不是简单的终端显示闪烁。</em></p>
 <h2 id="1-问题背景为什么这个问题很容易被误判">1. 问题背景：为什么这个问题很容易被误判</h2>
 <p>OpenClaw 这类 Agent 工具通常会把很多层东西串在一起：本地 TUI、gateway、agent runner、模型 provider、OpenAI-compatible 网关、上游模型、session 日志、工具调用事件、thinking/reasoning 字段、回复正文以及最后的投递渠道。任何一层出问题，表面上都可能表现成“回复不对”。</p>
@@ -232,52 +232,52 @@
 <h2 id="2-问题表现判断你是不是同类故障">2. 问题表现：判断你是不是同类故障</h2>
 <p>这类故障通常有几个共同特征。第一，重复内容会写入 OpenClaw 的 session 文件。也就是说，它不只是 TUI 渲染时多显示一遍。你可以找到最近的 session <code>.jsonl</code> 文件，搜索刚刚测试用的 marker。如果 assistant message 的 <code>content</code> 里已经是重复文本，说明问题发生在渲染之前。</p>
 <p>第二，重复常常是“整段重复”，不是随机多字。比如正文块是：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>OC_TEST_ONCEOC_TEST_ONCE
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>OC_TEST_ONCEOC_TEST_ONCE
 </span></span></code></pre></div><p>thinking 块也可能是完整段落重复：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>The user asks ... I should answer exactly once.
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>The user asks ... I should answer exactly once.
 </span></span><span style="display:flex;"><span>The user asks ... I should answer exactly once.
 </span></span></code></pre></div><p>第三，直接用非流式请求打到同一个 OpenAI-compatible 网关时，结果可能是正常的；而流式路径才会重复。这一点很关键，因为它把问题范围从“模型总是复读”缩小到“流式解析/聚合路径有兼容性问题”。第四，OpenClaw 里模型列表可能看起来完全正常。你用 <code>openclaw models list</code> 看到只有一个主模型、一个备用模型，并不代表流式事件不会重复。模型配置清爽和流式协议兼容是两件事。</p>
 <h2 id="3-先收集证据不要直接改配置">3. 先收集证据：不要直接改配置</h2>
 <p>推荐用一个唯一 marker 做测试，例如：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>MARKER<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;OC_DEDUPE_TEST_</span><span style="color:#66d9ef">$(</span>date +%H%M%S<span style="color:#66d9ef">)</span><span style="color:#e6db74">&#34;</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>MARKER<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;OC_DEDUPE_TEST_</span><span style="color:#66d9ef">$(</span>date +%H%M%S<span style="color:#66d9ef">)</span><span style="color:#e6db74">&#34;</span>
 </span></span><span style="display:flex;"><span>openclaw agent <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  --agent main <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  --session-key <span style="color:#e6db74">&#34;agent:main:dedupe-test-</span><span style="color:#e6db74">${</span>MARKER<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span> <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  --message <span style="color:#e6db74">&#34;Reply exactly once with: </span><span style="color:#e6db74">${</span>MARKER<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span> <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  --timeout <span style="color:#ae81ff">120</span> <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  --json
+</span></span></span><span style="display:flex;"><span>  --agent main <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span>  --session-key <span style="color:#e6db74">&#34;agent:main:dedupe-test-</span><span style="color:#e6db74">${</span>MARKER<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span>  --message <span style="color:#e6db74">&#34;Reply exactly once with: </span><span style="color:#e6db74">${</span>MARKER<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span>  --timeout <span style="color:#ae81ff">120</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span>  --json
 </span></span></code></pre></div><p>如果输出变成：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>OC_DEDUPE_TEST_101820OC_DEDUPE_TEST_101820
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>OC_DEDUPE_TEST_101820OC_DEDUPE_TEST_101820
 </span></span></code></pre></div><p>继续检查 session 落盘：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>SESSION_FILE<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;&lt;从 JSON 输出里拿到的 sessionFile&gt;&#34;</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>SESSION_FILE<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;&lt;从 JSON 输出里拿到的 sessionFile&gt;&#34;</span>
 </span></span><span style="display:flex;"><span>grep -n <span style="color:#e6db74">&#34;OC_DEDUPE_TEST&#34;</span> <span style="color:#e6db74">&#34;</span>$SESSION_FILE<span style="color:#e6db74">&#34;</span>
 </span></span></code></pre></div><p>如果 assistant message 里已经重复，说明不是 TUI 单纯渲染问题。再用 OpenAI-compatible 接口做流式和非流式对比。示意命令如下，注意把 <code>&lt;BASE_URL&gt;</code>、<code>&lt;API_KEY&gt;</code>、<code>&lt;MODEL_ID&gt;</code> 换成自己的值：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>curl -sS <span style="color:#e6db74">&#34;</span>$BASE_URL<span style="color:#e6db74">/chat/completions&#34;</span> <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  -H <span style="color:#e6db74">&#34;Authorization: Bearer </span>$API_KEY<span style="color:#e6db74">&#34;</span> <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  -H <span style="color:#e6db74">&#34;Content-Type: application/json&#34;</span> <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  -d <span style="color:#e6db74">&#39;{
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>curl -sS <span style="color:#e6db74">&#34;</span>$BASE_URL<span style="color:#e6db74">/chat/completions&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span>  -H <span style="color:#e6db74">&#34;Authorization: Bearer </span>$API_KEY<span style="color:#e6db74">&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span>  -H <span style="color:#e6db74">&#34;Content-Type: application/json&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span>  -d <span style="color:#e6db74">&#39;{
 </span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    &#34;model&#34;: &#34;&lt;MODEL_ID&gt;&#34;,
 </span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    &#34;messages&#34;: [{&#34;role&#34;:&#34;user&#34;,&#34;content&#34;:&#34;Reply exactly once with: PING_ONCE&#34;}],
 </span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    &#34;stream&#34;: false
 </span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  }&#39;</span> | jq <span style="color:#e6db74">&#39;.choices[0].message.content&#39;</span>
 </span></span></code></pre></div><p>然后测试流式：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>curl -N <span style="color:#e6db74">&#34;</span>$BASE_URL<span style="color:#e6db74">/chat/completions&#34;</span> <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  -H <span style="color:#e6db74">&#34;Authorization: Bearer </span>$API_KEY<span style="color:#e6db74">&#34;</span> <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  -H <span style="color:#e6db74">&#34;Content-Type: application/json&#34;</span> <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  -d <span style="color:#e6db74">&#39;{
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>curl -N <span style="color:#e6db74">&#34;</span>$BASE_URL<span style="color:#e6db74">/chat/completions&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span>  -H <span style="color:#e6db74">&#34;Authorization: Bearer </span>$API_KEY<span style="color:#e6db74">&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span>  -H <span style="color:#e6db74">&#34;Content-Type: application/json&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span>  -d <span style="color:#e6db74">&#39;{
 </span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    &#34;model&#34;: &#34;&lt;MODEL_ID&gt;&#34;,
 </span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    &#34;messages&#34;: [{&#34;role&#34;:&#34;user&#34;,&#34;content&#34;:&#34;Reply exactly once with: STREAM_ONCE&#34;}],
 </span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    &#34;stream&#34;: true
 </span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  }&#39;</span>
 </span></span></code></pre></div><p>正常的 OpenAI Chat Completions 流式客户端应该累计 <code>choices[].delta</code>，最后看到 <code>finish_reason</code> 后结束。若你的兼容网关在最后又吐出一个带完整 <code>message.content</code> 的尾块，而某层 SDK/adapter 又把它当成一次可追加事件，就会得到两份文本。</p>
-<p><img alt="正常流式协议只累计 delta" src="/post-images/openclaw-tui-duplicate-thinking-stream-patch/02-stream-contract.svg"></p>
+<p><img src="/post-images/openclaw-tui-duplicate-thinking-stream-patch/02-stream-contract.svg" alt="正常流式协议只累计 delta"></p>
 <p><em>图 2：正常流式客户端只累计增量 delta，最终得到一份完整文本。</em></p>
-<p><img alt="额外完整 message 尾块可能导致重复累计" src="/post-images/openclaw-tui-duplicate-thinking-stream-patch/03-bad-tail.svg"></p>
+<p><img src="/post-images/openclaw-tui-duplicate-thinking-stream-patch/03-bad-tail.svg" alt="额外完整 message 尾块可能导致重复累计"></p>
 <p><em>图 3：如果增量之后又出现完整 message，朴素累计器就可能把两份都拼进去。</em></p>
 <h2 id="4-根因不是两个模型同时回答而是流事件被重复聚合">4. 根因：不是两个模型同时回答，而是流事件被重复聚合</h2>
 <p>这次的根因可以概括成一句话：<strong>OpenAI-compatible 网关返回了 OpenClaw 当前路径不完全兼容的流式事件形状，OpenClaw 上层又缺少足够保守的重复折叠。</strong></p>
 <p>直接非流式请求正常，说明模型不是必然复读；直接调用基础 provider 流式库也可能正常，说明底层库本身未必总是错；但是 OpenClaw agent runner 带完整系统提示、工具上下文、session 写入和消息事件聚合时，会看到重复的 <code>text_delta</code> 和重复的 thinking 事件。raw stream 里能观察到这样的模式：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>thinking_delta: &#34;The user is ...&#34;
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>thinking_delta: &#34;The user is ...&#34;
 </span></span><span style="display:flex;"><span>text_delta:     &#34;OC_TEST_ONCE&#34;
 </span></span><span style="display:flex;"><span>thinking_delta: &#34;The user is ...&#34;        # 完整重复
 </span></span><span style="display:flex;"><span>text_delta:     &#34;OC_TEST_ONCE&#34;           # 完整重复
@@ -286,7 +286,7 @@
 <h2 id="5-临时解决方案先备份再打本地补丁">5. 临时解决方案：先备份，再打本地补丁</h2>
 <p>下面这份脚本是“临时止血”思路，不是上游永久修复。它适合 macOS/Homebrew 或全局 npm 风格安装的 OpenClaw。其他安装方式请先找到自己的 OpenClaw 安装目录。</p>
 <h3 id="51-找到安装文件并备份">5.1 找到安装文件并备份</h3>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>OPENCLAW_ROOT<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#66d9ef">$(</span>npm root -g 2&gt;/dev/null<span style="color:#66d9ef">)</span><span style="color:#e6db74">/openclaw&#34;</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>OPENCLAW_ROOT<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#66d9ef">$(</span>npm root -g 2&gt;/dev/null<span style="color:#66d9ef">)</span><span style="color:#e6db74">/openclaw&#34;</span>
 </span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> <span style="color:#f92672">[</span> ! -d <span style="color:#e6db74">&#34;</span>$OPENCLAW_ROOT<span style="color:#e6db74">&#34;</span> <span style="color:#f92672">]</span>; <span style="color:#66d9ef">then</span>
 </span></span><span style="display:flex;"><span>  OPENCLAW_ROOT<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;/opt/homebrew/lib/node_modules/openclaw&#34;</span>
 </span></span><span style="display:flex;"><span><span style="color:#66d9ef">fi</span>
@@ -304,7 +304,7 @@
 </span></span></code></pre></div><p>不要跳过备份。因为这是直接修改本地安装目录，升级 OpenClaw 或重新安装时也可能覆盖它。</p>
 <h3 id="52-给-openclaw-聚合层加重复折叠">5.2 给 OpenClaw 聚合层加重复折叠</h3>
 <p>下面脚本会做三件事：<code>text_delta</code> 如果等于当前已累计文本，就跳过；assistant message 结束前，如果 text/thinking 是精确的“前半段 + 后半段”重复，就折半；如果 content 数组里有完全相同的 text/thinking block，只保留一份。</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>python3 - <span style="color:#e6db74">&lt;&lt;&#39;PATCH_PY&#39;
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>python3 - <span style="color:#e6db74">&lt;&lt;&#39;PATCH_PY&#39;
 </span></span></span><span style="display:flex;"><span><span style="color:#e6db74">from pathlib import Path
 </span></span></span><span style="display:flex;"><span><span style="color:#e6db74">import os
 </span></span></span><span style="display:flex;"><span><span style="color:#e6db74">root = Path(os.environ.get(&#39;OPENCLAW_ROOT&#39;, &#39;/opt/homebrew/lib/node_modules/openclaw&#39;))
@@ -378,7 +378,7 @@
 </span></span></code></pre></div><p>这段补丁故意写得保守：它不尝试理解语义，只处理完全重复。也就是说，如果模型真的写了两段不同内容，它不会合并；如果模型输出的是完全重复的前后两半，它才折叠。</p>
 <h3 id="53-可选给-provider-流式尾块加保护">5.3 可选：给 provider 流式尾块加保护</h3>
 <p>有些兼容网关会在 <code>finish_reason</code> 后继续发尾块。可以给 pi-ai 的 OpenAI completions provider 加一条防线：已经看到 <code>finish_reason</code> 后，不再继续处理后续 chunk。</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>python3 - <span style="color:#e6db74">&lt;&lt;&#39;PATCH_PY&#39;
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>python3 - <span style="color:#e6db74">&lt;&lt;&#39;PATCH_PY&#39;
 </span></span></span><span style="display:flex;"><span><span style="color:#e6db74">from pathlib import Path
 </span></span></span><span style="display:flex;"><span><span style="color:#e6db74">import os
 </span></span></span><span style="display:flex;"><span><span style="color:#e6db74">root = Path(os.environ.get(&#39;OPENCLAW_ROOT&#39;, &#39;/opt/homebrew/lib/node_modules/openclaw&#39;))
@@ -401,15 +401,15 @@
 <h3 id="54-一份完整可执行的自动补丁脚本">5.4 一份完整可执行的自动补丁脚本</h3>
 <p>如果你不想分段复制上面的命令，可以直接使用下面这份完整脚本。它会自动寻找 OpenClaw 安装目录、备份目标文件、检查补丁锚点、写入补丁，并支持 <code>--dry-run</code> 预检查和 <code>--restart</code> 自动重启 gateway。</p>
 <p>推荐执行顺序是：先 dry-run，再真正打补丁，最后重启并验证。</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>mkdir -p ~/.openclaw/patches
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>mkdir -p ~/.openclaw/patches
 </span></span><span style="display:flex;"><span>nano ~/.openclaw/patches/patch_openclaw_duplicate_stream.py
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># 粘贴下面完整脚本后保存</span>
 </span></span><span style="display:flex;"><span>python3 ~/.openclaw/patches/patch_openclaw_duplicate_stream.py --dry-run
 </span></span><span style="display:flex;"><span>python3 ~/.openclaw/patches/patch_openclaw_duplicate_stream.py --restart
 </span></span></code></pre></div><p>如果你的 OpenClaw 不在默认位置，可以显式指定安装目录：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>python3 ~/.openclaw/patches/patch_openclaw_duplicate_stream.py --root /path/to/openclaw --restart
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>python3 ~/.openclaw/patches/patch_openclaw_duplicate_stream.py --root /path/to/openclaw --restart
 </span></span></code></pre></div><p>完整脚本如下：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-python" data-lang="python"><span style="display:flex;"><span><span style="color:#75715e">#!/usr/bin/env python3</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-python" data-lang="python"><span style="display:flex;"><span><span style="color:#75715e">#!/usr/bin/env python3</span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># Patch local OpenClaw runtime files to suppress exact duplicate thinking/text</span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># content from OpenAI-compatible streaming responses.</span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e">#</span>
@@ -433,45 +433,45 @@
 </span></span><span style="display:flex;"><span>
 </span></span><span style="display:flex;"><span>SELECTION_TEXT_DELTA_OLD <span style="color:#f92672">=</span> <span style="color:#e6db74">&#39;if (evtType === &#34;text_delta&#34;) return delta;&#39;</span>
 </span></span><span style="display:flex;"><span>SELECTION_TEXT_DELTA_NEW <span style="color:#f92672">=</span> <span style="color:#e6db74">&#39;&#39;&#39;if (evtType === &#34;text_delta&#34;) {
-</span></span></span><span style="display:flex;"><span><span style="color:#e6db74"></span><span style="color:#ae81ff">\t\t\t</span><span style="color:#e6db74">if (delta &amp;&amp; accumulatedText &amp;&amp; delta === accumulatedText) return &#34;&#34;;
-</span></span></span><span style="display:flex;"><span><span style="color:#e6db74"></span><span style="color:#ae81ff">\t\t\t</span><span style="color:#e6db74">return delta;
-</span></span></span><span style="display:flex;"><span><span style="color:#e6db74"></span><span style="color:#ae81ff">\t\t</span><span style="color:#e6db74">}&#39;&#39;&#39;</span>
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff">\t\t\t</span><span style="color:#e6db74">if (delta &amp;&amp; accumulatedText &amp;&amp; delta === accumulatedText) return &#34;&#34;;
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff">\t\t\t</span><span style="color:#e6db74">return delta;
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff">\t\t</span><span style="color:#e6db74">}&#39;&#39;&#39;</span>
 </span></span><span style="display:flex;"><span>
 </span></span><span style="display:flex;"><span>HELPER_ANCHOR <span style="color:#f92672">=</span> <span style="color:#e6db74">&#39;function resolveSilentReplyFallbackText(params) {&#39;</span>
 </span></span><span style="display:flex;"><span>HELPER_CODE <span style="color:#f92672">=</span> <span style="color:#e6db74">&#39;&#39;&#39;function collapseExactDoubledString(value) {
-</span></span></span><span style="display:flex;"><span><span style="color:#e6db74"></span><span style="color:#ae81ff">\t\t</span><span style="color:#e6db74">if (typeof value !== &#34;string&#34; || value.length &lt; 8 || value.length % 2 !== 0) return value;
-</span></span></span><span style="display:flex;"><span><span style="color:#e6db74"></span><span style="color:#ae81ff">\t\t</span><span style="color:#e6db74">const half = value.length / 2;
-</span></span></span><span style="display:flex;"><span><span style="color:#e6db74"></span><span style="color:#ae81ff">\t\t</span><span style="color:#e6db74">const first = value.slice(0, half);
-</span></span></span><span style="display:flex;"><span><span style="color:#e6db74"></span><span style="color:#ae81ff">\t\t</span><span style="color:#e6db74">return first === value.slice(half) ? first : value;
-</span></span></span><span style="display:flex;"><span><span style="color:#e6db74"></span><span style="color:#ae81ff">\t</span><span style="color:#e6db74">}
-</span></span></span><span style="display:flex;"><span><span style="color:#e6db74"></span><span style="color:#ae81ff">\t</span><span style="color:#e6db74">function normalizeDedupeText(value) {
-</span></span></span><span style="display:flex;"><span><span style="color:#e6db74"></span><span style="color:#ae81ff">\t\t</span><span style="color:#e6db74">return typeof value === &#34;string&#34; ? value.trim().replace(/</span><span style="color:#ae81ff">\\</span><span style="color:#e6db74">s+/g, &#34; &#34;) : &#34;&#34;;
-</span></span></span><span style="display:flex;"><span><span style="color:#e6db74"></span><span style="color:#ae81ff">\t</span><span style="color:#e6db74">}
-</span></span></span><span style="display:flex;"><span><span style="color:#e6db74"></span><span style="color:#ae81ff">\t</span><span style="color:#e6db74">function dedupeOpenAiCompatAssistantMessage(message) {
-</span></span></span><span style="display:flex;"><span><span style="color:#e6db74"></span><span style="color:#ae81ff">\t\t</span><span style="color:#e6db74">if (!message || message.role !== &#34;assistant&#34; || !Array.isArray(message.content)) return;
-</span></span></span><span style="display:flex;"><span><span style="color:#e6db74"></span><span style="color:#ae81ff">\t\t</span><span style="color:#e6db74">const seenThinking = new Set();
-</span></span></span><span style="display:flex;"><span><span style="color:#e6db74"></span><span style="color:#ae81ff">\t\t</span><span style="color:#e6db74">const seenText = new Set();
-</span></span></span><span style="display:flex;"><span><span style="color:#e6db74"></span><span style="color:#ae81ff">\t\t</span><span style="color:#e6db74">const next = [];
-</span></span></span><span style="display:flex;"><span><span style="color:#e6db74"></span><span style="color:#ae81ff">\t\t</span><span style="color:#e6db74">for (const block of message.content) {
-</span></span></span><span style="display:flex;"><span><span style="color:#e6db74"></span><span style="color:#ae81ff">\t\t\t</span><span style="color:#e6db74">if (!block || typeof block !== &#34;object&#34;) { next.push(block); continue; }
-</span></span></span><span style="display:flex;"><span><span style="color:#e6db74"></span><span style="color:#ae81ff">\t\t\t</span><span style="color:#e6db74">if (block.type === &#34;text&#34; &amp;&amp; typeof block.text === &#34;string&#34;) {
-</span></span></span><span style="display:flex;"><span><span style="color:#e6db74"></span><span style="color:#ae81ff">\t\t\t\t</span><span style="color:#e6db74">block.text = collapseExactDoubledString(block.text);
-</span></span></span><span style="display:flex;"><span><span style="color:#e6db74"></span><span style="color:#ae81ff">\t\t\t\t</span><span style="color:#e6db74">const key = normalizeDedupeText(block.text);
-</span></span></span><span style="display:flex;"><span><span style="color:#e6db74"></span><span style="color:#ae81ff">\t\t\t\t</span><span style="color:#e6db74">if (key &amp;&amp; seenText.has(key)) continue;
-</span></span></span><span style="display:flex;"><span><span style="color:#e6db74"></span><span style="color:#ae81ff">\t\t\t\t</span><span style="color:#e6db74">if (key) seenText.add(key);
-</span></span></span><span style="display:flex;"><span><span style="color:#e6db74"></span><span style="color:#ae81ff">\t\t\t</span><span style="color:#e6db74">} else if (block.type === &#34;thinking&#34; &amp;&amp; typeof block.thinking === &#34;string&#34;) {
-</span></span></span><span style="display:flex;"><span><span style="color:#e6db74"></span><span style="color:#ae81ff">\t\t\t\t</span><span style="color:#e6db74">block.thinking = collapseExactDoubledString(block.thinking);
-</span></span></span><span style="display:flex;"><span><span style="color:#e6db74"></span><span style="color:#ae81ff">\t\t\t\t</span><span style="color:#e6db74">const key = `${block.thinkingSignature ?? &#34;&#34;}:${normalizeDedupeText(block.thinking)}`;
-</span></span></span><span style="display:flex;"><span><span style="color:#e6db74"></span><span style="color:#ae81ff">\t\t\t\t</span><span style="color:#e6db74">if (key !== &#34;:&#34; &amp;&amp; seenThinking.has(key)) continue;
-</span></span></span><span style="display:flex;"><span><span style="color:#e6db74"></span><span style="color:#ae81ff">\t\t\t\t</span><span style="color:#e6db74">if (key !== &#34;:&#34;) seenThinking.add(key);
-</span></span></span><span style="display:flex;"><span><span style="color:#e6db74"></span><span style="color:#ae81ff">\t\t\t</span><span style="color:#e6db74">} else if (block.type === &#34;toolCall&#34; &amp;&amp; typeof block.partialArgs === &#34;string&#34;) {
-</span></span></span><span style="display:flex;"><span><span style="color:#e6db74"></span><span style="color:#ae81ff">\t\t\t\t</span><span style="color:#e6db74">block.partialArgs = collapseExactDoubledString(block.partialArgs);
-</span></span></span><span style="display:flex;"><span><span style="color:#e6db74"></span><span style="color:#ae81ff">\t\t\t</span><span style="color:#e6db74">}
-</span></span></span><span style="display:flex;"><span><span style="color:#e6db74"></span><span style="color:#ae81ff">\t\t\t</span><span style="color:#e6db74">next.push(block);
-</span></span></span><span style="display:flex;"><span><span style="color:#e6db74"></span><span style="color:#ae81ff">\t\t</span><span style="color:#e6db74">}
-</span></span></span><span style="display:flex;"><span><span style="color:#e6db74"></span><span style="color:#ae81ff">\t\t</span><span style="color:#e6db74">message.content = next;
-</span></span></span><span style="display:flex;"><span><span style="color:#e6db74"></span><span style="color:#ae81ff">\t</span><span style="color:#e6db74">}
-</span></span></span><span style="display:flex;"><span><span style="color:#e6db74"></span><span style="color:#ae81ff">\t</span><span style="color:#e6db74">&#39;&#39;&#39;</span>
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff">\t\t</span><span style="color:#e6db74">if (typeof value !== &#34;string&#34; || value.length &lt; 8 || value.length % 2 !== 0) return value;
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff">\t\t</span><span style="color:#e6db74">const half = value.length / 2;
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff">\t\t</span><span style="color:#e6db74">const first = value.slice(0, half);
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff">\t\t</span><span style="color:#e6db74">return first === value.slice(half) ? first : value;
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff">\t</span><span style="color:#e6db74">}
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff">\t</span><span style="color:#e6db74">function normalizeDedupeText(value) {
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff">\t\t</span><span style="color:#e6db74">return typeof value === &#34;string&#34; ? value.trim().replace(/</span><span style="color:#ae81ff">\\</span><span style="color:#e6db74">s+/g, &#34; &#34;) : &#34;&#34;;
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff">\t</span><span style="color:#e6db74">}
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff">\t</span><span style="color:#e6db74">function dedupeOpenAiCompatAssistantMessage(message) {
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff">\t\t</span><span style="color:#e6db74">if (!message || message.role !== &#34;assistant&#34; || !Array.isArray(message.content)) return;
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff">\t\t</span><span style="color:#e6db74">const seenThinking = new Set();
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff">\t\t</span><span style="color:#e6db74">const seenText = new Set();
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff">\t\t</span><span style="color:#e6db74">const next = [];
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff">\t\t</span><span style="color:#e6db74">for (const block of message.content) {
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff">\t\t\t</span><span style="color:#e6db74">if (!block || typeof block !== &#34;object&#34;) { next.push(block); continue; }
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff">\t\t\t</span><span style="color:#e6db74">if (block.type === &#34;text&#34; &amp;&amp; typeof block.text === &#34;string&#34;) {
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff">\t\t\t\t</span><span style="color:#e6db74">block.text = collapseExactDoubledString(block.text);
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff">\t\t\t\t</span><span style="color:#e6db74">const key = normalizeDedupeText(block.text);
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff">\t\t\t\t</span><span style="color:#e6db74">if (key &amp;&amp; seenText.has(key)) continue;
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff">\t\t\t\t</span><span style="color:#e6db74">if (key) seenText.add(key);
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff">\t\t\t</span><span style="color:#e6db74">} else if (block.type === &#34;thinking&#34; &amp;&amp; typeof block.thinking === &#34;string&#34;) {
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff">\t\t\t\t</span><span style="color:#e6db74">block.thinking = collapseExactDoubledString(block.thinking);
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff">\t\t\t\t</span><span style="color:#e6db74">const key = `${block.thinkingSignature ?? &#34;&#34;}:${normalizeDedupeText(block.thinking)}`;
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff">\t\t\t\t</span><span style="color:#e6db74">if (key !== &#34;:&#34; &amp;&amp; seenThinking.has(key)) continue;
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff">\t\t\t\t</span><span style="color:#e6db74">if (key !== &#34;:&#34;) seenThinking.add(key);
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff">\t\t\t</span><span style="color:#e6db74">} else if (block.type === &#34;toolCall&#34; &amp;&amp; typeof block.partialArgs === &#34;string&#34;) {
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff">\t\t\t\t</span><span style="color:#e6db74">block.partialArgs = collapseExactDoubledString(block.partialArgs);
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff">\t\t\t</span><span style="color:#e6db74">}
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff">\t\t\t</span><span style="color:#e6db74">next.push(block);
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff">\t\t</span><span style="color:#e6db74">}
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff">\t\t</span><span style="color:#e6db74">message.content = next;
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff">\t</span><span style="color:#e6db74">}
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff">\t</span><span style="color:#e6db74">&#39;&#39;&#39;</span>
 </span></span><span style="display:flex;"><span>
 </span></span><span style="display:flex;"><span>UPDATE_LAST_OLD <span style="color:#f92672">=</span> <span style="color:#e6db74">&#39;if (msg?.role !== &#34;assistant&#34; || isTranscriptOnlyOpenClawAssistantMessage$1(msg)) return;</span><span style="color:#ae81ff">\n\t</span><span style="color:#e6db74">ctx.noteLastAssistant(msg);&#39;</span>
 </span></span><span style="display:flex;"><span>UPDATE_LAST_NEW <span style="color:#f92672">=</span> <span style="color:#e6db74">&#39;if (msg?.role !== &#34;assistant&#34; || isTranscriptOnlyOpenClawAssistantMessage$1(msg)) return;</span><span style="color:#ae81ff">\n\t</span><span style="color:#e6db74">dedupeOpenAiCompatAssistantMessage(msg);</span><span style="color:#ae81ff">\n\t</span><span style="color:#e6db74">ctx.noteLastAssistant(msg);&#39;</span>
@@ -669,32 +669,32 @@
 </span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> __name__ <span style="color:#f92672">==</span> <span style="color:#e6db74">&#34;__main__&#34;</span>:
 </span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">raise</span> <span style="color:#a6e22e">SystemExit</span>(main())
 </span></span></code></pre></div><p>脚本退出码也可以用于自动化：<code>0</code> 表示检查或补丁成功，<code>2</code> 表示没有找到安装目录、关键文件或预期代码锚点。遇到 <code>2</code> 时不要硬改，先确认 OpenClaw 版本是否已经变化。</p>
-<p><img alt="临时补丁的三个检查点" src="/post-images/openclaw-tui-duplicate-thinking-stream-patch/04-patch-points.svg"></p>
+<p><img src="/post-images/openclaw-tui-duplicate-thinking-stream-patch/04-patch-points.svg" alt="临时补丁的三个检查点"></p>
 <p><em>图 4：备份、折叠重复、验证，是这类本地补丁的最小闭环。</em></p>
 <h2 id="6-重启-gateway-并验证">6. 重启 gateway 并验证</h2>
 <p>补丁写入后，重启 OpenClaw gateway。macOS LaunchAgent 环境常见命令如下：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>launchctl kickstart -k gui/<span style="color:#66d9ef">$(</span>id -u<span style="color:#66d9ef">)</span>/ai.openclaw.gateway
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>launchctl kickstart -k gui/<span style="color:#66d9ef">$(</span>id -u<span style="color:#66d9ef">)</span>/ai.openclaw.gateway
 </span></span></code></pre></div><p>如果你用的是其他启动方式，例如 systemd、手动 node 命令或容器，请用对应方式重启。重启后不要只看进程存在，要看 gateway 是否 ready，再跑一次 marker 测试：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>MARKER<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;OC_FIX_OK_</span><span style="color:#66d9ef">$(</span>date +%H%M%S<span style="color:#66d9ef">)</span><span style="color:#e6db74">&#34;</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>MARKER<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;OC_FIX_OK_</span><span style="color:#66d9ef">$(</span>date +%H%M%S<span style="color:#66d9ef">)</span><span style="color:#e6db74">&#34;</span>
 </span></span><span style="display:flex;"><span>openclaw agent <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  --agent main <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  --session-key <span style="color:#e6db74">&#34;agent:main:dedupe-test-</span><span style="color:#e6db74">${</span>MARKER<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span> <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  --message <span style="color:#e6db74">&#34;Reply exactly once with: </span><span style="color:#e6db74">${</span>MARKER<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span> <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  --timeout <span style="color:#ae81ff">120</span> <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  --json
+</span></span></span><span style="display:flex;"><span>  --agent main <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span>  --session-key <span style="color:#e6db74">&#34;agent:main:dedupe-test-</span><span style="color:#e6db74">${</span>MARKER<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span>  --message <span style="color:#e6db74">&#34;Reply exactly once with: </span><span style="color:#e6db74">${</span>MARKER<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span>  --timeout <span style="color:#ae81ff">120</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span>  --json
 </span></span></code></pre></div><p>期望输出应该只有一份：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>OC_FIX_OK_101820
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>OC_FIX_OK_101820
 </span></span></code></pre></div><p>再检查 session 文件。assistant 内容应该类似这样：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-json" data-lang="json"><span style="display:flex;"><span>[
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-json" data-lang="json"><span style="display:flex;"><span>[
 </span></span><span style="display:flex;"><span>  {<span style="color:#f92672">&#34;type&#34;</span>:<span style="color:#e6db74">&#34;thinking&#34;</span>,<span style="color:#f92672">&#34;thinking&#34;</span>:<span style="color:#e6db74">&#34;...&#34;</span>},
 </span></span><span style="display:flex;"><span>  {<span style="color:#f92672">&#34;type&#34;</span>:<span style="color:#e6db74">&#34;text&#34;</span>,<span style="color:#f92672">&#34;text&#34;</span>:<span style="color:#e6db74">&#34;OC_FIX_OK_101820&#34;</span>}
 </span></span><span style="display:flex;"><span>]
 </span></span></code></pre></div><p>如果 session 文件里正文仍然是 <code>OC_FIX_OK_101820OC_FIX_OK_101820</code>，说明补丁没有命中实际运行文件，或者你的 OpenClaw 版本函数名/文件名已经变化。此时不要继续叠补丁，先确认 gateway 进程实际从哪个安装目录启动。</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>ps eww -p &lt;GATEWAY_PID&gt; | tr <span style="color:#e6db74">&#39; &#39;</span> <span style="color:#e6db74">&#39;\n&#39;</span> | grep OPENCLAW
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>ps eww -p &lt;GATEWAY_PID&gt; | tr <span style="color:#e6db74">&#39; &#39;</span> <span style="color:#e6db74">&#39;\n&#39;</span> | grep OPENCLAW
 </span></span><span style="display:flex;"><span>ps -p &lt;GATEWAY_PID&gt; -o command<span style="color:#f92672">=</span>
 </span></span></code></pre></div><h2 id="7-回滚方法">7. 回滚方法</h2>
 <p>如果补丁后出现异常，直接从备份恢复：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>cp <span style="color:#e6db74">&#34;</span>$BACKUP_DIR<span style="color:#e6db74">/selection-*.js&#34;</span> <span style="color:#e6db74">&#34;</span>$SELECTION_FILE<span style="color:#e6db74">&#34;</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>cp <span style="color:#e6db74">&#34;</span>$BACKUP_DIR<span style="color:#e6db74">/selection-*.js&#34;</span> <span style="color:#e6db74">&#34;</span>$SELECTION_FILE<span style="color:#e6db74">&#34;</span>
 </span></span><span style="display:flex;"><span>cp <span style="color:#e6db74">&#34;</span>$BACKUP_DIR<span style="color:#e6db74">/openai-completions.js&#34;</span> <span style="color:#e6db74">&#34;</span>$PROVIDER_FILE<span style="color:#e6db74">&#34;</span>
 </span></span><span style="display:flex;"><span>launchctl kickstart -k gui/<span style="color:#66d9ef">$(</span>id -u<span style="color:#66d9ef">)</span>/ai.openclaw.gateway
 </span></span></code></pre></div><p>恢复后重新跑 marker 测试。别忘了，如果你升级或重装 OpenClaw，本地安装目录里的补丁可能会消失。这并不奇怪，说明你需要重新评估新版本是否已经修复，或者重新应用临时补丁。</p>
