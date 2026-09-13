@@ -1,0 +1,781 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>内核都卸载了，DKMS 却还在为它们编译 110M 模块：揪出 i915-sriov-dkms 的“幽灵内核” - 魔都水滴</title>
+<meta name="description" content="先说结论 给 PVE 节点安装显卡虚拟化驱动 i915-sriov-dkms 时，dkms status 里冒出了 4 个&#34;从没装过的内核版本&#34;——每个都被完整编译了一份模块，磁盘上多吃了约 70MB，编译时间白白翻了五倍。而这些内核的镜像包，早在装驱动之前就被卸载干净了。 追凶的结论让人哭笑不得：这个驱动包自带的安装 …">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://blog.margrop.net/post/dkms-ghost-kernels-%E5%B9%BD%E7%81%B5%E5%86%85%E6%A0%B8/"><meta property="og:site_name" content="魔都水滴">
+<meta property="og:title" content="内核都卸载了，DKMS 却还在为它们编译 110M 模块：揪出 i915-sriov-dkms 的“幽灵内核” - 魔都水滴">
+<meta property="og:description" content="先说结论 给 PVE 节点安装显卡虚拟化驱动 i915-sriov-dkms 时，dkms status 里冒出了 4 个&#34;从没装过的内核版本&#34;——每个都被完整编译了一份模块，磁盘上多吃了约 70MB，编译时间白白翻了五倍。而这些内核的镜像包，早在装驱动之前就被卸载干净了。 追凶的结论让人哭笑不得：这个驱动包自带的安装 …">
+<meta property="og:url" content="https://blog.margrop.net/post/dkms-ghost-kernels-%E5%B9%BD%E7%81%B5%E5%86%85%E6%A0%B8/">
+<meta property="og:locale" content="zh_CN"><meta property="og:type" content="article"><meta property="og:locale:alternate" content="en_US"><meta property="og:image" content="https://blog.margrop.net/images/avatar.png"><meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="内核都卸载了，DKMS 却还在为它们编译 110M 模块：揪出 i915-sriov-dkms 的“幽灵内核” - 魔都水滴">
+<meta name="twitter:description" content="先说结论 给 PVE 节点安装显卡虚拟化驱动 i915-sriov-dkms 时，dkms status 里冒出了 4 个&#34;从没装过的内核版本&#34;——每个都被完整编译了一份模块，磁盘上多吃了约 70MB，编译时间白白翻了五倍。而这些内核的镜像包，早在装驱动之前就被卸载干净了。 追凶的结论让人哭笑不得：这个驱动包自带的安装 …"><meta name="twitter:image" content="https://blog.margrop.net/images/avatar.png"><link rel="alternate" hreflang="zh-CN" href="https://blog.margrop.net/post/dkms-ghost-kernels-%E5%B9%BD%E7%81%B5%E5%86%85%E6%A0%B8/"><link rel="alternate" hreflang="en-US" href="https://blog.margrop.net/en/post/dkms-ghost-kernels-%E5%B9%BD%E7%81%B5%E5%86%85%E6%A0%B8/"><link rel="alternate" hreflang="x-default" href="https://blog.margrop.net/"><meta property="article:published_time" content="2026-09-14T07:00:00&#43;08:00">
+<meta property="article:modified_time" content="2026-09-14T07:00:00&#43;08:00"><meta property="article:tag" content="ProxmoxVE"><meta property="article:tag" content="pve"><meta property="article:tag" content="DKMS"><meta property="article:tag" content="故障排查"><meta property="article:tag" content="运维"><meta property="article:tag" content="Troubleshooting"><meta property="article:tag" content="Linux"><meta property="article:tag" content="自动化"><meta property="article:tag" content="Windows 11"><meta property="article:tag" content="macOS"><meta property="article:tag" content="Ubuntu 26.04"><script type="application/ld+json">{"@context":"https://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"魔都水滴"},"dateModified":"2026-09-14T07:00:00+08:00","datePublished":"2026-09-14T07:00:00+08:00","description":"先说结论 给 PVE 节点安装显卡虚拟化驱动 i915-sriov-dkms 时，dkms status 里冒出了 4 个\u0026#34;从没装过的内核版本\u0026#34;——每个都被完整编译了一份模块，磁盘上多吃了约 70MB，编译时间白白翻了五倍。而这些内核的镜像包，早在装驱动之前就被卸载干净了。 追凶的结论让人哭笑不得：这个驱动包自带的安装 …","headline":"内核都卸载了，DKMS 却还在为它们编译 110M 模块：揪出 i915-sriov-dkms 的“幽灵内核”","mainEntityOfPage":"https://blog.margrop.net/post/dkms-ghost-kernels-%E5%B9%BD%E7%81%B5%E5%86%85%E6%A0%B8/","url":"https://blog.margrop.net/post/dkms-ghost-kernels-%E5%B9%BD%E7%81%B5%E5%86%85%E6%A0%B8/"}</script>
+    <meta name="baidu-site-verification" content="code-sVFZ8SER59" />
+    <script src="/js/theme-toggle.js"></script>
+
+    
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-3J2W592DHJ"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-3J2W592DHJ');
+    </script>
+
+    <style>
+    :root {
+        color-scheme: light;
+        --page-bg: #fff;
+        --surface-bg: #f4f4f4;
+        --text: #222;
+        --muted: #666;
+        --subtle: #777;
+        --border: #eee;
+        --border-strong: #ddd;
+        --link: #006CFF;
+        --tag-bg: #eee;
+        --button-bg: #fff;
+        --button-primary-bg: #333;
+    }
+    @media (prefers-color-scheme: dark) {
+        :root:not([data-theme]) {
+            color-scheme: dark;
+            --page-bg: #111315;
+            --surface-bg: #1d2126;
+            --text: #e8eaed;
+            --muted: #aeb4bd;
+            --subtle: #9aa2ad;
+            --border: #30353d;
+            --border-strong: #454c56;
+            --link: #79b8ff;
+            --tag-bg: #2a3038;
+            --button-bg: #1d2126;
+            --button-primary-bg: #e8eaed;
+        }
+    }
+    html[data-theme="dark"] {
+        color-scheme: dark;
+        --page-bg: #111315;
+        --surface-bg: #1d2126;
+        --text: #e8eaed;
+        --muted: #aeb4bd;
+        --subtle: #9aa2ad;
+        --border: #30353d;
+        --border-strong: #454c56;
+        --link: #79b8ff;
+        --tag-bg: #2a3038;
+        --button-bg: #1d2126;
+        --button-primary-bg: #e8eaed;
+    }
+    html[data-theme="light"] {
+        color-scheme: light;
+        --page-bg: #fff;
+        --surface-bg: #f4f4f4;
+        --text: #222;
+        --muted: #666;
+        --subtle: #777;
+        --border: #eee;
+        --border-strong: #ddd;
+        --link: #006CFF;
+        --tag-bg: #eee;
+        --button-bg: #fff;
+        --button-primary-bg: #333;
+    }
+    body { background: var(--page-bg); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 860px; margin: 0 auto; padding: 20px; line-height: 1.7; color: var(--text); }
+    h1 { border-bottom: 2px solid var(--border-strong); padding-bottom: 10px; }
+    article > h1 { font-size: 2em; line-height: 1.3; margin-bottom: 12px; }
+    .post-list { list-style: none; padding: 0; }
+    .post-list li { margin: 15px 0; }
+    .post-list a { text-decoration: none; color: var(--text); font-size: 18px; }
+    .post-list a:hover { color: var(--link); }
+    .date { color: var(--muted); font-size: 14px; margin-right: 10px; }
+    .tags { margin-top: 8px; }
+    .tag { background: var(--tag-bg); padding: 2px 8px; border-radius: 3px; font-size: 12px; margin-right: 5px; display: inline-block; }
+    nav { margin-bottom: 18px; border-bottom: 1px solid var(--border); padding-bottom: 15px; }
+    nav a { margin-right: 20px; text-decoration: none; color: var(--text); font-size: 16px; }
+    nav a:hover { color: var(--link); }
+    .language-switcher { display: flex; align-items: center; gap: 10px; margin: -8px 0 26px; }
+    .language-switcher a { display: inline-block; padding: 4px 10px; border: 1px solid var(--border-strong); border-radius: 999px; color: var(--muted); text-decoration: none; font-size: 14px; }
+    .language-switcher a.active { background: var(--link); border-color: var(--link); color: #fff; }
+    .content { line-height: 1.8; }
+    .content code { background: var(--surface-bg); padding: 2px 5px; border-radius: 3px; }
+    .content pre { background: var(--surface-bg); padding: 15px; overflow-x: auto; border-radius: 5px; }
+    .content img { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+    .content .code-snippet__fix {
+        margin: 0 0 1.5em;
+    }
+    .content .code-snippet__fix .code-snippet__line-index {
+        display: none !important;
+    }
+    .meta { color: var(--muted); font-size: 14px; margin-bottom: 14px; }
+    .meta-separator { margin: 0 6px; color: var(--subtle); }
+    .site-stats { display: flex; flex-wrap: wrap; gap: 10px 18px; margin: 28px 0 8px; padding-top: 12px; border-top: 1px solid var(--border); color: var(--subtle); font-size: 12px; }
+    a { color: var(--link); }
+    .hero { padding: 12px 0 24px; }
+    .hero h1 { border-bottom: 2px solid #333; }
+    .eyebrow { color: var(--muted); font-size: 12px; letter-spacing: .12em; margin: 0 0 8px; }
+    .hero-tagline { font-size: 18px; margin: 12px 0 8px; }
+    .hero-copy { color: var(--muted); margin: 0 0 14px; }
+    .hero-actions { margin: 14px 0 4px; }
+    .button { display: inline-block; margin-right: 12px; border: 1px solid var(--border-strong); border-radius: 3px; padding: 4px 10px; text-decoration: none; color: var(--text); background: var(--button-bg); font-size: 14px; }
+    .button-primary { background: var(--button-primary-bg); border-color: var(--button-primary-bg); color: var(--page-bg); }
+    .theme-toggle { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 1px solid var(--border-strong); border-radius: 999px; background: var(--button-bg); color: var(--text); cursor: pointer; font: inherit; font-size: 16px; }
+    .theme-toggle:hover { border-color: var(--link); color: var(--link); }
+    .la-theme-widget { margin: 12px 0 20px; min-height: 24px; color: var(--text); }
+    .identity-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: 16px 0; }
+    .identity-grid div { display: flex; flex-direction: column; }
+    .identity-grid strong { font-size: 15px; }
+    .identity-grid span, .topic-card span, .featured-list small { color: var(--muted); font-size: 13px; }
+    .section-block { padding-top: 28px; }
+    .section-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+    .section-heading h2 { margin: 0; }
+    .section-heading a { font-size: 14px; }
+    .topic-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+    .topic-card { display: block; padding: 14px; border: 1px solid var(--border); text-decoration: none; color: var(--text); }
+    .topic-card:hover { border-color: var(--border-strong); }
+    .topic-card strong { display: block; margin: 4px 0; font-size: 17px; }
+    .topic-index, .featured-list > a > span { color: var(--muted) !important; font-size: 12px !important; }
+    .featured-list { border-top: 1px solid var(--border); }
+    .featured-list > a { display: flex; gap: 14px; padding: 12px 0; border-bottom: 1px solid var(--border); text-decoration: none; color: var(--text); }
+    .featured-list div { display: flex; flex-direction: column; }
+    .latest-block { max-width: 860px; }
+    @media (max-width: 680px) {
+        body { padding: 16px; }
+        nav a { display: inline-block; margin-right: 12px; margin-bottom: 8px; }
+        .identity-grid { grid-template-columns: repeat(2, 1fr); }
+        .topic-grid { grid-template-columns: 1fr; }
+    }
+</style>
+
+</head>
+<body>
+    <nav>
+  <a href="/">首页</a>
+  <a href="/start-here/">开始这里</a>
+  <a href="/career/">Portfolio</a>
+  <a href="/tag/ai/">AI Agent</a>
+  <a href="/tag/docker/">Self-hosting</a>
+  <a href="/tag/%e8%bf%90%e7%bb%b4/">Engineering</a>
+  <a href="/post/">归档</a>
+  <a href="/tags/">标签</a>
+  <a href="/about/">关于</a>
+  <a href="https://github.com/margrop" target="_blank" rel="noopener">GitHub</a>
+</nav>
+
+    <div class="language-switcher">
+  <button class="theme-toggle" type="button" data-theme-toggle aria-label="切换到暗黑模式" aria-pressed="false">🌙</button>
+
+  
+  
+    <a href="/post/dkms-ghost-kernels-%E5%B9%BD%E7%81%B5%E5%86%85%E6%A0%B8/" class="active">中文</a>
+  
+    <a href="/en/post/dkms-ghost-kernels-%E5%B9%BD%E7%81%B5%E5%86%85%E6%A0%B8/" class="">English</a>
+  
+  
+</div>
+
+    
+    <article>
+        <h1>内核都卸载了，DKMS 却还在为它们编译 110M 模块：揪出 i915-sriov-dkms 的“幽灵内核”</h1>
+        <div class="meta">
+            发布时间: 2026-09-14
+            <span class="meta-separator">·</span>
+            <span>阅读量 <span data-page-view-count>--</span></span>
+        </div>
+        
+<div class="tags">
+    
+    <a href="/tag/proxmoxve/"><span class="tag">ProxmoxVE</span></a>
+    
+    <a href="/tag/pve/"><span class="tag">pve</span></a>
+    
+    <a href="/tag/dkms/"><span class="tag">DKMS</span></a>
+    
+    <a href="/tag/%E6%95%85%E9%9A%9C%E6%8E%92%E6%9F%A5/"><span class="tag">故障排查</span></a>
+    
+    <a href="/tag/%E8%BF%90%E7%BB%B4/"><span class="tag">运维</span></a>
+    
+    <a href="/tag/troubleshooting/"><span class="tag">Troubleshooting</span></a>
+    
+    <a href="/tag/linux/"><span class="tag">Linux</span></a>
+    
+    <a href="/tag/%E8%87%AA%E5%8A%A8%E5%8C%96/"><span class="tag">自动化</span></a>
+    
+    <a href="/tag/windows-11/"><span class="tag">Windows 11</span></a>
+    
+    <a href="/tag/macos/"><span class="tag">macOS</span></a>
+    
+    <a href="/tag/ubuntu-26.04/"><span class="tag">Ubuntu 26.04</span></a>
+    
+</div>
+
+
+        <div class="content">
+            <blockquote>
+<p><strong>先说结论</strong></p>
+<p>给 PVE 节点安装显卡虚拟化驱动 i915-sriov-dkms 时，<code>dkms status</code> 里冒出了 4 个&quot;从没装过的内核版本&quot;——每个都被完整编译了一份模块，磁盘上多吃了约 70MB，编译时间白白翻了五倍。而这些内核的镜像包，早在装驱动之前就被卸载干净了。</p>
+<p>追凶的结论让人哭笑不得：这个驱动包自带的安装脚本里，赫然写着一行 <code>export autoinstall_all_kernels=1</code>——把 DKMS 的&quot;给系统里所有内核各编译一份&quot;开关拧到了最大。而 DKMS 判断&quot;内核是否存在&quot;的依据，不是 dpkg 数据库，而是 <code>/lib/modules/</code> 下的目录名单加上对应 headers（内核头文件）是否还在。旧内核的镜像卸了，四套 headers 却原封不动地留在系统里，于是幽灵们拿到了&quot;开工许可&quot;。</p>
+<p>修复只要三步：卸掉孤儿 headers → 清掉为幽灵内核编译的 DKMS 条目 → 删掉残留目录。本文完整复盘排查过程，并给出 Windows 11 / Ubuntu 26.04 / macOS 26 三个平台的一键体检脚本（默认演练模式），以及「人工执行」和「交给 Agent 自动配置」两种用法。</p>
+</blockquote>
+<p><img alt="原创封面：谁在给「幽灵内核」派活？" src="/post-images/dkms-ghost-kernels/00-cover.svg"></p>
+<p><em>图 1：原创封面图。PVE 主机装上一个驱动，DKMS 流水线却连夜给 4 个&quot;幽灵内核&quot;各交付了一套编译产物。</em></p>
+<h2 id="一问题背景给核显插上一卡多虚的翅膀">一、问题背景：给核显插上&quot;一卡多虚&quot;的翅膀</h2>
+<p>我的家庭实验室里有一台 PVE 物理节点，CPU 自带的 Intel 核显除了给控制台输出画面，大部分时间都在吃灰。为了让这颗核显物尽其用，我打算用 SR-IOV（单根 I/O 虚拟化）把它切成多个虚拟显卡（VF），直通给几台虚拟机分别用——硬件只有一份，算力大家分，这正是 All in Boom 家庭服务器的经典玩法。</p>
+<p>PVE 官方内核自带的 i915 驱动并不支持在消费级核显上开 SR-IOV，社区方案就是 <a href="https://github.com/strongtz/i915-sriov-dkms">strongtz/i915-sriov-dkms</a>：把主线内核的 i915 驱动打上 SR-IOV 补丁，做成 DKMS 模块发布。当前的发布版支持 6.17.x ~ 7.0.x 内核，我的节点正好跑在 7.0.14-16-pve 上，版本完全匹配。</p>
+<p>DKMS（Dynamic Kernel Module Support）简单说就是&quot;内核模块的自动装修队&quot;：每次内核更新，它都会自动把第三方模块重新编译一遍，让模块始终匹配新内核。安装这类驱动通常就是 <code>dpkg -i</code> 一个 deb 包，装完 <code>dkms status</code> 里能看到 <code>installed</code> 就算万事大吉。</p>
+<p>装完之后我习惯性瞄了一眼状态，然后愣住了。</p>
+<h2 id="二问题表现dkms-status-里躺着一堆查无此人的内核">二、问题表现：dkms status 里躺着一堆&quot;查无此人&quot;的内核</h2>
+<p>先把问题全景画出来：</p>
+<p><img alt="问题全景：装 1 个驱动，DKMS 却交出 5 份编译产物" src="/post-images/dkms-ghost-kernels/01-symptom.svg"></p>
+<p><em>图 2：问题全景。系统里实际安装的内核镜像只有 7.0.14-16-pve 一个，DKMS 却交付了 5 份编译产物。</em></p>
+<p><code>dkms status</code> 的真实输出是这样的：</p>
+<p><img alt="dkms status 里的四个幽灵内核" src="/post-images/dkms-ghost-kernels/02-terminal-dkms-status-before.svg"></p>
+<p><em>图 3：真实命令输出。四条 6.17.x 的条目状态都是 installed——编译成功、安装成功，但对应内核根本不存在。</em></p>
+<p>疑点非常直白：<strong>这台机器上运行且仅安装了一个内核镜像 <code>7.0.14-16-pve</code>，DKMS 却为 4 个 6.17.x 版本也各编译了一份模块</strong>。更诡异的是，这几个版本的内核镜像早在装驱动之前就被我卸载了——升级到 7.0 系列后清理旧内核是标准操作，<code>apt</code> 里连一个 6.17 的 <code>proxmox-kernel-*</code> 包都不剩。</p>
+<p>也就是说，DKMS 在给 4 个&quot;幽灵内核&quot;打工：编译它们永远用不上的模块。这既不是报错也不是警告，一切&quot;看起来都很成功&quot;，只是磁盘在悄悄变胖（<code>/var/lib/dkms</code> 里躺着 110M，其中约 70M 属于幽灵），编译时间也翻了五倍。</p>
+<h2 id="三问题分析名单上有名字图纸柜里有图纸">三、问题分析：名单上有名字，图纸柜里有图纸</h2>
+<h3 id="31-先排除人为因素">3.1 先排除人为因素</h3>
+<p>按照惯例，先把自己疑心的部分排除掉：</p>
+<table>
+<thead>
+<tr>
+<th>猜测</th>
+<th>验证方式</th>
+<th>结论</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>驱动包装错了版本？</td>
+<td>核对 deb 包版本与 GitHub Release</td>
+<td>排除，就是最新版</td>
+</tr>
+<tr>
+<td>手动编译过残留？</td>
+<td><code>/var/lib/dkms</code> 只有本次安装的时间戳</td>
+<td>排除</td>
+</tr>
+<tr>
+<td>有人动过 dkms 配置？</td>
+<td><code>/etc/dkms/framework.conf</code> 干干净净</td>
+<td>排除</td>
+</tr>
+<tr>
+<td>DKMS 自己抽风？</td>
+<td>同样操作在干净虚拟机里复现，照样编出 4 份</td>
+<td>实锤：行为是确定性的</td>
+</tr>
+</tbody>
+</table>
+<p>最后一个验证很关键：这不是灵异事件，是<strong>确定性逻辑</strong>。那么 DKMS 到底依据什么决定&quot;要给哪些内核编译&quot;？</p>
+<h3 id="32-dkms-的住户名单libmodules">3.2 DKMS 的&quot;住户名单&quot;：/lib/modules</h3>
+<p>DKMS 是个用户态框架，它不查 dpkg 数据库，它眼中的&quot;系统里有哪些内核&quot;，就是 <strong><code>/lib/modules/</code> 目录下有哪些子目录</strong>——每个内核版本安装时会在这里拥有一个以版本号命名的目录，相当于小区的住户名单。列一下这份名单：</p>
+<p><img alt="/lib/modules 名单与 headers 检查" src="/post-images/dkms-ghost-kernels/04-terminal-lib-modules-before.svg"></p>
+<p><em>图 4：真实命令输出。名单上有 8 个版本：4 个 6.17 带 headers（黄色），3 个 6.14 是连 headers 都没有的空目录，外加运行中的 7.0。</em></p>
+<p>名单比想象的要长——除了运行中的 7.0.14-16-pve，还有 4 个 6.17 和 3 个 6.14。那 3 个 6.14 目录是历次升级留下的&quot;空壳&quot;（<code>ls -A</code> 数出来是 0 个文件），内核镜像卸载时没能把它们一并带走。</p>
+<h3 id="33-dkms-的图纸柜headers">3.3 DKMS 的&quot;图纸柜&quot;：headers</h3>
+<p>但&quot;名单上有名字&quot;只是必要条件。编译内核模块需要内核头文件（headers）——相当于按原图纸施工，没有图纸，装修队只能跳过这一户。检查方法就是看 <code>/lib/modules/&lt;版本&gt;/build</code> 链接是否存在（这个链接由 headers 包创建）。而 headers 是不是还装着，得问 dpkg：</p>
+<p><img alt="四套旧内核的 headers 还在系统里" src="/post-images/dkms-ghost-kernels/03-terminal-headers-before.svg"></p>
+<p><em>图 5：真实命令输出（删去列）。内核镜像只剩 7.0 系列，但 4 套 6.17 的 headers 包原封不动地躺在系统里。</em></p>
+<p>至此，对照组凑齐了，结论也就出来了：</p>
+<ul>
+<li><strong>6.17 × 4</strong>：名单上有目录（升级后残留）+ 图纸柜里有 headers（一直没卸）→ DKMS 视为&quot;合法住户&quot;，照单编译；</li>
+<li><strong>6.14 × 3</strong>：名单上有空目录，但 headers 早已清掉 → DKMS 直接跳过，<code>dkms status</code> 里连一条记录都没有。</li>
+</ul>
+<p>同样都是幽灵，待遇却天差地别，差就差在那一套&quot;图纸&quot;上。这也解释了图 3 里为什么偏偏是 4 个 6.17 而没有 6.14——<strong>DKMS 给幽灵编译的前提条件，是幽灵的 headers 还在系统里</strong>。</p>
+<h2 id="四问题根因一行-export-打开的全量编译开关">四、问题根因：一行 <code>export</code> 打开的&quot;全量编译&quot;开关</h2>
+<h3 id="41-驱动包自带脚本里的那一行">4.1 驱动包自带脚本里的那一行</h3>
+<p>名单和图纸只是&quot;客观条件&quot;，还得有人下令开工。翻出这个 deb 包自带的安装脚本（postinst，包在安装/配置阶段执行的钩子）：</p>
+<p><img alt="postinst 里的 autoinstall_all_kernels=1" src="/post-images/dkms-ghost-kernels/05-terminal-postinst.svg"></p>
+<p><em>图 6：真实文件内容。安装脚本在第一件事就把 <code>autoinstall_all_kernels</code> 设为 1。</em></p>
+<p>这个变量是 DKMS 官方维护脚本（<code>/usr/lib/dkms/common.postinst</code>）识别的开关。看看官方代码怎么解读它：</p>
+<p><img alt="common.postinst 的判断逻辑" src="/post-images/dkms-ghost-kernels/06-terminal-common-postinst.svg"></p>
+<p><em>图 7：真实文件内容（节选）。变量一被导出，&ldquo;只编当前内核&quot;的默认分支整个被跳过。</em></p>
+<p>语义翻译过来就是：<strong>不设这个变量时，DKMS 默认只给&quot;当前运行内核 + 最新内核&quot;编译；变量一旦被导出，改为遍历系统里的全部内核</strong>。而这正是 i915-sriov-dkms 打包者的选择——上游在 debian 打包脚本里显式加上了这行 export。</p>
+<p>这个行为甚至有官方&quot;病历&quot;可查：Launchpad 上有一份针对 dkms 包的 Bug 报告，标题就叫&quot;DKMS only builds modules for the currently booted kernel version&rdquo;（DKMS 只为当前引导的内核编译），报告里明确写道：默认行为源自 <code>autoinstall_all_kernels</code> 未设置，希望设为 yes 来让所有内核都获得模块：</p>
+<p><img alt="Launchpad Bug #2120641 的原始描述" src="/post-images/dkms-ghost-kernels/11-web-launchpad.webp"></p>
+<p><em>图 8：真实网页截图。Launchpad Bug 报告从反方向印证了这个开关的存在与默认值。</em></p>
+<h3 id="42-把整个决策链条画出来">4.2 把整个决策链条画出来</h3>
+<p><img alt="DKMS 选择内核的决策流程" src="/post-images/dkms-ghost-kernels/07-decision-flow.svg"></p>
+<p><em>图 9：DKMS 在包安装阶段的决策流程。headers 是否在场，是幽灵能否被编译的分水岭。</em></p>
+<p>根因一句话总结：<strong>i915-sriov-dkms 的安装脚本导出 <code>autoinstall_all_kernels=1</code> → DKMS 遍历 <code>/lib/modules/</code> 全部名单 → 4 个 6.17 幽灵&quot;名单在册 + 图纸（headers）齐全&quot; → 每人获得一份专属编译产物；6.14 幽灵因图纸缺失幸免。</strong></p>
+<h3 id="43-打个比方小区物业的装修队">4.3 打个比方：小区物业的装修队</h3>
+<p>如果觉得 DKMS、headers 这些词太抽象，用一个小区的比喻讲，小学生也能听懂：</p>
+<p><img alt="小区物业装修队的比喻" src="/post-images/dkms-ghost-kernels/08-analogy-property.svg"></p>
+<p><em>图 10：小区比喻。名单 + 图纸缺一不可，而&quot;楼还在不在&quot;根本不在装修队的检查清单里。</em></p>
+<ul>
+<li><strong>DKMS 是小区物业的装修队</strong>，工作守则写着：照着「住户名单 + 图纸柜」，给每个有图纸的住户定制一套家具；</li>
+<li><strong><code>/lib/modules</code> 是住户名单</strong>：内核装上时登记，卸载时本该划掉，但残留在所难免；</li>
+<li><strong>headers 是图纸柜</strong>：装了 headers = 图纸还在；镜像卸了图纸没卸 = 人走了图纸还压在柜子里；</li>
+<li><strong><code>autoinstall_all_kernels=1</code> 是加班开关</strong>：正常物业只服务当前住着的一两户，打开开关后&quot;名单上每一户都要做&quot;；</li>
+<li><strong>编译产物是定制家具</strong>：6.17.13-2 这栋楼都拆了，家具照样按图纸做好，然后堆进物业仓库（磁盘）。</li>
+</ul>
+<p>整个事件里没有谁是&quot;坏蛋&quot;：上游想让所有已装内核启动时都能用上显卡虚拟化，逻辑自洽；DKMS 忠实执行名单，恪尽职守；真正的坑在于——<strong>装修队检查名单和图纸，却从不确认&quot;这栋楼还存不存在&quot;</strong>。</p>
+<h2 id="五如何解决把幽灵从名单上划掉">五、如何解决：把幽灵从名单上划掉</h2>
+<p>思路顺着根因倒推就行，三步：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># 1) 卸掉孤儿 headers（镜像已卸载、headers 还在的，就是孤儿）</span>
+</span></span><span style="display:flex;"><span>apt-get purge -y proxmox-headers-6.17.13-2-pve proxmox-headers-6.17.13-21-pve <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>                 proxmox-headers-6.17.13-4-pve proxmox-headers-6.17.4-2-pve
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 2) 清掉为幽灵内核编译的 DKMS 条目</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">for</span> k in 6.17.13-2-pve 6.17.13-21-pve 6.17.13-4-pve 6.17.4-2-pve; <span style="color:#66d9ef">do</span>
+</span></span><span style="display:flex;"><span>  dkms remove i915-sriov-dkms/2026.08.12.1 -k $k
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">done</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 3) 删掉 /lib/modules 下的残留空目录（确认对应内核包已不存在）</span>
+</span></span><span style="display:flex;"><span>rm -rf /lib/modules/6.17.13-2-pve /lib/modules/6.17.13-21-pve <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>       /lib/modules/6.17.13-4-pve /lib/modules/6.17.4-2-pve
+</span></span></code></pre></div><p>做完之后跑一遍&quot;复检三连&quot;：</p>
+<p><img alt="清理完成后的复检三连" src="/post-images/dkms-ghost-kernels/10-terminal-after.svg"></p>
+<p><em>图 11：真实命令输出。<code>dkms status</code> 从 5 条变 1 条，<code>linux-version list</code> 只剩运行内核，DKMS 缓存从 110M 瘦身到 39M。</em></p>
+<p><code>dkms status</code> 只剩当前内核一条 <code>installed</code>、<code>linux-version list</code> 只剩一行、<code>/var/lib/dkms</code> 从 110M 瘦到 39M——三条全中，修复完成。当前内核的模块安然无恙，显卡虚拟化功能不受任何影响。</p>
+<h2 id="六一键自动体检脚本">六、一键自动体检脚本</h2>
+<p>手不想碰键盘的读者，我把&quot;体检 → 分类 → 清理 → 复核&quot;整个流程封装成了三平台脚本。设计上遵循三条安全底线：</p>
+<ul>
+<li><strong>默认演练模式</strong>：不带参数只输出&quot;将会做什么&quot;的报告，落一份到 <code>/tmp</code>，人看过再动手；</li>
+<li><strong>绝不碰运行中内核</strong>：<code>uname -r</code> 命中的目录无条件 KEEP，另设 <code>dpkg -S</code> 占用检查，任何仍被已安装软件包占有的目录一律跳过；</li>
+<li><strong>元包保护</strong>：<code>proxmox-headers-7.0</code> 这类版本号不完整的元包不自动处理，宁可漏杀不可误杀。</li>
+</ul>
+<p><img alt="脚本演练输出实录" src="/post-images/dkms-ghost-kernels/09-terminal-fix-dryrun.svg"></p>
+<p><em>图 12：真实演练输出（dry-run）。四个 6.17 幽灵被标记为 GHOST，运行内核被保护，元包被跳过，复核段一目了然。</em></p>
+<h3 id="方法一人工一键执行">方法一：人工一键执行</h3>
+<p><strong>Ubuntu 26.04 / PVE 节点（<code>fix-dkms-ghost-kernels.sh</code>）</strong>——本机直接跑，或传 <code>root@目标节点</code> 远程体检另一台：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e">#!/usr/bin/env bash
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span><span style="color:#75715e"># fix-dkms-ghost-kernels.sh — 清理&#34;幽灵内核&#34;：为已卸载内核残留的 DKMS 构建、孤儿 headers、残留目录</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 本机体检:   sudo bash fix-dkms-ghost-kernels.sh</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 本机清理:   sudo bash fix-dkms-ghost-kernels.sh --apply</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 远程体检:   bash fix-dkms-ghost-kernels.sh root@&lt;目标节点IP&gt;</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 远程清理:   bash fix-dkms-ghost-kernels.sh root@&lt;目标节点IP&gt; --apply</span>
+</span></span><span style="display:flex;"><span>set -euo pipefail
+</span></span><span style="display:flex;"><span>TARGET<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;&#34;</span>
+</span></span><span style="display:flex;"><span>APPLY_ARG<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;&#34;</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">for</span> a in <span style="color:#e6db74">&#34;</span>$@<span style="color:#e6db74">&#34;</span>; <span style="color:#66d9ef">do</span>
+</span></span><span style="display:flex;"><span>  <span style="color:#66d9ef">case</span> <span style="color:#e6db74">&#34;</span>$a<span style="color:#e6db74">&#34;</span> in
+</span></span><span style="display:flex;"><span>    --apply<span style="color:#f92672">)</span> APPLY_ARG<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;--apply&#34;</span> ;;
+</span></span><span style="display:flex;"><span>    *<span style="color:#f92672">)</span> TARGET<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span>$a<span style="color:#e6db74">&#34;</span> ;;
+</span></span><span style="display:flex;"><span>  <span style="color:#66d9ef">esac</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">done</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>PAYLOAD<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>cat <span style="color:#e6db74">&lt;&lt;&#39;EOS&#39;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">set -euo pipefail
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">APPLY=0
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">[ &#34;${1:-}&#34; = &#34;--apply&#34; ] &amp;&amp; APPLY=1
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">REPORT=&#34;${TMPDIR:-/tmp}/dkms-ghost-kernels-$(date +%Y%m%d-%H%M%S).txt&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log(){ printf &#39;%s\n&#39; &#34;$*&#34; | tee -a &#34;$REPORT&#34;; }
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">RUNNING=&#34;$(uname -r)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log &#34;== [1/6] DKMS 幽灵内核体检 $(date -Is) ==&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log &#34;运行中内核: $RUNNING&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">INSTALLED_KERNELS=&#34;$(cd /boot 2&gt;/dev/null &amp;&amp; ls vmlinuz-* 2&gt;/dev/null | sed &#39;s/^vmlinuz-//&#39; || true)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log &#34;已安装内核镜像 (/boot/vmlinuz-*):&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">printf &#39;%s\n&#39; &#34;$INSTALLED_KERNELS&#34; | sed &#39;s/^/  - /&#39; | while read -r l; do log &#34;$l&#34;; done
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log &#34;== [2/6] dkms status 现状 ==&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">dkms status 2&gt;/dev/null | while IFS= read -r l; do log &#34;$l&#34;; done
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">[ -z &#34;$(dkms status 2&gt;/dev/null)&#34; ] &amp;&amp; log &#34;(无任何 DKMS 条目)&#34; || true
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log &#34;== [3/6] 逐个分类 /lib/modules 下的内核目录 ==&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">GHOST_DIRS=()
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">for d in /lib/modules/*/; do
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  v=&#34;$(basename &#34;$d&#34;)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  [ &#34;$v&#34; = &#34;$RUNNING&#34; ] &amp;&amp; { log &#34;KEEP  $v  (正在运行，绝不动它)&#34;; continue; }
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  if printf &#39;%s\n&#39; &#34;$INSTALLED_KERNELS&#34; | grep -qxF &#34;$v&#34;; then
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    log &#34;KEEP  $v  (内核镜像仍已安装)&#34;; continue
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  fi
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  if dpkg -S &#34;/lib/modules/$v&#34; &gt;/dev/null 2&gt;&amp;1; then
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    log &#34;KEEP  $v  (仍有已安装的软件包占用，跳过)&#34;; continue
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  fi
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  GHOST_DIRS+=(&#34;$v&#34;)
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  log &#34;GHOST $v  (内核镜像已卸载，残留目录；文件数: $(find &#34;$d&#34; -type f 2&gt;/dev/null | wc -l))&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">done
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log &#34;== [4/6] 需要清理的 DKMS 构建条目 ==&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">STALE_COUNT=0
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">while IFS= read -r line; do
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  [ -z &#34;$line&#34; ] &amp;&amp; continue
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  kv=&#34;$(printf &#39;%s&#39; &#34;$line&#34; | awk -F&#39;, &#39; &#39;/,/{print $2}&#39; | cut -d, -f1)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  [ -z &#34;$kv&#34; ] &amp;&amp; continue
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  [ &#34;$kv&#34; = &#34;$RUNNING&#34; ] &amp;&amp; continue
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  printf &#39;%s\n&#39; &#34;$INSTALLED_KERNELS&#34; | grep -qxF &#34;$kv&#34; &amp;&amp; continue
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  mod=&#34;$(printf &#39;%s&#39; &#34;$line&#34; | cut -d/ -f1)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  mv=&#34;$(printf &#39;%s&#39; &#34;$line&#34; | cut -d/ -f2 | cut -d, -f1)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  STALE_COUNT=$((STALE_COUNT+1))
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  if [ &#34;$APPLY&#34; = 1 ]; then
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    log &#34;CLEAN dkms remove $mod/$mv -k $kv&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    dkms remove &#34;$mod/$mv&#34; -k &#34;$kv&#34; || log &#34;  (移除失败，请手动检查)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  else
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    log &#34;STALE $mod/$mv  for kernel $kv  (将执行: dkms remove $mod/$mv -k $kv)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  fi
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">done &lt; &lt;(dkms status 2&gt;/dev/null)
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">[ &#34;$STALE_COUNT&#34; = 0 ] &amp;&amp; [ &#34;$APPLY&#34; = 0 ] &amp;&amp; log &#34;(没有为幽灵内核编译的 DKMS 条目，干净)&#34; || true
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log &#34;== [5/6] 需要卸载的孤儿内核头文件包 ==&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">ORPHANS=()
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">for pkg in $(dpkg --list 2&gt;/dev/null | awk &#39;/^ii  (linux-headers|proxmox-headers|pve-headers)-[0-9]/{print $2}&#39;); do
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  v=&#34;$(printf &#39;%s&#39; &#34;$pkg&#34; | sed -E &#39;s/^(linux|proxmox|pve)-headers-//&#39;)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  printf &#39;%s&#39; &#34;$v&#34; | grep -qE &#39;^[0-9]+\.[0-9]+\.[0-9]+&#39; || { log &#34;SKIP  $pkg  (元包/版本号不完整，不自动处理)&#34;; continue; }
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  [ &#34;$v&#34; = &#34;$RUNNING&#34; ] &amp;&amp; { log &#34;SKIP  $pkg  (属于运行中内核)&#34;; continue; }
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  [ -e &#34;/boot/vmlinuz-$v&#34; ] &amp;&amp; { log &#34;SKIP  $pkg  (内核镜像仍已安装)&#34;; continue; }
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  ORPHANS+=(&#34;$pkg&#34;)
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  log &#34;ORPHAN $pkg  (对应内核 $v 已卸载)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">done
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">if [ &#34;${#ORPHANS[@]}&#34; -gt 0 ]; then
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  if [ &#34;$APPLY&#34; = 1 ]; then
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    log &#34;PURGE: apt-get -y purge ${ORPHANS[*]}&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    DEBIAN_FRONTEND=noninteractive apt-get -y purge &#34;${ORPHANS[@]}&#34; || log &#34;  (卸载失败，请手动检查)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  else
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    log &#34;演练: apt-get -s purge ${ORPHANS[*]}&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    apt-get -s purge &#34;${ORPHANS[@]}&#34; 2&gt;/dev/null | grep -E &#39;^(Remv|Purg)&#39; | while IFS= read -r l; do log &#34;  $l&#34;; done || true
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  fi
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">else
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  log &#34;(没有孤儿头文件包，干净)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">fi
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log &#34;== [6/6] 清理幽灵残留目录 ==&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">if [ &#34;${#GHOST_DIRS[@]}&#34; -gt 0 ]; then
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  for v in &#34;${GHOST_DIRS[@]}&#34;; do
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    if [ &#34;$APPLY&#34; = 1 ]; then
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">      log &#34;RMDIR /lib/modules/$v&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">      rm -rf &#34;/lib/modules/$v&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    else
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">      log &#34;演练: rm -rf /lib/modules/$v&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    fi
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  done
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">else
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  log &#34;(没有幽灵残留目录，干净)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">fi
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log &#34;== 复核 ==&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log &#34;dkms status:&#34;; dkms status 2&gt;/dev/null | sed &#39;s/^/  /&#39; | while IFS= read -r l; do log &#34;$l&#34;; done
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log &#34;/lib/modules:&#34;; ls /lib/modules | sed &#39;s/^/  /&#39; | while IFS= read -r l; do log &#34;$l&#34;; done
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log &#34;DKMS 缓存占用: $(du -sh /var/lib/dkms 2&gt;/dev/null | cut -f1)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">if [ &#34;$APPLY&#34; = 1 ]; then
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  log &#34;完成。清理报告: $REPORT&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">else
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  log &#34;以上为演练结果（未做任何修改）。确认无误后加 --apply 重新执行。报告: $REPORT&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">fi
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">EOS</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">)</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> <span style="color:#f92672">[</span> -n <span style="color:#e6db74">&#34;</span>$TARGET<span style="color:#e6db74">&#34;</span> <span style="color:#f92672">]</span>; <span style="color:#66d9ef">then</span>
+</span></span><span style="display:flex;"><span>  ssh <span style="color:#e6db74">&#34;</span>$TARGET<span style="color:#e6db74">&#34;</span> <span style="color:#e6db74">&#34;bash -s </span>$APPLY_ARG<span style="color:#e6db74">&#34;</span> <span style="color:#f92672">&lt;&lt;&lt;</span><span style="color:#e6db74">&#34;</span>$PAYLOAD<span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">else</span>
+</span></span><span style="display:flex;"><span>  <span style="color:#f92672">[</span> <span style="color:#e6db74">&#34;</span><span style="color:#66d9ef">$(</span>id -u<span style="color:#66d9ef">)</span><span style="color:#e6db74">&#34;</span> -eq <span style="color:#ae81ff">0</span> <span style="color:#f92672">]</span> <span style="color:#f92672">||</span> <span style="color:#f92672">{</span> echo <span style="color:#e6db74">&#34;本机清理需要 root 权限，请用 sudo 运行。&#34;</span>; exit 1; <span style="color:#f92672">}</span>
+</span></span><span style="display:flex;"><span>  bash -s $APPLY_ARG <span style="color:#f92672">&lt;&lt;&lt;</span><span style="color:#e6db74">&#34;</span>$PAYLOAD<span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">fi</span>
+</span></span></code></pre></div><p><strong>Windows 11（<code>Fix-DkmsGhostKernels.ps1</code>）</strong>——用系统自带 OpenSSH 客户端远程体检/清理，PowerShell 里执行 <code>.\Fix-DkmsGhostKernels.ps1 -Target &quot;root@&lt;目标节点IP&gt;&quot;</code>（加 <code>-Apply</code> 才真正清理）。特别说明：脚本刻意做成纯 ASCII——Windows PowerShell 5.1 会把无 BOM 的 UTF-8 脚本按本地代码页误读，中文字符串轻则乱码、重则解析报错，纯 ASCII 是最稳的选择：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-powershell" data-lang="powershell"><span style="display:flex;"><span><span style="color:#75715e"># Fix-DkmsGhostKernels.ps1 - Check &amp; clean &#34;ghost kernels&#34; on a remote Ubuntu/Debian/PVE node.</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># Dry run : .\Fix-DkmsGhostKernels.ps1 -Target &#34;root@&lt;server-ip&gt;&#34;</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># Apply   : .\Fix-DkmsGhostKernels.ps1 -Target &#34;root@&lt;server-ip&gt;&#34; -Apply</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># Uses only the built-in OpenSSH client. (ASCII-only on purpose: Windows PowerShell 5.1</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># mis-decodes BOM-less UTF-8 scripts and may fail to parse non-ASCII strings.)</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">param</span>(
+</span></span><span style="display:flex;"><span>  [Parameter(<span style="color:#a6e22e">Mandatory</span> = $true)][<span style="color:#66d9ef">string</span>]$Target,
+</span></span><span style="display:flex;"><span>  [<span style="color:#66d9ef">int</span>]$Port = <span style="color:#ae81ff">22</span>,
+</span></span><span style="display:flex;"><span>  [<span style="color:#66d9ef">switch</span>]$Apply
+</span></span><span style="display:flex;"><span>)
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>$payload = <span style="color:#e6db74">@&#39;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">set -euo pipefail
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">APPLY=0
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">[ &#34;${1:-}&#34; = &#34;--apply&#34; ] &amp;&amp; APPLY=1
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">REPORT=&#34;${TMPDIR:-/tmp}/dkms-ghost-kernels-$(date +%Y%m%d-%H%M%S).txt&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log(){ printf &#39;%s\n&#39; &#34;$*&#34; | tee -a &#34;$REPORT&#34;; }
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">RUNNING=&#34;$(uname -r)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log &#34;== [1/6] DKMS ghost-kernel health check $(date -Is) ==&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log &#34;Running kernel: $RUNNING&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">INSTALLED_KERNELS=&#34;$(cd /boot 2&gt;/dev/null &amp;&amp; ls vmlinuz-* 2&gt;/dev/null | sed &#39;s/^vmlinuz-//&#39; || true)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log &#34;Installed kernel images (/boot/vmlinuz-*):&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">printf &#39;%s\n&#39; &#34;$INSTALLED_KERNELS&#34; | sed &#39;s/^/  - /&#39; | while read -r l; do log &#34;$l&#34;; done
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log &#34;== [2/6] dkms status ==&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">dkms status 2&gt;/dev/null | while IFS= read -r l; do log &#34;$l&#34;; done
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">[ -z &#34;$(dkms status 2&gt;/dev/null)&#34; ] &amp;&amp; log &#34;(no DKMS entries)&#34; || true
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log &#34;== [3/6] Classifying /lib/modules entries ==&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">GHOST_DIRS=()
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">for d in /lib/modules/*/; do
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  v=&#34;$(basename &#34;$d&#34;)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  [ &#34;$v&#34; = &#34;$RUNNING&#34; ] &amp;&amp; { log &#34;KEEP  $v  (running kernel, never touched)&#34;; continue; }
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  if printf &#39;%s\n&#39; &#34;$INSTALLED_KERNELS&#34; | grep -qxF &#34;$v&#34;; then
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    log &#34;KEEP  $v  (kernel image still installed)&#34;; continue
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  fi
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  if dpkg -S &#34;/lib/modules/$v&#34; &gt;/dev/null 2&gt;&amp;1; then
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    log &#34;KEEP  $v  (still owned by installed packages, skipped)&#34;; continue
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  fi
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  GHOST_DIRS+=(&#34;$v&#34;)
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  log &#34;GHOST $v  (image uninstalled, leftover dir; files: $(find &#34;$d&#34; -type f 2&gt;/dev/null | wc -l))&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">done
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log &#34;== [4/6] DKMS builds for ghost kernels ==&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">STALE_COUNT=0
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">while IFS= read -r line; do
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  [ -z &#34;$line&#34; ] &amp;&amp; continue
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  kv=&#34;$(printf &#39;%s&#39; &#34;$line&#34; | awk -F&#39;, &#39; &#39;/,/{print $2}&#39; | cut -d, -f1)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  [ -z &#34;$kv&#34; ] &amp;&amp; continue
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  [ &#34;$kv&#34; = &#34;$RUNNING&#34; ] &amp;&amp; continue
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  printf &#39;%s\n&#39; &#34;$INSTALLED_KERNELS&#34; | grep -qxF &#34;$kv&#34; &amp;&amp; continue
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  mod=&#34;$(printf &#39;%s&#39; &#34;$line&#34; | cut -d/ -f1)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  mv=&#34;$(printf &#39;%s&#39; &#34;$line&#34; | cut -d/ -f2 | cut -d, -f1)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  STALE_COUNT=$((STALE_COUNT+1))
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  if [ &#34;$APPLY&#34; = 1 ]; then
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    log &#34;CLEAN dkms remove $mod/$mv -k $kv&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    dkms remove &#34;$mod/$mv&#34; -k &#34;$kv&#34; || log &#34;  (remove failed, please check manually)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  else
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    log &#34;STALE $mod/$mv  for kernel $kv  (will run: dkms remove $mod/$mv -k $kv)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  fi
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">done &lt; &lt;(dkms status 2&gt;/dev/null)
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">[ &#34;$STALE_COUNT&#34; = 0 ] &amp;&amp; [ &#34;$APPLY&#34; = 0 ] &amp;&amp; log &#34;(no DKMS builds for ghost kernels, clean)&#34; || true
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log &#34;== [5/6] Orphan kernel header packages ==&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">ORPHANS=()
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">for pkg in $(dpkg --list 2&gt;/dev/null | awk &#39;/^ii  (linux-headers|proxmox-headers|pve-headers)-[0-9]/{print $2}&#39;); do
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  v=&#34;$(printf &#39;%s&#39; &#34;$pkg&#34; | sed -E &#39;s/^(linux|proxmox|pve)-headers-//&#39;)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  printf &#39;%s&#39; &#34;$v&#34; | grep -qE &#39;^[0-9]+\.[0-9]+\.[0-9]+&#39; || { log &#34;SKIP  $pkg  (meta package, not handled automatically)&#34;; continue; }
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  [ &#34;$v&#34; = &#34;$RUNNING&#34; ] &amp;&amp; { log &#34;SKIP  $pkg  (belongs to the running kernel)&#34;; continue; }
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  [ -e &#34;/boot/vmlinuz-$v&#34; ] &amp;&amp; { log &#34;SKIP  $pkg  (kernel image still installed)&#34;; continue; }
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  ORPHANS+=(&#34;$pkg&#34;)
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  log &#34;ORPHAN $pkg  (kernel $v no longer installed)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">done
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">if [ &#34;${#ORPHANS[@]}&#34; -gt 0 ]; then
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  if [ &#34;$APPLY&#34; = 1 ]; then
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    log &#34;PURGE: apt-get -y purge ${ORPHANS[*]}&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    DEBIAN_FRONTEND=noninteractive apt-get -y purge &#34;${ORPHANS[@]}&#34; || log &#34;  (purge failed, please check manually)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  else
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    log &#34;Dry-run: apt-get -s purge ${ORPHANS[*]}&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    apt-get -s purge &#34;${ORPHANS[@]}&#34; 2&gt;/dev/null | grep -E &#39;^(Remv|Purg)&#39; | while IFS= read -r l; do log &#34;  $l&#34;; done || true
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  fi
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">else
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  log &#34;(no orphan header packages, clean)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">fi
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log &#34;== [6/6] Removing ghost leftover dirs ==&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">if [ &#34;${#GHOST_DIRS[@]}&#34; -gt 0 ]; then
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  for v in &#34;${GHOST_DIRS[@]}&#34;; do
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    if [ &#34;$APPLY&#34; = 1 ]; then
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">      log &#34;RMDIR /lib/modules/$v&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">      rm -rf &#34;/lib/modules/$v&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    else
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">      log &#34;Dry-run: rm -rf /lib/modules/$v&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    fi
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  done
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">else
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  log &#34;(no ghost leftover dirs, clean)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">fi
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log &#34;== Verification ==&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log &#34;dkms status:&#34;; dkms status 2&gt;/dev/null | sed &#39;s/^/  /&#39; | while IFS= read -r l; do log &#34;$l&#34;; done
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log &#34;/lib/modules:&#34;; ls /lib/modules | sed &#39;s/^/  /&#39; | while IFS= read -r l; do log &#34;$l&#34;; done
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log &#34;DKMS cache usage: $(du -sh /var/lib/dkms 2&gt;/dev/null | cut -f1)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">if [ &#34;$APPLY&#34; = 1 ]; then
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  log &#34;Done. Report: $REPORT&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">else
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  log &#34;This was a DRY RUN (nothing changed). Re-run with -Apply to clean. Report: $REPORT&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">fi
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">&#39;@</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>$arg = <span style="color:#e6db74">&#39;&#39;</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> ($Apply) { $arg = <span style="color:#e6db74">&#39;--apply&#39;</span> }
+</span></span><span style="display:flex;"><span>$payload | ssh -p $Port $Target <span style="color:#e6db74">&#34;bash -s </span>$arg<span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> ($LASTEXITCODE <span style="color:#f92672">-eq</span> <span style="color:#ae81ff">0</span>) {
+</span></span><span style="display:flex;"><span>  Write-Host <span style="color:#e6db74">&#34;Done. Please review the final &#39;Verification&#39; block above.&#34;</span> -ForegroundColor Green
+</span></span><span style="display:flex;"><span>} <span style="color:#66d9ef">else</span> {
+</span></span><span style="display:flex;"><span>  Write-Host <span style="color:#e6db74">&#34;Failed. Check the SSH connection and the output above.&#34;</span> -ForegroundColor Red
+</span></span><span style="display:flex;"><span>}
+</span></span></code></pre></div><p><strong>macOS 26（<code>fix-dkms-ghost-kernels-macos.zsh</code>）</strong>——终端里执行 <code>bash fix-dkms-ghost-kernels-macos.zsh root@&lt;目标节点IP&gt;</code>（加 <code>--apply</code> 才真正清理）：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e">#!/usr/bin/env zsh
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span><span style="color:#75715e"># fix-dkms-ghost-kernels-macos.zsh — macOS 26 一键体检/清理远程节点的&#34;幽灵内核&#34;</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 体检: bash fix-dkms-ghost-kernels-macos.zsh root@&lt;目标节点IP&gt;</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 清理: bash fix-dkms-ghost-kernels-macos.zsh root@&lt;目标节点IP&gt; --apply</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 只依赖系统自带的 ssh，目标机需为 Ubuntu / Debian / Proxmox VE。</span>
+</span></span><span style="display:flex;"><span>set -euo pipefail
+</span></span><span style="display:flex;"><span>TARGET<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>1:?用法: bash fix-dkms-ghost-kernels-macos.zsh root@&lt;目标节点IP&gt; [--apply]<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>APPLY_ARG<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>2<span style="color:#66d9ef">:-</span><span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>ssh <span style="color:#e6db74">&#34;</span>$TARGET<span style="color:#e6db74">&#34;</span> <span style="color:#e6db74">&#34;bash -s </span>$APPLY_ARG<span style="color:#e6db74">&#34;</span> <span style="color:#e6db74">&lt;&lt;&#39;EOS&#39;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">set -euo pipefail
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">APPLY=0
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">[ &#34;${1:-}&#34; = &#34;--apply&#34; ] &amp;&amp; APPLY=1
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">REPORT=&#34;${TMPDIR:-/tmp}/dkms-ghost-kernels-$(date +%Y%m%d-%H%M%S).txt&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log(){ printf &#39;%s\n&#39; &#34;$*&#34; | tee -a &#34;$REPORT&#34;; }
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">RUNNING=&#34;$(uname -r)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log &#34;== [1/6] DKMS 幽灵内核体检 $(date -Is) ==&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log &#34;运行中内核: $RUNNING&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">INSTALLED_KERNELS=&#34;$(cd /boot 2&gt;/dev/null &amp;&amp; ls vmlinuz-* 2&gt;/dev/null | sed &#39;s/^vmlinuz-//&#39; || true)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log &#34;已安装内核镜像 (/boot/vmlinuz-*):&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">printf &#39;%s\n&#39; &#34;$INSTALLED_KERNELS&#34; | sed &#39;s/^/  - /&#39; | while read -r l; do log &#34;$l&#34;; done
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log &#34;== [2/6] dkms status 现状 ==&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">dkms status 2&gt;/dev/null | while IFS= read -r l; do log &#34;$l&#34;; done
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">[ -z &#34;$(dkms status 2&gt;/dev/null)&#34; ] &amp;&amp; log &#34;(无任何 DKMS 条目)&#34; || true
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log &#34;== [3/6] 逐个分类 /lib/modules 下的内核目录 ==&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">GHOST_DIRS=()
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">for d in /lib/modules/*/; do
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  v=&#34;$(basename &#34;$d&#34;)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  [ &#34;$v&#34; = &#34;$RUNNING&#34; ] &amp;&amp; { log &#34;KEEP  $v  (正在运行，绝不动它)&#34;; continue; }
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  if printf &#39;%s\n&#39; &#34;$INSTALLED_KERNELS&#34; | grep -qxF &#34;$v&#34;; then
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    log &#34;KEEP  $v  (内核镜像仍已安装)&#34;; continue
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  fi
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  if dpkg -S &#34;/lib/modules/$v&#34; &gt;/dev/null 2&gt;&amp;1; then
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    log &#34;KEEP  $v  (仍有已安装的软件包占用，跳过)&#34;; continue
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  fi
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  GHOST_DIRS+=(&#34;$v&#34;)
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  log &#34;GHOST $v  (内核镜像已卸载，残留目录；文件数: $(find &#34;$d&#34; -type f 2&gt;/dev/null | wc -l))&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">done
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log &#34;== [4/6] 需要清理的 DKMS 构建条目 ==&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">STALE_COUNT=0
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">while IFS= read -r line; do
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  [ -z &#34;$line&#34; ] &amp;&amp; continue
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  kv=&#34;$(printf &#39;%s&#39; &#34;$line&#34; | awk -F&#39;, &#39; &#39;/,/{print $2}&#39; | cut -d, -f1)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  [ -z &#34;$kv&#34; ] &amp;&amp; continue
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  [ &#34;$kv&#34; = &#34;$RUNNING&#34; ] &amp;&amp; continue
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  printf &#39;%s\n&#39; &#34;$INSTALLED_KERNELS&#34; | grep -qxF &#34;$kv&#34; &amp;&amp; continue
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  mod=&#34;$(printf &#39;%s&#39; &#34;$line&#34; | cut -d/ -f1)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  mv=&#34;$(printf &#39;%s&#39; &#34;$line&#34; | cut -d/ -f2 | cut -d, -f1)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  STALE_COUNT=$((STALE_COUNT+1))
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  if [ &#34;$APPLY&#34; = 1 ]; then
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    log &#34;CLEAN dkms remove $mod/$mv -k $kv&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    dkms remove &#34;$mod/$mv&#34; -k &#34;$kv&#34; || log &#34;  (移除失败，请手动检查)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  else
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    log &#34;STALE $mod/$mv  for kernel $kv  (将执行: dkms remove $mod/$mv -k $kv)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  fi
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">done &lt; &lt;(dkms status 2&gt;/dev/null)
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">[ &#34;$STALE_COUNT&#34; = 0 ] &amp;&amp; [ &#34;$APPLY&#34; = 0 ] &amp;&amp; log &#34;(没有为幽灵内核编译的 DKMS 条目，干净)&#34; || true
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log &#34;== [5/6] 需要卸载的孤儿内核头文件包 ==&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">ORPHANS=()
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">for pkg in $(dpkg --list 2&gt;/dev/null | awk &#39;/^ii  (linux-headers|proxmox-headers|pve-headers)-[0-9]/{print $2}&#39;); do
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  v=&#34;$(printf &#39;%s&#39; &#34;$pkg&#34; | sed -E &#39;s/^(linux|proxmox|pve)-headers-//&#39;)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  printf &#39;%s&#39; &#34;$v&#34; | grep -qE &#39;^[0-9]+\.[0-9]+\.[0-9]+&#39; || { log &#34;SKIP  $pkg  (元包/版本号不完整，不自动处理)&#34;; continue; }
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  [ &#34;$v&#34; = &#34;$RUNNING&#34; ] &amp;&amp; { log &#34;SKIP  $pkg  (属于运行中内核)&#34;; continue; }
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  [ -e &#34;/boot/vmlinuz-$v&#34; ] &amp;&amp; { log &#34;SKIP  $pkg  (内核镜像仍已安装)&#34;; continue; }
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  ORPHANS+=(&#34;$pkg&#34;)
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  log &#34;ORPHAN $pkg  (对应内核 $v 已卸载)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">done
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">if [ &#34;${#ORPHANS[@]}&#34; -gt 0 ]; then
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  if [ &#34;$APPLY&#34; = 1 ]; then
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    log &#34;PURGE: apt-get -y purge ${ORPHANS[*]}&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    DEBIAN_FRONTEND=noninteractive apt-get -y purge &#34;${ORPHANS[@]}&#34; || log &#34;  (卸载失败，请手动检查)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  else
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    log &#34;演练: apt-get -s purge ${ORPHANS[*]}&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    apt-get -s purge &#34;${ORPHANS[@]}&#34; 2&gt;/dev/null | grep -E &#39;^(Remv|Purg)&#39; | while IFS= read -r l; do log &#34;  $l&#34;; done || true
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  fi
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">else
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  log &#34;(没有孤儿头文件包，干净)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">fi
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log &#34;== [6/6] 清理幽灵残留目录 ==&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">if [ &#34;${#GHOST_DIRS[@]}&#34; -gt 0 ]; then
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  for v in &#34;${GHOST_DIRS[@]}&#34;; do
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    if [ &#34;$APPLY&#34; = 1 ]; then
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">      log &#34;RMDIR /lib/modules/$v&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">      rm -rf &#34;/lib/modules/$v&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    else
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">      log &#34;演练: rm -rf /lib/modules/$v&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    fi
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  done
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">else
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  log &#34;(没有幽灵残留目录，干净)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">fi
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log &#34;== 复核 ==&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log &#34;dkms status:&#34;; dkms status 2&gt;/dev/null | sed &#39;s/^/  /&#39; | while IFS= read -r l; do log &#34;$l&#34;; done
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log &#34;/lib/modules:&#34;; ls /lib/modules | sed &#39;s/^/  /&#39; | while IFS= read -r l; do log &#34;$l&#34;; done
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log &#34;DKMS 缓存占用: $(du -sh /var/lib/dkms 2&gt;/dev/null | cut -f1)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">if [ &#34;$APPLY&#34; = 1 ]; then
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  log &#34;完成。清理报告: $REPORT&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">else
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  log &#34;以上为演练结果（未做任何修改）。确认无误后加 --apply 重新执行。报告: $REPORT&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">fi
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">EOS</span>
+</span></span></code></pre></div><p>三个脚本执行完，核对输出末尾的「复核」段：<code>dkms status</code> 只剩运行内核、<code>/lib/modules</code> 只剩真实存在的内核，即为体检通过；确认无误后加 <code>--apply</code> / <code>-Apply</code> 重新执行一遍，就完成了清理。</p>
+<h3 id="方法二agent-自动配置">方法二：Agent 自动配置</h3>
+<p>更省事的做法是把问题直接丢给 AI Agent（ZCode、Claude Code 等均可），你只需要提供 SSH 连接方式。下面这段提示词可以直接复制：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>请帮我检查并清理一台 Proxmox VE / Ubuntu 服务器上的 DKMS&#34;幽灵内核&#34;——即内核镜像
+</span></span><span style="display:flex;"><span>已卸载、但系统里仍残留其 DKMS 编译产物、孤儿 headers 包和 /lib/modules 残留目录。
+</span></span><span style="display:flex;"><span>请严格按以下步骤操作：
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>1. 通过 SSH 登录该节点（连接方式见会话上下文/我会另行提供）；
+</span></span><span style="display:flex;"><span>2. 记录现状：uname -r、dkms status、ls /lib/modules、
+</span></span><span style="display:flex;"><span>   dpkg -l | grep -E &#39;linux-headers|proxmox-headers|pve-headers&#39;；
+</span></span><span style="display:flex;"><span>3. 先以演练模式运行一次体检脚本（先 dry-run，不改任何东西）：
+</span></span><span style="display:flex;"><span>   - 分类规则：uname -r 命中的目录无条件保留；/boot/vmlinuz-&lt;版本&gt; 仍存在的保留；
+</span></span><span style="display:flex;"><span>     dpkg -S 显示仍被已安装包占用的目录跳过；其余判定为幽灵；
+</span></span><span style="display:flex;"><span>   - 孤儿 headers：包名对应的内核版本无 vmlinuz 且非运行内核，且版本号含三段数字
+</span></span><span style="display:flex;"><span>     （形如 proxmox-headers-7.0 的元包不得列入）；
+</span></span><span style="display:flex;"><span>4. 把演练报告给我看，明确列出：将 dkms remove 的条目、将 apt purge 的包、
+</span></span><span style="display:flex;"><span>   将 rm -rf 的目录；等我确认后加 --apply 重新执行；
+</span></span><span style="display:flex;"><span>5. 清理后复核：dkms status 应只剩已安装内核的条目；ls /lib/modules 应与
+</span></span><span style="display:flex;"><span>   /boot/vmlinuz-* 及运行内核一致；du -sh /var/lib/dkms 记录瘦身效果。
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>约束：绝不触碰运行中内核（uname -r）；不执行 dist-upgrade/full-upgrade；不重启；
+</span></span><span style="display:flex;"><span>不动当前内核的 headers 与模块；rm -rf 仅限 /lib/modules/&lt;幽灵版本&gt; 这一层目录。
+</span></span></code></pre></div><p>Agent 跑完后，重点核对它给出的三样证据：演练报告里的 GHOST/ORPHAN 清单、清理后的 <code>dkms status</code>、以及 <code>/lib/modules</code> 与 <code>/boot/vmlinuz-*</code> 的一致性。</p>
+<h2 id="七举一反三dkms-时代的内核卫生守则">七、举一反三：DKMS 时代的内核卫生守则</h2>
+<p>这次事件的教训可以浓缩成几条守则：</p>
+<ol>
+<li><strong>删内核要&quot;镜像 + headers&quot;成对删</strong>。headers 是 DKMS 误编译的土壤：只要图纸还在柜子里，下一次重装或升级 DKMS 驱动时，幽灵就会被再次唤醒。<code>apt autoremove</code> 之后，顺手 <code>dpkg -l | grep headers</code> 复查一眼。</li>
+<li><strong>装 DKMS 驱动前，想清楚要不要&quot;全量编译&quot;</strong>。如果你的机器常年只保留一个内核，<code>autoinstall_all_kernels=1</code> 纯属浪费；如果是新旧内核并存、等待重启验证的过渡期，这个设计反而是保障——重启回退旧内核时模块依然可用。</li>
+<li><strong><code>dkms status</code> 要会读&quot;沉默的浪费&quot;</strong>。它只报告成功与失败，不报告&quot;值不值得&quot;。每台 DKMS 驱动的机器都值得每月跑一次本文的体检脚本。</li>
+<li><strong>判断&quot;内核是否存在&quot;要以 <code>/boot/vmlinuz-*</code> 和 dpkg 为准</strong>，而不是 <code>/lib/modules</code> 的目录——后者是&quot;名单&quot;，会有残页；前者是&quot;门牌&quot;，拆楼必摘牌。</li>
+</ol>
+<h2 id="八qa">八、Q&amp;A</h2>
+<p><strong>Q1：为幽灵内核编译出来的模块，有什么实际危害？</strong></p>
+<p>A：功能上零危害——幽灵内核永远不会启动，模块永远不会被加载。危害都在资源侧：安装时多等几趟编译（<code>update-initramfs -u -k all</code> 也会为每个内核目录跑一遍）、磁盘多占几十 MB、<code>dkms status</code> 里多一堆干扰视线的条目。属于&quot;不致命但膈应人&quot;的慢性浪费。</p>
+<p><strong>Q2：为什么 6.14 的空目录没被编译？</strong></p>
+<p>A：因为编译需要 headers（<code>/lib/modules/&lt;版本&gt;/build</code> 链接）。6.14 的 headers 当年清干净了，只剩目录空壳，DKMS 想编也无从下手。这恰好从反面验证了根因：名单 + 图纸，缺一不可。</p>
+<p><strong>Q3：这些幽灵模块会拖慢开机吗？</strong></p>
+<p>A：不会。开机只加载运行内核的模块，幽灵的模块在它自己的目录里睡大觉。唯一的间接影响是 initramfs 更新变慢——那也只发生在安装/卸载包的那几十秒。</p>
+<p><strong>Q4：上游为什么要设计成&quot;给所有内核编译&quot;？这不是 bug 吗？</strong></p>
+<p>A：不是 bug，是取舍。i915-sriov 这类驱动属于&quot;启动即必需&quot;：如果新旧内核并存、你重启回退到旧内核，没有模块显卡虚拟化就直接失效。全量编译保证了任何已安装内核启动时都可用。Debian 默认（只编当前 + 最新内核）是另一种取舍，Launchpad 上同样有人提需求希望默认全量。两种策略没有对错，只有场景。</p>
+<p><strong>Q5：以后升级内核还会复发吗？</strong></p>
+<p>A：只要&quot;删镜像留 headers&quot;的习惯还在，就会复发——下次重装或升级 i915-sriov-dkms 时，残留 headers 的幽灵会再次被全量编译。根治方法是让&quot;镜像 + headers&quot;同进同出，然后定期跑一遍本文的体检脚本，一分钟解决。</p>
+<p><strong>Q6：我就是不想要全量编译，能从根上关掉吗？</strong></p>
+<p>A：可以绕过 deb 包的 postinst，手动注册 DKMS：把源码目录放到 <code>/usr/src/i915-sriov-dkms-&lt;版本&gt;</code> 后执行 <code>dkms add</code> 和 <code>dkms install -m i915-sriov-dkms -v &lt;版本&gt; -k $(uname -r)</code>，只给当前内核编译。但要注意：后续每次内核升级后需要自己补编译（这正是 deb 包 + 全量编译帮你自动做的事）。取舍归你自己。</p>
+<h2 id="参考资料">参考资料</h2>
+<p><img alt="Debian Wiki 的 DkmsPackaging 页面" src="/post-images/dkms-ghost-kernels/12-web-debian-wiki.webp"></p>
+<p><em>图 13：真实网页截图。Debian Wiki 的 DkmsPackaging 页面记录了 DKMS 打包与 common.postinst 的官方约定。</em></p>
+<ul>
+<li><a href="https://github.com/strongtz/i915-sriov-dkms">strongtz/i915-sriov-dkms（GitHub）</a>——本文主角，i915/xe 驱动的 SR-IOV 社区移植版</li>
+<li><a href="https://bugs.launchpad.net/bugs/2120641">Launchpad Bug #2120641：DKMS only builds modules for the currently booted kernel version</a>——<code>autoinstall_all_kernels</code> 开关的官方&quot;病历&quot;</li>
+<li><a href="https://wiki.debian.org/DkmsPackaging">Debian Wiki：DkmsPackaging</a>——DKMS 的 Debian 打包规范与 common.postinst 约定</li>
+<li><a href="https://manpages.debian.org/testing/dkms/dkms.8.en.html">dkms(8) 手册页（Debian）</a>——<code>autoinstall</code> 与相关参数的权威说明</li>
+<li><a href="https://github.com/dkms-project/dkms">dkms-project/dkms（GitHub）</a>——DKMS 上游源码仓库</li>
+</ul>
+
+        </div>
+    </article>
+
+    
+  
+
+
+
+
+    
+<div class="site-stats" aria-label="访问统计">
+    <span>本文阅读量 <span data-page-view-count>--</span></span>
+</div>
+
+
+    
+    <script type="text/javascript" src="https://js.users.51.la/21044367.js"></script>
+    <script charset="UTF-8" id="LA_COLLECT" src="//sdk.51.la/js-sdk-pro.min.js"></script>
+    <script>LA.init({id: "1vVTUWl7zoRjnKXi",ck: "1vVTUWl7zoRjnKXi"})</script>
+    <script src="https://sdk.51.la/perf/js-sdk-perf.min.js" crossorigin="anonymous"></script>
+    <script>
+      new LingQue.Monitor().init({id:"202teQt8THXwqyve"});
+    </script>
+    <script defer src="/js/page-views.js"></script>
+    <div class="la-theme-widget" data-51la-widget aria-label="51.la 网站统计"></div>
+    <script defer src="/js/51la-theme-widget.js"></script>
+</body>
+</html>

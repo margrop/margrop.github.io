@@ -1,0 +1,783 @@
+<!DOCTYPE html>
+<html lang="en-US">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>The Kernels Were Uninstalled, but DKMS Kept Compiling 110MB of Modules for Them: Hunting the Ghost Kernels of i915-sriov-dkms - Margrop Blog</title>
+<meta name="description" content="TL;DR Right after installing the i915-sriov-dkms graphics-virtualization driver on a Proxmox VE node, dkms status listed four kernel versions that were never …">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://blog.margrop.net/en/post/dkms-ghost-kernels-%E5%B9%BD%E7%81%B5%E5%86%85%E6%A0%B8/"><meta property="og:site_name" content="Margrop Blog">
+<meta property="og:title" content="The Kernels Were Uninstalled, but DKMS Kept Compiling 110MB of Modules for Them: Hunting the Ghost Kernels of i915-sriov-dkms - Margrop Blog">
+<meta property="og:description" content="TL;DR Right after installing the i915-sriov-dkms graphics-virtualization driver on a Proxmox VE node, dkms status listed four kernel versions that were never …">
+<meta property="og:url" content="https://blog.margrop.net/en/post/dkms-ghost-kernels-%E5%B9%BD%E7%81%B5%E5%86%85%E6%A0%B8/">
+<meta property="og:locale" content="en_US"><meta property="og:type" content="article"><meta property="og:locale:alternate" content="zh_CN"><meta property="og:image" content="https://blog.margrop.net/images/avatar.png"><meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="The Kernels Were Uninstalled, but DKMS Kept Compiling 110MB of Modules for Them: Hunting the Ghost Kernels of i915-sriov-dkms - Margrop Blog">
+<meta name="twitter:description" content="TL;DR Right after installing the i915-sriov-dkms graphics-virtualization driver on a Proxmox VE node, dkms status listed four kernel versions that were never …"><meta name="twitter:image" content="https://blog.margrop.net/images/avatar.png"><link rel="alternate" hreflang="zh-CN" href="https://blog.margrop.net/post/dkms-ghost-kernels-%E5%B9%BD%E7%81%B5%E5%86%85%E6%A0%B8/"><link rel="alternate" hreflang="en-US" href="https://blog.margrop.net/en/post/dkms-ghost-kernels-%E5%B9%BD%E7%81%B5%E5%86%85%E6%A0%B8/"><link rel="alternate" hreflang="x-default" href="https://blog.margrop.net/"><meta property="article:published_time" content="2026-09-14T07:00:00&#43;08:00">
+<meta property="article:modified_time" content="2026-09-14T07:00:00&#43;08:00"><meta property="article:tag" content="ProxmoxVE"><meta property="article:tag" content="pve"><meta property="article:tag" content="DKMS"><meta property="article:tag" content="Troubleshooting"><meta property="article:tag" content="Operations"><meta property="article:tag" content="Linux"><meta property="article:tag" content="Automation"><meta property="article:tag" content="Windows 11"><meta property="article:tag" content="macOS"><meta property="article:tag" content="Ubuntu 26.04"><script type="application/ld+json">{"@context":"https://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"Margrop"},"dateModified":"2026-09-14T07:00:00+08:00","datePublished":"2026-09-14T07:00:00+08:00","description":"TL;DR Right after installing the i915-sriov-dkms graphics-virtualization driver on a Proxmox VE node, dkms status listed four kernel versions that were never …","headline":"The Kernels Were Uninstalled, but DKMS Kept Compiling 110MB of Modules for Them: Hunting the Ghost Kernels of i915-sriov-dkms","mainEntityOfPage":"https://blog.margrop.net/en/post/dkms-ghost-kernels-%E5%B9%BD%E7%81%B5%E5%86%85%E6%A0%B8/","url":"https://blog.margrop.net/en/post/dkms-ghost-kernels-%E5%B9%BD%E7%81%B5%E5%86%85%E6%A0%B8/"}</script>
+    <meta name="baidu-site-verification" content="code-sVFZ8SER59" />
+    <script src="/js/theme-toggle.js"></script>
+
+    
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-3J2W592DHJ"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-3J2W592DHJ');
+    </script>
+
+    <style>
+    :root {
+        color-scheme: light;
+        --page-bg: #fff;
+        --surface-bg: #f4f4f4;
+        --text: #222;
+        --muted: #666;
+        --subtle: #777;
+        --border: #eee;
+        --border-strong: #ddd;
+        --link: #006CFF;
+        --tag-bg: #eee;
+        --button-bg: #fff;
+        --button-primary-bg: #333;
+    }
+    @media (prefers-color-scheme: dark) {
+        :root:not([data-theme]) {
+            color-scheme: dark;
+            --page-bg: #111315;
+            --surface-bg: #1d2126;
+            --text: #e8eaed;
+            --muted: #aeb4bd;
+            --subtle: #9aa2ad;
+            --border: #30353d;
+            --border-strong: #454c56;
+            --link: #79b8ff;
+            --tag-bg: #2a3038;
+            --button-bg: #1d2126;
+            --button-primary-bg: #e8eaed;
+        }
+    }
+    html[data-theme="dark"] {
+        color-scheme: dark;
+        --page-bg: #111315;
+        --surface-bg: #1d2126;
+        --text: #e8eaed;
+        --muted: #aeb4bd;
+        --subtle: #9aa2ad;
+        --border: #30353d;
+        --border-strong: #454c56;
+        --link: #79b8ff;
+        --tag-bg: #2a3038;
+        --button-bg: #1d2126;
+        --button-primary-bg: #e8eaed;
+    }
+    html[data-theme="light"] {
+        color-scheme: light;
+        --page-bg: #fff;
+        --surface-bg: #f4f4f4;
+        --text: #222;
+        --muted: #666;
+        --subtle: #777;
+        --border: #eee;
+        --border-strong: #ddd;
+        --link: #006CFF;
+        --tag-bg: #eee;
+        --button-bg: #fff;
+        --button-primary-bg: #333;
+    }
+    body { background: var(--page-bg); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 860px; margin: 0 auto; padding: 20px; line-height: 1.7; color: var(--text); }
+    h1 { border-bottom: 2px solid var(--border-strong); padding-bottom: 10px; }
+    article > h1 { font-size: 2em; line-height: 1.3; margin-bottom: 12px; }
+    .post-list { list-style: none; padding: 0; }
+    .post-list li { margin: 15px 0; }
+    .post-list a { text-decoration: none; color: var(--text); font-size: 18px; }
+    .post-list a:hover { color: var(--link); }
+    .date { color: var(--muted); font-size: 14px; margin-right: 10px; }
+    .tags { margin-top: 8px; }
+    .tag { background: var(--tag-bg); padding: 2px 8px; border-radius: 3px; font-size: 12px; margin-right: 5px; display: inline-block; }
+    nav { margin-bottom: 18px; border-bottom: 1px solid var(--border); padding-bottom: 15px; }
+    nav a { margin-right: 20px; text-decoration: none; color: var(--text); font-size: 16px; }
+    nav a:hover { color: var(--link); }
+    .language-switcher { display: flex; align-items: center; gap: 10px; margin: -8px 0 26px; }
+    .language-switcher a { display: inline-block; padding: 4px 10px; border: 1px solid var(--border-strong); border-radius: 999px; color: var(--muted); text-decoration: none; font-size: 14px; }
+    .language-switcher a.active { background: var(--link); border-color: var(--link); color: #fff; }
+    .content { line-height: 1.8; }
+    .content code { background: var(--surface-bg); padding: 2px 5px; border-radius: 3px; }
+    .content pre { background: var(--surface-bg); padding: 15px; overflow-x: auto; border-radius: 5px; }
+    .content img { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+    .content .code-snippet__fix {
+        margin: 0 0 1.5em;
+    }
+    .content .code-snippet__fix .code-snippet__line-index {
+        display: none !important;
+    }
+    .meta { color: var(--muted); font-size: 14px; margin-bottom: 14px; }
+    .meta-separator { margin: 0 6px; color: var(--subtle); }
+    .site-stats { display: flex; flex-wrap: wrap; gap: 10px 18px; margin: 28px 0 8px; padding-top: 12px; border-top: 1px solid var(--border); color: var(--subtle); font-size: 12px; }
+    a { color: var(--link); }
+    .hero { padding: 12px 0 24px; }
+    .hero h1 { border-bottom: 2px solid #333; }
+    .eyebrow { color: var(--muted); font-size: 12px; letter-spacing: .12em; margin: 0 0 8px; }
+    .hero-tagline { font-size: 18px; margin: 12px 0 8px; }
+    .hero-copy { color: var(--muted); margin: 0 0 14px; }
+    .hero-actions { margin: 14px 0 4px; }
+    .button { display: inline-block; margin-right: 12px; border: 1px solid var(--border-strong); border-radius: 3px; padding: 4px 10px; text-decoration: none; color: var(--text); background: var(--button-bg); font-size: 14px; }
+    .button-primary { background: var(--button-primary-bg); border-color: var(--button-primary-bg); color: var(--page-bg); }
+    .theme-toggle { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 1px solid var(--border-strong); border-radius: 999px; background: var(--button-bg); color: var(--text); cursor: pointer; font: inherit; font-size: 16px; }
+    .theme-toggle:hover { border-color: var(--link); color: var(--link); }
+    .la-theme-widget { margin: 12px 0 20px; min-height: 24px; color: var(--text); }
+    .identity-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: 16px 0; }
+    .identity-grid div { display: flex; flex-direction: column; }
+    .identity-grid strong { font-size: 15px; }
+    .identity-grid span, .topic-card span, .featured-list small { color: var(--muted); font-size: 13px; }
+    .section-block { padding-top: 28px; }
+    .section-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+    .section-heading h2 { margin: 0; }
+    .section-heading a { font-size: 14px; }
+    .topic-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+    .topic-card { display: block; padding: 14px; border: 1px solid var(--border); text-decoration: none; color: var(--text); }
+    .topic-card:hover { border-color: var(--border-strong); }
+    .topic-card strong { display: block; margin: 4px 0; font-size: 17px; }
+    .topic-index, .featured-list > a > span { color: var(--muted) !important; font-size: 12px !important; }
+    .featured-list { border-top: 1px solid var(--border); }
+    .featured-list > a { display: flex; gap: 14px; padding: 12px 0; border-bottom: 1px solid var(--border); text-decoration: none; color: var(--text); }
+    .featured-list div { display: flex; flex-direction: column; }
+    .latest-block { max-width: 860px; }
+    @media (max-width: 680px) {
+        body { padding: 16px; }
+        nav a { display: inline-block; margin-right: 12px; margin-bottom: 8px; }
+        .identity-grid { grid-template-columns: repeat(2, 1fr); }
+        .topic-grid { grid-template-columns: 1fr; }
+    }
+</style>
+
+</head>
+<body>
+    <nav>
+  <a href="/en/">Home</a>
+  <a href="/en/start-here/">Start Here</a>
+  <a href="/en/career/">Portfolio</a>
+  <a href="/en/tag/ai/">AI Agent</a>
+  <a href="/en/tag/docker/">Self-hosting</a>
+  <a href="/en/tag/%e8%bf%90%e7%bb%b4/">Engineering</a>
+  <a href="/en/post/">Archive</a>
+  <a href="/en/tags/">Tags</a>
+  <a href="/en/about/">About</a>
+  <a href="https://github.com/margrop" target="_blank" rel="noopener">GitHub</a>
+</nav>
+
+    <div class="language-switcher">
+  <button class="theme-toggle" type="button" data-theme-toggle aria-label="切换到暗黑模式" aria-pressed="false">🌙</button>
+
+  
+  
+    <a href="/post/dkms-ghost-kernels-%E5%B9%BD%E7%81%B5%E5%86%85%E6%A0%B8/" class="">中文</a>
+  
+    <a href="/en/post/dkms-ghost-kernels-%E5%B9%BD%E7%81%B5%E5%86%85%E6%A0%B8/" class="active">English</a>
+  
+  
+</div>
+
+    
+    <article>
+        <h1>The Kernels Were Uninstalled, but DKMS Kept Compiling 110MB of Modules for Them: Hunting the Ghost Kernels of i915-sriov-dkms</h1>
+        <div class="meta">
+            Published: 2026-09-14
+            <span class="meta-separator">·</span>
+            <span>阅读量 <span data-page-view-count>--</span></span>
+        </div>
+        
+<div class="tags">
+    
+    <a href="/en/tag/proxmoxve/"><span class="tag">ProxmoxVE</span></a>
+    
+    <a href="/en/tag/pve/"><span class="tag">PVE</span></a>
+    
+    <a href="/en/tag/dkms/"><span class="tag">DKMS</span></a>
+    
+    <a href="/en/tag/troubleshooting/"><span class="tag">Troubleshooting</span></a>
+    
+    <a href="/en/tag/operations/"><span class="tag">Operations</span></a>
+    
+    <a href="/en/tag/linux/"><span class="tag">Linux</span></a>
+    
+    <a href="/en/tag/automation/"><span class="tag">Automation</span></a>
+    
+    <a href="/en/tag/windows-11/"><span class="tag">Windows 11</span></a>
+    
+    <a href="/en/tag/macos/"><span class="tag">macOS</span></a>
+    
+    <a href="/en/tag/ubuntu-26.04/"><span class="tag">Ubuntu 26.04</span></a>
+    
+</div>
+
+
+        <div class="content">
+            <blockquote>
+<p><strong>TL;DR</strong></p>
+<p>Right after installing the i915-sriov-dkms graphics-virtualization driver on a Proxmox VE node, <code>dkms status</code> listed four kernel versions that were never installed on that machine — each one compiled a full set of modules, costing about 70MB of extra disk and roughly five times the build time. And those kernel image packages had been cleanly uninstalled long before the driver ever touched the system.</p>
+<p>The root cause is almost funny: the driver package&rsquo;s own install script contains a single line — <code>export autoinstall_all_kernels=1</code> — which cranks DKMS&rsquo;s &ldquo;build a copy for every kernel on the system&rdquo; switch to maximum. And DKMS does not consult the dpkg database to decide whether a kernel &ldquo;exists&rdquo;: it reads the directory roster under <code>/lib/modules/</code> and checks whether the matching headers are still installed. The old kernel images were gone, but four sets of headers were still sitting in the system — so the ghosts got their work permit.</p>
+<p>The fix takes three steps: purge the orphan headers → remove the DKMS builds for ghost kernels → delete the leftover directories. This post walks through the full investigation and ships one-click health-check scripts for Windows 11 / Ubuntu 26.04 / macOS 26 (dry-run by default), in both &ldquo;run it yourself&rdquo; and &ldquo;hand it to an AI agent&rdquo; flavors.</p>
+</blockquote>
+<p><img alt="Original cover: who is assigning work to the ghost kernels?" src="/post-images/dkms-ghost-kernels/00-cover.svg"></p>
+<p><em>Figure 1: Original cover art. One driver installed on the PVE host — and the DKMS pipeline delivers a full set of build artifacts to four &ldquo;ghost kernels&rdquo; overnight.</em></p>
+<h2 id="1-background-giving-the-igpu-one-card-many-vms-superpowers">1. Background: Giving the iGPU &ldquo;one card, many VMs&rdquo; Superpowers</h2>
+<p>One of the physical nodes in my home lab has an Intel iGPU that mostly collects dust after lighting up the console. To put it to work, I wanted to use SR-IOV (Single Root I/O Virtualization) to slice it into multiple virtual functions (VFs) and pass them through to several VMs — one piece of hardware, shared by everyone. A classic homelab play.</p>
+<p>The i915 driver shipped with the stock PVE kernel does not support SR-IOV on consumer iGPUs. The community answer is <a href="https://github.com/strongtz/i915-sriov-dkms">strongtz/i915-sriov-dkms</a>: the mainline i915 driver with SR-IOV patches, packaged as a DKMS module. The current release supports kernels 6.17.x ~ 7.0.x, and my node runs 7.0.14-16-pve — a perfect match.</p>
+<p>DKMS (Dynamic Kernel Module Support) is, in short, the &ldquo;auto-renovation crew&rdquo; for kernel modules: every time a kernel updates, it automatically recompiles third-party modules so they keep matching. Installing such a driver is usually just <code>dpkg -i</code> on a deb package; seeing <code>installed</code> in <code>dkms status</code> means you are done.</p>
+<p>After installing, I habitually glanced at the status — and froze.</p>
+<h2 id="2-symptoms-a-bunch-of-kernels-that-do-not-exist">2. Symptoms: A Bunch of Kernels That Do Not Exist</h2>
+<p>The full picture first:</p>
+<p><img alt="The full picture: install one driver, DKMS ships five sets of artifacts" src="/post-images/dkms-ghost-kernels/01-symptom.svg"></p>
+<p><em>Figure 2: The full picture. Only one kernel image (7.0.14-16-pve) is actually installed, yet DKMS delivered five sets of build artifacts.</em></p>
+<p>Here is the real <code>dkms status</code> output:</p>
+<p><img alt="Four ghost kernels in dkms status" src="/post-images/dkms-ghost-kernels/02-terminal-dkms-status-before.svg"></p>
+<p><em>Figure 3: Real command output. All four 6.17.x entries read installed — built successfully, installed successfully, for kernels that do not exist.</em></p>
+<p>The suspicious part is blunt: <strong>this machine runs exactly one kernel image, <code>7.0.14-16-pve</code>, but DKMS also built modules for four 6.17.x versions</strong>. Stranger still, those kernel image packages had been uninstalled before the driver was installed — cleaning up old kernels after upgrading to the 7.0 series is standard practice, and not a single 6.17 <code>proxmox-kernel-*</code> package remained in apt.</p>
+<p>In other words, DKMS was working for four &ldquo;ghost kernels&rdquo;, compiling modules they would never use. There was no error and no warning — everything &ldquo;looked successful&rdquo;. The disk was just quietly getting fatter (<code>/var/lib/dkms</code> held 110MB, of which ~70MB belonged to the ghosts), and the build took five times longer than it should have.</p>
+<h2 id="3-analysis-on-the-roster-and-in-the-blueprint-cabinet">3. Analysis: On the Roster, and in the Blueprint Cabinet</h2>
+<h3 id="31-rule-out-the-human-factor-first">3.1 Rule Out the Human Factor First</h3>
+<p>As always, eliminate the obvious suspects first:</p>
+<table>
+<thead>
+<tr>
+<th>Suspicion</th>
+<th>How I checked</th>
+<th>Verdict</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Wrong driver package?</td>
+<td>Compared the deb version with the GitHub release</td>
+<td>Ruled out — latest version</td>
+</tr>
+<tr>
+<td>Leftovers from manual builds?</td>
+<td><code>/var/lib/dkms</code> only had this install&rsquo;s timestamps</td>
+<td>Ruled out</td>
+</tr>
+<tr>
+<td>Someone touched dkms config?</td>
+<td><code>/etc/dkms/framework.conf</code> was pristine</td>
+<td>Ruled out</td>
+</tr>
+<tr>
+<td>DKMS acting up?</td>
+<td>Reproduced on a clean VM: same four builds</td>
+<td>Confirmed: deterministic behavior</td>
+</tr>
+</tbody>
+</table>
+<p>The last check matters most: this is not a haunting, it is <strong>deterministic logic</strong>. So what does DKMS actually use to decide &ldquo;which kernels to build for&rdquo;?</p>
+<h3 id="32-dkmss-roster-libmodules">3.2 DKMS&rsquo;s &ldquo;Roster&rdquo;: /lib/modules</h3>
+<p>DKMS is a user-space framework. It never queries the dpkg database; the &ldquo;kernels on this system&rdquo; are simply <strong>the subdirectories under <code>/lib/modules/</code></strong> — every installed kernel version gets a directory named after itself there. Think of it as the residential roster of an apartment complex. Let&rsquo;s read the roster:</p>
+<p><img alt="The /lib/modules roster and headers check" src="/post-images/dkms-ghost-kernels/04-terminal-lib-modules-before.svg"></p>
+<p><em>Figure 4: Real command output. Eight versions on the roster: four 6.17s with headers (yellow), three 6.14s that are empty shells without headers, plus the running 7.0.</em></p>
+<p>The roster is longer than expected — besides the running 7.0.14-16-pve, there are four 6.17s and three 6.14s. Those 6.14 directories are empty shells left behind by past upgrades (<code>ls -A</code> counts zero files); uninstalling the kernel images never took the directories with them.</p>
+<h3 id="33-dkmss-blueprint-cabinet-headers">3.3 DKMS&rsquo;s &ldquo;Blueprint Cabinet&rdquo;: headers</h3>
+<p>But being on the roster is only necessary, not sufficient. Compiling a kernel module requires the kernel headers — the original blueprints. Without blueprints, the renovation crew simply skips that apartment. The check is whether the <code>/lib/modules/&lt;version&gt;/build</code> symlink exists (created by the headers package). Whether the headers are still installed is a question for dpkg:</p>
+<p><img alt="Four sets of old-kernel headers still installed" src="/post-images/dkms-ghost-kernels/03-terminal-headers-before.svg"></p>
+<p><em>Figure 5: Real command output (columns trimmed). Only the 7.0-series kernel images remain, but four sets of 6.17 headers were sitting in the system untouched.</em></p>
+<p>Now the control group is complete, and the conclusion writes itself:</p>
+<ul>
+<li><strong>6.17 × 4</strong>: on the roster (leftover dirs) + blueprints in the cabinet (headers never removed) → DKMS treats them as legitimate residents and builds for each one;</li>
+<li><strong>6.14 × 3</strong>: on the roster as empty directories, but their headers were cleaned long ago → DKMS skips them entirely; <code>dkms status</code> does not even list them.</li>
+</ul>
+<p>Same ghosts, wildly different treatment — the difference is precisely that set of &ldquo;blueprints&rdquo;. This also explains why Figure 3 shows exactly four 6.17s and no 6.14s: <strong>for a ghost kernel to be compiled, its headers must still be installed.</strong></p>
+<h2 id="4-root-cause-one-export-that-opens-the-build-for-everything-switch">4. Root Cause: One <code>export</code> That Opens the &ldquo;Build for Everything&rdquo; Switch</h2>
+<h3 id="41-the-line-in-the-drivers-own-script">4.1 The Line in the Driver&rsquo;s Own Script</h3>
+<p>The roster and the blueprints are only the objective conditions; someone still has to order the work. Let&rsquo;s open the deb package&rsquo;s own install script (the postinst — a hook that runs during package install/configure):</p>
+<p><img alt="autoinstall_all_kernels=1 in the postinst" src="/post-images/dkms-ghost-kernels/05-terminal-postinst.svg"></p>
+<p><em>Figure 6: Real file content. The very first thing the install script does is set <code>autoinstall_all_kernels</code> to 1.</em></p>
+<p>This variable is a switch recognized by DKMS&rsquo;s official maintainer script (<code>/usr/lib/dkms/common.postinst</code>). Here is how the official code interprets it:</p>
+<p><img alt="The common.postinst logic" src="/post-images/dkms-ghost-kernels/06-terminal-common-postinst.svg"></p>
+<p><em>Figure 7: Real file content (excerpt). Once the variable is exported, the &ldquo;build for the current kernel only&rdquo; default branch is skipped entirely.</em></p>
+<p>Translated into plain language: <strong>without this variable, DKMS by default builds only for the &ldquo;currently running kernel + newest kernel&rdquo;; once the variable is exported, it iterates over every kernel on the system.</strong> That is exactly the choice made by the i915-sriov-dkms maintainers — the upstream Debian packaging adds this export explicitly.</p>
+<p>The behavior even has an official &ldquo;medical record&rdquo;: a Launchpad bug against the dkms package titled &ldquo;DKMS only builds modules for the currently booted kernel version&rdquo;, which states that the default comes from <code>autoinstall_all_kernels</code> being unset and requests setting it to yes so that all kernels get modules:</p>
+<p><img alt="The original Launchpad Bug #2120641 description" src="/post-images/dkms-ghost-kernels/11-web-launchpad.webp"></p>
+<p><em>Figure 8: Real web screenshot. The Launchpad bug report confirms this switch&rsquo;s existence and default value — from the opposite direction.</em></p>
+<h3 id="42-the-whole-decision-chain-drawn-out">4.2 The Whole Decision Chain, Drawn Out</h3>
+<p><img alt="How DKMS picks the kernels to serve" src="/post-images/dkms-ghost-kernels/07-decision-flow.svg"></p>
+<p><em>Figure 9: DKMS&rsquo;s decision flow during package installation. Whether headers are present is the dividing line for whether a ghost gets compiled.</em></p>
+<p>Root cause in one sentence: <strong>i915-sriov-dkms&rsquo;s install script exports <code>autoinstall_all_kernels=1</code> → DKMS iterates over the full <code>/lib/modules/</code> roster → the four 6.17 ghosts are &ldquo;on the roster + blueprints (headers) present&rdquo; → each receives its own set of build artifacts; the three 6.14 ghosts are spared for lack of blueprints.</strong></p>
+<h3 id="43-an-analogy-the-property-managements-renovation-crew">4.3 An Analogy: The Property Management&rsquo;s Renovation Crew</h3>
+<p>If DKMS and headers feel too abstract, here is an apartment-complex analogy a primary-schooler can follow:</p>
+<p><img alt="The property management renovation crew analogy" src="/post-images/dkms-ghost-kernels/08-analogy-property.svg"></p>
+<p><em>Figure 10: The analogy. Roster + blueprints are both required — and &ldquo;does the building still exist&rdquo; is simply not on the crew&rsquo;s checklist.</em></p>
+<ul>
+<li><strong>DKMS is the renovation crew of the property management office</strong>, and its rulebook reads: following the &ldquo;residential roster + blueprint cabinet&rdquo;, custom-build a set of furniture for every resident whose blueprints are on file;</li>
+<li><strong><code>/lib/modules</code> is the roster</strong>: residents register when a kernel is installed and should be crossed out when uninstalled — but leftover names are inevitable;</li>
+<li><strong>headers are the blueprint cabinet</strong>: headers installed = blueprints still filed; image uninstalled but headers kept = the resident moved out but the blueprints are still in the cabinet;</li>
+<li><strong><code>autoinstall_all_kernels=1</code> is the overtime switch</strong>: a normal crew serves only the one or two apartments actually occupied; flip the switch and &ldquo;every name on the roster gets furniture&rdquo;;</li>
+<li><strong>the build artifacts are the custom furniture</strong>: building 6.17.13-2 was demolished long ago, yet the furniture is dutifully built to spec and piled into the property warehouse (disk).</li>
+</ul>
+<p>Nobody in this story is a villain: upstream wants the driver available no matter which installed kernel you boot — perfectly reasonable; DKMS faithfully serves the roster — diligent and obedient. The real trap is that <strong>the crew checks the roster and the blueprints, but never verifies that the building still exists.</strong></p>
+<h2 id="5-the-fix-cross-the-ghosts-off-the-roster">5. The Fix: Cross the Ghosts Off the Roster</h2>
+<p>Just reverse the root cause — three steps:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># 1) Purge the orphan headers (image uninstalled + headers still present = orphan)</span>
+</span></span><span style="display:flex;"><span>apt-get purge -y proxmox-headers-6.17.13-2-pve proxmox-headers-6.17.13-21-pve <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>                 proxmox-headers-6.17.13-4-pve proxmox-headers-6.17.4-2-pve
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 2) Remove the DKMS builds for the ghost kernels</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">for</span> k in 6.17.13-2-pve 6.17.13-21-pve 6.17.13-4-pve 6.17.4-2-pve; <span style="color:#66d9ef">do</span>
+</span></span><span style="display:flex;"><span>  dkms remove i915-sriov-dkms/2026.08.12.1 -k $k
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">done</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 3) Delete the leftover dirs under /lib/modules (confirm the kernel packages are gone)</span>
+</span></span><span style="display:flex;"><span>rm -rf /lib/modules/6.17.13-2-pve /lib/modules/6.17.13-21-pve <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>       /lib/modules/6.17.13-4-pve /lib/modules/6.17.4-2-pve
+</span></span></code></pre></div><p>Then run the &ldquo;verification trio&rdquo;:</p>
+<p><img alt="The verification trio after cleanup" src="/post-images/dkms-ghost-kernels/10-terminal-after.svg"></p>
+<p><em>Figure 11: Real command output. <code>dkms status</code> drops from five entries to one, <code>linux-version list</code> shows only the running kernel, and the DKMS cache slims down from 110M to 39M.</em></p>
+<p>One <code>installed</code> entry for the current kernel in <code>dkms status</code>, a single line from <code>linux-version list</code>, <code>/var/lib/dkms</code> down from 110M to 39M — all three checks pass. The current kernel&rsquo;s modules are untouched, and GPU virtualization keeps working.</p>
+<h2 id="6-one-click-health-check-scripts">6. One-Click Health-Check Scripts</h2>
+<p>For readers who&rsquo;d rather not type any of that, I wrapped the whole &ldquo;check → classify → clean → verify&rdquo; flow into three cross-platform scripts, with three safety rails built in:</p>
+<ul>
+<li><strong>Dry-run by default</strong>: without a flag, the scripts only print what they <em>would</em> do (a report is also saved under <code>/tmp</code>); you review, then apply;</li>
+<li><strong>The running kernel is never touched</strong>: directories matching <code>uname -r</code> are unconditionally KEEPed; an additional <code>dpkg -S</code> ownership check skips any directory still owned by an installed package;</li>
+<li><strong>Meta-package protection</strong>: meta packages like <code>proxmox-headers-7.0</code> with incomplete version strings are never auto-removed — better to miss than to misfire.</li>
+</ul>
+<p><img alt="Real dry-run output of the script" src="/post-images/dkms-ghost-kernels/09-terminal-fix-dryrun.svg"></p>
+<p><em>Figure 12: Real dry-run output. The four 6.17 ghosts are flagged GHOST, the running kernel is protected, the meta package is skipped, and the verification block tells the whole story.</em></p>
+<h3 id="method-1-run-it-yourself">Method 1: Run It Yourself</h3>
+<p><strong>Ubuntu 26.04 / PVE node (<code>fix-dkms-ghost-kernels.sh</code>)</strong> — run locally, or pass <code>root@&lt;target-node&gt;</code> to check a remote machine:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e">#!/usr/bin/env bash
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span><span style="color:#75715e"># fix-dkms-ghost-kernels.sh — clean &#34;ghost kernels&#34;: leftover DKMS builds, orphan headers,</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># leftover dirs for kernels whose images are already uninstalled</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># Local check :  sudo bash fix-dkms-ghost-kernels.sh</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># Local clean :  sudo bash fix-dkms-ghost-kernels.sh --apply</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># Remote check:  bash fix-dkms-ghost-kernels.sh root@&lt;target-node-ip&gt;</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># Remote clean:  bash fix-dkms-ghost-kernels.sh root@&lt;target-node-ip&gt; --apply</span>
+</span></span><span style="display:flex;"><span>set -euo pipefail
+</span></span><span style="display:flex;"><span>TARGET<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;&#34;</span>
+</span></span><span style="display:flex;"><span>APPLY_ARG<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;&#34;</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">for</span> a in <span style="color:#e6db74">&#34;</span>$@<span style="color:#e6db74">&#34;</span>; <span style="color:#66d9ef">do</span>
+</span></span><span style="display:flex;"><span>  <span style="color:#66d9ef">case</span> <span style="color:#e6db74">&#34;</span>$a<span style="color:#e6db74">&#34;</span> in
+</span></span><span style="display:flex;"><span>    --apply<span style="color:#f92672">)</span> APPLY_ARG<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;--apply&#34;</span> ;;
+</span></span><span style="display:flex;"><span>    *<span style="color:#f92672">)</span> TARGET<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span>$a<span style="color:#e6db74">&#34;</span> ;;
+</span></span><span style="display:flex;"><span>  <span style="color:#66d9ef">esac</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">done</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>PAYLOAD<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>cat <span style="color:#e6db74">&lt;&lt;&#39;EOS&#39;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">set -euo pipefail
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">APPLY=0
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">[ &#34;${1:-}&#34; = &#34;--apply&#34; ] &amp;&amp; APPLY=1
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">REPORT=&#34;${TMPDIR:-/tmp}/dkms-ghost-kernels-$(date +%Y%m%d-%H%M%S).txt&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log(){ printf &#39;%s\n&#39; &#34;$*&#34; | tee -a &#34;$REPORT&#34;; }
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">RUNNING=&#34;$(uname -r)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log &#34;== [1/6] DKMS ghost-kernel health check $(date -Is) ==&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log &#34;Running kernel: $RUNNING&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">INSTALLED_KERNELS=&#34;$(cd /boot 2&gt;/dev/null &amp;&amp; ls vmlinuz-* 2&gt;/dev/null | sed &#39;s/^vmlinuz-//&#39; || true)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log &#34;Installed kernel images (/boot/vmlinuz-*):&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">printf &#39;%s\n&#39; &#34;$INSTALLED_KERNELS&#34; | sed &#39;s/^/  - /&#39; | while read -r l; do log &#34;$l&#34;; done
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log &#34;== [2/6] dkms status ==&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">dkms status 2&gt;/dev/null | while IFS= read -r l; do log &#34;$l&#34;; done
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">[ -z &#34;$(dkms status 2&gt;/dev/null)&#34; ] &amp;&amp; log &#34;(no DKMS entries)&#34; || true
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log &#34;== [3/6] Classifying /lib/modules entries ==&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">GHOST_DIRS=()
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">for d in /lib/modules/*/; do
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  v=&#34;$(basename &#34;$d&#34;)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  [ &#34;$v&#34; = &#34;$RUNNING&#34; ] &amp;&amp; { log &#34;KEEP  $v  (running kernel, never touched)&#34;; continue; }
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  if printf &#39;%s\n&#39; &#34;$INSTALLED_KERNELS&#34; | grep -qxF &#34;$v&#34;; then
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    log &#34;KEEP  $v  (kernel image still installed)&#34;; continue
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  fi
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  if dpkg -S &#34;/lib/modules/$v&#34; &gt;/dev/null 2&gt;&amp;1; then
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    log &#34;KEEP  $v  (still owned by installed packages, skipped)&#34;; continue
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  fi
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  GHOST_DIRS+=(&#34;$v&#34;)
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  log &#34;GHOST $v  (image uninstalled, leftover dir; files: $(find &#34;$d&#34; -type f 2&gt;/dev/null | wc -l))&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">done
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log &#34;== [4/6] DKMS builds for ghost kernels ==&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">STALE_COUNT=0
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">while IFS= read -r line; do
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  [ -z &#34;$line&#34; ] &amp;&amp; continue
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  kv=&#34;$(printf &#39;%s&#39; &#34;$line&#34; | awk -F&#39;, &#39; &#39;/,/{print $2}&#39; | cut -d, -f1)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  [ -z &#34;$kv&#34; ] &amp;&amp; continue
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  [ &#34;$kv&#34; = &#34;$RUNNING&#34; ] &amp;&amp; continue
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  printf &#39;%s\n&#39; &#34;$INSTALLED_KERNELS&#34; | grep -qxF &#34;$kv&#34; &amp;&amp; continue
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  mod=&#34;$(printf &#39;%s&#39; &#34;$line&#34; | cut -d/ -f1)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  mv=&#34;$(printf &#39;%s&#39; &#34;$line&#34; | cut -d/ -f2 | cut -d, -f1)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  STALE_COUNT=$((STALE_COUNT+1))
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  if [ &#34;$APPLY&#34; = 1 ]; then
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    log &#34;CLEAN dkms remove $mod/$mv -k $kv&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    dkms remove &#34;$mod/$mv&#34; -k &#34;$kv&#34; || log &#34;  (remove failed, please check manually)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  else
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    log &#34;STALE $mod/$mv  for kernel $kv  (will run: dkms remove $mod/$mv -k $kv)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  fi
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">done &lt; &lt;(dkms status 2&gt;/dev/null)
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">[ &#34;$STALE_COUNT&#34; = 0 ] &amp;&amp; [ &#34;$APPLY&#34; = 0 ] &amp;&amp; log &#34;(no DKMS builds for ghost kernels, clean)&#34; || true
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log &#34;== [5/6] Orphan kernel header packages ==&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">ORPHANS=()
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">for pkg in $(dpkg --list 2&gt;/dev/null | awk &#39;/^ii  (linux-headers|proxmox-headers|pve-headers)-[0-9]/{print $2}&#39;); do
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  v=&#34;$(printf &#39;%s&#39; &#34;$pkg&#34; | sed -E &#39;s/^(linux|proxmox|pve)-headers-//&#39;)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  printf &#39;%s&#39; &#34;$v&#34; | grep -qE &#39;^[0-9]+\.[0-9]+\.[0-9]+&#39; || { log &#34;SKIP  $pkg  (meta package, not handled automatically)&#34;; continue; }
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  [ &#34;$v&#34; = &#34;$RUNNING&#34; ] &amp;&amp; { log &#34;SKIP  $pkg  (belongs to the running kernel)&#34;; continue; }
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  [ -e &#34;/boot/vmlinuz-$v&#34; ] &amp;&amp; { log &#34;SKIP  $pkg  (kernel image still installed)&#34;; continue; }
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  ORPHANS+=(&#34;$pkg&#34;)
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  log &#34;ORPHAN $pkg  (kernel $v no longer installed)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">done
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">if [ &#34;${#ORPHANS[@]}&#34; -gt 0 ]; then
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  if [ &#34;$APPLY&#34; = 1 ]; then
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    log &#34;PURGE: apt-get -y purge ${ORPHANS[*]}&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    DEBIAN_FRONTEND=noninteractive apt-get -y purge &#34;${ORPHANS[@]}&#34; || log &#34;  (purge failed, please check manually)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  else
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    log &#34;Dry-run: apt-get -s purge ${ORPHANS[*]}&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    apt-get -s purge &#34;${ORPHANS[@]}&#34; 2&gt;/dev/null | grep -E &#39;^(Remv|Purg)&#39; | while IFS= read -r l; do log &#34;  $l&#34;; done || true
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  fi
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">else
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  log &#34;(no orphan header packages, clean)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">fi
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log &#34;== [6/6] Removing ghost leftover dirs ==&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">if [ &#34;${#GHOST_DIRS[@]}&#34; -gt 0 ]; then
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  for v in &#34;${GHOST_DIRS[@]}&#34;; do
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    if [ &#34;$APPLY&#34; = 1 ]; then
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">      log &#34;RMDIR /lib/modules/$v&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">      rm -rf &#34;/lib/modules/$v&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    else
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">      log &#34;Dry-run: rm -rf /lib/modules/$v&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    fi
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  done
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">else
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  log &#34;(no ghost leftover dirs, clean)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">fi
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log &#34;== Verification ==&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log &#34;dkms status:&#34;; dkms status 2&gt;/dev/null | sed &#39;s/^/  /&#39; | while IFS= read -r l; do log &#34;$l&#34;; done
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log &#34;/lib/modules:&#34;; ls /lib/modules | sed &#39;s/^/  /&#39; | while IFS= read -r l; do log &#34;$l&#34;; done
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log &#34;DKMS cache usage: $(du -sh /var/lib/dkms 2&gt;/dev/null | cut -f1)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">if [ &#34;$APPLY&#34; = 1 ]; then
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  log &#34;Done. Report: $REPORT&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">else
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  log &#34;This was a DRY RUN (nothing changed). Re-run with --apply to clean. Report: $REPORT&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">fi
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">EOS</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">)</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> <span style="color:#f92672">[</span> -n <span style="color:#e6db74">&#34;</span>$TARGET<span style="color:#e6db74">&#34;</span> <span style="color:#f92672">]</span>; <span style="color:#66d9ef">then</span>
+</span></span><span style="display:flex;"><span>  ssh <span style="color:#e6db74">&#34;</span>$TARGET<span style="color:#e6db74">&#34;</span> <span style="color:#e6db74">&#34;bash -s </span>$APPLY_ARG<span style="color:#e6db74">&#34;</span> <span style="color:#f92672">&lt;&lt;&lt;</span><span style="color:#e6db74">&#34;</span>$PAYLOAD<span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">else</span>
+</span></span><span style="display:flex;"><span>  <span style="color:#f92672">[</span> <span style="color:#e6db74">&#34;</span><span style="color:#66d9ef">$(</span>id -u<span style="color:#66d9ef">)</span><span style="color:#e6db74">&#34;</span> -eq <span style="color:#ae81ff">0</span> <span style="color:#f92672">]</span> <span style="color:#f92672">||</span> <span style="color:#f92672">{</span> echo <span style="color:#e6db74">&#34;Local cleanup needs root; run with sudo.&#34;</span>; exit 1; <span style="color:#f92672">}</span>
+</span></span><span style="display:flex;"><span>  bash -s $APPLY_ARG <span style="color:#f92672">&lt;&lt;&lt;</span><span style="color:#e6db74">&#34;</span>$PAYLOAD<span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">fi</span>
+</span></span></code></pre></div><p><strong>Windows 11 (<code>Fix-DkmsGhostKernels.ps1</code>)</strong> — remote check/cleanup over the built-in OpenSSH client; run <code>.\Fix-DkmsGhostKernels.ps1 -Target &quot;root@&lt;server-ip&gt;&quot;</code> in PowerShell (add <code>-Apply</code> to actually clean). Note the script is intentionally ASCII-only: Windows PowerShell 5.1 misreads BOM-less UTF-8 scripts using the legacy code page, which garbles non-ASCII strings or even breaks parsing — plain ASCII is the robust choice:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-powershell" data-lang="powershell"><span style="display:flex;"><span><span style="color:#75715e"># Fix-DkmsGhostKernels.ps1 - Check &amp; clean &#34;ghost kernels&#34; on a remote Ubuntu/Debian/PVE node.</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># Dry run : .\Fix-DkmsGhostKernels.ps1 -Target &#34;root@&lt;server-ip&gt;&#34;</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># Apply   : .\Fix-DkmsGhostKernels.ps1 -Target &#34;root@&lt;server-ip&gt;&#34; -Apply</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># Uses only the built-in OpenSSH client. (ASCII-only on purpose: Windows PowerShell 5.1</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># mis-decodes BOM-less UTF-8 scripts and may fail to parse non-ASCII strings.)</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">param</span>(
+</span></span><span style="display:flex;"><span>  [Parameter(<span style="color:#a6e22e">Mandatory</span> = $true)][<span style="color:#66d9ef">string</span>]$Target,
+</span></span><span style="display:flex;"><span>  [<span style="color:#66d9ef">int</span>]$Port = <span style="color:#ae81ff">22</span>,
+</span></span><span style="display:flex;"><span>  [<span style="color:#66d9ef">switch</span>]$Apply
+</span></span><span style="display:flex;"><span>)
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>$payload = <span style="color:#e6db74">@&#39;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">set -euo pipefail
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">APPLY=0
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">[ &#34;${1:-}&#34; = &#34;--apply&#34; ] &amp;&amp; APPLY=1
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">REPORT=&#34;${TMPDIR:-/tmp}/dkms-ghost-kernels-$(date +%Y%m%d-%H%M%S).txt&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log(){ printf &#39;%s\n&#39; &#34;$*&#34; | tee -a &#34;$REPORT&#34;; }
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">RUNNING=&#34;$(uname -r)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log &#34;== [1/6] DKMS ghost-kernel health check $(date -Is) ==&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log &#34;Running kernel: $RUNNING&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">INSTALLED_KERNELS=&#34;$(cd /boot 2&gt;/dev/null &amp;&amp; ls vmlinuz-* 2&gt;/dev/null | sed &#39;s/^vmlinuz-//&#39; || true)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log &#34;Installed kernel images (/boot/vmlinuz-*):&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">printf &#39;%s\n&#39; &#34;$INSTALLED_KERNELS&#34; | sed &#39;s/^/  - /&#39; | while read -r l; do log &#34;$l&#34;; done
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log &#34;== [2/6] dkms status ==&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">dkms status 2&gt;/dev/null | while IFS= read -r l; do log &#34;$l&#34;; done
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">[ -z &#34;$(dkms status 2&gt;/dev/null)&#34; ] &amp;&amp; log &#34;(no DKMS entries)&#34; || true
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log &#34;== [3/6] Classifying /lib/modules entries ==&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">GHOST_DIRS=()
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">for d in /lib/modules/*/; do
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  v=&#34;$(basename &#34;$d&#34;)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  [ &#34;$v&#34; = &#34;$RUNNING&#34; ] &amp;&amp; { log &#34;KEEP  $v  (running kernel, never touched)&#34;; continue; }
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  if printf &#39;%s\n&#39; &#34;$INSTALLED_KERNELS&#34; | grep -qxF &#34;$v&#34;; then
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    log &#34;KEEP  $v  (kernel image still installed)&#34;; continue
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  fi
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  if dpkg -S &#34;/lib/modules/$v&#34; &gt;/dev/null 2&gt;&amp;1; then
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    log &#34;KEEP  $v  (still owned by installed packages, skipped)&#34;; continue
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  fi
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  GHOST_DIRS+=(&#34;$v&#34;)
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  log &#34;GHOST $v  (image uninstalled, leftover dir; files: $(find &#34;$d&#34; -type f 2&gt;/dev/null | wc -l))&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">done
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log &#34;== [4/6] DKMS builds for ghost kernels ==&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">STALE_COUNT=0
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">while IFS= read -r line; do
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  [ -z &#34;$line&#34; ] &amp;&amp; continue
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  kv=&#34;$(printf &#39;%s&#39; &#34;$line&#34; | awk -F&#39;, &#39; &#39;/,/{print $2}&#39; | cut -d, -f1)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  [ -z &#34;$kv&#34; ] &amp;&amp; continue
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  [ &#34;$kv&#34; = &#34;$RUNNING&#34; ] &amp;&amp; continue
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  printf &#39;%s\n&#39; &#34;$INSTALLED_KERNELS&#34; | grep -qxF &#34;$kv&#34; &amp;&amp; continue
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  mod=&#34;$(printf &#39;%s&#39; &#34;$line&#34; | cut -d/ -f1)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  mv=&#34;$(printf &#39;%s&#39; &#34;$line&#34; | cut -d/ -f2 | cut -d, -f1)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  STALE_COUNT=$((STALE_COUNT+1))
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  if [ &#34;$APPLY&#34; = 1 ]; then
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    log &#34;CLEAN dkms remove $mod/$mv -k $kv&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    dkms remove &#34;$mod/$mv&#34; -k &#34;$kv&#34; || log &#34;  (remove failed, please check manually)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  else
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    log &#34;STALE $mod/$mv  for kernel $kv  (will run: dkms remove $mod/$mv -k $kv)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  fi
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">done &lt; &lt;(dkms status 2&gt;/dev/null)
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">[ &#34;$STALE_COUNT&#34; = 0 ] &amp;&amp; [ &#34;$APPLY&#34; = 0 ] &amp;&amp; log &#34;(no DKMS builds for ghost kernels, clean)&#34; || true
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log &#34;== [5/6] Orphan kernel header packages ==&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">ORPHANS=()
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">for pkg in $(dpkg --list 2&gt;/dev/null | awk &#39;/^ii  (linux-headers|proxmox-headers|pve-headers)-[0-9]/{print $2}&#39;); do
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  v=&#34;$(printf &#39;%s&#39; &#34;$pkg&#34; | sed -E &#39;s/^(linux|proxmox|pve)-headers-//&#39;)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  printf &#39;%s&#39; &#34;$v&#34; | grep -qE &#39;^[0-9]+\.[0-9]+\.[0-9]+&#39; || { log &#34;SKIP  $pkg  (meta package, not handled automatically)&#34;; continue; }
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  [ &#34;$v&#34; = &#34;$RUNNING&#34; ] &amp;&amp; { log &#34;SKIP  $pkg  (belongs to the running kernel)&#34;; continue; }
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  [ -e &#34;/boot/vmlinuz-$v&#34; ] &amp;&amp; { log &#34;SKIP  $pkg  (kernel image still installed)&#34;; continue; }
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  ORPHANS+=(&#34;$pkg&#34;)
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  log &#34;ORPHAN $pkg  (kernel $v no longer installed)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">done
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">if [ &#34;${#ORPHANS[@]}&#34; -gt 0 ]; then
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  if [ &#34;$APPLY&#34; = 1 ]; then
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    log &#34;PURGE: apt-get -y purge ${ORPHANS[*]}&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    DEBIAN_FRONTEND=noninteractive apt-get -y purge &#34;${ORPHANS[@]}&#34; || log &#34;  (purge failed, please check manually)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  else
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    log &#34;Dry-run: apt-get -s purge ${ORPHANS[*]}&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    apt-get -s purge &#34;${ORPHANS[@]}&#34; 2&gt;/dev/null | grep -E &#39;^(Remv|Purg)&#39; | while IFS= read -r l; do log &#34;  $l&#34;; done || true
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  fi
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">else
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  log &#34;(no orphan header packages, clean)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">fi
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log &#34;== [6/6] Removing ghost leftover dirs ==&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">if [ &#34;${#GHOST_DIRS[@]}&#34; -gt 0 ]; then
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  for v in &#34;${GHOST_DIRS[@]}&#34;; do
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    if [ &#34;$APPLY&#34; = 1 ]; then
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">      log &#34;RMDIR /lib/modules/$v&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">      rm -rf &#34;/lib/modules/$v&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    else
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">      log &#34;Dry-run: rm -rf /lib/modules/$v&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    fi
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  done
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">else
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  log &#34;(no ghost leftover dirs, clean)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">fi
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log &#34;== Verification ==&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log &#34;dkms status:&#34;; dkms status 2&gt;/dev/null | sed &#39;s/^/  /&#39; | while IFS= read -r l; do log &#34;$l&#34;; done
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log &#34;/lib/modules:&#34;; ls /lib/modules | sed &#39;s/^/  /&#39; | while IFS= read -r l; do log &#34;$l&#34;; done
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log &#34;DKMS cache usage: $(du -sh /var/lib/dkms 2&gt;/dev/null | cut -f1)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">if [ &#34;$APPLY&#34; = 1 ]; then
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  log &#34;Done. Report: $REPORT&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">else
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  log &#34;This was a DRY RUN (nothing changed). Re-run with -Apply to clean. Report: $REPORT&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">fi
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">&#39;@</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>$arg = <span style="color:#e6db74">&#39;&#39;</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> ($Apply) { $arg = <span style="color:#e6db74">&#39;--apply&#39;</span> }
+</span></span><span style="display:flex;"><span>$payload | ssh -p $Port $Target <span style="color:#e6db74">&#34;bash -s </span>$arg<span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> ($LASTEXITCODE <span style="color:#f92672">-eq</span> <span style="color:#ae81ff">0</span>) {
+</span></span><span style="display:flex;"><span>  Write-Host <span style="color:#e6db74">&#34;Done. Please review the final &#39;Verification&#39; block above.&#34;</span> -ForegroundColor Green
+</span></span><span style="display:flex;"><span>} <span style="color:#66d9ef">else</span> {
+</span></span><span style="display:flex;"><span>  Write-Host <span style="color:#e6db74">&#34;Failed. Check the SSH connection and the output above.&#34;</span> -ForegroundColor Red
+</span></span><span style="display:flex;"><span>}
+</span></span></code></pre></div><p><strong>macOS 26 (<code>fix-dkms-ghost-kernels-macos.zsh</code>)</strong> — run <code>bash fix-dkms-ghost-kernels-macos.zsh root@&lt;server-ip&gt;</code> in Terminal (add <code>--apply</code> to actually clean):</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e">#!/usr/bin/env zsh
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span><span style="color:#75715e"># fix-dkms-ghost-kernels-macos.zsh — check/clean &#34;ghost kernels&#34; on a remote node from macOS 26</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># Check: bash fix-dkms-ghost-kernels-macos.zsh root@&lt;server-ip&gt;</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># Clean: bash fix-dkms-ghost-kernels-macos.zsh root@&lt;server-ip&gt; --apply</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># Uses only the built-in ssh; the target must be Ubuntu / Debian / Proxmox VE.</span>
+</span></span><span style="display:flex;"><span>set -euo pipefail
+</span></span><span style="display:flex;"><span>TARGET<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>1:?usage: bash fix-dkms-ghost-kernels-macos.zsh root@&lt;server-ip&gt; [--apply]<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>APPLY_ARG<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>2<span style="color:#66d9ef">:-</span><span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>ssh <span style="color:#e6db74">&#34;</span>$TARGET<span style="color:#e6db74">&#34;</span> <span style="color:#e6db74">&#34;bash -s </span>$APPLY_ARG<span style="color:#e6db74">&#34;</span> <span style="color:#e6db74">&lt;&lt;&#39;EOS&#39;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">set -euo pipefail
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">APPLY=0
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">[ &#34;${1:-}&#34; = &#34;--apply&#34; ] &amp;&amp; APPLY=1
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">REPORT=&#34;${TMPDIR:-/tmp}/dkms-ghost-kernels-$(date +%Y%m%d-%H%M%S).txt&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log(){ printf &#39;%s\n&#39; &#34;$*&#34; | tee -a &#34;$REPORT&#34;; }
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">RUNNING=&#34;$(uname -r)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log &#34;== [1/6] DKMS ghost-kernel health check $(date -Is) ==&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log &#34;Running kernel: $RUNNING&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">INSTALLED_KERNELS=&#34;$(cd /boot 2&gt;/dev/null &amp;&amp; ls vmlinuz-* 2&gt;/dev/null | sed &#39;s/^vmlinuz-//&#39; || true)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log &#34;Installed kernel images (/boot/vmlinuz-*):&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">printf &#39;%s\n&#39; &#34;$INSTALLED_KERNELS&#34; | sed &#39;s/^/  - /&#39; | while read -r l; do log &#34;$l&#34;; done
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log &#34;== [2/6] dkms status ==&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">dkms status 2&gt;/dev/null | while IFS= read -r l; do log &#34;$l&#34;; done
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">[ -z &#34;$(dkms status 2&gt;/dev/null)&#34; ] &amp;&amp; log &#34;(no DKMS entries)&#34; || true
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log &#34;== [3/6] Classifying /lib/modules entries ==&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">GHOST_DIRS=()
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">for d in /lib/modules/*/; do
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  v=&#34;$(basename &#34;$d&#34;)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  [ &#34;$v&#34; = &#34;$RUNNING&#34; ] &amp;&amp; { log &#34;KEEP  $v  (running kernel, never touched)&#34;; continue; }
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  if printf &#39;%s\n&#39; &#34;$INSTALLED_KERNELS&#34; | grep -qxF &#34;$v&#34;; then
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    log &#34;KEEP  $v  (kernel image still installed)&#34;; continue
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  fi
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  if dpkg -S &#34;/lib/modules/$v&#34; &gt;/dev/null 2&gt;&amp;1; then
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    log &#34;KEEP  $v  (still owned by installed packages, skipped)&#34;; continue
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  fi
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  GHOST_DIRS+=(&#34;$v&#34;)
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  log &#34;GHOST $v  (image uninstalled, leftover dir; files: $(find &#34;$d&#34; -type f 2&gt;/dev/null | wc -l))&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">done
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log &#34;== [4/6] DKMS builds for ghost kernels ==&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">STALE_COUNT=0
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">while IFS= read -r line; do
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  [ -z &#34;$line&#34; ] &amp;&amp; continue
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  kv=&#34;$(printf &#39;%s&#39; &#34;$line&#34; | awk -F&#39;, &#39; &#39;/,/{print $2}&#39; | cut -d, -f1)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  [ -z &#34;$kv&#34; ] &amp;&amp; continue
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  [ &#34;$kv&#34; = &#34;$RUNNING&#34; ] &amp;&amp; continue
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  printf &#39;%s\n&#39; &#34;$INSTALLED_KERNELS&#34; | grep -qxF &#34;$kv&#34; &amp;&amp; continue
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  mod=&#34;$(printf &#39;%s&#39; &#34;$line&#34; | cut -d/ -f1)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  mv=&#34;$(printf &#39;%s&#39; &#34;$line&#34; | cut -d/ -f2 | cut -d, -f1)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  STALE_COUNT=$((STALE_COUNT+1))
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  if [ &#34;$APPLY&#34; = 1 ]; then
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    log &#34;CLEAN dkms remove $mod/$mv -k $kv&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    dkms remove &#34;$mod/$mv&#34; -k &#34;$kv&#34; || log &#34;  (remove failed, please check manually)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  else
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    log &#34;STALE $mod/$mv  for kernel $kv  (will run: dkms remove $mod/$mv -k $kv)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  fi
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">done &lt; &lt;(dkms status 2&gt;/dev/null)
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">[ &#34;$STALE_COUNT&#34; = 0 ] &amp;&amp; [ &#34;$APPLY&#34; = 0 ] &amp;&amp; log &#34;(no DKMS builds for ghost kernels, clean)&#34; || true
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log &#34;== [5/6] Orphan kernel header packages ==&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">ORPHANS=()
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">for pkg in $(dpkg --list 2&gt;/dev/null | awk &#39;/^ii  (linux-headers|proxmox-headers|pve-headers)-[0-9]/{print $2}&#39;); do
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  v=&#34;$(printf &#39;%s&#39; &#34;$pkg&#34; | sed -E &#39;s/^(linux|proxmox|pve)-headers-//&#39;)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  printf &#39;%s&#39; &#34;$v&#34; | grep -qE &#39;^[0-9]+\.[0-9]+\.[0-9]+&#39; || { log &#34;SKIP  $pkg  (meta package, not handled automatically)&#34;; continue; }
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  [ &#34;$v&#34; = &#34;$RUNNING&#34; ] &amp;&amp; { log &#34;SKIP  $pkg  (belongs to the running kernel)&#34;; continue; }
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  [ -e &#34;/boot/vmlinuz-$v&#34; ] &amp;&amp; { log &#34;SKIP  $pkg  (kernel image still installed)&#34;; continue; }
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  ORPHANS+=(&#34;$pkg&#34;)
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  log &#34;ORPHAN $pkg  (kernel $v no longer installed)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">done
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">if [ &#34;${#ORPHANS[@]}&#34; -gt 0 ]; then
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  if [ &#34;$APPLY&#34; = 1 ]; then
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    log &#34;PURGE: apt-get -y purge ${ORPHANS[*]}&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    DEBIAN_FRONTEND=noninteractive apt-get -y purge &#34;${ORPHANS[@]}&#34; || log &#34;  (purge failed, please check manually)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  else
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    log &#34;Dry-run: apt-get -s purge ${ORPHANS[*]}&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    apt-get -s purge &#34;${ORPHANS[@]}&#34; 2&gt;/dev/null | grep -E &#39;^(Remv|Purg)&#39; | while IFS= read -r l; do log &#34;  $l&#34;; done || true
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  fi
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">else
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  log &#34;(no orphan header packages, clean)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">fi
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log &#34;== [6/6] Removing ghost leftover dirs ==&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">if [ &#34;${#GHOST_DIRS[@]}&#34; -gt 0 ]; then
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  for v in &#34;${GHOST_DIRS[@]}&#34;; do
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    if [ &#34;$APPLY&#34; = 1 ]; then
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">      log &#34;RMDIR /lib/modules/$v&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">      rm -rf &#34;/lib/modules/$v&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    else
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">      log &#34;Dry-run: rm -rf /lib/modules/$v&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    fi
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  done
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">else
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  log &#34;(no ghost leftover dirs, clean)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">fi
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log &#34;== Verification ==&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log &#34;dkms status:&#34;; dkms status 2&gt;/dev/null | sed &#39;s/^/  /&#39; | while IFS= read -r l; do log &#34;$l&#34;; done
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log &#34;/lib/modules:&#34;; ls /lib/modules | sed &#39;s/^/  /&#39; | while IFS= read -r l; do log &#34;$l&#34;; done
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">log &#34;DKMS cache usage: $(du -sh /var/lib/dkms 2&gt;/dev/null | cut -f1)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">if [ &#34;$APPLY&#34; = 1 ]; then
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  log &#34;Done. Report: $REPORT&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">else
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  log &#34;This was a DRY RUN (nothing changed). Re-run with --apply to clean. Report: $REPORT&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">fi
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">EOS</span>
+</span></span></code></pre></div><p>After any of the three scripts finishes, check the &ldquo;Verification&rdquo; block at the end: <code>dkms status</code> listing only the running kernel and <code>/lib/modules</code> matching <code>/boot/vmlinuz-*</code> means the system is healthy; once you confirm the dry-run report, re-run with <code>--apply</code> / <code>-Apply</code> to clean.</p>
+<h3 id="method-2-hand-it-to-an-ai-agent">Method 2: Hand It to an AI Agent</h3>
+<p>The lazier route is to hand the whole problem to an AI agent (ZCode, Claude Code, etc.) — you only need to provide SSH access. This prompt can be copied as-is:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>Please check and clean the DKMS &#34;ghost kernels&#34; on a Proxmox VE / Ubuntu server —
+</span></span><span style="display:flex;"><span>kernel images that were uninstalled but left behind DKMS builds, orphan header
+</span></span><span style="display:flex;"><span>packages, and leftover /lib/modules directories. Follow these steps exactly:
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>1. SSH into the node (connection details in session context / provided separately);
+</span></span><span style="display:flex;"><span>2. Record the current state: uname -r, dkms status, ls /lib/modules,
+</span></span><span style="display:flex;"><span>   dpkg -l | grep -E &#39;linux-headers|proxmox-headers|pve-headers&#39;;
+</span></span><span style="display:flex;"><span>3. Run the health check in dry-run mode first (change nothing):
+</span></span><span style="display:flex;"><span>   - Classification rule: dirs matching uname -r are always kept; kept if
+</span></span><span style="display:flex;"><span>     /boot/vmlinuz-&lt;version&gt; exists; skipped if dpkg -S shows the dir is still
+</span></span><span style="display:flex;"><span>     owned by installed packages; everything else is a ghost;
+</span></span><span style="display:flex;"><span>   - Orphan headers: the package&#39;s kernel version has no vmlinuz and is not the
+</span></span><span style="display:flex;"><span>     running kernel, and the version string has three numeric components
+</span></span><span style="display:flex;"><span>     (meta packages like proxmox-headers-7.0 must NOT be included);
+</span></span><span style="display:flex;"><span>4. Show me the dry-run report listing: dkms remove entries, apt purge packages,
+</span></span><span style="display:flex;"><span>   and rm -rf dirs; only after my confirmation, re-run with --apply;
+</span></span><span style="display:flex;"><span>5. Verify afterwards: dkms status lists only installed kernels; ls /lib/modules
+</span></span><span style="display:flex;"><span>   matches /boot/vmlinuz-* plus the running kernel; record du -sh /var/lib/dkms.
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>Constraints: never touch the running kernel (uname -r); no dist-upgrade/full-upgrade;
+</span></span><span style="display:flex;"><span>no reboots; do not touch the current kernel&#39;s headers or modules; rm -rf is allowed
+</span></span><span style="display:flex;"><span>only at the depth of /lib/modules/&lt;ghost-version&gt;.
+</span></span></code></pre></div><p>When the agent finishes, check its three pieces of evidence: the GHOST/ORPHAN list from the dry run, the post-cleanup <code>dkms status</code>, and the consistency between <code>/lib/modules</code> and <code>/boot/vmlinuz-*</code>.</p>
+<h2 id="7-takeaways-kernel-hygiene-in-the-dkms-era">7. Takeaways: Kernel Hygiene in the DKMS Era</h2>
+<p>The lessons of this incident compress into a few rules:</p>
+<ol>
+<li><strong>Remove kernels as image + headers pairs.</strong> Headers are the soil ghost builds grow in: as long as the blueprints stay in the cabinet, the next driver install/upgrade will wake the ghosts again. After <code>apt autoremove</code>, take one glance at <code>dpkg -l | grep headers</code>.</li>
+<li><strong>Decide whether you want &ldquo;build for everything&rdquo; before installing a DKMS driver.</strong> If your machine always keeps a single kernel, <code>autoinstall_all_kernels=1</code> is pure waste; during a transition period with old and new kernels coexisting waiting for a reboot-and-verify, the design is actually a safety net — roll back to the old kernel and the module is still there.</li>
+<li><strong>Read <code>dkms status</code> with &ldquo;silent waste&rdquo; in mind.</strong> It reports success and failure, never &ldquo;worth it&rdquo;. Every machine running DKMS drivers deserves this post&rsquo;s health check once a month.</li>
+<li><strong>Treat <code>/boot/vmlinuz-*</code> and dpkg as the source of truth</strong> for &ldquo;does this kernel exist&rdquo; — not the <code>/lib/modules</code> directories. The latter is a roster with leftover pages; the former is the door plate, removed whenever the building comes down.</li>
+</ol>
+<h2 id="8-qa">8. Q&amp;A</h2>
+<p><strong>Q1: What is the actual harm of modules built for ghost kernels?</strong></p>
+<p>A: Zero functional harm — the ghost kernels never boot, so the modules never load. The cost is all on the resource side: extra build passes during install (<code>update-initramfs -u -k all</code> also runs for every kernel directory), a few dozen MB of disk, and a bunch of noise entries in <code>dkms status</code>. A chronic, non-fatal waste.</p>
+<p><strong>Q2: Why weren&rsquo;t the empty 6.14 directories compiled?</strong></p>
+<p>A: Because compiling requires headers (the <code>/lib/modules/&lt;version&gt;/build</code> symlink). The 6.14 headers were cleaned up long ago, leaving only hollow shells — DKMS had nothing to build with. This conveniently proves the root cause from the other side: roster + blueprints, both required.</p>
+<p><strong>Q3: Do the ghost modules slow down booting?</strong></p>
+<p>A: No. Boot only loads modules for the running kernel; the ghost modules sleep in their own directories. The only indirect effect is slower initramfs updates — measured in tens of seconds, only during package install/remove.</p>
+<p><strong>Q4: Why would upstream &ldquo;build for all kernels&rdquo; by design? Isn&rsquo;t this a bug?</strong></p>
+<p>A: Not a bug — a trade-off. A driver like i915-sriov is &ldquo;required at boot&rdquo;: if old and new kernels coexist and you reboot into the old one, without the module GPU virtualization simply breaks. Building for everything guarantees any installed kernel can boot with a working module. The Debian default (current + newest kernel only) is the opposite trade-off, and there are opposite requests on Launchpad asking for build-all as the default. Neither strategy is wrong; they fit different scenarios.</p>
+<p><strong>Q5: Will this happen again after future kernel upgrades?</strong></p>
+<p>A: If the &ldquo;remove the image but keep the headers&rdquo; habit remains, yes — the next install or upgrade of i915-sriov-dkms will wake the ghosts whose headers remain. The cure is removing image + headers as a pair, plus running this post&rsquo;s health check regularly. One minute a month.</p>
+<p><strong>Q6: I just don&rsquo;t want build-all. Can I turn it off at the root?</strong></p>
+<p>A: Yes — bypass the deb package&rsquo;s postinst and register with DKMS manually: put the source tree under <code>/usr/src/i915-sriov-dkms-&lt;version&gt;</code>, then <code>dkms add</code> and <code>dkms install -m i915-sriov-dkms -v &lt;version&gt; -k $(uname -r)</code> to build for the current kernel only. Caveat: you must recompile manually after every kernel upgrade — which is exactly what the deb package plus build-all automates for you. Your call.</p>
+<h2 id="references">References</h2>
+<p><img alt="The DkmsPackaging page on the Debian Wiki" src="/post-images/dkms-ghost-kernels/12-web-debian-wiki.webp"></p>
+<p><em>Figure 13: Real web screenshot. The Debian Wiki&rsquo;s DkmsPackaging page documents DKMS packaging and the common.postinst conventions.</em></p>
+<ul>
+<li><a href="https://github.com/strongtz/i915-sriov-dkms">strongtz/i915-sriov-dkms (GitHub)</a> — the protagonist of this post, the community SR-IOV port of the i915/xe drivers</li>
+<li><a href="https://bugs.launchpad.net/bugs/2120641">Launchpad Bug #2120641: DKMS only builds modules for the currently booted kernel version</a> — the official &ldquo;medical record&rdquo; of the <code>autoinstall_all_kernels</code> switch</li>
+<li><a href="https://wiki.debian.org/DkmsPackaging">Debian Wiki: DkmsPackaging</a> — DKMS packaging conventions and the common.postinst contract</li>
+<li><a href="https://manpages.debian.org/testing/dkms/dkms.8.en.html">dkms(8) man page (Debian)</a> — authoritative reference for <code>autoinstall</code> and related options</li>
+<li><a href="https://github.com/dkms-project/dkms">dkms-project/dkms (GitHub)</a> — the upstream DKMS source repository</li>
+</ul>
+
+        </div>
+    </article>
+
+    
+  
+
+
+
+
+    
+<div class="site-stats" aria-label="访问统计">
+    <span>本文阅读量 <span data-page-view-count>--</span></span>
+</div>
+
+
+    
+    <script type="text/javascript" src="https://js.users.51.la/21044367.js"></script>
+    <script charset="UTF-8" id="LA_COLLECT" src="//sdk.51.la/js-sdk-pro.min.js"></script>
+    <script>LA.init({id: "1vVTUWl7zoRjnKXi",ck: "1vVTUWl7zoRjnKXi"})</script>
+    <script src="https://sdk.51.la/perf/js-sdk-perf.min.js" crossorigin="anonymous"></script>
+    <script>
+      new LingQue.Monitor().init({id:"202teQt8THXwqyve"});
+    </script>
+    <script defer src="/js/page-views.js"></script>
+    <div class="la-theme-widget" data-51la-widget aria-label="51.la 网站统计"></div>
+    <script defer src="/js/51la-theme-widget.js"></script>
+</body>
+</html>
