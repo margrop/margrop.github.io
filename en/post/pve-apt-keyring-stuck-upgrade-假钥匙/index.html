@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="en-US">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Same Repository, One Node on 9.2 and One Stuck on 9.1: Hunting the Fake Keyring That Silently Broke PVE Updates - Margrop Blog</title>
+<meta name="description" content="TL;DR I run two Proxmox VE 9 nodes configured with exactly the same package repository (the pve-no-subscription mirror). One had already moved on to the latest …">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://blog.margrop.net/en/post/pve-apt-keyring-stuck-upgrade-%E5%81%87%E9%92%A5%E5%8C%99/"><meta property="og:site_name" content="Margrop Blog">
+<meta property="og:title" content="Same Repository, One Node on 9.2 and One Stuck on 9.1: Hunting the Fake Keyring That Silently Broke PVE Updates - Margrop Blog">
+<meta property="og:description" content="TL;DR I run two Proxmox VE 9 nodes configured with exactly the same package repository (the pve-no-subscription mirror). One had already moved on to the latest …">
+<meta property="og:url" content="https://blog.margrop.net/en/post/pve-apt-keyring-stuck-upgrade-%E5%81%87%E9%92%A5%E5%8C%99/">
+<meta property="og:locale" content="en_US"><meta property="og:type" content="article"><meta property="og:locale:alternate" content="zh_CN"><meta property="og:image" content="https://blog.margrop.net/images/avatar.png"><meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Same Repository, One Node on 9.2 and One Stuck on 9.1: Hunting the Fake Keyring That Silently Broke PVE Updates - Margrop Blog">
+<meta name="twitter:description" content="TL;DR I run two Proxmox VE 9 nodes configured with exactly the same package repository (the pve-no-subscription mirror). One had already moved on to the latest …"><meta name="twitter:image" content="https://blog.margrop.net/images/avatar.png"><link rel="alternate" hreflang="zh-CN" href="https://blog.margrop.net/post/pve-apt-keyring-stuck-upgrade-%E5%81%87%E9%92%A5%E5%8C%99/"><link rel="alternate" hreflang="en-US" href="https://blog.margrop.net/en/post/pve-apt-keyring-stuck-upgrade-%E5%81%87%E9%92%A5%E5%8C%99/"><link rel="alternate" hreflang="x-default" href="https://blog.margrop.net/"><meta property="article:published_time" content="2026-09-13T20:00:00&#43;08:00">
+<meta property="article:modified_time" content="2026-09-13T20:00:00&#43;08:00"><meta property="article:tag" content="ProxmoxVE"><meta property="article:tag" content="pve"><meta property="article:tag" content="Troubleshooting"><meta property="article:tag" content="Operations"><meta property="article:tag" content="Linux"><meta property="article:tag" content="Automation"><meta property="article:tag" content="Windows 11"><meta property="article:tag" content="macOS"><meta property="article:tag" content="Ubuntu 26.04"><script type="application/ld+json">{"@context":"https://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"Margrop"},"dateModified":"2026-09-13T20:00:00+08:00","datePublished":"2026-09-13T20:00:00+08:00","description":"TL;DR I run two Proxmox VE 9 nodes configured with exactly the same package repository (the pve-no-subscription mirror). One had already moved on to the latest …","headline":"Same Repository, One Node on 9.2 and One Stuck on 9.1: Hunting the Fake Keyring That Silently Broke PVE Updates","mainEntityOfPage":"https://blog.margrop.net/en/post/pve-apt-keyring-stuck-upgrade-%E5%81%87%E9%92%A5%E5%8C%99/","url":"https://blog.margrop.net/en/post/pve-apt-keyring-stuck-upgrade-%E5%81%87%E9%92%A5%E5%8C%99/"}</script>
+    <meta name="baidu-site-verification" content="code-sVFZ8SER59" />
+    <script src="/js/theme-toggle.js"></script>
+
+    
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-3J2W592DHJ"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-3J2W592DHJ');
+    </script>
+
+    <style>
+    :root {
+        color-scheme: light;
+        --page-bg: #fff;
+        --surface-bg: #f4f4f4;
+        --text: #222;
+        --muted: #666;
+        --subtle: #777;
+        --border: #eee;
+        --border-strong: #ddd;
+        --link: #006CFF;
+        --tag-bg: #eee;
+        --button-bg: #fff;
+        --button-primary-bg: #333;
+    }
+    @media (prefers-color-scheme: dark) {
+        :root:not([data-theme]) {
+            color-scheme: dark;
+            --page-bg: #111315;
+            --surface-bg: #1d2126;
+            --text: #e8eaed;
+            --muted: #aeb4bd;
+            --subtle: #9aa2ad;
+            --border: #30353d;
+            --border-strong: #454c56;
+            --link: #79b8ff;
+            --tag-bg: #2a3038;
+            --button-bg: #1d2126;
+            --button-primary-bg: #e8eaed;
+        }
+    }
+    html[data-theme="dark"] {
+        color-scheme: dark;
+        --page-bg: #111315;
+        --surface-bg: #1d2126;
+        --text: #e8eaed;
+        --muted: #aeb4bd;
+        --subtle: #9aa2ad;
+        --border: #30353d;
+        --border-strong: #454c56;
+        --link: #79b8ff;
+        --tag-bg: #2a3038;
+        --button-bg: #1d2126;
+        --button-primary-bg: #e8eaed;
+    }
+    html[data-theme="light"] {
+        color-scheme: light;
+        --page-bg: #fff;
+        --surface-bg: #f4f4f4;
+        --text: #222;
+        --muted: #666;
+        --subtle: #777;
+        --border: #eee;
+        --border-strong: #ddd;
+        --link: #006CFF;
+        --tag-bg: #eee;
+        --button-bg: #fff;
+        --button-primary-bg: #333;
+    }
+    body { background: var(--page-bg); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 860px; margin: 0 auto; padding: 20px; line-height: 1.7; color: var(--text); }
+    h1 { border-bottom: 2px solid var(--border-strong); padding-bottom: 10px; }
+    article > h1 { font-size: 2em; line-height: 1.3; margin-bottom: 12px; }
+    .post-list { list-style: none; padding: 0; }
+    .post-list li { margin: 15px 0; }
+    .post-list a { text-decoration: none; color: var(--text); font-size: 18px; }
+    .post-list a:hover { color: var(--link); }
+    .date { color: var(--muted); font-size: 14px; margin-right: 10px; }
+    .tags { margin-top: 8px; }
+    .tag { background: var(--tag-bg); padding: 2px 8px; border-radius: 3px; font-size: 12px; margin-right: 5px; display: inline-block; }
+    nav { margin-bottom: 18px; border-bottom: 1px solid var(--border); padding-bottom: 15px; }
+    nav a { margin-right: 20px; text-decoration: none; color: var(--text); font-size: 16px; }
+    nav a:hover { color: var(--link); }
+    .language-switcher { display: flex; align-items: center; gap: 10px; margin: -8px 0 26px; }
+    .language-switcher a { display: inline-block; padding: 4px 10px; border: 1px solid var(--border-strong); border-radius: 999px; color: var(--muted); text-decoration: none; font-size: 14px; }
+    .language-switcher a.active { background: var(--link); border-color: var(--link); color: #fff; }
+    .content { line-height: 1.8; }
+    .content code { background: var(--surface-bg); padding: 2px 5px; border-radius: 3px; }
+    .content pre { background: var(--surface-bg); padding: 15px; overflow-x: auto; border-radius: 5px; }
+    .content img { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+    .content .code-snippet__fix {
+        margin: 0 0 1.5em;
+    }
+    .content .code-snippet__fix .code-snippet__line-index {
+        display: none !important;
+    }
+    .meta { color: var(--muted); font-size: 14px; margin-bottom: 14px; }
+    .meta-separator { margin: 0 6px; color: var(--subtle); }
+    .site-stats { display: flex; flex-wrap: wrap; gap: 10px 18px; margin: 28px 0 8px; padding-top: 12px; border-top: 1px solid var(--border); color: var(--subtle); font-size: 12px; }
+    a { color: var(--link); }
+    .hero { padding: 12px 0 24px; }
+    .hero h1 { border-bottom: 2px solid #333; }
+    .eyebrow { color: var(--muted); font-size: 12px; letter-spacing: .12em; margin: 0 0 8px; }
+    .hero-tagline { font-size: 18px; margin: 12px 0 8px; }
+    .hero-copy { color: var(--muted); margin: 0 0 14px; }
+    .hero-actions { margin: 14px 0 4px; }
+    .button { display: inline-block; margin-right: 12px; border: 1px solid var(--border-strong); border-radius: 3px; padding: 4px 10px; text-decoration: none; color: var(--text); background: var(--button-bg); font-size: 14px; }
+    .button-primary { background: var(--button-primary-bg); border-color: var(--button-primary-bg); color: var(--page-bg); }
+    .theme-toggle { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 1px solid var(--border-strong); border-radius: 999px; background: var(--button-bg); color: var(--text); cursor: pointer; font: inherit; font-size: 16px; }
+    .theme-toggle:hover { border-color: var(--link); color: var(--link); }
+    .la-theme-widget { margin: 12px 0 20px; min-height: 24px; color: var(--text); }
+    .identity-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: 16px 0; }
+    .identity-grid div { display: flex; flex-direction: column; }
+    .identity-grid strong { font-size: 15px; }
+    .identity-grid span, .topic-card span, .featured-list small { color: var(--muted); font-size: 13px; }
+    .section-block { padding-top: 28px; }
+    .section-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+    .section-heading h2 { margin: 0; }
+    .section-heading a { font-size: 14px; }
+    .topic-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+    .topic-card { display: block; padding: 14px; border: 1px solid var(--border); text-decoration: none; color: var(--text); }
+    .topic-card:hover { border-color: var(--border-strong); }
+    .topic-card strong { display: block; margin: 4px 0; font-size: 17px; }
+    .topic-index, .featured-list > a > span { color: var(--muted) !important; font-size: 12px !important; }
+    .featured-list { border-top: 1px solid var(--border); }
+    .featured-list > a { display: flex; gap: 14px; padding: 12px 0; border-bottom: 1px solid var(--border); text-decoration: none; color: var(--text); }
+    .featured-list div { display: flex; flex-direction: column; }
+    .latest-block { max-width: 860px; }
+    @media (max-width: 680px) {
+        body { padding: 16px; }
+        nav a { display: inline-block; margin-right: 12px; margin-bottom: 8px; }
+        .identity-grid { grid-template-columns: repeat(2, 1fr); }
+        .topic-grid { grid-template-columns: 1fr; }
+    }
+</style>
+
+</head>
+<body>
+    <nav>
+  <a href="/en/">Home</a>
+  <a href="/en/start-here/">Start Here</a>
+  <a href="/en/career/">Portfolio</a>
+  <a href="/en/tag/ai/">AI Agent</a>
+  <a href="/en/tag/docker/">Self-hosting</a>
+  <a href="/en/tag/%e8%bf%90%e7%bb%b4/">Engineering</a>
+  <a href="/en/post/">Archive</a>
+  <a href="/en/tags/">Tags</a>
+  <a href="/en/about/">About</a>
+  <a href="https://github.com/margrop" target="_blank" rel="noopener">GitHub</a>
+</nav>
+
+    <div class="language-switcher">
+  <button class="theme-toggle" type="button" data-theme-toggle aria-label="切换到暗黑模式" aria-pressed="false">🌙</button>
+
+  
+  
+    <a href="/post/pve-apt-keyring-stuck-upgrade-%E5%81%87%E9%92%A5%E5%8C%99/" class="">中文</a>
+  
+    <a href="/en/post/pve-apt-keyring-stuck-upgrade-%E5%81%87%E9%92%A5%E5%8C%99/" class="active">English</a>
+  
+  
+</div>
+
+    
+    <article>
+        <h1>Same Repository, One Node on 9.2 and One Stuck on 9.1: Hunting the Fake Keyring That Silently Broke PVE Updates</h1>
+        <div class="meta">
+            Published: 2026-09-13
+            <span class="meta-separator">·</span>
+            <span>阅读量 <span data-page-view-count>--</span></span>
+        </div>
+        
+<div class="tags">
+    
+    <a href="/en/tag/proxmoxve/"><span class="tag">ProxmoxVE</span></a>
+    
+    <a href="/en/tag/pve/"><span class="tag">PVE</span></a>
+    
+    <a href="/en/tag/troubleshooting/"><span class="tag">Troubleshooting</span></a>
+    
+    <a href="/en/tag/operations/"><span class="tag">Operations</span></a>
+    
+    <a href="/en/tag/linux/"><span class="tag">Linux</span></a>
+    
+    <a href="/en/tag/automation/"><span class="tag">Automation</span></a>
+    
+    <a href="/en/tag/windows-11/"><span class="tag">Windows 11</span></a>
+    
+    <a href="/en/tag/macos/"><span class="tag">macOS</span></a>
+    
+    <a href="/en/tag/ubuntu-26.04/"><span class="tag">Ubuntu 26.04</span></a>
+    
+</div>
+
+
+        <div class="content">
+            <blockquote>
+<p><strong>TL;DR</strong></p>
+<p>I run two Proxmox VE 9 nodes configured with exactly the same package repository (the <code>pve-no-subscription</code> mirror). One had already moved on to the latest 9.2.18; the other was stuck at 9.1.9 — and had been silently stuck for more than four months, with no error ever surfacing.</p>
+<p>The root cause was neither the network nor the repository config: the GPG keyring file <code>/etc/apt/trusted.gpg.d/proxmox-release-trixie.gpg</code> had been created from the wrong download in the first place — it contained a &ldquo;signature block&rdquo; instead of a public key. Debian 13&rsquo;s new signature verifier therefore refused to refresh the PVE package index every single time, then <strong>quietly kept using a four-month-old index</strong>.</p>
+<p>The fix takes three steps: back up the broken file → install the correct official key → <code>apt update</code> again. No reinstall, no repository changes, five minutes end to end. This post walks through the full investigation and ships one-click fix scripts for Windows 11 / Ubuntu 26.04 / macOS 26, in both &ldquo;run it yourself&rdquo; and &ldquo;hand it to an AI agent&rdquo; flavors.</p>
+</blockquote>
+<p><img alt="Original cover: a fake keyring locks a whole server out of updates" src="/post-images/pve-apt-keyring-stuck-upgrade/00-cover.svg"></p>
+<p><em>Figure 1: Original cover art. Same repository, two different version worlds — the culprit is a fake key sitting in the keyring.</em></p>
+<h2 id="1-background-a-mundane-version-alignment">1. Background: A Mundane &ldquo;Version Alignment&rdquo;</h2>
+<p>My home lab runs two physical PVE nodes hosting around twenty VMs: soft routers, databases, builders, reverse proxies. Both nodes were installed back in the PVE 9.0 days and point at the same <code>pve-no-subscription</code> mirror — a standard home-lab setup.</p>
+<p>While aligning versions across both nodes, something odd showed up:</p>
+<ul>
+<li><strong>Node B</strong>: hit &ldquo;Refresh&rdquo; in the web UI and 9.2.18 was right there; one click, done.</li>
+<li><strong>Node A</strong>: the same operation topped out at 9.1.9. <code>apt full-upgrade</code> insisted the system was already up to date (<code>0 upgraded, 0 newly installed</code>).</li>
+</ul>
+<p>My first guess was &ldquo;the sources must be configured differently&rdquo; — the nodes were installed at different times, after all. That assumption died within minutes, and the real hunt began.</p>
+<h2 id="2-symptoms-one-source-two-realities">2. Symptoms: One Source, Two Realities</h2>
+<p><img alt="The full picture: same repo, two fates" src="/post-images/pve-apt-keyring-stuck-upgrade/01-symptom.svg"></p>
+<p><em>Figure 2: The full picture. Node B sees 9.2.18; node A&rsquo;s ceiling is welded shut at 9.1.9.</em></p>
+<h3 id="21-a-whole-release-series-apart">2.1 A Whole Release Series Apart</h3>
+<p>Running <code>pveversion</code> on both nodes tells the story at a glance:</p>
+<p><img alt="pveversion: 9.1.9 vs 9.2.18" src="/post-images/pve-apt-keyring-stuck-upgrade/02-terminal-pveversion.svg"></p>
+<p><em>Figure 3: Real command output. Node A is on 9.1.9 (kernel 6.17 series); node B is on 9.2.18 (kernel 7.0 series).</em></p>
+<h3 id="22-apt-believes-919-is-the-latest">2.2 apt Believes 9.1.9 <em>Is</em> the Latest</h3>
+<p>The decisive output is <code>apt-cache policy pve-manager</code> on node A:</p>
+<p><img alt="apt-cache policy shows a locked candidate" src="/post-images/pve-apt-keyring-stuck-upgrade/03-terminal-apt-policy.svg"></p>
+<p><em>Figure 4: Real command output (abridged). The Candidate is also 9.1.9 — and even 9.1.10 is missing from the version list.</em></p>
+<p>Quick primer on reading this: <strong>Installed</strong> is what&rsquo;s on disk, <strong>Candidate</strong> is what apt believes is available. A candidate of 9.1.9 means apt&rsquo;s &ldquo;shopping list&rdquo; contains no 9.2 entries at all. The problem is not the <em>install</em> step — it&rsquo;s the <em>seeing</em> step: <strong>apt has no idea 9.2.18 exists</strong>.</p>
+<p>The obvious suspects fell one by one:</p>
+<table>
+<thead>
+<tr>
+<th>Suspect</th>
+<th>Check</th>
+<th>Verdict</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Different sources?</td>
+<td><code>diff</code> of <code>sources.list</code> and <code>sources.list.d/</code></td>
+<td>Identical</td>
+</tr>
+<tr>
+<td>Mirror out of sync?</td>
+<td>Same mirror, yet node B sees 9.2.18</td>
+<td>Ruled out</td>
+</tr>
+<tr>
+<td>Version pinned?</td>
+<td>No pins in <code>apt-cache policy</code>, clean <code>/etc/apt/preferences</code></td>
+<td>Ruled out</td>
+</tr>
+<tr>
+<td>Disk full / apt lock?</td>
+<td><code>df -h</code> fine, no locks</td>
+<td>Ruled out</td>
+</tr>
+</tbody>
+</table>
+<h2 id="3-analysis-timestamps-are-the-first-crime-scene">3. Analysis: Timestamps Are the First Crime Scene</h2>
+<p>With the easy explanations exhausted, I switched angles: if apt can&rsquo;t <em>see</em> new versions, when did it last refresh its shopping list? The index cache lives in <code>/var/lib/apt/lists/</code>, and file timestamps don&rsquo;t lie:</p>
+<p><img alt="Index timestamps: one frozen in April, one fresh" src="/post-images/pve-apt-keyring-stuck-upgrade/07-terminal-list-dates.svg"></p>
+<p><em>Figure 5: Real command output (filenames abridged). Node A&rsquo;s PVE index is stuck at 2026-04-25; node B&rsquo;s was refreshed in September.</em></p>
+<p>First layer of the truth: <strong>node A&rsquo;s PVE package index had not refreshed successfully for over four months</strong>. Late April 2026 is exactly when 9.1.9 was current — from that moment on, the PVE repository simply ceased to exist for this machine.</p>
+<p>Which raises the question: why did nobody notice? Running <code>apt-get update</code> by hand reveals it:</p>
+<p><img alt="The signature verification failure" src="/post-images/pve-apt-keyring-stuck-upgrade/05-terminal-apt-update-error.svg"></p>
+<p><em>Figure 6: Real command output. The <code>Err:</code> points at InRelease verification failing, missing key <code>24B30F06…</code> — yet the whole command exits &ldquo;successfully&rdquo; with only <code>W:</code> warnings.</em></p>
+<p>Every line of that error is informative:</p>
+<ul>
+<li><code>Sub-process /usr/bin/sqv returned an error code (1)</code> — <code>sqv</code> is the new-generation signature verifier that apt uses on Debian 13 (Trixie), from the Sequoia-PGP project, replacing the aging <code>gpgv</code>;</li>
+<li><code>Missing key 24B30F06ECC1836A4E5EFECBA7BCD1420BFE778E, which is needed to verify signature</code> — the verifier cannot find a public key in its keyring that matches the PVE repository&rsquo;s signature;</li>
+<li><code>The repository is not updated and the previous index files will be used</code> — <strong>this is the soul of the incident</strong>: the index refresh is refused, and the old one soldier on.</li>
+</ul>
+<p>The nastiest part is what the footnote says: only <code>W:</code> warnings, no <code>E:</code> errors, cheerful exit code. A cron job running <code>apt update &amp;&amp; apt upgrade</code> would report success forever, upgrade nothing, and never make a sound.</p>
+<h3 id="31-where-exactly-is-the-missing-key">3.1 Where Exactly Is the &ldquo;Missing Key&rdquo;?</h3>
+<p>For this node&rsquo;s repository style, the verification key should live at <code>/etc/apt/trusted.gpg.d/proxmox-release-trixie.gpg</code>. Putting both nodes&rsquo; files side by side catches the culprit red-handed:</p>
+<p><img alt="file(1) comparing both keyring files" src="/post-images/pve-apt-keyring-stuck-upgrade/06-terminal-keyring-file.svg"></p>
+<p><em>Figure 7: Real command output. Node A&rsquo;s &ldquo;keyring&rdquo; is actually a block starting with <code>-----BEGIN PGP SIGNATURE-----</code>; node B&rsquo;s is a proper OpenPGP public key.</em></p>
+<p>The whole story snaps into focus: when the PVE repository was first configured on node A, the key-download step <strong>saved the wrong file</strong> — the repository&rsquo;s <em>signature</em> file went into the keyring directory instead of the <em>public key</em>. A signature block is not a key; the verifier cannot parse it, so every refresh reports a missing key. The broken file&rsquo;s timestamp, April 26, marks the day of that &ldquo;successful-looking&rdquo; repository change — and the last time this node ever received an update from the PVE repository.</p>
+<h2 id="4-root-cause-one-failed-verification-quietly-locks-the-version">4. Root Cause: One Failed Verification Quietly Locks the Version</h2>
+<p>Here is the full chain as a diagram — a textbook case of silent degradation:</p>
+<p><img alt="The apt verification flow" src="/post-images/pve-apt-keyring-stuck-upgrade/08-gpg-flow.svg"></p>
+<p><em>Figure 8: apt&rsquo;s verification journey. With no matching public key in the keyring, sqv refuses the refresh and leaves nothing but a warning.</em></p>
+<p>If GPG and keyrings feel abstract, here&rsquo;s a restaurant analogy:</p>
+<p><img alt="The restaurant stamp analogy" src="/post-images/pve-apt-keyring-stuck-upgrade/04-analogy-keyring.svg"></p>
+<p><em>Figure 9: The restaurant analogy. Keyring = the book of official stamp samples; a broken keyring = a book with scrap paper inside, so nothing ever matches.</em></p>
+<p>Mapping the metaphor to the mechanics:</p>
+<ol>
+<li>The <strong>repository</strong> publishes an <code>InRelease</code> index on every update — the full package list plus the vendor&rsquo;s GPG signature (&ldquo;a menu with an anti-forgery stamp&rdquo;);</li>
+<li>The <strong>keyring</strong> is the local book of official stamp samples; every file under <code>trusted.gpg.d</code> is treated as a sample;</li>
+<li>The <strong>verifier (sqv)</strong> compares the menu&rsquo;s stamp against the sample book at every refresh and rejects mismatches;</li>
+<li><strong>Silent fallback</strong>: on rejection, apt neither aborts nor alerts — it just keeps serving last month&rsquo;s menu (the stale index). That is the entire secret of &ldquo;four months, nobody noticed&rdquo;.</li>
+</ol>
+<p>Root cause in one sentence: <strong>node A&rsquo;s PVE keyring file contained the wrong content (a signature block posing as a key) → every index refresh failed verification → apt ran on April&rsquo;s stale index → the version ceiling was locked at 9.1.9.</strong></p>
+<h2 id="5-the-fix-swap-the-key-in-three-steps">5. The Fix: Swap the Key in Three Steps</h2>
+<p>The fix is refreshingly plain: <strong>put the correct public key back into the keyring, then refresh the index.</strong> The only question is where the correct key comes from. Both routes below are field-tested; I recommend them in this order:</p>
+<h3 id="51-route-1-recommended-restore-from-the-official-keyring-package">5.1 Route 1 (Recommended): Restore from the Official Keyring Package</h3>
+<p>The PVE repository ships an official package, <code>proxmox-archive-keyring</code>, containing all currently valid release keys. Package installs only verify checksums against the local index — no direct connectivity to the vendor&rsquo;s overseas servers required, which makes this route ideal for networks where <code>download.proxmox.com</code> is hard to reach:</p>
+<p><img alt="The missing key lives in the official keyring package" src="/post-images/pve-apt-keyring-stuck-upgrade/10-terminal-fingerprint.svg"></p>
+<p><em>Figure 10: Real command output. The keyring shipped inside the official package contains exactly the fingerprint the error message asked for: <code>24B30F06…</code>.</em></p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>apt-get install --reinstall -y proxmox-archive-keyring
+</span></span><span style="display:flex;"><span>install -m <span style="color:#ae81ff">0644</span> /usr/share/keyrings/proxmox-archive-keyring.gpg <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>                /etc/apt/trusted.gpg.d/proxmox-release-trixie.gpg
+</span></span><span style="display:flex;"><span>apt-get update
+</span></span></code></pre></div><h3 id="52-route-2-fallback-copy-from-a-healthy-sibling-node">5.2 Route 2 (Fallback): Copy from a Healthy Sibling Node</h3>
+<p>If your LAN has a healthy node with the same repository layout (mine happened to), copying its keyring file across is equally valid — same repository, same public key:</p>
+<p><img alt="The full repair session" src="/post-images/pve-apt-keyring-stuck-upgrade/09-terminal-fix.svg"></p>
+<p><em>Figure 11: The actual repair. Back up the broken file → copy the good key from the healthy node → refresh the index → the candidate jumps from 9.1.9 straight to 9.2.18.</em></p>
+<p>Notes that apply to both routes:</p>
+<ul>
+<li><strong>Back up first</strong>: <code>cp -a</code> the broken file to <code>/root</code> — instant rollback anytime;</li>
+<li><strong>Check the Candidate before upgrading</strong>: <code>apt-cache policy pve-manager</code> showing 9.2.18 is your proof of fix;</li>
+<li><strong>Separate upgrading from rebooting</strong>: <code>apt full-upgrade</code> brings the kernel from the 6.17 to the 7.0 series and needs a reboot to take effect — pick a maintenance window for production nodes.</li>
+</ul>
+<blockquote>
+<p>By the way, the Proxmox wiki now recommends the deb822-style <code>.sources</code> files plus <code>/usr/share/keyrings/proxmox-archive-keyring.gpg</code> (referenced explicitly via <code>Signed-By:</code>), which is tidier than the global <code>trusted.gpg.d</code> keyring. I kept the minimal-change repair here and left the repository migration as a follow-up.</p>
+</blockquote>
+<h2 id="6-one-click-fix-scripts">6. One-Click Fix Scripts</h2>
+<p>Too lazy to type? The logic is packaged into one-click scripts for three platforms. All of them use only SSH and the official repository — <strong>no third-party services</strong> — and all follow the same &ldquo;check → back up → fix → verify&rdquo; flow, automatically skipping nodes whose keyring is already healthy:</p>
+<p><img alt="The script&rsquo;s four-step logic" src="/post-images/pve-apt-keyring-stuck-upgrade/11-fix-flow.svg"></p>
+<p><em>Figure 12: Script flow. Check first, back up second, fix third, verify last — idempotent and safe to re-run.</em></p>
+<h3 id="method-1-run-it-yourself">Method 1: Run It Yourself</h3>
+<p><strong>Ubuntu 26.04 / on the PVE node itself (<code>fix-pve-keyring.sh</code>)</strong> — runs locally on a node, or repairs a remote one when given a <code>root@&lt;node&gt;</code> argument:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e">#!/usr/bin/env bash
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span><span style="color:#75715e"># fix-pve-keyring.sh — repair the version ceiling caused by PVE keyring failure</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># Local:   sudo bash fix-pve-keyring.sh</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># Remote:  bash fix-pve-keyring.sh root@&lt;target-node&gt;</span>
+</span></span><span style="display:flex;"><span>set -euo pipefail
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>PAYLOAD<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>cat <span style="color:#e6db74">&lt;&lt;&#39;EOS&#39;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">set -euo pipefail
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">KEY=&#34;/etc/apt/trusted.gpg.d/proxmox-release-trixie.gpg&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">PKG=&#34;/usr/share/keyrings/proxmox-archive-keyring.gpg&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">echo &#34;== [1/5] Version before fix ==&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">pveversion || true
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">apt-cache policy pve-manager | sed -n &#39;1,4p&#39;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">echo &#34;== [2/5] Keyring health check ==&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">if file &#34;$KEY&#34; 2&gt;/dev/null | grep -q &#34;OpenPGP Public Key&#34;; then
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  echo &#34;OK: keyring format is healthy. If updates still fail, investigate elsewhere.&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">else
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  echo &#34;BAD: keyring is not a valid public key file; repair needed.&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">fi
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">echo &#34;== [3/5] Back up the original file ==&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">if [ -e &#34;$KEY&#34; ]; then
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  cp -a &#34;$KEY&#34; &#34;$KEY.bak.$(date +%Y%m%d%H%M%S)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  echo &#34;Backed up as $KEY.bak.*&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">fi
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">echo &#34;== [4/5] Restore the key from the official package ==&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">apt-get install --reinstall -y proxmox-archive-keyring \
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  || echo &#34;Reinstall failed; falling back to the local copy of the official key&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">if [ ! -s &#34;$PKG&#34; ]; then
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  echo &#34;Official key file $PKG not found; see the manual route.&#34;; exit 1
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">fi
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">install -m 0644 &#34;$PKG&#34; &#34;$KEY&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">echo &#34;== [5/5] Refresh the index and verify ==&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">apt-get update
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">echo &#34;== Version after fix (Candidate should be the latest) ==&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">apt-cache policy pve-manager | sed -n &#39;1,4p&#39;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">EOS</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">)</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> <span style="color:#f92672">[</span> <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>1<span style="color:#66d9ef">:-</span><span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span> !<span style="color:#f92672">=</span> <span style="color:#e6db74">&#34;&#34;</span> <span style="color:#f92672">]</span>; <span style="color:#66d9ef">then</span>
+</span></span><span style="display:flex;"><span>  ssh <span style="color:#e6db74">&#34;</span>$1<span style="color:#e6db74">&#34;</span> <span style="color:#e6db74">&#39;bash -s&#39;</span> <span style="color:#f92672">&lt;&lt;&lt;</span><span style="color:#e6db74">&#34;</span>$PAYLOAD<span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">else</span>
+</span></span><span style="display:flex;"><span>  bash -c <span style="color:#e6db74">&#34;</span>$PAYLOAD<span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">fi</span>
+</span></span></code></pre></div><p><strong>Windows 11 (<code>fix-pve-keyring.ps1</code>)</strong> — uses the built-in OpenSSH client; run <code>.\fix-pve-keyring.ps1 -Target &quot;root@&lt;node&gt;&quot;</code> in PowerShell:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-powershell" data-lang="powershell"><span style="display:flex;"><span><span style="color:#75715e"># fix-pve-keyring.ps1 — one-click remote PVE keyring repair from Windows 11</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">param</span>(
+</span></span><span style="display:flex;"><span>  [Parameter(<span style="color:#a6e22e">Mandatory</span> = $true)][<span style="color:#66d9ef">string</span>]$Target,  <span style="color:#75715e"># e.g. root@&lt;target-node&gt;</span>
+</span></span><span style="display:flex;"><span>  [<span style="color:#66d9ef">int</span>]$Port = <span style="color:#ae81ff">22</span>
+</span></span><span style="display:flex;"><span>)
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>$payload = <span style="color:#e6db74">@&#39;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">set -euo pipefail
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">KEY=&#34;/etc/apt/trusted.gpg.d/proxmox-release-trixie.gpg&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">PKG=&#34;/usr/share/keyrings/proxmox-archive-keyring.gpg&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">echo &#34;== [1/5] Version before fix ==&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">pveversion || true
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">apt-cache policy pve-manager | sed -n &#39;1,4p&#39;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">echo &#34;== [2/5] Keyring health check ==&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">file &#34;$KEY&#34; 2&gt;/dev/null | grep -q &#34;OpenPGP Public Key&#34; \
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  &amp;&amp; echo &#34;OK: keyring healthy&#34; || echo &#34;BAD: keyring broken, repairing&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">echo &#34;== [3/5] Back up the original file ==&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">[ -e &#34;$KEY&#34; ] &amp;&amp; cp -a &#34;$KEY&#34; &#34;$KEY.bak.$(date +%Y%m%d%H%M%S)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">echo &#34;== [4/5] Restore the key from the official package ==&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">apt-get install --reinstall -y proxmox-archive-keyring \
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  || echo &#34;Reinstall failed; falling back to the local copy&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">[ -s &#34;$PKG&#34; ] || { echo &#34;$PKG not found&#34;; exit 1; }
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">install -m 0644 &#34;$PKG&#34; &#34;$KEY&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">echo &#34;== [5/5] Refresh the index and verify ==&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">apt-get update
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">apt-cache policy pve-manager | sed -n &#39;1,4p&#39;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">&#39;@</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>$payload | ssh -p $Port $Target <span style="color:#e6db74">&#34;bash -s&#34;</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> ($LASTEXITCODE <span style="color:#f92672">-eq</span> <span style="color:#ae81ff">0</span>) {
+</span></span><span style="display:flex;"><span>  Write-Host <span style="color:#e6db74">&#34;Fix flow finished; confirm the Candidate above is current.&#34;</span> -ForegroundColor Green
+</span></span><span style="display:flex;"><span>} <span style="color:#66d9ef">else</span> {
+</span></span><span style="display:flex;"><span>  Write-Host <span style="color:#e6db74">&#34;Something failed; check the SSH connection and output above.&#34;</span> -ForegroundColor Red
+</span></span><span style="display:flex;"><span>}
+</span></span></code></pre></div><p><strong>macOS 26 (<code>fix-pve-keyring-macos.sh</code>)</strong> — run <code>bash fix-pve-keyring-macos.sh root@&lt;node&gt;</code> in Terminal:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e">#!/usr/bin/env zsh
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span><span style="color:#75715e"># fix-pve-keyring-macos.sh — one-click remote PVE keyring repair from macOS</span>
+</span></span><span style="display:flex;"><span>set -euo pipefail
+</span></span><span style="display:flex;"><span>TARGET<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>1:?[usage] bash fix-pve-keyring-macos.sh root@&lt;target-node&gt;<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>ssh <span style="color:#e6db74">&#34;</span>$TARGET<span style="color:#e6db74">&#34;</span> <span style="color:#e6db74">&#39;bash -s&#39;</span> <span style="color:#e6db74">&lt;&lt;&#39;EOS&#39;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">set -euo pipefail
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">KEY=&#34;/etc/apt/trusted.gpg.d/proxmox-release-trixie.gpg&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">PKG=&#34;/usr/share/keyrings/proxmox-archive-keyring.gpg&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">echo &#34;== [1/5] Version before fix ==&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">pveversion || true
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">apt-cache policy pve-manager | sed -n &#39;1,4p&#39;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">echo &#34;== [2/5] Keyring health check ==&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">file &#34;$KEY&#34; 2&gt;/dev/null | grep -q &#34;OpenPGP Public Key&#34; \
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  &amp;&amp; echo &#34;OK: keyring healthy&#34; || echo &#34;BAD: keyring broken, repairing&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">echo &#34;== [3/5] Back up the original file ==&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">[ -e &#34;$KEY&#34; ] &amp;&amp; cp -a &#34;$KEY&#34; &#34;$KEY.bak.$(date +%Y%m%d%H%M%S)&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">echo &#34;== [4/5] Restore the key from the official package ==&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">apt-get install --reinstall -y proxmox-archive-keyring \
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  || echo &#34;Reinstall failed; falling back to the local copy&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">[ -s &#34;$PKG&#34; ] || { echo &#34;$PKG not found&#34;; exit 1; }
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">install -m 0644 &#34;$PKG&#34; &#34;$KEY&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">echo &#34;== [5/5] Refresh the index and verify ==&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">apt-get update
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">apt-cache policy pve-manager | sed -n &#39;1,4p&#39;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">EOS</span>
+</span></span></code></pre></div><p>On any platform, the fix is confirmed once the final Candidate jumps to 9.2.x (or whatever is current when you read this).</p>
+<h3 id="method-2-hand-it-to-an-agent">Method 2: Hand It to an Agent</h3>
+<p>Even easier: give the whole problem to an AI coding agent (ZCode, Claude Code, etc.) along with SSH access. This prompt is ready to paste:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>Please fix a Proxmox VE server that cannot upgrade to the latest release. The likely
+</span></span><span style="display:flex;"><span>root cause is a broken keyring file /etc/apt/trusted.gpg.d/proxmox-release-trixie.gpg
+</span></span><span style="display:flex;"><span>(e.g. it contains a PGP signature block instead of a public key), which makes apt
+</span></span><span style="display:flex;"><span>signature verification fail and keeps the package index stale. Steps:
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>1. SSH into the node (connection details are in the session context / provided separately);
+</span></span><span style="display:flex;"><span>2. Record the current state: run pveversion and apt-cache policy pve-manager;
+</span></span><span style="display:flex;"><span>3. Inspect the keyring file with `file`; if it is not &#34;OpenPGP Public Key&#34;,
+</span></span><span style="display:flex;"><span>   back it up with cp -a under /root/ first;
+</span></span><span style="display:flex;"><span>4. Run apt-get install --reinstall -y proxmox-archive-keyring, then copy
+</span></span><span style="display:flex;"><span>   /usr/share/keyrings/proxmox-archive-keyring.gpg over the keyring path above
+</span></span><span style="display:flex;"><span>   with mode 0644; if the reinstall fails but the local file exists, copy it directly;
+</span></span><span style="display:flex;"><span>5. Run apt-get update and confirm there are no Err:, Missing key, or
+</span></span><span style="display:flex;"><span>   unsupported filetype messages;
+</span></span><span style="display:flex;"><span>6. Report apt-cache policy pve-manager&#39;s Candidate as evidence of the fix.
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>Constraints: do NOT run dist-upgrade/full-upgrade, do NOT reboot the server,
+</span></span><span style="display:flex;"><span>and do NOT modify repository definitions.
+</span></span></code></pre></div><p>After the agent finishes, verify its two pieces of evidence: no <code>Err:</code> lines in <code>apt-get update</code>, and a Candidate at the current release.</p>
+<h2 id="7-lessons-so-it-never-happens-again">7. Lessons So It Never Happens Again</h2>
+<p><img alt="The five-item prevention checklist" src="/post-images/pve-apt-keyring-stuck-upgrade/12-prevention.svg"></p>
+<p><em>Figure 13: The prevention checklist. The core idea: never equate &ldquo;no errors&rdquo; with &ldquo;no problems&rdquo;.</em></p>
+<p>The most valuable lesson here is not about GPG itself — it&rsquo;s about recognizing <strong>silent degradation</strong> as a failure mode:</p>
+<ol>
+<li><strong>Run the three-step health check before any upgrade</strong>: scan <code>apt-get update</code> output for <code>Err:</code>/<code>W:</code>; check the candidate with <code>apt-cache policy &lt;pkg&gt;</code>; check index freshness with <code>ls -l /var/lib/apt/lists/</code>. Thirty seconds total, defeats 90% of &ldquo;fake latest&rdquo;.</li>
+<li><strong>Never trust exit codes alone in automation</strong>: <code>apt-get update</code> exits successfully even when repository verification fails. Assert on output instead, e.g. <code>apt-get update 2&gt;&amp;1 | grep -E '^(Err|W):' &amp;&amp; exit 1</code>.</li>
+<li><strong>Source key material only from official channels</strong>: reinstalling the <code>proxmox-archive-keyring</code> package is the most reliable route; if you must download a key by hand, always confirm with <code>file</code> that you saved an <code>OpenPGP Public Key</code> — this very incident started with saving the wrong file.</li>
+<li><strong>Let sibling nodes cross-check each other</strong>: when cluster members drift apart in versions or behavior, <code>diff</code> their repository configs and keyring directories first — the answer usually jumps out immediately.</li>
+</ol>
+<h2 id="8-qa">8. Q&amp;A</h2>
+<p><strong>Q1: Why did the web UI look perfectly healthy while the problem sat there for four months?</strong></p>
+<p>A: On one hand, <code>apt-get update</code> only prints <code>W:</code> warnings when verification fails and still exits successfully, so cron-driven auto-updates never notice. On the other hand, the PVE web UI&rsquo;s &ldquo;Node → Updates → Repositories&rdquo; panel does have a repository health check that flags signature problems — but most people (myself included, back then) rarely open that page. Add it to your routine inspection list.</p>
+<p><strong>Q2: Wouldn&rsquo;t <code>[trusted=yes]</code> on the repository just make this go away?</strong></p>
+<p>A: That removes the stamp check entirely — whatever a man-in-the-middle injects gets installed. Never do this on production machines.</p>
+<p><strong>Q3: Would switching to a different mirror fix it?</strong></p>
+<p>A: No. The keyring is broken locally; every mirror on earth will fail verification the same way. Two nodes on the same mirror — one healthy, one stuck — is the proof.</p>
+<p><strong>Q4: Does 9.1 → 9.2 need the official upgrade walkthrough?</strong></p>
+<p>A: No. Minor-version updates within the same major release are a plain <code>apt full-upgrade</code>. Only major upgrades (say 8 → 9) require the official step-by-step procedure.</p>
+<p><strong>Q5: Should I upgrade immediately after the fix?</strong></p>
+<p>A: Technically you can, but it&rsquo;s wiser to back up or snapshot important guests, check cluster health, and pick a maintenance window for <code>apt full-upgrade</code>; a reboot activates the new kernel. My node A hosts soft routers and databases, so the upgrade waited for a night window.</p>
+<p><strong>Q6: Does Debian 12 / PVE 8 have the same failure mode?</strong></p>
+<p>A: Yes, with different cosmetics. The older <code>gpgv</code> verifier reports <code>NO_PUBKEY</code>, but the mechanism is identical: broken keyring → stale index → locked version. The same repair philosophy (restore the official key, refresh the index) applies; just use the <code>bookworm</code> keyring filenames.</p>
+<h2 id="references">References</h2>
+<ul>
+<li><a href="https://pve.proxmox.com/wiki/Package_Repositories">Proxmox VE Wiki: Package Repositories</a> — authoritative repository documentation, key download URLs, and the deb822 style</li>
+<li><a href="https://pve.proxmox.com/wiki/Install_Proxmox_VE_on_Debian_13_Trixie">Proxmox VE Wiki: Install Proxmox VE on Debian 13 Trixie</a></li>
+<li><a href="https://forum.proxmox.com/threads/pve-upgrade-8-to-9-conflicting-values-set-for-option-signed-by.184300/">Proxmox Forum: PVE upgrade 8 to 9 — Conflicting values set for option Signed-By</a> — common pitfalls around key paths</li>
+<li><a href="https://forum.proxmox.com/threads/solution-for-the-repository-http-download-proxmox-com-debian-pbs-client-trixie-inrelease-is-not-signed-error.169669/">Proxmox Forum: repository &hellip; InRelease is not signed</a> — a classic Trixie-era verification failure case</li>
+</ul>
+
+        </div>
+    </article>
+
+    
+  
+
+
+
+
+    
+<div class="site-stats" aria-label="访问统计">
+    <span>本文阅读量 <span data-page-view-count>--</span></span>
+</div>
+
+
+    
+    <script type="text/javascript" src="https://js.users.51.la/21044367.js"></script>
+    <script charset="UTF-8" id="LA_COLLECT" src="//sdk.51.la/js-sdk-pro.min.js"></script>
+    <script>LA.init({id: "1vVTUWl7zoRjnKXi",ck: "1vVTUWl7zoRjnKXi"})</script>
+    <script src="https://sdk.51.la/perf/js-sdk-perf.min.js" crossorigin="anonymous"></script>
+    <script>
+      new LingQue.Monitor().init({id:"202teQt8THXwqyve"});
+    </script>
+    <script defer src="/js/page-views.js"></script>
+    <div class="la-theme-widget" data-51la-widget aria-label="51.la 网站统计"></div>
+    <script defer src="/js/51la-theme-widget.js"></script>
+</body>
+</html>
