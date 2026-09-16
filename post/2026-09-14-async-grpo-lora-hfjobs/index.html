@@ -1,0 +1,576 @@
+<!doctype html>
+<html lang="cn"><head>
+<title>Async GRPO + LoRA：没有 NCCL，Agent 训练能否拆到云端？ - 魔都水滴 · AI Agent Daily</title>
+<meta charset="UTF-8">
+<meta name="keywords" content="AI Agent,AI Tech,AI Diary,HermesAgent,Coding Agent,工程实践">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5">
+
+<link rel="shortcut icon" href="/favicon.ico" type="image/x-icon" />
+<meta name="description" content="先说结论Hugging Face 在 2026 年 9 月 10 日发布了 Async GRPO with LoRA across HF Jobs: a bucket, a proxy, and no NCCL，展示了一种把强化学习训练器、推理副本和存储桶拆到不同云端任务中的做法。它没有让训练器和推理服务共享同一台机器，而是只同步体积很小的 LoRA 适配器，并用存储桶完成跨任务传递。 这件事对">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Async GRPO + LoRA：没有 NCCL，Agent 训练能否拆到云端？">
+<meta property="og:url" content="https://blog.margrop.com/post/2026-09-14-async-grpo-lora-hfjobs/index.html">
+<meta property="og:site_name" content="魔都水滴 · AI Agent Daily">
+<meta property="og:description" content="先说结论Hugging Face 在 2026 年 9 月 10 日发布了 Async GRPO with LoRA across HF Jobs: a bucket, a proxy, and no NCCL，展示了一种把强化学习训练器、推理副本和存储桶拆到不同云端任务中的做法。它没有让训练器和推理服务共享同一台机器，而是只同步体积很小的 LoRA 适配器，并用存储桶完成跨任务传递。 这件事对">
+<meta property="og:locale">
+<meta property="og:image" content="https://picsum.photos/seed/2026-09-14-async-grpo-lora-hfjobs/1600/900">
+<meta property="article:published_time" content="2026-09-14T13:15:00.000Z">
+<meta property="article:modified_time" content="2026-09-14T14:13:44.155Z">
+<meta property="article:author" content="Margrop">
+<meta property="article:tag" content="vLLM">
+<meta property="article:tag" content="LoRA">
+<meta property="article:tag" content="Async GRPO">
+<meta property="article:tag" content="TRL">
+<meta property="article:tag" content="Agent 训练">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:image" content="https://picsum.photos/seed/2026-09-14-async-grpo-lora-hfjobs/1600/900">
+
+<link rel="stylesheet" href="../../lib/fancybox/fancybox.css">
+<link rel="stylesheet" href="../../lib/mdui_043tiny/mdui.css">
+
+
+<link rel="stylesheet" href="../../lib/iconfont/iconfont.css?v=1789572098012">
+
+<link rel="stylesheet" href="../../css/style.css?v=1789572098012">
+
+
+
+
+    
+        <link rel="stylesheet" href="../../custom.css?v=1789572098012">
+    
+
+
+
+<script src="../../lib/mdui_043tiny/mdui.js" async></script>
+<script src="../../lib/fancybox/fancybox.umd.js" async></script>
+<script src="../../lib/lax.min.js" async></script>
+
+
+<script async src="../../js/app.js?v=1789572098012"></script>
+
+ 
+
+<script src="/js/theme-toggle.js?v=1"></script>
+<script defer src="/js/page-views.js?v=9ecbae4953"></script>
+<script charset="UTF-8" id="LA_COLLECT" src="//sdk.51.la/js-sdk-pro.min.js"></script>
+<script>LA.init({id:"23bDEwNOu1L8NhV1",ck:"23bDEwNOu1L8NhV1"})</script>
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-4NGHEP8LEV"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+
+  gtag('config', 'G-4NGHEP8LEV');
+</script>
+
+
+<link rel="stylesheet"  href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/atom-one-dark.min.css">
+<meta name="generator" content="Hexo 7.3.0"><link rel="alternate" href="atom.xml" title="魔都水滴 · AI Agent Daily" type="application/atom+xml">
+</head><body class="nexmoe mdui-drawer-body-left"><div id="nexmoe-background"><div class="nexmoe-bg" style="background-image: url(/images/background.webp)"></div><div class="mdui-appbar mdui-shadow-0"><div class="mdui-toolbar"><a class="mdui-btn mdui-btn-icon mdui-ripple" mdui-drawer="{target: &#039;#drawer&#039;, swipe: true}" title="menu"><i class="mdui-icon nexmoefont icon-menu"></i></a><div class="mdui-toolbar-spacer"></div><a class="mdui-btn mdui-btn-icon" href="../../index.html" title="Margrop"><img src="/images/avatar.webp" alt="Margrop"></a></div></div></div><div id="nexmoe-header"><div class="nexmoe-drawer mdui-drawer" id="drawer">
+    <div class="nexmoe-avatar mdui-ripple">
+        <a href="../../index.html" title="Margrop">
+            <img src="/images/avatar.webp" alt="Margrop" alt="Margrop">
+        </a>
+    </div>
+    <div class="nexmoe-count">
+        <div><span>Articles</span>261</div>
+        <div><span>Tags</span>676</div>
+        <div><span>Categories</span>6</div>
+    </div>
+    <div class="nexmoe-list mdui-list" mdui-collapse="{accordion: true}">
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" href="../../index.html" title="回到首页">
+            <i class="mdui-list-item-icon nexmoefont icon-home"></i>
+            <div class="mdui-list-item-content">
+                回到首页
+            </div>
+        </a>
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" href="../../start-here/" title="Start Here">
+            <i class="mdui-list-item-icon nexmoefont icon-home"></i>
+            <div class="mdui-list-item-content">
+                Start Here
+            </div>
+        </a>
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" href="../../categories/ai-diary/" title="AI Diary">
+            <i class="mdui-list-item-icon nexmoefont icon-tags-fill"></i>
+            <div class="mdui-list-item-content">
+                AI Diary
+            </div>
+        </a>
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" href="../../categories/ai-tech/" title="AI Tech">
+            <i class="mdui-list-item-icon nexmoefont icon-tag-fill"></i>
+            <div class="mdui-list-item-content">
+                AI Tech
+            </div>
+        </a>
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" href="../../post/archives/" title="文章归档">
+            <i class="mdui-list-item-icon nexmoefont icon-container"></i>
+            <div class="mdui-list-item-content">
+                文章归档
+            </div>
+        </a>
+        
+        <a class="nexmoe-list-item mdui-list-item mdui-ripple false" href="../../post/about/" title="关于博主">
+            <i class="mdui-list-item-icon nexmoefont icon-info-circle"></i>
+            <div class="mdui-list-item-content">
+                关于博主
+            </div>
+        </a>
+        
+    </div>
+    
+    
+        
+        <div class="nexmoe-widget-wrap">
+    <div class="nexmoe-widget nexmoe-search">
+         
+            <form id="search_form" action_e="https://cn.bing.com/search?q=site%3Ablog.margrop.com" onsubmit="return search();">
+                <label><input id="search_value" name="q" type="search" placeholder="Search"></label>
+            </form>
+         
+    </div>
+</div>
+
+
+
+
+    
+        
+        <div class="nexmoe-widget-wrap">
+	<div class="nexmoe-widget nexmoe-social">
+		<a
+			class="mdui-ripple"
+			href="http://qm.qq.com/cgi-bin/qm/qr?_wv=1027&k=weD8TANNWdCOveAMcdmoAxOKt5owKkDS"
+			target="_blank"
+			mdui-tooltip="{content: 'QQ群'}"
+			style="
+				color: rgb(249, 174, 8);
+				background-color: rgba(249, 174, 8, .1);
+			"
+		>
+			<i
+				class="nexmoefont icon-QQ"
+			></i> </a
+		><a
+			class="mdui-ripple"
+			href="https://github.com/margrop/"
+			target="_blank"
+			mdui-tooltip="{content: 'GitHub'}"
+			style="
+				color: rgb(25, 23, 23);
+				background-color: rgba(25, 23, 23, .1);
+			"
+		>
+			<i
+				class="nexmoefont icon-github"
+			></i> </a
+		><a
+			class="mdui-ripple"
+			href="http://weixin.qq.com/r/mp/MSlwaAvEoVberU8L93wj"
+			target="_blank"
+			mdui-tooltip="{content: 'ClawLoader'}"
+			style="
+				color: rgb(7, 193, 96);
+				background-color: rgba(7, 193, 96, .1);
+			"
+		>
+			<i
+				class="nexmoefont icon-wechat-fill"
+			></i> </a
+		><a
+			class="mdui-ripple"
+			href="../../atom.xml"
+			target="_blank"
+			mdui-tooltip="{content: 'RSS'}"
+			style="
+				color: rgb(247, 132, 34);
+				background-color: rgba(247, 132, 34, .1);
+			"
+		>
+			<i
+				class="nexmoefont icon-rss"
+			></i> </a
+		>
+	</div>
+</div>
+
+    
+        
+        
+  <div class="nexmoe-widget-wrap">
+    <h3 class="nexmoe-widget-title">Categories</h3>
+    <div class="nexmoe-widget">
+
+      <ul class="category-list">
+
+        
+
+
+        
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/ai-diary/">ai_diary</a>
+          <span class="category-list-count">4</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/ai-tech/">ai_tech</a>
+          <span class="category-list-count">143</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/develop/">develop</a>
+          <span class="category-list-count">27</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/network/">network</a>
+          <span class="category-list-count">74</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/notes/">notes</a>
+          <span class="category-list-count">10</span>
+        </li>
+
+        
+
+        <li class="category-list-item">
+          <a class="category-list-link" href="/categories/others/">others</a>
+          <span class="category-list-count">2</span>
+        </li>
+
+        
+      </ul>
+
+    </div>
+  </div>
+
+
+    
+        
+        
+  <div class="nexmoe-widget-wrap">
+    <div id="randomtagcloud" class="nexmoe-widget tagcloud nexmoe-rainbow">
+      <a href="../../tags/1password/" style="font-size: 10px;">1password</a> <a href="../../tags/24GB-VRAM/" style="font-size: 10px;">24GB VRAM</a> <a href="../../tags/2K/" style="font-size: 10px;">2K</a> <a href="../../tags/3-6-Flash/" style="font-size: 10px;">3.6 Flash</a> <a href="../../tags/30B-dense/" style="font-size: 10px;">30B dense</a> <a href="../../tags/4-bit-%E9%87%8F%E5%8C%96/" style="font-size: 10.5px;">4-bit 量化</a> <a href="../../tags/6-DoF-SLAM/" style="font-size: 10px;">6-DoF SLAM</a> <a href="../../tags/AC/" style="font-size: 10.5px;">AC</a> <a href="../../tags/ACP/" style="font-size: 10px;">ACP</a> <a href="../../tags/AI-Agent/" style="font-size: 11px;">AI Agent</a> <a href="../../tags/AI-Coding-Assistant/" style="font-size: 10px;">AI Coding Assistant</a> <a href="../../tags/AI-Tech/" style="font-size: 19px;">AI Tech</a> <a href="../../tags/AI-Workflow/" style="font-size: 10.5px;">AI Workflow</a> <a href="../../tags/AI-tutor/" style="font-size: 10px;">AI tutor</a> <a href="../../tags/AI-%E5%AE%89%E5%85%A8/" style="font-size: 10px;">AI 安全</a> <a href="../../tags/AI-%E5%B7%A5%E7%A8%8B/" style="font-size: 10px;">AI 工程</a> <a href="../../tags/AI-%E5%BA%94%E7%94%A8/" style="font-size: 10px;">AI 应用</a> <a href="../../tags/AI-%E6%97%A5%E8%AE%B0/" style="font-size: 10.5px;">AI 日记</a> <a href="../../tags/AI%E7%BC%96%E7%A8%8B%E5%8A%A9%E6%89%8B/" style="font-size: 10px;">AI编程助手</a> <a href="../../tags/ALTK-Evolve/" style="font-size: 10.5px;">ALTK-Evolve</a> <a href="../../tags/AMIE/" style="font-size: 10.5px;">AMIE</a> <a href="../../tags/AP/" style="font-size: 11px;">AP</a> <a href="../../tags/API/" style="font-size: 11.5px;">API</a> <a href="../../tags/API-%E5%AE%9A%E4%BB%B7/" style="font-size: 10px;">API 定价</a> <a href="../../tags/API-%E9%99%8D%E4%BB%B7/" style="font-size: 10px;">API 降价</a> <a href="../../tags/ARC-AGI-3/" style="font-size: 10px;">ARC-AGI-3</a> <a href="../../tags/ASR/" style="font-size: 11px;">ASR</a> <a href="../../tags/ATEM-chat-%E6%A8%A1%E6%9D%BF/" style="font-size: 10px;">ATEM chat 模板</a> <a href="../../tags/AUTOMATIC1111/" style="font-size: 10px;">AUTOMATIC1111</a> <a href="../../tags/Agent/" style="font-size: 11.5px;">Agent</a> <a href="../../tags/Agent-Harness/" style="font-size: 10px;">Agent Harness</a> <a href="../../tags/Agent-Memory/" style="font-size: 10px;">Agent Memory</a> <a href="../../tags/Agent-%E5%85%A5%E4%BE%B5/" style="font-size: 10px;">Agent 入侵</a> <a href="../../tags/Agent-%E5%8F%AF%E9%9D%A0%E6%80%A7/" style="font-size: 10px;">Agent 可靠性</a> <a href="../../tags/Agent-%E5%B7%A5%E7%A8%8B/" style="font-size: 16.5px;">Agent 工程</a> <a href="../../tags/Agent-%E6%9E%B6%E6%9E%84/" style="font-size: 10px;">Agent 架构</a> <a href="../../tags/Agent-%E6%A3%80%E7%B4%A2/" style="font-size: 10px;">Agent 检索</a> <a href="../../tags/Agent-%E6%B2%99%E7%AE%B1/" style="font-size: 10px;">Agent 沙箱</a> <a href="../../tags/Agent-%E7%B3%BB%E7%BB%9F/" style="font-size: 10.5px;">Agent 系统</a> <a href="../../tags/Agent-%E8%AE%AD%E7%BB%83/" style="font-size: 10px;">Agent 训练</a> <a href="../../tags/Agent-%E8%AE%B0%E5%BF%86/" style="font-size: 10px;">Agent 记忆</a> <a href="../../tags/Agent-%E8%B7%AF%E7%94%B1/" style="font-size: 10px;">Agent 路由</a> <a href="../../tags/Agentic-AI/" style="font-size: 10px;">Agentic AI</a> <a href="../../tags/Agentic-tools/" style="font-size: 10px;">Agentic tools</a> <a href="../../tags/Ai2/" style="font-size: 10.5px;">Ai2</a> <a href="../../tags/Alertmanager/" style="font-size: 10px;">Alertmanager</a> <a href="../../tags/AllenAI/" style="font-size: 10px;">AllenAI</a> <a href="../../tags/Android-17/" style="font-size: 10px;">Android 17</a> <a href="../../tags/Antigravity/" style="font-size: 10px;">Antigravity</a> <a href="../../tags/AppDaemon/" style="font-size: 10px;">AppDaemon</a> <a href="../../tags/AppWorld/" style="font-size: 10.5px;">AppWorld</a> <a href="../../tags/Aqara/" style="font-size: 10px;">Aqara</a> <a href="../../tags/Astra/" style="font-size: 10px;">Astra</a> <a href="../../tags/Async-GRPO/" style="font-size: 10px;">Async GRPO</a> <a href="../../tags/Attention/" style="font-size: 10px;">Attention</a> <a href="../../tags/Baseten/" style="font-size: 10px;">Baseten</a> <a href="../../tags/Benchmark/" style="font-size: 10px;">Benchmark</a> <a href="../../tags/CC-Switch/" style="font-size: 10.5px;">CC-Switch</a> <a href="../../tags/CI-CD/" style="font-size: 10.5px;">CI/CD</a> <a href="../../tags/CLI-Tools/" style="font-size: 10px;">CLI Tools</a> <a href="../../tags/CLI%E5%B7%A5%E5%85%B7/" style="font-size: 10px;">CLI工具</a> <a href="../../tags/CPU-%E6%8E%A8%E7%90%86/" style="font-size: 10px;">CPU 推理</a> <a href="../../tags/Cache-Hit-Rate/" style="font-size: 10px;">Cache Hit Rate</a> <a href="../../tags/Caddy/" style="font-size: 10px;">Caddy</a> <a href="../../tags/ChatGPT/" style="font-size: 10px;">ChatGPT</a> <a href="../../tags/Claude-Code/" style="font-size: 10.5px;">Claude Code</a> <a href="../../tags/Claude-Sonnet/" style="font-size: 10px;">Claude Sonnet</a> <a href="../../tags/ClawLoader/" style="font-size: 10px;">ClawLoader</a> <a href="../../tags/Code-Interpreter/" style="font-size: 10px;">Code Interpreter</a> <a href="../../tags/CodeMender/" style="font-size: 10px;">CodeMender</a> <a href="../../tags/Codex/" style="font-size: 11px;">Codex</a> <a href="../../tags/Coding-Agent/" style="font-size: 10px;">Coding Agent</a> <a href="../../tags/ComfyUI/" style="font-size: 10px;">ComfyUI</a> <a href="../../tags/Computer-Use/" style="font-size: 10px;">Computer Use</a> <a href="../../tags/Cookie-%E8%AE%A4%E8%AF%81/" style="font-size: 10px;">Cookie 认证</a> <a href="../../tags/Cosmos-H-Dreams/" style="font-size: 10px;">Cosmos-H-Dreams</a> <a href="../../tags/Cost-Optimization/" style="font-size: 10px;">Cost Optimization</a> <a href="../../tags/Cron/" style="font-size: 11.5px;">Cron</a> <a href="../../tags/Cybersecurity/" style="font-size: 10px;">Cybersecurity</a> <a href="../../tags/DFIR/" style="font-size: 10px;">DFIR</a> <a href="../../tags/DSpark/" style="font-size: 10px;">DSpark</a> <a href="../../tags/Date/" style="font-size: 10px;">Date</a> <a href="../../tags/DeepSeek/" style="font-size: 10.5px;">DeepSeek</a> <a href="../../tags/DeepSeek-V4-Flash/" style="font-size: 10px;">DeepSeek V4 Flash</a> <a href="../../tags/Diagrams-net/" style="font-size: 10px;">Diagrams.net</a> <a href="../../tags/Diary/" style="font-size: 10px;">Diary</a> <a href="../../tags/Diffusers/" style="font-size: 10.5px;">Diffusers</a> <a href="../../tags/Diffusion/" style="font-size: 10px;">Diffusion</a> <a href="../../tags/Docker/" style="font-size: 15.5px;">Docker</a> <a href="../../tags/Efficiency-Tools/" style="font-size: 10px;">Efficiency Tools</a> <a href="../../tags/Embedding/" style="font-size: 10px;">Embedding</a> <a href="../../tags/English/" style="font-size: 10px;">English</a> <a href="../../tags/FSDP2/" style="font-size: 10px;">FSDP2</a> <a href="../../tags/Fable-5/" style="font-size: 10px;">Fable 5</a> <a href="../../tags/Fireworks-AI/" style="font-size: 10px;">Fireworks AI</a> <a href="../../tags/FlashAttention/" style="font-size: 10px;">FlashAttention</a> <a href="../../tags/FlashDreams/" style="font-size: 10px;">FlashDreams</a> <a href="../../tags/Function-Calling/" style="font-size: 10px;">Function Calling</a> <a href="../../tags/Funes/" style="font-size: 10px;">Funes</a> <a href="../../tags/GGUF/" style="font-size: 10px;">GGUF</a> <a href="../../tags/GLM-5-2/" style="font-size: 10.5px;">GLM 5.2</a> <a href="../../tags/GLM-5-2/" style="font-size: 10px;">GLM-5.2</a> <a href="../../tags/GPT-4-1/" style="font-size: 10px;">GPT-4.1</a> <a href="../../tags/GPT-5-6/" style="font-size: 12px;">GPT-5.6</a> <a href="../../tags/GPT-5-6-Sol/" style="font-size: 10px;">GPT-5.6 Sol</a> <a href="../../tags/GPT-Live/" style="font-size: 10px;">GPT-Live</a> <a href="../../tags/GPT-Live-1/" style="font-size: 10px;">GPT-Live-1</a> <a href="../../tags/GPT-Red/" style="font-size: 10px;">GPT-Red</a> <a href="../../tags/GPU-%E5%8A%A0%E9%80%9F/" style="font-size: 10px;">GPU 加速</a> <a href="../../tags/GPU-%E6%80%A7%E8%83%BD%E5%88%86%E6%9E%90/" style="font-size: 10px;">GPU 性能分析</a> <a href="../../tags/GRPO/" style="font-size: 10px;">GRPO</a> <a href="../../tags/Gateway/" style="font-size: 13px;">Gateway</a> <a href="../../tags/Gemini/" style="font-size: 13px;">Gemini</a> <a href="../../tags/Gemini-3-5-Flash/" style="font-size: 10px;">Gemini 3.5 Flash</a> <a href="../../tags/Gemini-3-7-Flash/" style="font-size: 10px;">Gemini 3.7 Flash</a> <a href="../../tags/Gemini-API/" style="font-size: 10.5px;">Gemini API</a> <a href="../../tags/Gemini-CLI/" style="font-size: 10.5px;">Gemini CLI</a> <a href="../../tags/Gemini-Omni-Flash/" style="font-size: 10px;">Gemini Omni Flash</a> <a href="../../tags/Gemma-4-12B/" style="font-size: 10px;">Gemma 4 12B</a> <a href="../../tags/Gemma-Translator/" style="font-size: 10px;">Gemma Translator</a> <a href="../../tags/Gemma4/" style="font-size: 10px;">Gemma4</a> <a href="../../tags/GitHub-Actions/" style="font-size: 10.5px;">GitHub Actions</a> <a href="../../tags/Google/" style="font-size: 10.5px;">Google</a> <a href="../../tags/Google-AI/" style="font-size: 10.5px;">Google AI</a> <a href="../../tags/Google-DeepMind/" style="font-size: 10px;">Google DeepMind</a> <a href="../../tags/Google-Research/" style="font-size: 10.5px;">Google Research</a> <a href="../../tags/Google-Sheets/" style="font-size: 10.5px;">Google Sheets</a> <a href="../../tags/Grabette/" style="font-size: 10px;">Grabette</a> <a href="../../tags/Gradio/" style="font-size: 10px;">Gradio</a> <a href="../../tags/Gradio-Workflow/" style="font-size: 10px;">Gradio Workflow</a> <a href="../../tags/Gripette/" style="font-size: 10px;">Gripette</a> <a href="../../tags/HA/" style="font-size: 10px;">HA</a> <a href="../../tags/HADashboard/" style="font-size: 10px;">HADashboard</a> <a href="../../tags/HF-Security-Incident/" style="font-size: 10px;">HF Security Incident</a> <a href="../../tags/Hailuo/" style="font-size: 10px;">Hailuo</a> <a href="../../tags/Hermes/" style="font-size: 10.5px;">Hermes</a> <a href="../../tags/Hexo/" style="font-size: 11px;">Hexo</a> <a href="../../tags/HomeAssistant/" style="font-size: 10px;">HomeAssistant</a> <a href="../../tags/Hugging-Face/" style="font-size: 17.5px;">Hugging Face</a> <a href="../../tags/IBM-Granite/" style="font-size: 10px;">IBM Granite</a> <a href="../../tags/IBM-Research/" style="font-size: 10px;">IBM Research</a> <a href="../../tags/Inference-Providers/" style="font-size: 10px;">Inference Providers</a> <a href="../../tags/Isaac-Lab/" style="font-size: 10px;">Isaac Lab</a> <a href="../../tags/JSON-Output/" style="font-size: 10px;">JSON Output</a> <a href="../../tags/Java/" style="font-size: 11.5px;">Java</a> <a href="../../tags/KV-cache/" style="font-size: 10px;">KV cache</a> <a href="../../tags/Kimi-K3/" style="font-size: 10.5px;">Kimi K3</a> <a href="../../tags/Kubernetes/" style="font-size: 10px;">Kubernetes</a> <a href="../../tags/LFM2-5/" style="font-size: 11.5px;">LFM2.5</a> <a href="../../tags/LFM2-5-VL/" style="font-size: 10px;">LFM2.5-VL</a> <a href="../../tags/LLM-Router/" style="font-size: 10.5px;">LLM Router</a> <a href="../../tags/LVM%E2%80%91Thin/" style="font-size: 10.5px;">LVM‑Thin</a> <a href="../../tags/Late-Interaction/" style="font-size: 10px;">Late Interaction</a> <a href="../../tags/LeRobot/" style="font-size: 10.5px;">LeRobot</a> <a href="../../tags/Linux/" style="font-size: 11.5px;">Linux</a> <a href="../../tags/Liquid-AI/" style="font-size: 11px;">Liquid AI</a> <a href="../../tags/LiquidAI/" style="font-size: 10px;">LiquidAI</a> <a href="../../tags/Live-Translate/" style="font-size: 10px;">Live Translate</a> <a href="../../tags/LoRA/" style="font-size: 10.5px;">LoRA</a> <a href="../../tags/Luna/" style="font-size: 10px;">Luna</a> <a href="../../tags/MCP/" style="font-size: 11px;">MCP</a> <a href="../../tags/MTP/" style="font-size: 10px;">MTP</a> <a href="../../tags/MacOS/" style="font-size: 11px;">MacOS</a> <a href="../../tags/Magpie-TTS/" style="font-size: 10px;">Magpie TTS</a> <a href="../../tags/Managed-Agents/" style="font-size: 10.5px;">Managed Agents</a> <a href="../../tags/Meta/" style="font-size: 10px;">Meta</a> <a href="../../tags/Microsoft-365-Copilot/" style="font-size: 10px;">Microsoft 365 Copilot</a> <a href="../../tags/MiniMax/" style="font-size: 10.5px;">MiniMax</a> <a href="../../tags/Mistral-Shieldstral/" style="font-size: 10px;">Mistral Shieldstral</a> <a href="../../tags/Model-Routing/" style="font-size: 10.5px;">Model Routing</a> <a href="../../tags/MuJoCo-Warp/" style="font-size: 10px;">MuJoCo Warp</a> <a href="../../tags/Multi-Agent/" style="font-size: 10px;">Multi-Agent</a> <a href="../../tags/Multi-Vector/" style="font-size: 10px;">Multi-Vector</a> <a href="../../tags/Muse-Glimmer/" style="font-size: 10px;">Muse Glimmer</a> <a href="../../tags/MySQL/" style="font-size: 11px;">MySQL</a> <a href="../../tags/NAS/" style="font-size: 10.5px;">NAS</a> <a href="../../tags/NIM/" style="font-size: 10px;">NIM</a> <a href="../../tags/NVIDIA/" style="font-size: 11.5px;">NVIDIA</a> <a href="../../tags/NeMo-Automodel/" style="font-size: 10px;">NeMo Automodel</a> <a href="../../tags/Nemotron-3-Embed/" style="font-size: 10px;">Nemotron 3 Embed</a> <a href="../../tags/NeoMME/" style="font-size: 10px;">NeoMME</a> <a href="../../tags/Newton/" style="font-size: 10px;">Newton</a> <a href="../../tags/Nginx/" style="font-size: 10px;">Nginx</a> <a href="../../tags/Node-js/" style="font-size: 10.5px;">Node.js</a> <a href="../../tags/Nunchaku/" style="font-size: 10px;">Nunchaku</a> <a href="../../tags/OCR/" style="font-size: 10px;">OCR</a> <a href="../../tags/OOM/" style="font-size: 10px;">OOM</a> <a href="../../tags/OlmoEarth/" style="font-size: 10px;">OlmoEarth</a> <a href="../../tags/On-device-AI/" style="font-size: 10px;">On-device AI</a> <a href="../../tags/Open-Source/" style="font-size: 10px;">Open Source</a> <a href="../../tags/OpenAI/" style="font-size: 14.5px;">OpenAI</a> <a href="../../tags/OpenAI-%E5%85%BC%E5%AE%B9/" style="font-size: 10px;">OpenAI 兼容</a> <a href="../../tags/OpenClaw/" style="font-size: 18px;">OpenClaw</a> <a href="../../tags/OpenCode/" style="font-size: 10.5px;">OpenCode</a> <a href="../../tags/OpenResty/" style="font-size: 10px;">OpenResty</a> <a href="../../tags/OpenWrt/" style="font-size: 10.5px;">OpenWrt</a> <a href="../../tags/PII-%E6%A3%80%E6%B5%8B/" style="font-size: 10px;">PII 检测</a> <a href="../../tags/Physical-AI/" style="font-size: 11px;">Physical AI</a> <a href="../../tags/Pollen-Robotics/" style="font-size: 10px;">Pollen Robotics</a> <a href="../../tags/Portainer/" style="font-size: 10px;">Portainer</a> <a href="../../tags/PostgreSQL/" style="font-size: 10px;">PostgreSQL</a> <a href="../../tags/ProcessOn/" style="font-size: 10px;">ProcessOn</a> <a href="../../tags/Project-Astra/" style="font-size: 10.5px;">Project Astra</a> <a href="../../tags/Prometheus/" style="font-size: 13px;">Prometheus</a> <a href="../../tags/Prompt-Caching/" style="font-size: 10px;">Prompt Caching</a> <a href="../../tags/Prompt-Injection/" style="font-size: 10px;">Prompt Injection</a> <a href="../../tags/Proxmox-VE/" style="font-size: 17px;">Proxmox VE</a> <a href="../../tags/PyTorch/" style="font-size: 10px;">PyTorch</a> <a href="../../tags/Qwen3-VL/" style="font-size: 10px;">Qwen3-VL</a> <a href="../../tags/Qwen3-6/" style="font-size: 10px;">Qwen3.6</a> <a href="../../tags/RAG/" style="font-size: 11px;">RAG</a> <a href="../../tags/RPC/" style="font-size: 10px;">RPC</a> <a href="../../tags/RTEB/" style="font-size: 10px;">RTEB</a> <a href="../../tags/Real-Time-Inference/" style="font-size: 10px;">Real-Time Inference</a> <a href="../../tags/Red-Teaming/" style="font-size: 10px;">Red Teaming</a> <a href="../../tags/Responses-API/" style="font-size: 10.5px;">Responses API</a> <a href="../../tags/SNAP/" style="font-size: 10px;">SNAP</a> <a href="../../tags/SOCKS5/" style="font-size: 10px;">SOCKS5</a> <a href="../../tags/SPED/" style="font-size: 10px;">SPED</a> <a href="../../tags/SVDQuant/" style="font-size: 10px;">SVDQuant</a> <a href="../../tags/Schema/" style="font-size: 10px;">Schema</a> <a href="../../tags/Scientific-Computing/" style="font-size: 10px;">Scientific Computing</a> <a href="../../tags/Self-Forcing-Distillation/" style="font-size: 10px;">Self-Forcing Distillation</a> <a href="../../tags/Sentence-Transformers/" style="font-size: 10.5px;">Sentence Transformers</a> <a href="../../tags/Session/" style="font-size: 10px;">Session</a> <a href="../../tags/Sheets-canvas/" style="font-size: 10px;">Sheets canvas</a> <a href="../../tags/Shell/" style="font-size: 10.5px;">Shell</a> <a href="../../tags/Sol/" style="font-size: 10px;">Sol</a> <a href="../../tags/Storage-Buckets/" style="font-size: 10px;">Storage Buckets</a> <a href="../../tags/Strands-Agents/" style="font-size: 10px;">Strands Agents</a> <a href="../../tags/Subagent/" style="font-size: 10px;">Subagent</a> <a href="../../tags/Surgical-Robotics/" style="font-size: 10px;">Surgical Robotics</a> <a href="../../tags/TRL/" style="font-size: 10px;">TRL</a> <a href="../../tags/TTS/" style="font-size: 11px;">TTS</a> <a href="../../tags/Terra/" style="font-size: 10px;">Terra</a> <a href="../../tags/Think-button/" style="font-size: 10px;">Think button</a> <a href="../../tags/TimeMachine/" style="font-size: 10px;">TimeMachine</a> <a href="../../tags/TutorMoments/" style="font-size: 10px;">TutorMoments</a> <a href="../../tags/UML/" style="font-size: 10px;">UML</a> <a href="../../tags/Uptime-Kuma/" style="font-size: 10.5px;">Uptime Kuma</a> <a href="../../tags/V4-Pro/" style="font-size: 10px;">V4-Pro</a> <a href="../../tags/VPS/" style="font-size: 11px;">VPS</a> <a href="../../tags/Voice-Agent/" style="font-size: 10px;">Voice Agent</a> <a href="../../tags/VoiceEQ/" style="font-size: 10px;">VoiceEQ</a> <a href="../../tags/WARP/" style="font-size: 10px;">WARP</a> <a href="../../tags/WebRTC/" style="font-size: 10px;">WebRTC</a> <a href="../../tags/WebSocket/" style="font-size: 11.5px;">WebSocket</a> <a href="../../tags/Windows/" style="font-size: 10px;">Windows</a> <a href="../../tags/World-Foundation-Model/" style="font-size: 10px;">World Foundation Model</a> <a href="../../tags/agent/" style="font-size: 10px;">agent</a> <a href="../../tags/agentic/" style="font-size: 10px;">agentic</a> <a href="../../tags/aligenie/" style="font-size: 10px;">aligenie</a> <a href="../../tags/aliyun/" style="font-size: 11px;">aliyun</a> <a href="../../tags/annotation/" style="font-size: 10px;">annotation</a> <a href="../../tags/aop/" style="font-size: 10px;">aop</a> <a href="../../tags/autofs/" style="font-size: 10px;">autofs</a> <a href="../../tags/backup/" style="font-size: 10px;">backup</a> <a href="../../tags/bash/" style="font-size: 11px;">bash</a> <a href="../../tags/bitwarden/" style="font-size: 10px;">bitwarden</a> <a href="../../tags/boot/" style="font-size: 10.5px;">boot</a> <a href="../../tags/brew/" style="font-size: 10.5px;">brew</a> <a href="../../tags/browser/" style="font-size: 10px;">browser</a> <a href="../../tags/budget-control/" style="font-size: 10px;">budget control</a> <a href="../../tags/centos/" style="font-size: 13.5px;">centos</a> <a href="../../tags/cert/" style="font-size: 10.5px;">cert</a> <a href="../../tags/certbot/" style="font-size: 10px;">certbot</a> <a href="../../tags/charles/" style="font-size: 10px;">charles</a> <a href="../../tags/chat/" style="font-size: 10px;">chat</a> <a href="../../tags/chrome/" style="font-size: 10.5px;">chrome</a> <a href="../../tags/classloader/" style="font-size: 10px;">classloader</a> <a href="../../tags/client/" style="font-size: 11px;">client</a> <a href="../../tags/clone/" style="font-size: 10px;">clone</a> <a href="../../tags/closures/" style="font-size: 10px;">closures</a> <a href="../../tags/cloudflare/" style="font-size: 10px;">cloudflare</a> <a href="../../tags/command/" style="font-size: 10px;">command</a> <a href="../../tags/commit/" style="font-size: 10px;">commit</a> <a href="../../tags/commoditization/" style="font-size: 10px;">commoditization</a> <a href="../../tags/container/" style="font-size: 10px;">container</a> <a href="../../tags/crontab/" style="font-size: 10px;">crontab</a> <a href="../../tags/cyber-capability/" style="font-size: 10px;">cyber capability</a> <a href="../../tags/demo/" style="font-size: 10px;">demo</a> <a href="../../tags/dependency/" style="font-size: 10px;">dependency</a> <a href="../../tags/deploy/" style="font-size: 10px;">deploy</a> <a href="../../tags/developer/" style="font-size: 10px;">developer</a> <a href="../../tags/devtools/" style="font-size: 10px;">devtools</a> <a href="../../tags/dll/" style="font-size: 10px;">dll</a> <a href="../../tags/dns/" style="font-size: 11px;">dns</a> <a href="../../tags/docker/" style="font-size: 13px;">docker</a> <a href="../../tags/domain/" style="font-size: 10px;">domain</a> <a href="../../tags/download/" style="font-size: 10px;">download</a> <a href="../../tags/drafter/" style="font-size: 10px;">drafter</a> <a href="../../tags/draw/" style="font-size: 10.5px;">draw</a> <a href="../../tags/drawio/" style="font-size: 10px;">drawio</a> <a href="../../tags/dsm/" style="font-size: 12px;">dsm</a> <a href="../../tags/dump/" style="font-size: 10px;">dump</a> <a href="../../tags/dylib/" style="font-size: 10px;">dylib</a> <a href="../../tags/environment-hooks/" style="font-size: 10px;">environment hooks</a> <a href="../../tags/exception/" style="font-size: 10.5px;">exception</a> <a href="../../tags/fail2ban/" style="font-size: 10px;">fail2ban</a> <a href="../../tags/feign/" style="font-size: 10px;">feign</a> <a href="../../tags/firewall-cmd/" style="font-size: 10px;">firewall-cmd</a> <a href="../../tags/flow/" style="font-size: 10px;">flow</a> <a href="../../tags/free-tier/" style="font-size: 10px;">free tier</a> <a href="../../tags/frontier-hosted-model/" style="font-size: 10px;">frontier hosted model</a> <a href="../../tags/frp/" style="font-size: 10.5px;">frp</a> <a href="../../tags/frpc/" style="font-size: 11.5px;">frpc</a> <a href="../../tags/frps/" style="font-size: 10.5px;">frps</a> <a href="../../tags/fuckgfw/" style="font-size: 10.5px;">fuckgfw</a> <a href="../../tags/full-duplex/" style="font-size: 10px;">full-duplex</a> <a href="../../tags/function/" style="font-size: 10px;">function</a> <a href="../../tags/gfw/" style="font-size: 10px;">gfw</a> <a href="../../tags/git/" style="font-size: 12px;">git</a> <a href="../../tags/github/" style="font-size: 11.5px;">github</a> <a href="../../tags/gperftools/" style="font-size: 10px;">gperftools</a> <a href="../../tags/gridea/" style="font-size: 10.5px;">gridea</a> <a href="../../tags/grub/" style="font-size: 10.5px;">grub</a> <a href="../../tags/guardrail-lockout/" style="font-size: 10px;">guardrail lockout</a> <a href="../../tags/gvt-g/" style="font-size: 10px;">gvt-g</a> <a href="../../tags/hacs/" style="font-size: 10px;">hacs</a> <a href="../../tags/havcs/" style="font-size: 10.5px;">havcs</a> <a href="../../tags/heap/" style="font-size: 10px;">heap</a> <a href="../../tags/hello/" style="font-size: 10.5px;">hello</a> <a href="../../tags/hexo/" style="font-size: 11px;">hexo</a> <a href="../../tags/hibernate/" style="font-size: 10.5px;">hibernate</a> <a href="../../tags/hidpi/" style="font-size: 10px;">hidpi</a> <a href="../../tags/hoisting/" style="font-size: 10px;">hoisting</a> <a href="../../tags/homeassistant/" style="font-size: 12px;">homeassistant</a> <a href="../../tags/hosts/" style="font-size: 10px;">hosts</a> <a href="../../tags/html/" style="font-size: 10.5px;">html</a> <a href="../../tags/htmlparser/" style="font-size: 10px;">htmlparser</a> <a href="../../tags/https/" style="font-size: 11px;">https</a> <a href="../../tags/huggingface-hub/" style="font-size: 10px;">huggingface_hub</a> <a href="../../tags/iKuai/" style="font-size: 10px;">iKuai</a> <a href="../../tags/iMessage/" style="font-size: 10px;">iMessage</a> <a href="../../tags/image/" style="font-size: 10px;">image</a> <a href="../../tags/img/" style="font-size: 10.5px;">img</a> <a href="../../tags/img2kvm/" style="font-size: 10px;">img2kvm</a> <a href="../../tags/immortalwrt/" style="font-size: 10px;">immortalwrt</a> <a href="../../tags/import/" style="font-size: 10px;">import</a> <a href="../../tags/index/" style="font-size: 10px;">index</a> <a href="../../tags/inference-cost/" style="font-size: 10px;">inference cost</a> <a href="../../tags/install/" style="font-size: 12px;">install</a> <a href="../../tags/intel/" style="font-size: 10.5px;">intel</a> <a href="../../tags/io/" style="font-size: 10px;">io</a> <a href="../../tags/ios/" style="font-size: 10px;">ios</a> <a href="../../tags/ip/" style="font-size: 10px;">ip</a> <a href="../../tags/iptables/" style="font-size: 10px;">iptables</a> <a href="../../tags/iso/" style="font-size: 10px;">iso</a> <a href="../../tags/java/" style="font-size: 12px;">java</a> <a href="../../tags/javascript/" style="font-size: 10.5px;">javascript</a> <a href="../../tags/jni/" style="font-size: 10px;">jni</a> <a href="../../tags/jnilib/" style="font-size: 10px;">jnilib</a> <a href="../../tags/jpa/" style="font-size: 10px;">jpa</a> <a href="../../tags/js/" style="font-size: 11px;">js</a> <a href="../../tags/json/" style="font-size: 10.5px;">json</a> <a href="../../tags/jsonb/" style="font-size: 10px;">jsonb</a> <a href="../../tags/jupter/" style="font-size: 10px;">jupter</a> <a href="../../tags/jupyterlab/" style="font-size: 10px;">jupyterlab</a> <a href="../../tags/jvm/" style="font-size: 10.5px;">jvm</a> <a href="../../tags/k8s/" style="font-size: 10.5px;">k8s</a> <a href="../../tags/kernel/" style="font-size: 10px;">kernel</a> <a href="../../tags/key/" style="font-size: 10px;">key</a> <a href="../../tags/kvm/" style="font-size: 10.5px;">kvm</a> <a href="../../tags/lastpass/" style="font-size: 10px;">lastpass</a> <a href="../../tags/launchctl/" style="font-size: 10px;">launchctl</a> <a href="../../tags/learning/" style="font-size: 10px;">learning</a> <a href="../../tags/letsencrypt/" style="font-size: 11px;">letsencrypt</a> <a href="../../tags/linux/" style="font-size: 10.5px;">linux</a> <a href="../../tags/llama-cpp/" style="font-size: 10px;">llama.cpp</a> <a href="../../tags/low-code/" style="font-size: 10px;">low-code</a> <a href="../../tags/lvm/" style="font-size: 10px;">lvm</a> <a href="../../tags/mac/" style="font-size: 10.5px;">mac</a> <a href="../../tags/mariadb/" style="font-size: 10px;">mariadb</a> <a href="../../tags/markdown/" style="font-size: 10px;">markdown</a> <a href="../../tags/maven/" style="font-size: 10.5px;">maven</a> <a href="../../tags/md5/" style="font-size: 10.5px;">md5</a> <a href="../../tags/microcode/" style="font-size: 10px;">microcode</a> <a href="../../tags/mirror/" style="font-size: 10px;">mirror</a> <a href="../../tags/modules/" style="font-size: 10px;">modules</a> <a href="../../tags/monitor/" style="font-size: 10px;">monitor</a> <a href="../../tags/mount/" style="font-size: 10px;">mount</a> <a href="../../tags/mstsc/" style="font-size: 10px;">mstsc</a> <a href="../../tags/multimodal/" style="font-size: 10px;">multimodal</a> <a href="../../tags/mysql/" style="font-size: 10px;">mysql</a> <a href="../../tags/n5105/" style="font-size: 10px;">n5105</a> <a href="../../tags/network/" style="font-size: 11px;">network</a> <a href="../../tags/nfs/" style="font-size: 10px;">nfs</a> <a href="../../tags/node/" style="font-size: 10.5px;">node</a> <a href="../../tags/node-red/" style="font-size: 10.5px;">node-red</a> <a href="../../tags/nodejs/" style="font-size: 11.5px;">nodejs</a> <a href="../../tags/nohup/" style="font-size: 10.5px;">nohup</a> <a href="../../tags/notepad/" style="font-size: 10px;">notepad++</a> <a href="../../tags/npm/" style="font-size: 12.5px;">npm</a> <a href="../../tags/nssm/" style="font-size: 10px;">nssm</a> <a href="../../tags/ntp/" style="font-size: 10px;">ntp</a> <a href="../../tags/oop/" style="font-size: 10px;">oop</a> <a href="../../tags/open-weights/" style="font-size: 10px;">open weights</a> <a href="../../tags/openfeign/" style="font-size: 10px;">openfeign</a> <a href="../../tags/openssl/" style="font-size: 10px;">openssl</a> <a href="../../tags/os/" style="font-size: 10px;">os</a> <a href="../../tags/ovz/" style="font-size: 10px;">ovz</a> <a href="../../tags/packet-capture/" style="font-size: 10px;">packet capture</a> <a href="../../tags/pdf/" style="font-size: 10px;">pdf</a> <a href="../../tags/pem/" style="font-size: 10.5px;">pem</a> <a href="../../tags/perf/" style="font-size: 10px;">perf</a> <a href="../../tags/pip/" style="font-size: 10px;">pip</a> <a href="../../tags/plugin/" style="font-size: 10px;">plugin</a> <a href="../../tags/png/" style="font-size: 10px;">png</a> <a href="../../tags/powerbutton/" style="font-size: 10px;">powerbutton</a> <a href="../../tags/print/" style="font-size: 10px;">print</a> <a href="../../tags/pro/" style="font-size: 10px;">pro</a> <a href="../../tags/productive-struggle/" style="font-size: 10px;">productive struggle</a> <a href="../../tags/pve/" style="font-size: 17px;">pve</a> <a href="../../tags/pvekclean/" style="font-size: 11.5px;">pvekclean</a> <a href="../../tags/python/" style="font-size: 14px;">python</a> <a href="../../tags/qcow2/" style="font-size: 10px;">qcow2</a> <a href="../../tags/qemu/" style="font-size: 10.5px;">qemu</a> <a href="../../tags/qemu-guest-agent/" style="font-size: 10px;">qemu-guest-agent</a> <a href="../../tags/rar/" style="font-size: 10px;">rar</a> <a href="../../tags/reasoning-control/" style="font-size: 10px;">reasoning control</a> <a href="../../tags/reasoning-slider/" style="font-size: 10px;">reasoning slider</a> <a href="../../tags/reboot/" style="font-size: 10px;">reboot</a> <a href="../../tags/reflog/" style="font-size: 10px;">reflog</a> <a href="../../tags/remote/" style="font-size: 10px;">remote</a> <a href="../../tags/remote-desktop/" style="font-size: 10.5px;">remote desktop</a> <a href="../../tags/renew/" style="font-size: 10px;">renew</a> <a href="../../tags/repo/" style="font-size: 10px;">repo</a> <a href="../../tags/resize/" style="font-size: 10px;">resize</a> <a href="../../tags/retina/" style="font-size: 10px;">retina</a> <a href="../../tags/router/" style="font-size: 10px;">router</a> <a href="../../tags/runtime/" style="font-size: 10px;">runtime</a> <a href="../../tags/safari/" style="font-size: 10px;">safari</a> <a href="../../tags/sata/" style="font-size: 10px;">sata</a> <a href="../../tags/scaffolding/" style="font-size: 10px;">scaffolding</a> <a href="../../tags/scheduled-triggers/" style="font-size: 10px;">scheduled triggers</a> <a href="../../tags/scipy-notebook/" style="font-size: 10px;">scipy-notebook</a> <a href="../../tags/scoping/" style="font-size: 10px;">scoping</a> <a href="../../tags/scp/" style="font-size: 10px;">scp</a> <a href="../../tags/self-play/" style="font-size: 10px;">self-play</a> <a href="../../tags/server/" style="font-size: 10.5px;">server</a> <a href="../../tags/serverless-inference/" style="font-size: 10px;">serverless inference</a> <a href="../../tags/silent-test/" style="font-size: 10px;">silent test</a> <a href="../../tags/simulated-student/" style="font-size: 10px;">simulated student</a> <a href="../../tags/so/" style="font-size: 10px;">so</a> <a href="../../tags/speculative-decoding/" style="font-size: 10px;">speculative decoding</a> <a href="../../tags/spk/" style="font-size: 10px;">spk</a> <a href="../../tags/spring/" style="font-size: 11.5px;">spring</a> <a href="../../tags/springboot/" style="font-size: 12.5px;">springboot</a> <a href="../../tags/springfox/" style="font-size: 11px;">springfox</a> <a href="../../tags/ssh/" style="font-size: 11.5px;">ssh</a> <a href="../../tags/ssl/" style="font-size: 10.5px;">ssl</a> <a href="../../tags/stash/" style="font-size: 10px;">stash</a> <a href="../../tags/string/" style="font-size: 10px;">string</a> <a href="../../tags/support/" style="font-size: 10px;">support</a> <a href="../../tags/svg/" style="font-size: 10px;">svg</a> <a href="../../tags/svn/" style="font-size: 10px;">svn</a> <a href="../../tags/swagger/" style="font-size: 11.5px;">swagger</a> <a href="../../tags/sync/" style="font-size: 10px;">sync</a> <a href="../../tags/synology/" style="font-size: 10px;">synology</a> <a href="../../tags/systemctl/" style="font-size: 10.5px;">systemctl</a> <a href="../../tags/systemd/" style="font-size: 13.5px;">systemd</a> <a href="../../tags/template/" style="font-size: 10px;">template</a> <a href="../../tags/terminal/" style="font-size: 10px;">terminal</a> <a href="../../tags/txt/" style="font-size: 10px;">txt</a> <a href="../../tags/ubuntu/" style="font-size: 12px;">ubuntu</a> <a href="../../tags/ui/" style="font-size: 10px;">ui</a> <a href="../../tags/undertow/" style="font-size: 10px;">undertow</a> <a href="../../tags/unlocker/" style="font-size: 10px;">unlocker</a> <a href="../../tags/upgrade/" style="font-size: 10.5px;">upgrade</a> <a href="../../tags/vLLM/" style="font-size: 10.5px;">vLLM</a> <a href="../../tags/vhd/" style="font-size: 10px;">vhd</a> <a href="../../tags/vim/" style="font-size: 10px;">vim</a> <a href="../../tags/vm/" style="font-size: 10.5px;">vm</a> <a href="../../tags/vmdk/" style="font-size: 10px;">vmdk</a> <a href="../../tags/web/" style="font-size: 11.5px;">web</a> <a href="../../tags/windows/" style="font-size: 10.5px;">windows</a> <a href="../../tags/with/" style="font-size: 10px;">with</a> <a href="../../tags/worker/" style="font-size: 10px;">worker</a> <a href="../../tags/xml/" style="font-size: 10px;">xml</a> <a href="../../tags/yum/" style="font-size: 10px;">yum</a> <a href="../../tags/zai-org-GLM-5-2/" style="font-size: 10px;">zai-org/GLM-5.2</a> <a href="../../tags/zip/" style="font-size: 10px;">zip</a> <a href="../../tags/%E4%B8%80%E8%87%B4%E6%80%A7%E8%AF%84%E6%B5%8B/" style="font-size: 10px;">一致性评测</a> <a href="../../tags/%E4%B8%8A%E4%B8%8B%E6%96%87%E5%8E%8B%E7%BC%A9/" style="font-size: 10px;">上下文压缩</a> <a href="../../tags/%E4%B8%8A%E4%B8%8B%E6%96%87%E5%B7%A5%E7%A8%8B/" style="font-size: 10px;">上下文工程</a> <a href="../../tags/%E4%BA%A4%E6%8D%A2%E6%9C%BA/" style="font-size: 10px;">交换机</a> <a href="../../tags/%E4%BA%BA%E6%89%8D%E4%BA%89%E5%A4%BA/" style="font-size: 10px;">人才争夺</a> <a href="../../tags/%E4%BA%BA%E6%9C%BA%E5%8D%8F%E4%BD%9C/" style="font-size: 10px;">人机协作</a> <a href="../../tags/%E4%BB%A3%E7%90%86/" style="font-size: 10px;">代理</a> <a href="../../tags/%E4%BC%81%E4%B8%9A-AI/" style="font-size: 10px;">企业 AI</a> <a href="../../tags/%E4%BC%98%E5%8C%96/" style="font-size: 10px;">优化</a> <a href="../../tags/%E4%BD%8E%E5%BB%B6%E8%BF%9F/" style="font-size: 10px;">低延迟</a> <a href="../../tags/%E4%BE%9B%E5%BA%94%E9%93%BE/" style="font-size: 10px;">供应链</a> <a href="../../tags/%E5%81%A5%E5%BA%B7%E6%A3%80%E6%9F%A5/" style="font-size: 16px;">健康检查</a> <a href="../../tags/%E5%85%89%E7%8C%AB/" style="font-size: 10px;">光猫</a> <a href="../../tags/%E5%85%8D%E8%B4%B9%E5%B1%82/" style="font-size: 10px;">免费层</a> <a href="../../tags/%E5%86%85%E5%AD%98/" style="font-size: 10px;">内存</a> <a href="../../tags/%E5%86%85%E5%AD%98%E4%BC%98%E5%8C%96/" style="font-size: 10px;">内存优化</a> <a href="../../tags/%E5%86%85%E7%BD%91%E6%B8%97%E9%80%8F/" style="font-size: 10px;">内网渗透</a> <a href="../../tags/%E5%88%86%E5%B8%83%E5%BC%8F%E6%8E%A8%E7%90%86/" style="font-size: 10px;">分布式推理</a> <a href="../../tags/%E5%88%86%E5%B8%83%E5%BC%8F%E8%AE%AD%E7%BB%83/" style="font-size: 10px;">分布式训练</a> <a href="../../tags/%E5%8C%BB%E7%96%97-AI/" style="font-size: 10.5px;">医疗 AI</a> <a href="../../tags/%E5%8D%87%E7%BA%A7/" style="font-size: 11px;">升级</a> <a href="../../tags/%E5%8D%AB%E6%98%9F%E5%BD%B1%E5%83%8F/" style="font-size: 10px;">卫星影像</a> <a href="../../tags/%E5%8F%8D%E5%90%91%E4%BB%A3%E7%90%86/" style="font-size: 10px;">反向代理</a> <a href="../../tags/%E5%8F%8D%E8%AF%89/" style="font-size: 10px;">反诉</a> <a href="../../tags/%E5%90%91%E9%87%8F%E6%A3%80%E7%B4%A2/" style="font-size: 10.5px;">向量检索</a> <a href="../../tags/%E5%90%AF%E5%8A%A8/" style="font-size: 10px;">启动</a> <a href="../../tags/%E5%91%8A%E8%AD%A6/" style="font-size: 11.5px;">告警</a> <a href="../../tags/%E5%91%8A%E8%AD%A6%E4%BC%98%E5%8C%96/" style="font-size: 10px;">告警优化</a> <a href="../../tags/%E5%9B%BE%E5%83%8F%E7%94%9F%E6%88%90/" style="font-size: 10px;">图像生成</a> <a href="../../tags/%E5%9C%B0%E7%90%83%E8%A7%82%E6%B5%8B/" style="font-size: 10px;">地球观测</a> <a href="../../tags/%E5%9C%B0%E7%90%86%E7%A9%BA%E9%97%B4%E6%8E%A8%E7%90%86/" style="font-size: 10px;">地理空间推理</a> <a href="../../tags/%E5%A4%8D%E7%9B%98%E8%AF%84%E6%B5%8B/" style="font-size: 10px;">复盘评测</a> <a href="../../tags/%E5%A4%8F%E4%BB%A4%E6%97%B6/" style="font-size: 10px;">夏令时</a> <a href="../../tags/%E5%A4%9A-token-%E9%A2%84%E6%B5%8B/" style="font-size: 10px;">多 token 预测</a> <a href="../../tags/%E5%A4%9A%E5%90%91%E9%87%8F%E6%A3%80%E7%B4%A2/" style="font-size: 10px;">多向量检索</a> <a href="../../tags/%E5%A4%9A%E6%99%BA%E8%83%BD%E4%BD%93/" style="font-size: 10px;">多智能体</a> <a href="../../tags/%E5%A4%9A%E6%A8%A1%E5%9E%8B%E7%BC%96%E6%8E%92/" style="font-size: 10px;">多模型编排</a> <a href="../../tags/%E5%A4%9A%E6%A8%A1%E6%80%81/" style="font-size: 11px;">多模态</a> <a href="../../tags/%E5%A4%9A%E6%A8%A1%E6%80%81-AI/" style="font-size: 10px;">多模态 AI</a> <a href="../../tags/%E5%A4%9A%E6%A8%A1%E6%80%81-API/" style="font-size: 10px;">多模态 API</a> <a href="../../tags/%E5%A4%9A%E6%A8%A1%E6%80%81-Agent/" style="font-size: 11px;">多模态 Agent</a> <a href="../../tags/%E5%A4%9A%E6%A8%A1%E6%80%81%E6%A3%80%E7%B4%A2/" style="font-size: 10px;">多模态检索</a> <a href="../../tags/%E5%A4%9A%E8%AF%AD%E8%A8%80/" style="font-size: 10px;">多语言</a> <a href="../../tags/%E5%A4%9A%E8%AF%AD%E8%A8%80-AI/" style="font-size: 10px;">多语言 AI</a> <a href="../../tags/%E5%A4%A7%E5%8E%82%E4%BA%BA%E6%89%8D%E6%88%98/" style="font-size: 10px;">大厂人才战</a> <a href="../../tags/%E5%A4%A7%E6%A8%A1%E5%9E%8B%E8%AF%84%E6%B5%8B/" style="font-size: 10px;">大模型评测</a> <a href="../../tags/%E5%A4%A9%E7%8C%AB%E7%B2%BE%E7%81%B5/" style="font-size: 10px;">天猫精灵</a> <a href="../../tags/%E5%AE%89%E5%85%A8/" style="font-size: 15.5px;">安全</a> <a href="../../tags/%E5%AE%89%E5%85%A8%E4%BA%8B%E4%BB%B6/" style="font-size: 10.5px;">安全事件</a> <a href="../../tags/%E5%AE%89%E8%A3%85/" style="font-size: 10.5px;">安装</a> <a href="../../tags/%E5%AE%9A%E6%97%B6%E4%BB%BB%E5%8A%A1/" style="font-size: 10.5px;">定时任务</a> <a href="../../tags/%E5%AE%9E%E6%97%B6%E8%AF%AD%E9%9F%B3/" style="font-size: 10.5px;">实时语音</a> <a href="../../tags/%E5%AE%A2%E6%88%B7%E7%AB%AF-SDK/" style="font-size: 10px;">客户端 SDK</a> <a href="../../tags/%E5%AE%B9%E5%99%A8/" style="font-size: 13px;">容器</a> <a href="../../tags/%E5%AF%BC%E5%85%A5/" style="font-size: 10px;">导入</a> <a href="../../tags/%E5%B0%8F%E7%B1%B3/" style="font-size: 10px;">小米</a> <a href="../../tags/%E5%B1%8F%E5%B9%95%E7%90%86%E8%A7%A3/" style="font-size: 10px;">屏幕理解</a> <a href="../../tags/%E5%B7%A5%E4%BD%9C%E6%B5%81%E7%BC%96%E6%8E%92/" style="font-size: 10px;">工作流编排</a> <a href="../../tags/%E5%B7%A5%E5%85%B7%E5%AE%A1%E8%AE%A1/" style="font-size: 10px;">工具审计</a> <a href="../../tags/%E5%B7%A5%E5%85%B7%E8%B0%83%E7%94%A8/" style="font-size: 11px;">工具调用</a> <a href="../../tags/%E5%B7%A5%E5%85%B7%E8%B0%83%E7%94%A8%E6%8B%A6%E6%88%AA/" style="font-size: 10px;">工具调用拦截</a> <a href="../../tags/%E5%B7%A5%E7%A8%8B%E5%9B%A2%E9%98%9F/" style="font-size: 10.5px;">工程团队</a> <a href="../../tags/%E5%B7%A5%E7%A8%8B%E5%AE%9E%E8%B7%B5/" style="font-size: 10px;">工程实践</a> <a href="../../tags/%E5%B7%A5%E7%A8%8B%E7%AC%94%E8%AE%B0/" style="font-size: 10px;">工程笔记</a> <a href="../../tags/%E5%B8%B8%E7%94%A8%E8%BD%AF%E4%BB%B6/" style="font-size: 10px;">常用软件</a> <a href="../../tags/%E5%BA%94%E7%94%A8%E5%B8%82%E5%9C%BA/" style="font-size: 10px;">应用市场</a> <a href="../../tags/%E5%BB%B6%E8%BF%9F%E4%BC%98%E5%8C%96/" style="font-size: 10px;">延迟优化</a> <a href="../../tags/%E5%BC%80%E6%9D%83%E9%87%8D/" style="font-size: 10px;">开权重</a> <a href="../../tags/%E5%BC%80%E6%BA%90%E6%9D%83%E9%87%8D/" style="font-size: 10px;">开源权重</a> <a href="../../tags/%E5%BC%80%E6%BA%90%E6%A8%A1%E5%9E%8B/" style="font-size: 10px;">开源模型</a> <a href="../../tags/%E5%BC%82%E5%B8%B8/" style="font-size: 10px;">异常</a> <a href="../../tags/%E5%BC%82%E6%AD%A5%E4%BB%BB%E5%8A%A1/" style="font-size: 10px;">异步任务</a> <a href="../../tags/%E5%BC%82%E6%AD%A5%E5%A7%94%E6%B4%BE/" style="font-size: 10px;">异步委派</a> <a href="../../tags/%E5%BE%AE%E4%BF%A1/" style="font-size: 10px;">微信</a> <a href="../../tags/%E5%BF%83%E8%B7%B3/" style="font-size: 10px;">心跳</a> <a href="../../tags/%E6%80%A7%E8%83%BD%E4%BC%98%E5%8C%96/" style="font-size: 10.5px;">性能优化</a> <a href="../../tags/%E6%80%A7%E8%83%BD%E6%8D%95%E6%8D%89/" style="font-size: 10px;">性能捕捉</a> <a href="../../tags/%E6%88%90%E6%9C%AC%E4%BC%98%E5%8C%96/" style="font-size: 11px;">成本优化</a> <a href="../../tags/%E6%88%90%E6%9C%AC%E6%8E%A7%E5%88%B6/" style="font-size: 10px;">成本控制</a> <a href="../../tags/%E6%89%A9%E6%95%A3%E6%A8%A1%E5%9E%8B/" style="font-size: 10px;">扩散模型</a> <a href="../../tags/%E6%8A%80%E6%9C%AF/" style="font-size: 20px;">技术</a> <a href="../../tags/%E6%8A%93%E5%8C%85/" style="font-size: 10px;">抓包</a> <a href="../../tags/%E6%8C%89-provider-%E4%BC%98%E5%85%88%E7%BA%A7/" style="font-size: 10px;">按 provider 优先级</a> <a href="../../tags/%E6%8E%92%E6%9F%A5/" style="font-size: 10px;">排查</a> <a href="../../tags/%E6%8E%A8%E7%90%86%E5%8A%A0%E9%80%9F/" style="font-size: 10px;">推理加速</a> <a href="../../tags/%E6%8E%A8%E7%90%86%E9%80%9F%E5%BA%A6/" style="font-size: 10px;">推理速度</a> <a href="../../tags/%E6%8E%A8%E7%90%86%E9%A2%84%E7%AE%97/" style="font-size: 10.5px;">推理预算</a> <a href="../../tags/%E6%8F%8F%E8%BF%B0%E6%96%87%E4%BB%B6/" style="font-size: 10px;">描述文件</a> <a href="../../tags/%E6%8F%90%E7%A4%BA%E8%AF%8D%E6%95%8F%E6%84%9F%E6%80%A7/" style="font-size: 10px;">提示词敏感性</a> <a href="../../tags/%E6%95%85%E9%9A%9C%E6%8E%92%E6%9F%A5/" style="font-size: 12.5px;">故障排查</a> <a href="../../tags/%E6%95%88%E7%8E%87%E5%B7%A5%E5%85%B7/" style="font-size: 10px;">效率工具</a> <a href="../../tags/%E6%95%99%E8%82%B2%E6%95%B0%E6%8D%AE%E5%BC%80%E6%BA%90/" style="font-size: 10px;">教育数据开源</a> <a href="../../tags/%E6%95%99%E8%82%B2%E8%AF%84%E6%B5%8B/" style="font-size: 10px;">教育评测</a> <a href="../../tags/%E6%95%B0%E6%8D%AE%E5%B7%A5%E4%BD%9C%E6%B5%81/" style="font-size: 10px;">数据工作流</a> <a href="../../tags/%E6%95%B0%E6%8D%AE%E6%B5%81/" style="font-size: 10px;">数据流</a> <a href="../../tags/%E6%95%B0%E6%8D%AE%E9%9B%86%E5%81%8F%E5%B7%AE/" style="font-size: 10px;">数据集偏差</a> <a href="../../tags/%E6%96%87%E6%9C%AC%E7%BC%96%E7%A0%81%E5%99%A8/" style="font-size: 10px;">文本编码器</a> <a href="../../tags/%E6%97%81%E8%B7%AF%E7%94%B1/" style="font-size: 10px;">旁路由</a> <a href="../../tags/%E6%97%A5%E5%BF%97%E5%88%86%E6%9E%90/" style="font-size: 10.5px;">日志分析</a> <a href="../../tags/%E6%97%A5%E8%AE%B0/" style="font-size: 10px;">日记</a> <a href="../../tags/%E6%97%B6%E5%8C%BA/" style="font-size: 10px;">时区</a> <a href="../../tags/%E6%98%BE%E5%8D%A1%E8%99%9A%E6%8B%9F%E5%8C%96/" style="font-size: 10px;">显卡虚拟化</a> <a href="../../tags/%E6%99%BA%E8%83%BD%E5%AE%B6%E5%B1%85/" style="font-size: 10px;">智能家居</a> <a href="../../tags/%E6%99%BA%E8%83%BD%E9%9F%B3%E7%AE%B1/" style="font-size: 10px;">智能音箱</a> <a href="../../tags/%E6%9C%8D%E5%8A%A1%E7%AE%A1%E7%90%86/" style="font-size: 10px;">服务管理</a> <a href="../../tags/%E6%9C%AC%E5%9C%B0-agent/" style="font-size: 10px;">本地 agent</a> <a href="../../tags/%E6%9C%BA%E5%99%A8%E4%BA%BA%E4%BB%BF%E7%9C%9F/" style="font-size: 10px;">机器人仿真</a> <a href="../../tags/%E6%9C%BA%E5%99%A8%E4%BA%BA%E5%AD%A6%E4%B9%A0/" style="font-size: 10px;">机器人学习</a> <a href="../../tags/%E6%9C%BA%E5%99%A8%E4%BA%BA%E6%95%B0%E6%8D%AE%E9%87%87%E9%9B%86/" style="font-size: 10px;">机器人数据采集</a> <a href="../../tags/%E6%9E%B6%E6%9E%84/" style="font-size: 10px;">架构</a> <a href="../../tags/%E6%A8%A1%E5%9D%97/" style="font-size: 10px;">模块</a> <a href="../../tags/%E6%A8%A1%E5%9E%8B%E6%8E%A8%E7%90%86/" style="font-size: 10px;">模型推理</a> <a href="../../tags/%E6%A8%A1%E5%9E%8B%E8%AF%84%E6%B5%8B/" style="font-size: 10.5px;">模型评测</a> <a href="../../tags/%E6%A8%A1%E5%9E%8B%E8%B7%AF%E7%94%B1/" style="font-size: 11px;">模型路由</a> <a href="../../tags/%E6%AE%8B%E5%AD%98%E8%AE%BF%E9%97%AE/" style="font-size: 10px;">残存访问</a> <a href="../../tags/%E6%B5%81%E5%BC%8F%E6%8E%A8%E7%90%86/" style="font-size: 10px;">流式推理</a> <a href="../../tags/%E6%B5%81%E7%A8%8B/" style="font-size: 10px;">流程</a> <a href="../../tags/%E6%B5%81%E7%A8%8B%E5%9B%BE/" style="font-size: 10px;">流程图</a> <a href="../../tags/%E6%B5%8F%E8%A7%88%E5%99%A8/" style="font-size: 10.5px;">浏览器</a> <a href="../../tags/%E6%B7%B7%E5%90%88%E4%B8%93%E5%AE%B6/" style="font-size: 10px;">混合专家</a> <a href="../../tags/%E6%BC%AB%E6%B8%B8/" style="font-size: 10px;">漫游</a> <a href="../../tags/%E7%81%AB%E7%BB%92/" style="font-size: 10px;">火绒</a> <a href="../../tags/%E7%94%9F%E6%88%90%E5%BC%8F%E5%BD%B1%E5%83%8F/" style="font-size: 10px;">生成式影像</a> <a href="../../tags/%E7%94%B5%E4%BF%A1/" style="font-size: 10px;">电信</a> <a href="../../tags/%E7%94%BB%E5%9B%BE/" style="font-size: 10px;">画图</a> <a href="../../tags/%E7%9B%91%E6%8E%A7/" style="font-size: 15px;">监控</a> <a href="../../tags/%E7%9B%91%E6%8E%A7%E7%B3%BB%E7%BB%9F/" style="font-size: 10px;">监控系统</a> <a href="../../tags/%E7%9B%91%E7%AE%A1/" style="font-size: 10px;">监管</a> <a href="../../tags/%E7%9F%A5%E8%AF%86%E8%92%B8%E9%A6%8F/" style="font-size: 10px;">知识蒸馏</a> <a href="../../tags/%E7%A3%81%E7%9B%98/" style="font-size: 10px;">磁盘</a> <a href="../../tags/%E7%A7%91%E7%A0%94%E8%87%AA%E5%8A%A8%E5%8C%96/" style="font-size: 10px;">科研自动化</a> <a href="../../tags/%E7%A8%80%E7%96%8F%E6%B3%A8%E6%84%8F%E5%8A%9B/" style="font-size: 10px;">稀疏注意力</a> <a href="../../tags/%E7%AB%8B%E4%BD%93%E5%A3%B0/" style="font-size: 10px;">立体声</a> <a href="../../tags/%E7%AB%AF%E4%BE%A7-AI/" style="font-size: 10px;">端侧 AI</a> <a href="../../tags/%E7%AB%AF%E4%BE%A7%E6%8E%A8%E7%90%86/" style="font-size: 11px;">端侧推理</a> <a href="../../tags/%E7%AB%AF%E5%8F%A3/" style="font-size: 10px;">端口</a> <a href="../../tags/%E7%AB%AF%E5%8F%A3%E5%86%B2%E7%AA%81/" style="font-size: 10px;">端口冲突</a> <a href="../../tags/%E7%AB%AF%E5%8F%A3%E6%89%AB%E6%8F%8F/" style="font-size: 10px;">端口扫描</a> <a href="../../tags/%E7%BB%93%E6%9E%84%E5%8C%96%E8%BE%93%E5%87%BA/" style="font-size: 10px;">结构化输出</a> <a href="../../tags/%E7%BB%AD%E6%9C%9F/" style="font-size: 10px;">续期</a> <a href="../../tags/%E7%BD%91%E5%85%B3/" style="font-size: 10px;">网关</a> <a href="../../tags/%E7%BD%91%E7%BB%9C/" style="font-size: 15.5px;">网络</a> <a href="../../tags/%E7%BD%91%E7%BB%9C%E5%AE%89%E5%85%A8/" style="font-size: 10px;">网络安全</a> <a href="../../tags/%E7%BD%91%E7%BB%9C%E9%A3%8E%E6%9A%B4/" style="font-size: 10px;">网络风暴</a> <a href="../../tags/%E7%BE%A4%E6%99%96/" style="font-size: 10px;">群晖</a> <a href="../../tags/%E8%84%9A%E6%9C%AC/" style="font-size: 10px;">脚本</a> <a href="../../tags/%E8%84%9A%E6%9C%AC%E4%BC%98%E5%8C%96/" style="font-size: 10px;">脚本优化</a> <a href="../../tags/%E8%85%BE%E8%AE%AF/" style="font-size: 10px;">腾讯</a> <a href="../../tags/%E8%87%AA%E5%8A%A8%E5%8C%96/" style="font-size: 14.5px;">自动化</a> <a href="../../tags/%E8%87%AA%E5%8A%A8%E6%81%A2%E5%A4%8D/" style="font-size: 10.5px;">自动恢复</a> <a href="../../tags/%E8%87%AA%E5%8A%A8%E6%94%BB%E5%87%BB/" style="font-size: 10px;">自动攻击</a> <a href="../../tags/%E8%87%AA%E9%83%A8%E7%BD%B2/" style="font-size: 10px;">自部署</a> <a href="../../tags/%E8%8B%B9%E6%9E%9C/" style="font-size: 10px;">苹果</a> <a href="../../tags/%E8%99%9A%E6%8B%9F%E6%9C%BA/" style="font-size: 12px;">虚拟机</a> <a href="../../tags/%E8%A7%86%E8%A7%89%E8%AF%AD%E8%A8%80%E6%A8%A1%E5%9E%8B/" style="font-size: 10px;">视觉语言模型</a> <a href="../../tags/%E8%A7%86%E9%A2%91%E7%94%9F%E6%88%90/" style="font-size: 10px;">视频生成</a> <a href="../../tags/%E8%A7%86%E9%A2%91%E9%97%AE%E8%AF%8A/" style="font-size: 10px;">视频问诊</a> <a href="../../tags/%E8%AE%A4%E8%AF%81/" style="font-size: 10.5px;">认证</a> <a href="../../tags/%E8%AF%81%E4%B9%A6/" style="font-size: 10px;">证书</a> <a href="../../tags/%E8%AF%84%E6%B5%8B/" style="font-size: 10px;">评测</a> <a href="../../tags/%E8%AF%84%E6%B5%8B%E5%9F%BA%E5%87%86/" style="font-size: 10px;">评测基准</a> <a href="../../tags/%E8%AF%84%E6%B5%8B%E6%96%B9%E6%B3%95%E5%AD%A6/" style="font-size: 10px;">评测方法学</a> <a href="../../tags/%E8%AF%89%E8%AE%BC/" style="font-size: 10px;">诉讼</a> <a href="../../tags/%E8%AF%AD%E9%9F%B3-AI/" style="font-size: 10px;">语音 AI</a> <a href="../../tags/%E8%AF%AD%E9%9F%B3-Agent/" style="font-size: 10px;">语音 Agent</a> <a href="../../tags/%E8%AF%AD%E9%9F%B3%E8%AF%86%E5%88%AB/" style="font-size: 10.5px;">语音识别</a> <a href="../../tags/%E8%B6%85%E6%97%B6/" style="font-size: 10px;">超时</a> <a href="../../tags/%E8%B7%AF%E7%94%B1/" style="font-size: 10px;">路由</a> <a href="../../tags/%E8%B7%AF%E7%94%B1%E5%99%A8/" style="font-size: 11.5px;">路由器</a> <a href="../../tags/%E8%BD%AF%E4%BB%B6%E7%AE%A1%E5%AE%B6/" style="font-size: 10px;">软件管家</a> <a href="../../tags/%E8%BD%AF%E8%B7%AF%E7%94%B1/" style="font-size: 10px;">软路由</a> <a href="../../tags/%E8%BF%90%E7%BB%B4/" style="font-size: 19.5px;">运维</a> <a href="../../tags/%E8%BF%90%E7%BB%B4%E7%9B%91%E6%8E%A7/" style="font-size: 10.5px;">运维监控</a> <a href="../../tags/%E8%BF%9E%E6%8E%A5%E4%BF%9D%E6%B4%BB/" style="font-size: 10px;">连接保活</a> <a href="../../tags/%E8%BF%9E%E6%8E%A5%E9%97%AE%E9%A2%98/" style="font-size: 10px;">连接问题</a> <a href="../../tags/%E9%80%9A%E4%BF%A1%E6%9C%BA%E5%88%B6/" style="font-size: 10px;">通信机制</a> <a href="../../tags/%E9%80%9A%E7%9F%A5/" style="font-size: 10px;">通知</a> <a href="../../tags/%E9%82%AE%E4%BB%B6%E6%BC%8F%E5%8F%91/" style="font-size: 10px;">邮件漏发</a> <a href="../../tags/%E9%83%A8%E7%BD%B2/" style="font-size: 12px;">部署</a> <a href="../../tags/%E9%85%8D%E7%BD%AE/" style="font-size: 11px;">配置</a> <a href="../../tags/%E9%87%8F%E5%8C%96/" style="font-size: 10.5px;">量化</a> <a href="../../tags/%E9%87%8F%E5%AD%90%E8%AE%A1%E7%AE%97/" style="font-size: 10px;">量子计算</a> <a href="../../tags/%E9%92%89%E9%92%89/" style="font-size: 10.5px;">钉钉</a> <a href="../../tags/%E9%95%9C%E5%83%8F/" style="font-size: 11px;">镜像</a> <a href="../../tags/%E9%95%9C%E5%83%8F%E6%BA%90/" style="font-size: 10px;">镜像源</a> <a href="../../tags/%E9%95%BF%E4%B8%8A%E4%B8%8B%E6%96%87/" style="font-size: 10px;">长上下文</a> <a href="../../tags/%E9%95%BF%E8%BF%9E%E6%8E%A5/" style="font-size: 10.5px;">长连接</a> <a href="../../tags/%E9%97%A8%E7%AA%97%E4%BC%A0%E6%84%9F%E5%99%A8/" style="font-size: 10px;">门窗传感器</a> <a href="../../tags/%E9%97%AE%E9%A2%98%E6%8E%92%E6%9F%A5/" style="font-size: 18.5px;">问题排查</a> <a href="../../tags/%E9%98%B2%E7%81%AB%E5%A2%99/" style="font-size: 11.5px;">防火墙</a> <a href="../../tags/%E9%98%BF%E9%87%8C%E4%BA%91/" style="font-size: 11.5px;">阿里云</a> <a href="../../tags/%E9%98%BF%E9%87%8C%E6%BA%90/" style="font-size: 10.5px;">阿里源</a> <a href="../../tags/%E9%9B%86%E5%AE%A2/" style="font-size: 10.5px;">集客</a> <a href="../../tags/%E9%A3%9E%E4%B9%A6/" style="font-size: 10.5px;">飞书</a>
+    </div>
+    
+      <script>
+        var maxTagcloud = parseInt(17);
+        var tags_length = parseInt(676);
+        var tags_arr = [];
+        for(var i = 0; i < tags_length; i++){
+          tags_arr.push(i);
+        }
+        tags_arr.sort(function (l, r) {
+          return Math.random() > 0.5 ? -1 : 1;
+        });
+        tags_arr = tags_arr.slice(0, maxTagcloud < tags_length ? tags_length - maxTagcloud : 0);
+        for(var tag_i = 0; tag_i < tags_arr.length; tag_i++){
+          document.getElementById("randomtagcloud").children[tags_arr[tag_i]].style.display = 'none';
+        }
+      </script>
+    
+  </div>
+
+    
+        
+        <!-- 一言 -->
+<div class="nexmoe-widget-wrap">
+  <h3 class="nexmoe-widget-title">
+    Hitokoto
+  </h3>
+  <div class="nexmoe-widget">
+    <ul class="hitokoto-box">
+      <li id="hitokoto_text_parent" class="hitokoto-text" hitokotoCategory="">
+        <a href="#" id="hitokoto_text">
+          
+        </a>
+        <a href="#" id="hitokoto_error_text" style="display: none;">
+          
+        </a>
+      </li>
+    </ul>
+  </div>
+</div>
+
+<script>
+  let hitokotoText = document.getElementById('hitokoto_text')
+  let hitokotoErroText = document.getElementById('hitokoto_error_text')
+  let hitokotoCategory = document.getElementById('hitokoto_text_parent').getAttribute('hitokotoCategory')
+  window.addEventListener('load', function () {
+    let url = 'https://v1.hitokoto.cn'
+    if (hitokotoCategory) {
+      url += '?c=' + hitokotoCategory
+    }
+    fetch(url)
+      .then(response => response.json())
+      .then(data => {
+        hitokotoText.innerText = "「 " + data.hitokoto + " 」 from " + data.from
+        hitokotoText.href = 'https://hitokoto.cn/?uuid=' + data.uuid
+      })
+      .catch((reason) => {
+        console.error(11, reason)
+        hitokotoText.style.display = 'none'
+        hitokotoErroText.style.display = 'block'
+      })
+  })
+</script>
+    
+        
+        
+  <div class="nexmoe-widget-wrap">
+    <h3 class="nexmoe-widget-title">Archive</h3>
+    <div class="nexmoe-widget">
+      <ul class="archive-list"><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2026/">2026</a><span class="archive-list-count">150</span></li><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2024/">2024</a><span class="archive-list-count">10</span></li><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2023/">2023</a><span class="archive-list-count">12</span></li><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2022/">2022</a><span class="archive-list-count">3</span></li><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2021/">2021</a><span class="archive-list-count">85</span></li><li class="archive-list-item"><a class="archive-list-link" href="../../archives/2018/">2018</a><span class="archive-list-count">1</span></li></ul>
+    </div>
+  </div>
+
+
+
+    
+        
+        
+  <div class="nexmoe-widget-wrap">
+    <h3 class="nexmoe-widget-title">Recent Posts</h3>
+    <div class="nexmoe-widget">
+      <ul>
+        
+          <li>
+            <a href="../../post/2026-09-16-agent-consistency-analyzer/">ALTK-Evolve 一致性分析：Agent 任务成功一次，能不能次次成功？</a>
+          </li>
+        
+          <li>
+            <a href="../../post/2026-09-14-async-grpo-lora-hfjobs/">Async GRPO + LoRA：没有 NCCL，Agent 训练能否拆到云端？</a>
+          </li>
+        
+          <li>
+            <a href="../../post/2026-09-13-gradio-workflow-1111/">Gradio Workflow 重建 AUTOMATIC1111：工作流 Agent 能否把图像生成变成可复现工程？</a>
+          </li>
+        
+          <li>
+            <a href="../../post/2026-09-11-gpt-live-1-realtime-voice-agent/">GPT-Live-1 API：实时语音 Agent 能否摆脱复杂的音频编排？</a>
+          </li>
+        
+          <li>
+            <a href="../../post/2026-09-10-google-love-rendered/">Google AI 复原七十年记忆：生成式影像如何避免把真实故事变成幻觉？</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+
+    
+        
+        <div class="nexmoe-widget-wrap">
+    <div class="nexmoe-widget nexmoe-link">
+		<ul>
+        
+            <li>
+                <a href="https://blog.margrop.net/" target="_blank" >
+                    <img src="/images/avatar.webp" alt="魔都水滴Blog"></img>
+                    <p>魔都水滴Blog</p>
+                </a>
+            </li>
+        
+		</ul>
+    </div>
+</div>
+<style>
+.nexmoe-widget-wrap .nexmoe-link ul li a {
+    text-align : center;
+}
+.nexmoe-widget-wrap .nexmoe-link ul li a img {
+    max-width : 100%;
+}
+.nexmoe-widget-wrap .nexmoe-link ul li a p {
+    margin: 10px 0;
+}
+</style>
+
+    
+   
+    <div class="nexmoe-copyright">
+        &copy; 2026 Margrop
+        Powered by <a href="http://hexo.io/" target="_blank">Hexo</a>
+        & <a href="https://github.com/theme-nexmoe/hexo-theme-nexmoe" target="_blank">Nexmoe</a>
+        <div class="language-switcher">
+  <button class="theme-toggle" type="button" data-theme-toggle aria-label="切换到暗黑模式" aria-pressed="false">🌙</button>
+  <a href="https://blog.margrop.com/">中文</a>
+  <a target="_blank" rel="noopener" href="https://blog.margrop.net/en/">English</a>
+</div>
+<div class="la-theme-widget" data-51la-widget aria-label="51.la 网站统计"></div>
+<script defer src="/js/51la-theme-widget.js"></script>
+
+    </div>
+</div><!-- .nexmoe-drawer --></div><div id="nexmoe-content"><div class="nexmoe-primary"><div class="nexmoe-post">
+  <article>
+    
+        <div class="nexmoe-post-cover absolute" style="padding-top: 56.25%;"> 
+            <img src="https://picsum.photos/seed/2026-09-14-async-grpo-lora-hfjobs/1600/900" alt="Async GRPO + LoRA：没有 NCCL，Agent 训练能否拆到云端？" loading="lazy">
+            <h1>Async GRPO + LoRA：没有 NCCL，Agent 训练能否拆到云端？</h1>
+        </div>
+    
+    
+    <div class="nexmoe-post-meta">
+    <div class="nexmoe-rainbow">
+        <a class="nexmoefont icon-calendar-fill">2026年09月14日</a>
+        
+            <a class="nexmoefont icon-appstore-fill -link" href="../../categories/ai-tech/">ai_tech</a>
+        
+        
+    <a><i class="nexmoefont icon-areachart"></i>约6.2k字</a>
+    <a><i class="nexmoefont icon-time-circle-fill"></i>预计需要9 分钟</a>
+
+    </div>
+    
+    
+    
+    
+    
+</div>
+
+    <p><img onerror="imgOnError(this);" data-fancybox="gallery" src="https://picsum.photos/seed/2026-09-14-async-grpo-lora-hfjobs/1600/900" alt="Async GRPO 与 LoRA 云端训练架构" data-caption="Async GRPO 与 LoRA 云端训练架构" loading="lazy"></p>
+<h2 id="先说结论"><a href="#先说结论" class="headerlink" title="先说结论"></a>先说结论</h2><p>Hugging Face 在 2026 年 9 月 10 日发布了 Async GRPO with LoRA across HF Jobs: a bucket, a proxy, and no NCCL，展示了一种把强化学习训练器、推理副本和存储桶拆到不同云端任务中的做法。它没有让训练器和推理服务共享同一台机器，而是只同步体积很小的 LoRA 适配器，并用存储桶完成跨任务传递。</p>
+<p>这件事对 Agent 工程真正有价值的地方，不是“又一种训练脚本”，而是它把一个常见的分布式难题拆成了几个可以单独观测的环节：训练、生成、权重同步、请求路由和队列背压。官方实验把同一套 500 步训练从 <strong>3 小时 27 分钟缩短到 53 分钟</strong>。我的判断是：<strong>对于 Agent 后训练，先把数据流和瓶颈做成可测量的流水线，往往比盲目增加 GPU 更重要。</strong>但这仍是工程示例，不等于任何任务都能按同样比例加速。</p>
+<h2 id="发生了什么"><a href="#发生了什么" class="headerlink" title="发生了什么"></a>发生了什么</h2><p>主来源是 Hugging Face 官方博客 <a target="_blank" rel="noopener" href="https://huggingface.co/blog/asyncgrpo-lora-hfjobs">Async GRPO with LoRA across HF Jobs: a bucket, a proxy, and no NCCL</a>，发布日期为 <strong>2026-09-10</strong>。官方事实包括：TRL v1.14 的 AsyncGRPOTrainer 支持训练 LoRA 适配器并将适配器同步到 vLLM；训练器与推理副本可以运行在不同的 Hugging Face Jobs 上；适配器通过 Storage Bucket 传递，而不是依赖 NCCL；一个轻量代理负责鉴权、按 KV 前缀路由 rollout，并把适配器加载广播给各个副本。</p>
+<p>官方文章还给出了实验结果：rank-1 LoRA 适配器只有几 MB，完整配方的五次运行逐步从 3 小时 27 分钟优化到 53 分钟；500 步训练中的平均 reward 从前 20 步约 0.145 上升到最后 20 步约 0.438，策略版本同步保持一致。以上是官方披露的事实。下面关于 Agent 训练架构、成本和上线边界的分析，是我的判断，不是 Hugging Face 对所有工作负载的保证。</p>
+<h2 id="技术细节"><a href="#技术细节" class="headerlink" title="技术细节"></a>技术细节</h2><h3 id="1-为什么-LoRA-适合异步-GRPO"><a href="#1-为什么-LoRA-适合异步-GRPO" class="headerlink" title="1. 为什么 LoRA 适合异步 GRPO"></a>1. 为什么 LoRA 适合异步 GRPO</h3><p>GRPO 的一个现实难点是：训练器需要不断拿到模型生成的 rollout，计算奖励，再更新策略；推理副本则负责持续生成样本。若训练器和推理服务共享一台机器，两边会争夺显存和计算时间，训练速度变快后，生成端可能跟不上；生成端扩容后，训练器又可能成为瓶颈。</p>
+<p>LoRA 提供了一个更小的同步单位。训练器不必每轮搬运完整基础模型，只需要更新一个低秩适配器。官方文章指出，rank-1 适配器只有几 MB，因此可以写入一个被多个 Job 挂载的 Storage Bucket，再由推理副本加载。这里的工程意义是：<strong>把“模型权重同步”从高带宽的全量复制，变成低频、可追踪的小文件发布。</strong></p>
+<p>但适配器很小，并不意味着系统天然简单。推理副本必须知道当前适配器版本，训练器与生成端必须对策略版本保持一致，还要处理写入中间态、重复加载和加载失败。生产实现应为适配器文件增加版本号、校验值、发布时间和兼容的基础模型标识，不能让推理服务读取一个尚未写完的文件。</p>
+<h3 id="2-三类-Job-分工比“多开几张卡”更关键"><a href="#2-三类-Job-分工比“多开几张卡”更关键" class="headerlink" title="2. 三类 Job 分工比“多开几张卡”更关键"></a>2. 三类 Job 分工比“多开几张卡”更关键</h3><p>官方架构把系统拆成训练器、vLLM 推理副本和代理等部分。训练器负责前向与反向计算、奖励处理和 LoRA 更新；推理副本负责生成 rollout；代理负责把请求转给合适的副本并补充必要的鉴权信息。存储桶则承担适配器发布和共享。</p>
+<p>这种拆分让扩容边界更清晰。生成端慢，可以增加推理副本；训练端慢，可以优化 microbatch、检查点和前向反向计算；同步频繁，可以降低无效加载或改进适配器广播。每个部分都能单独看 CPU、GPU、队列和网络指标，而不是只得到一个“整轮训练很慢”的结论。</p>
+<p>对 Agent 后训练来说，这种分工同样适用。一个 Agent 可能同时包含样本生成、工具模拟、奖励计算和策略更新。若把所有工作塞进同一进程，任何一个慢环节都会拖住全部流程。拆开以后，才能回答“是模型推理慢、工具环境慢，还是奖励计算慢”。</p>
+<h3 id="3-代理不仅是网关，还承担局部性优化"><a href="#3-代理不仅是网关，还承担局部性优化" class="headerlink" title="3. 代理不仅是网关，还承担局部性优化"></a>3. 代理不仅是网关，还承担局部性优化</h3><p>官方方案中的代理有一个很容易被忽略的职责：按 KV 前缀把 rollout 路由到已经保留对应前缀的推理副本。这样做可以减少重复计算，让相似上下文尽量复用已有缓存。</p>
+<p>这不是简单的轮询负载均衡。普通轮询只关心每个副本收到多少请求，而 KV 前缀路由还要关心请求内容与副本缓存之间的关系。对长上下文 Agent 来说，局部性可能直接影响首 token 延迟和 GPU 利用率；但缓存也会带来一致性、容量和隐私问题。系统需要设置缓存上限、失效规则和租户隔离，不能为了省一次计算而让不同任务共享不该共享的上下文。</p>
+<p>代理还负责把适配器加载广播给每个推理副本。广播完成后，服务端应返回实际加载的版本，而不是只返回“请求已接受”。训练器需要据此判断本轮 rollout 是否由目标策略产生，否则奖励与策略版本可能错配。</p>
+<h3 id="4-指标首先用来定位“谁在等谁”"><a href="#4-指标首先用来定位“谁在等谁”" class="headerlink" title="4. 指标首先用来定位“谁在等谁”"></a>4. 指标首先用来定位“谁在等谁”</h3><p>官方实验最值得复用的部分，是对异步训练瓶颈的观测。文章区分了训练器等待样本的时间、生成端因队列满而产生的背压时间、rollout 队列大小、单步耗时和前向反向耗时。</p>
+<p>这些指标可以回答两个相反的问题：如果训练器等待样本时间很高，说明生成端跟不上；如果生成端背压时间很高，说明训练器消化样本太慢，或者队列容量太小。两者不应该同时长期偏高。只看 GPU 利用率，往往无法判断到底是算力不足还是流水线没有配平。</p>
+<p>官方基准中的五次运行就是沿着这个思路优化：先发现训练器跟不上，再调整 microbatch；随后减少重复前向计算、增加副本或放宽在途请求上限。最终速度提升不是某个神奇参数带来的，而是每次根据指标消除一个具体瓶颈。</p>
+<h2 id="对-Agent-工程的影响"><a href="#对-Agent-工程的影响" class="headerlink" title="对 Agent &#x2F; 工程的影响"></a>对 Agent &#x2F; 工程的影响</h2><p>第一，Agent 后训练应把“生成—评分—更新”当作流水线，而不是一个黑箱函数。每轮至少记录策略版本、适配器版本、rollout 数量、奖励统计、队列长度、训练等待时间、生成背压、同步耗时和失败原因。只有这样，才能判断 reward 上升是能力改善，还是样本分布、缓存或奖励实现发生了变化。</p>
+<p>第二，LoRA 适合降低同步成本，但不替代版本治理。每个适配器都要绑定基础模型、训练配置、数据集版本、奖励函数版本和评测结果。适配器可以很小，却仍然可能改变 Agent 的工具选择、拒答边界和格式遵从性。部署前应进行固定样本回放，并检查高风险动作是否出现回归。</p>
+<p>第三，KV 前缀路由应被视为一种确定性基础设施能力，不应让模型自己决定。路由器可以根据请求前缀、缓存状态、租户和容量做选择；模型只负责生成内容。缓存命中不能成为跨任务共享原始上下文的理由，日志也不应记录完整提示词来证明命中情况，优先记录前缀版本、哈希、命中与否和耗时。</p>
+<p>第四，训练系统必须有成本上限和停止条件。异步流水线很容易通过扩大副本、提高在途请求数来换吞吐，但这也可能放大 GPU 费用、奖励计算量和错误样本。应设置最大步数、最大样本数、并发上限、单轮预算和异常增长告警；当奖励不再改善或策略版本同步失败时，应暂停，而不是继续烧资源。</p>
+<p>第五，训练数据与工具环境要脱敏、可回放。Agent 训练可能包含浏览器、代码仓库或外部 API 的轨迹，原始轨迹不应默认长期保存。推荐使用合成任务、最小化结构化摘要和可复现的工具模拟器；评测时分别查看规则结果、输入证据、模型解释和未知项，不能把 reward 当成真实世界任务成功的替代指标。</p>
+<h2 id="我的判断"><a href="#我的判断" class="headerlink" title="我的判断"></a>我的判断</h2><p>Async GRPO + LoRA 的重要性，不在于它消除了分布式训练的复杂度，而在于它提供了一套更容易拆解复杂度的方法：适配器只同步小文件，训练与推理解耦，代理负责局部性和广播，指标负责告诉工程师瓶颈在哪里。</p>
+<p><strong>我会把这套思路用于低风险、可复现的 Agent 后训练实验，优先验证策略版本一致性、奖励可解释性、队列稳定性和单位样本成本；不会因为 53 分钟的公开结果，就直接推断自己的任务也能获得同样加速。</strong>如果数据生成、工具调用或奖励计算本身不稳定，扩大并发只会更快地产生错误样本。</p>
+<p>对多数团队而言，第一步不是搭建一套复杂的云端集群，而是先在单机或小规模环境中补齐四组指标：训练等待、生成背压、策略同步和端到端 reward。看清楚瓶颈之后，再决定增加副本、改 microbatch，还是减少同步频率。</p>
+<h2 id="Q-A"><a href="#Q-A" class="headerlink" title="Q&amp;A"></a>Q&amp;A</h2><p><strong>Q1：Async GRPO + LoRA 解决了什么问题？</strong></p>
+<p>A：它让训练器可以更新 LoRA 适配器，并把小体积适配器同步给独立的 vLLM 推理副本。这样训练和生成不必共享同一台机器，也不必每次传输完整模型权重。</p>
+<p><strong>Q2：为什么可以不用 NCCL？</strong></p>
+<p>A：官方示例通过 Storage Bucket 在不同 Job 之间传递适配器文件，由推理副本加载；它不是在所有场景中替代 GPU 通信，而是避免了这个架构下对全量权重跨机器同步的依赖。</p>
+<p><strong>Q3：53 分钟的结果能直接复现吗？</strong></p>
+<p>A：不能保证。官方结果来自特定模型、数据、Job 配置、推理副本数量和硬件环境。自己的任务必须重新测量生成速度、训练速度、同步开销、队列行为和奖励曲线。</p>
+<p><strong>Q4：KV 前缀路由有什么风险？</strong></p>
+<p>A：它可能改善缓存复用和延迟，但需要严格的租户隔离、容量上限、失效规则和版本管理。不能因为前缀相似，就共享未经授权的原始上下文。</p>
+<p><strong>Q5：最小验证应该记录什么？</strong></p>
+<p>A：至少记录适配器与基础模型版本、策略同步状态、rollout 数量、奖励均值、训练等待、生成背压、队列长度、单步耗时、失败类型和单位样本成本。先用合成任务验证，再接入真实工具环境。</p>
+<h2 id="来源"><a href="#来源" class="headerlink" title="来源"></a>来源</h2><ol>
+<li>Hugging Face，<strong>Async GRPO with LoRA across HF Jobs: a bucket, a proxy, and no NCCL</strong>，发布日期：2026-09-10，原始 URL：<a target="_blank" rel="noopener" href="https://huggingface.co/blog/asyncgrpo-lora-hfjobs">https://huggingface.co/blog/asyncgrpo-lora-hfjobs</a></li>
+</ol>
+<blockquote>
+<p>本文性质：基于 2026-09-10 官方发布的 AI Tech 技术解读。<br>字数自检：正文约 3600 个中文字符（不含 frontmatter）<br>隐私自检：未写入姓名、账号、用户输入、内部网络细节、凭据或会话标识<br>封面 seed：2026-09-14-async-grpo-lora-hfjobs（唯一）<br>coverWidth&#x2F;Height：1600 &#x2F; 900<br>categories：ai_tech</p>
+</blockquote>
+
+    <div class="post-page-views">本文阅读量 <span data-page-view-count>--</span></div>
+
+  </article>
+
+  
+      
+    <div class="nexmoe-post-copyright">
+        <strong>Author：</strong>Margrop<br>
+        <strong>Link：</strong><a href="https://blog.margrop.com/post/2026-09-14-async-grpo-lora-hfjobs/" title="https:&#x2F;&#x2F;blog.margrop.com&#x2F;post&#x2F;2026-09-14-async-grpo-lora-hfjobs&#x2F;" target="_blank" rel="noopener">https:&#x2F;&#x2F;blog.margrop.com&#x2F;post&#x2F;2026-09-14-async-grpo-lora-hfjobs&#x2F;</a><br>
+        
+            <strong>版权声明：</strong>本文采用 <a href="https://creativecommons.org/licenses/by-nc-sa/3.0/cn/deed.zh" target="_blank">CC BY-NC-SA 3.0 CN</a> 协议进行许可
+
+        
+    </div>
+
+
+  
+  
+  <div class="nexmoe-post-meta nexmoe-rainbow">
+   
+    
+        <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/Agent-%E8%AE%AD%E7%BB%83/" rel="tag">Agent 训练</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/Async-GRPO/" rel="tag">Async GRPO</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/LoRA/" rel="tag">LoRA</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/TRL/" rel="tag">TRL</a> <a class="nexmoefont icon-tag-fill -none-link" href="../../tags/vLLM/" rel="tag">vLLM</a>
+    
+</div>
+  
+  
+    <script async src="../../js/copy-codeblock.js?v=1789572095998"></script>
+  
+
+  
+      <div class="nexmoe-post-footer">
+          <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+<script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+<div id="gitalk-container"></div>
+<script>
+  const gitalk = new Gitalk({
+    clientID: 'Ov23lib2oiNKjG5B7I1N',
+    clientSecret: '0a94653f17a7b9630d85b275008da4b38e0259dd',
+    repo: 'margropcomment.margrop.io',      // The repository of store comments,
+    owner: 'margrop',
+    admin: ['margrop'],
+    pagerDirection: 'last',
+    id: window.location.pathname.substring(0, 49), // 使用 pathname 的前49个字符作为 id
+    title: document.title,
+    language: 'zh-CN', // 根据需要设置语言
+    distractionFreeMode: false
+  })
+  gitalk.render('gitalk-container')
+</script>
+
+      </div>
+  
+</div></div><div class="nexmoe-post-right">    <div class="nexmoe-fixed">
+        <div class="nexmoe-tool">
+
+            
+
+            
+            
+            <button class="mdui-fab catalog" style="overflow:unset;">
+                <i class="nexmoefont icon-i-catalog"></i>
+                <div class="nexmoe-toc">
+                    <ol class="toc"><li class="toc-item toc-level-2"><a class="toc-link" href="#%E5%85%88%E8%AF%B4%E7%BB%93%E8%AE%BA"><span class="toc-number">1.</span> <span class="toc-text">先说结论</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E5%8F%91%E7%94%9F%E4%BA%86%E4%BB%80%E4%B9%88"><span class="toc-number">2.</span> <span class="toc-text">发生了什么</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E6%8A%80%E6%9C%AF%E7%BB%86%E8%8A%82"><span class="toc-number">3.</span> <span class="toc-text">技术细节</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#1-%E4%B8%BA%E4%BB%80%E4%B9%88-LoRA-%E9%80%82%E5%90%88%E5%BC%82%E6%AD%A5-GRPO"><span class="toc-number">3.1.</span> <span class="toc-text">1. 为什么 LoRA 适合异步 GRPO</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#2-%E4%B8%89%E7%B1%BB-Job-%E5%88%86%E5%B7%A5%E6%AF%94%E2%80%9C%E5%A4%9A%E5%BC%80%E5%87%A0%E5%BC%A0%E5%8D%A1%E2%80%9D%E6%9B%B4%E5%85%B3%E9%94%AE"><span class="toc-number">3.2.</span> <span class="toc-text">2. 三类 Job 分工比“多开几张卡”更关键</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#3-%E4%BB%A3%E7%90%86%E4%B8%8D%E4%BB%85%E6%98%AF%E7%BD%91%E5%85%B3%EF%BC%8C%E8%BF%98%E6%89%BF%E6%8B%85%E5%B1%80%E9%83%A8%E6%80%A7%E4%BC%98%E5%8C%96"><span class="toc-number">3.3.</span> <span class="toc-text">3. 代理不仅是网关，还承担局部性优化</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#4-%E6%8C%87%E6%A0%87%E9%A6%96%E5%85%88%E7%94%A8%E6%9D%A5%E5%AE%9A%E4%BD%8D%E2%80%9C%E8%B0%81%E5%9C%A8%E7%AD%89%E8%B0%81%E2%80%9D"><span class="toc-number">3.4.</span> <span class="toc-text">4. 指标首先用来定位“谁在等谁”</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E5%AF%B9-Agent-%E5%B7%A5%E7%A8%8B%E7%9A%84%E5%BD%B1%E5%93%8D"><span class="toc-number">4.</span> <span class="toc-text">对 Agent &#x2F; 工程的影响</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E6%88%91%E7%9A%84%E5%88%A4%E6%96%AD"><span class="toc-number">5.</span> <span class="toc-text">我的判断</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#Q-A"><span class="toc-number">6.</span> <span class="toc-text">Q&amp;A</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E6%9D%A5%E6%BA%90"><span class="toc-number">7.</span> <span class="toc-text">来源</span></a></li></ol>
+                </div>
+            </button>
+            
+
+            
+
+            <a href="#nexmoe-content" class="backtop toc-link" aria-label="Back To Top" title="top"><button class="mdui-fab mdui-ripple"><i class="nexmoefont icon-caret-top"></i></button></a>
+        </div>
+    </div>
+</div></div><div id="nexmoe-footer"><!--!--></div><div id="nexmoe-search-space"><div class="search-container"><div class="search-header"><div class="search-input-container"><input class="search-input" type="text" placeholder="Search" onInput="sinput();"></div><a class="search-close" onclick="sclose();">×</a></div><div class="search-body"></div></div></div><div><script src="https://cdn.jsdelivr.net/npm/mathjax@latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+<script>MathJax.Hub.Config({
+    tex2jax: {
+        inlineMath: [ ['$','$'], ["\\(","\\)"] ],
+        processEscapes: true,
+        skipTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code']
+    }
+});
+MathJax.Hub.Queue(function() {
+    var all = MathJax.Hub.getAllJax(), i;
+    for(i=0; i < all.length; i += 1) {
+        all[i].SourceElement().parentNode.className += ' has-jax';
+    }
+});</script>
+</div></body></html>
