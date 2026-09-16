@@ -1,0 +1,868 @@
+<!DOCTYPE html>
+<html lang="en-US">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Trapped in the 302 Loop: The Untold Mechanics of GeoIP, CDN Edge Routing, Cache Poisoning, and Next-Gen Traffic Steering - Margrop Blog</title>
+<meta name="description" content="The Executive Summary Site reliability engineers, cloud architects, and full-stack developers building global multi-region applications, internationalized …">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://blog.margrop.net/en/post/geoip-cdn-302-redirect-architecture-and-troubleshooting-guide/"><meta property="og:site_name" content="Margrop Blog">
+<meta property="og:title" content="Trapped in the 302 Loop: The Untold Mechanics of GeoIP, CDN Edge Routing, Cache Poisoning, and Next-Gen Traffic Steering - Margrop Blog">
+<meta property="og:description" content="The Executive Summary Site reliability engineers, cloud architects, and full-stack developers building global multi-region applications, internationalized …">
+<meta property="og:url" content="https://blog.margrop.net/en/post/geoip-cdn-302-redirect-architecture-and-troubleshooting-guide/">
+<meta property="og:locale" content="en_US"><meta property="og:type" content="article"><meta property="og:locale:alternate" content="zh_CN"><meta property="og:image" content="https://blog.margrop.net/images/avatar.png"><meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Trapped in the 302 Loop: The Untold Mechanics of GeoIP, CDN Edge Routing, Cache Poisoning, and Next-Gen Traffic Steering - Margrop Blog">
+<meta name="twitter:description" content="The Executive Summary Site reliability engineers, cloud architects, and full-stack developers building global multi-region applications, internationalized …"><meta name="twitter:image" content="https://blog.margrop.net/images/avatar.png"><link rel="alternate" hreflang="zh-CN" href="https://blog.margrop.net/post/geoip-cdn-302-redirect-architecture-and-troubleshooting-guide/"><link rel="alternate" hreflang="en-US" href="https://blog.margrop.net/en/post/geoip-cdn-302-redirect-architecture-and-troubleshooting-guide/"><link rel="alternate" hreflang="x-default" href="https://blog.margrop.net/"><meta property="article:published_time" content="2026-09-16T23:30:00&#43;08:00">
+<meta property="article:modified_time" content="2026-09-16T23:30:00&#43;08:00"><meta property="article:tag" content="CDN"><meta property="article:tag" content="GeoIP"><meta property="article:tag" content="HTTP 302"><meta property="article:tag" content="302 Redirect"><meta property="article:tag" content="Redirect"><meta property="article:tag" content="Network"><meta property="article:tag" content="Cloudflare"><meta property="article:tag" content="Nginx"><meta property="article:tag" content="Performance"><meta property="article:tag" content="Automation"><meta property="article:tag" content="Troubleshooting"><meta property="article:tag" content="Linux"><meta property="article:tag" content="Windows 11"><meta property="article:tag" content="Ubuntu 26.04"><meta property="article:tag" content="macOS 26"><script type="application/ld+json">{"@context":"https://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"Margrop"},"dateModified":"2026-09-16T23:30:00+08:00","datePublished":"2026-09-16T23:30:00+08:00","description":"The Executive Summary Site reliability engineers, cloud architects, and full-stack developers building global multi-region applications, internationalized …","headline":"Trapped in the 302 Loop: The Untold Mechanics of GeoIP, CDN Edge Routing, Cache Poisoning, and Next-Gen Traffic Steering","mainEntityOfPage":"https://blog.margrop.net/en/post/geoip-cdn-302-redirect-architecture-and-troubleshooting-guide/","url":"https://blog.margrop.net/en/post/geoip-cdn-302-redirect-architecture-and-troubleshooting-guide/"}</script>
+    <meta name="baidu-site-verification" content="code-sVFZ8SER59" />
+    <script src="/js/theme-toggle.js"></script>
+
+    
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-3J2W592DHJ"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-3J2W592DHJ');
+    </script>
+
+    <style>
+    :root {
+        color-scheme: light;
+        --page-bg: #fff;
+        --surface-bg: #f4f4f4;
+        --text: #222;
+        --muted: #666;
+        --subtle: #777;
+        --border: #eee;
+        --border-strong: #ddd;
+        --link: #006CFF;
+        --tag-bg: #eee;
+        --button-bg: #fff;
+        --button-primary-bg: #333;
+    }
+    @media (prefers-color-scheme: dark) {
+        :root:not([data-theme]) {
+            color-scheme: dark;
+            --page-bg: #111315;
+            --surface-bg: #1d2126;
+            --text: #e8eaed;
+            --muted: #aeb4bd;
+            --subtle: #9aa2ad;
+            --border: #30353d;
+            --border-strong: #454c56;
+            --link: #79b8ff;
+            --tag-bg: #2a3038;
+            --button-bg: #1d2126;
+            --button-primary-bg: #e8eaed;
+        }
+    }
+    html[data-theme="dark"] {
+        color-scheme: dark;
+        --page-bg: #111315;
+        --surface-bg: #1d2126;
+        --text: #e8eaed;
+        --muted: #aeb4bd;
+        --subtle: #9aa2ad;
+        --border: #30353d;
+        --border-strong: #454c56;
+        --link: #79b8ff;
+        --tag-bg: #2a3038;
+        --button-bg: #1d2126;
+        --button-primary-bg: #e8eaed;
+    }
+    html[data-theme="light"] {
+        color-scheme: light;
+        --page-bg: #fff;
+        --surface-bg: #f4f4f4;
+        --text: #222;
+        --muted: #666;
+        --subtle: #777;
+        --border: #eee;
+        --border-strong: #ddd;
+        --link: #006CFF;
+        --tag-bg: #eee;
+        --button-bg: #fff;
+        --button-primary-bg: #333;
+    }
+    body { background: var(--page-bg); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 860px; margin: 0 auto; padding: 20px; line-height: 1.7; color: var(--text); }
+    h1 { border-bottom: 2px solid var(--border-strong); padding-bottom: 10px; }
+    article > h1 { font-size: 2em; line-height: 1.3; margin-bottom: 12px; }
+    .post-list { list-style: none; padding: 0; }
+    .post-list li { margin: 15px 0; }
+    .post-list a { text-decoration: none; color: var(--text); font-size: 18px; }
+    .post-list a:hover { color: var(--link); }
+    .date { color: var(--muted); font-size: 14px; margin-right: 10px; }
+    .tags { margin-top: 8px; }
+    .tag { background: var(--tag-bg); padding: 2px 8px; border-radius: 3px; font-size: 12px; margin-right: 5px; display: inline-block; }
+    nav { margin-bottom: 18px; border-bottom: 1px solid var(--border); padding-bottom: 15px; }
+    nav a { margin-right: 20px; text-decoration: none; color: var(--text); font-size: 16px; }
+    nav a:hover { color: var(--link); }
+    .language-switcher { display: flex; align-items: center; gap: 10px; margin: -8px 0 26px; }
+    .language-switcher a { display: inline-block; padding: 4px 10px; border: 1px solid var(--border-strong); border-radius: 999px; color: var(--muted); text-decoration: none; font-size: 14px; }
+    .language-switcher a.active { background: var(--link); border-color: var(--link); color: #fff; }
+    .content { line-height: 1.8; }
+    .content code { background: var(--surface-bg); padding: 2px 5px; border-radius: 3px; }
+    .content pre { background: var(--surface-bg); padding: 15px; overflow-x: auto; border-radius: 5px; }
+    .content img { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+    .content .code-snippet__fix {
+        margin: 0 0 1.5em;
+    }
+    .content .code-snippet__fix .code-snippet__line-index {
+        display: none !important;
+    }
+    .meta { color: var(--muted); font-size: 14px; margin-bottom: 14px; }
+    .meta-separator { margin: 0 6px; color: var(--subtle); }
+    .site-stats { display: flex; flex-wrap: wrap; gap: 10px 18px; margin: 28px 0 8px; padding-top: 12px; border-top: 1px solid var(--border); color: var(--subtle); font-size: 12px; }
+    a { color: var(--link); }
+    .hero { padding: 12px 0 24px; }
+    .hero h1 { border-bottom: 2px solid #333; }
+    .eyebrow { color: var(--muted); font-size: 12px; letter-spacing: .12em; margin: 0 0 8px; }
+    .hero-tagline { font-size: 18px; margin: 12px 0 8px; }
+    .hero-copy { color: var(--muted); margin: 0 0 14px; }
+    .hero-actions { margin: 14px 0 4px; }
+    .button { display: inline-block; margin-right: 12px; border: 1px solid var(--border-strong); border-radius: 3px; padding: 4px 10px; text-decoration: none; color: var(--text); background: var(--button-bg); font-size: 14px; }
+    .button-primary { background: var(--button-primary-bg); border-color: var(--button-primary-bg); color: var(--page-bg); }
+    .theme-toggle { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 1px solid var(--border-strong); border-radius: 999px; background: var(--button-bg); color: var(--text); cursor: pointer; font: inherit; font-size: 16px; }
+    .theme-toggle:hover { border-color: var(--link); color: var(--link); }
+    .la-theme-widget { margin: 12px 0 20px; min-height: 24px; color: var(--text); }
+    .identity-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: 16px 0; }
+    .identity-grid div { display: flex; flex-direction: column; }
+    .identity-grid strong { font-size: 15px; }
+    .identity-grid span, .topic-card span, .featured-list small { color: var(--muted); font-size: 13px; }
+    .section-block { padding-top: 28px; }
+    .section-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+    .section-heading h2 { margin: 0; }
+    .section-heading a { font-size: 14px; }
+    .topic-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+    .topic-card { display: block; padding: 14px; border: 1px solid var(--border); text-decoration: none; color: var(--text); }
+    .topic-card:hover { border-color: var(--border-strong); }
+    .topic-card strong { display: block; margin: 4px 0; font-size: 17px; }
+    .topic-index, .featured-list > a > span { color: var(--muted) !important; font-size: 12px !important; }
+    .featured-list { border-top: 1px solid var(--border); }
+    .featured-list > a { display: flex; gap: 14px; padding: 12px 0; border-bottom: 1px solid var(--border); text-decoration: none; color: var(--text); }
+    .featured-list div { display: flex; flex-direction: column; }
+    .latest-block { max-width: 860px; }
+    @media (max-width: 680px) {
+        body { padding: 16px; }
+        nav a { display: inline-block; margin-right: 12px; margin-bottom: 8px; }
+        .identity-grid { grid-template-columns: repeat(2, 1fr); }
+        .topic-grid { grid-template-columns: 1fr; }
+    }
+</style>
+
+</head>
+<body>
+    <nav>
+  <a href="/en/">Home</a>
+  <a href="/en/start-here/">Start Here</a>
+  <a href="/en/career/">Portfolio</a>
+  <a href="/en/tag/ai/">AI Agent</a>
+  <a href="/en/tag/docker/">Self-hosting</a>
+  <a href="/en/tag/%e8%bf%90%e7%bb%b4/">Engineering</a>
+  <a href="/en/post/">Archive</a>
+  <a href="/en/tags/">Tags</a>
+  <a href="/en/about/">About</a>
+  <a href="https://github.com/margrop" target="_blank" rel="noopener">GitHub</a>
+</nav>
+
+    <div class="language-switcher">
+  <button class="theme-toggle" type="button" data-theme-toggle aria-label="切换到暗黑模式" aria-pressed="false">🌙</button>
+
+  
+  
+    <a href="/post/geoip-cdn-302-redirect-architecture-and-troubleshooting-guide/" class="">中文</a>
+  
+    <a href="/en/post/geoip-cdn-302-redirect-architecture-and-troubleshooting-guide/" class="active">English</a>
+  
+  
+</div>
+
+    
+    <article>
+        <h1>Trapped in the 302 Loop: The Untold Mechanics of GeoIP, CDN Edge Routing, Cache Poisoning, and Next-Gen Traffic Steering</h1>
+        <div class="meta">
+            Published: 2026-09-16
+            <span class="meta-separator">·</span>
+            <span>阅读量 <span data-page-view-count>--</span></span>
+        </div>
+        
+<div class="tags">
+    
+    <a href="/en/tag/cdn/"><span class="tag">CDN</span></a>
+    
+    <a href="/en/tag/geoip/"><span class="tag">GeoIP</span></a>
+    
+    <a href="/en/tag/http-302/"><span class="tag">HTTP 302</span></a>
+    
+    <a href="/en/tag/302-redirect/"><span class="tag">302 Redirect</span></a>
+    
+    <a href="/en/tag/redirect/"><span class="tag">Redirect</span></a>
+    
+    <a href="/en/tag/network/"><span class="tag">Network</span></a>
+    
+    <a href="/en/tag/cloudflare/"><span class="tag">Cloudflare</span></a>
+    
+    <a href="/en/tag/nginx/"><span class="tag">Nginx</span></a>
+    
+    <a href="/en/tag/performance/"><span class="tag">Performance</span></a>
+    
+    <a href="/en/tag/automation/"><span class="tag">Automation</span></a>
+    
+    <a href="/en/tag/troubleshooting/"><span class="tag">Troubleshooting</span></a>
+    
+    <a href="/en/tag/linux/"><span class="tag">Linux</span></a>
+    
+    <a href="/en/tag/windows-11/"><span class="tag">Windows 11</span></a>
+    
+    <a href="/en/tag/ubuntu-26.04/"><span class="tag">Ubuntu 26.04</span></a>
+    
+    <a href="/en/tag/macos-26/"><span class="tag">macOS 26</span></a>
+    
+</div>
+
+
+        <div class="content">
+            <blockquote>
+<p><strong>The Executive Summary</strong></p>
+<p>Site reliability engineers, cloud architects, and full-stack developers building global multi-region applications, internationalized storefronts, or distributed mirror systems have almost certainly faced these chilling anomalies:</p>
+<ul>
+<li><strong>The Nightmare Loop</strong>: A user lands on your root domain, the browser address bar flickers violently for three seconds, and suddenly crashes with a dreaded red banner: <code>ERR_TOO_MANY_REDIRECTS</code>!</li>
+<li><strong>The Uniformity Trap</strong>: A visitor situated in Tokyo, Japan or Frankfurt, Germany accesses your unified entry domain via their native ISP, only to be forcibly bounced to the English-only <code>/en-us/</code> store—and even clearing their local browser cache fails to break the spell!</li>
+<li><strong>The Ghost Origin</strong>: Your backend integrates a high-precision MaxMind GeoIP2 commercial database, but inspection of your production access logs reveals that 100% of global visitors appear to originate from San Jose, California—completely crippling your regional content steering!</li>
+<li><strong>The Mirror Avalanche</strong>: To deliver faster ISO downloads for European users, your origin responds with a 302 redirect pointing to a Frankfurt mirror node. The upstream CDN edge caches this 302 redirect globally for 24 hours. Within hours, all worldwide download traffic saturates that single Frankfurt server, burning out the link and triggering an astronomical egress bill!</li>
+</ul>
+<p><strong>These seemingly unrelated failures stem directly from a fundamental philosophical conflict in global edge architecture:</strong></p>
+<ol>
+<li><strong>CDNs strive for Uniformity</strong>: Their primary goal is to store identical copies of responses at the edge so every user receives ultra-fast, local delivery;</li>
+<li><strong>GeoIP and Routing strive for Diversity</strong>: Their goal is to discern each client&rsquo;s unique geographic coordinates and route them to region-specific content;</li>
+<li><strong>HTTP 302 (Found) is the double-edged sword caught in between</strong>: If developers misunderstand RFC 9110 caching standards and omit critical <code>Vary</code> or <code>Cache-Control</code> directives, the CDN will treat a personalized redirect intended for one single user as universal truth for all, causing catastrophic <strong>Cache Poisoning</strong> and <strong>Infinite Redirect Loops</strong>.</li>
+</ol>
+<p>In this deep dive, we break down GeoIP, CDN edge mechanics, and HTTP 302 steering using relatable everyday analogies (accessible enough for a school student to grasp 70%+), dissect the root causes behind these four production disasters, compare the four major architectures of global traffic steering, and deliver complete, zero-dependency diagnostic automation scripts for <strong>Windows 11, Ubuntu 26.04, and macOS 26</strong> (supporting both interactive human execution and headless AI Agent orchestration).</p>
+</blockquote>
+<p><img alt="AI Generated Cover: GeoIP, CDN Edge Routing, and 302 Redirection Architecture" src="/post-images/geoip-cdn-302-redirect-architecture-guide/00-ai-cover.webp"></p>
+<p><em>Figure 1: AI Generated Cover. In the vast digital realm, GeoIP geolocation, CDN edge hubs, and HTTP 302 traffic steering intertwine to form the lifeline of global distributed systems.</em></p>
+<hr>
+<h2 id="1-problem-background-the-triad-of-global-traffic-steering">1. Problem Background: The Triad of Global Traffic Steering</h2>
+<p>In the early days of the World Wide Web, architecture was delightfully simple: one monolithic Origin Server served the entire planet. Whether a client was in San Francisco, London, or Beijing, every packet traversed intercontinental fiber cables. Transoceanic round-trip times (RTT) of 200ms to 300ms made global user experience painfully sluggish.</p>
+<p>To solve this, modern infrastructure developed three foundational pillars:</p>
+<h3 id="1-geoip-attaching-physical-gps-coordinates-to-ip-addresses">1. GeoIP: Attaching Physical GPS Coordinates to IP Addresses</h3>
+<p>In raw TCP/IP, IP addresses are purely logical topology locators; they do not inherently encode national borders or physical coordinates.
+Through Autonomous System Number (ASN) routing announcements across the five Regional Internet Registries (RIRs like ARIN, RIPE NCC, APNIC) and continuous active measurements by database providers (<strong>MaxMind GeoIP2/GeoLite2</strong>, <strong>IP2Location</strong>, <strong>Cloudflare GeoIP</strong>), engineers compiled a lookup dictionary:
+$$\text{Client IPv4/IPv6} \longrightarrow {\text{Continent}, \text{Country ISO}, \text{City}, \text{Latitude}, \text{Longitude}, \text{ASN}}$$
+This allows servers to deduce a client&rsquo;s approximate geographic region upon initial handshake.</p>
+<h3 id="2-cdn-content-delivery-network-distributed-neighborhood-warehouses">2. CDN (Content Delivery Network): Distributed Neighborhood Warehouses</h3>
+<p>To overcome the physical speed of light in optical fiber, CDNs deployed thousands of Edge Points of Presence (PoPs) worldwide.
+Using <strong>Anycast BGP</strong> routing, when users resolve domain names and open TCP connections, border routers automatically direct packets to the geographically nearest CDN PoP. Static assets (images, CSS, JS, audio/video chunks) are cached in edge NVMe storage, allowing users to fetch content in 10ms to 30ms without contacting the origin.</p>
+<h3 id="3-http-302-redirection-the-rfc-protocol-dispatcher">3. HTTP 302 Redirection: The RFC Protocol Dispatcher</h3>
+<p>Under the HTTP specification (evolving from RFC 2616 and RFC 7231 to modern <strong>RFC 9110</strong>), redirection status codes are strictly delineated:</p>
+<ul>
+<li><strong>301 Moved Permanently</strong>: The target resource has been permanently reassigned a new URI. <strong>Browsers aggressively cache this status code on disk</strong>, never requesting the original URL again on subsequent visits!</li>
+<li><strong>302 Found</strong>: The target resource resides <strong>temporarily</strong> under a different URI. Future requests should still use the original URI.</li>
+<li><strong>307 Temporary Redirect</strong>: Similar to 302, but guarantees that the HTTP request method <strong>does not mutate</strong> during redirection (e.g., POST remains POST).</li>
+<li><strong>308 Permanent Redirect</strong>: Similar to 301, guaranteeing the HTTP request method does not mutate.</li>
+</ul>
+<p>For geographic steering, <strong>engineers must NEVER use 301 Moved Permanently</strong>—because user locations are fluid (travel, VPNs, network re-routing, or origin failover). Once a browser stores a 301 on disk, dynamic redirection is broken permanently for that client.</p>
+<p>Therefore, <strong>HTTP 302 Found (or 307 Temporary Redirect) became the universal industry choice for regional routing.</strong></p>
+<h3 id="the-inherent-architectural-conflict">The Inherent Architectural Conflict</h3>
+<p>Here lies the core collision:</p>
+<ul>
+<li><strong>CDNs want to cache everything</strong>: If an incoming request matches a cache key, the edge wants to serve the exact same cached bytes to everyone;</li>
+<li><strong>GeoIP wants to differentiate</strong>: US visitors need US content, Japanese visitors need Japanese content, German visitors need German content;</li>
+<li><strong>302 is a lightweight pointer</strong>: It consists merely of a status line and a <code>Location</code> header.</li>
+</ul>
+<p>When an edge node caches a <code>302 Found -&gt; /en-us/</code> intended for a US visitor, the system begins poisoning requests from the rest of the world.</p>
+<hr>
+<h2 id="2-common-production-symptoms-four-ghostly-failures">2. Common Production Symptoms: Four Ghostly Failures</h2>
+<p>When GeoIP, CDN edge caching, and 302 redirects are misconfigured, production networks manifest these four classic disasters:</p>
+<h3 id="symptom-1-the-infinite-302-loop-err_too_many_redirects">Symptom 1: The Infinite 302 Loop (<code>ERR_TOO_MANY_REDIRECTS</code>)</h3>
+<p>A user visits <code>https://example.com/</code>. The browser window enters an uncontrollable redirect cascade, bouncing between endpoints until the browser hits its safety threshold (typically 20 hops) and aborts with a blank error screen.</p>
+<h3 id="symptom-2-global-cache-poisoning-one-visitor-corrupts-the-world">Symptom 2: Global Cache Poisoning (One Visitor Corrupts the World)</h3>
+<p>At 02:00 UTC, the edge cache is purged. The first subsequent request originates from a search crawler in Dublin, Ireland. The origin inspects the IP and responds with <code>302 -&gt; /en-ie/</code>.
+Because geographic isolation headers are missing, the CDN stores this 302 as the default response for <code>/</code>. For the next six hours, visitors from New York, Tokyo, and Sydney are all forcibly redirected to the Ireland regional site!</p>
+<h3 id="symptom-3-origin-ghost-city--total-client-ip-obliteration">Symptom 3: Origin &ldquo;Ghost City&rdquo; — Total Client IP Obliteration</h3>
+<p>Application developers retrieve the client IP using standard environment variables (e.g., PHP <code>$_SERVER['REMOTE_ADDR']</code>, Node.js <code>req.socket.remoteAddress</code>, Go <code>r.RemoteAddr</code>).
+Behind a CDN reverse proxy, all inbound TCP connections to the origin originate from CDN edge proxies. Consequently, the origin identifies 100% of global visitors as located in the CDN&rsquo;s data center (e.g., San Jose, California). Dynamic localization fails completely.</p>
+<h3 id="symptom-4-download-steering-collapse-and-transoceanic-crawling">Symptom 4: Download Steering Collapse and Transoceanic Crawling</h3>
+<p>In open-source distribution mirrors or large file download systems, the origin issues 302 redirects to point clients to local ISP mirrors.
+If the 302 decision requires a 500ms transoceanic origin round-trip, or if CDN edge nodes cache an overseas mirror URL, users on gigabit connections find their downloads throttled to 30 KB/s over congested trans-pacific cables.</p>
+<p><img alt="Terminal Live Trace: HTTP 302 Redirect Chain and Edge Headers" src="/post-images/geoip-cdn-302-redirect-architecture-guide/shot-01-curl-302-redirect-chain.webp"></p>
+<p><em>Figure 2: Real terminal live trace. Using curl to inspect the 302 redirect chain. The first hop returns HTTP/2 302 Found with Location: /zh-cn/; with proper Vary and Cache-Control headers, the second hop hits edge cache with 200 OK in just 48ms total.</em></p>
+<hr>
+<h2 id="3-core-concepts-explained-with-everyday-analogies">3. Core Concepts Explained with Everyday Analogies</h2>
+<p>To make these complex interactions crystal clear—even to an elementary school student—let us step away from abstract bytes and imagine a <strong>Global Department Store and Neighborhood Convenience Shops</strong>:</p>
+<p><img alt="Everyday Analogy: Global Store, Local Convenience Shops, and Dispatch Signs" src="/post-images/geoip-cdn-302-redirect-architecture-guide/01-supermarket-convenience-store-analogy.svg"></p>
+<p><em>Figure 3: Everyday life analogy. Visualizing the Origin Server as the Overseas Central Warehouse, CDN as Local Neighborhood Convenience Stores, GeoIP as the Postal Code Desk, and 302 as Temporary Direction Signs.</em></p>
+<h3 id="analogy-1-the-origin-server--the-remote-central-warehouse">Analogy 1: The Origin Server = The Remote Central Warehouse</h3>
+<p>The central warehouse is located across the ocean in the United States. It stocks every product and houses the master database.
+However, if an eager student in Tokyo wants a bottle of soda, shipping it directly from the central warehouse takes days and costs a fortune.</p>
+<h3 id="analogy-2-the-cdn-edge-node--the-local-247-convenience-store">Analogy 2: The CDN Edge Node = The Local 24/7 Convenience Store</h3>
+<p>To provide instant access, the company opens thousands of franchise convenience stores right outside neighborhoods worldwide.
+The convenience store stocks popular sodas and snacks (<strong>static assets</strong>). The neighborhood student walks 50 meters and grabs a drink in 5 seconds (<strong>Edge Cache Hit</strong>).</p>
+<h3 id="analogy-3-geoip--the-postal-code-desk">Analogy 3: GeoIP = The Postal Code Desk</h3>
+<p>Every customer wears a badge displaying their home street address (<strong>IP Address</strong>). The clerk at the postal desk checks a thick reference book (<strong>MaxMind MMDB Database</strong>) to verify which city and country the customer lives in.
+However, if the customer hired an overseas courier to walk in on their behalf (<strong>VPN / Proxy</strong>), the clerk mistakenly identifies them by the courier&rsquo;s origin.</p>
+<h3 id="analogy-4-301-permanent-vs-302-temporary-redirect--permanent-relocation-sign-vs-store-clerk-direction">Analogy 4: 301 Permanent vs 302 Temporary Redirect = Permanent Relocation Sign vs Store Clerk Direction</h3>
+<ul>
+<li><strong>301 Permanent Redirect</strong>: A bold red sign nailed to the door: <em>&ldquo;This store has permanently closed and relocated to Tower B across the street. Never return to this building again!&rdquo;</em> The customer&rsquo;s brain (<strong>Browser Cache</strong>) permanently logs this notice and never visits the old doorway again.</li>
+<li><strong>302 Temporary Redirect</strong>: A friendly store clerk stands at the entrance: <em>&ldquo;Welcome! Today our promo milk tea is placed in Aisle 2, please head that way!&rdquo;</em> Because aisle placements change daily, <strong>the customer must ask the clerk again tomorrow</strong>.</li>
+</ul>
+<h3 id="analogy-5-the-302-cache-poisoning-disaster--the-lazy-clerk-taping-the-note-to-the-main-door">Analogy 5: The 302 Cache Poisoning Disaster = The Lazy Clerk Taping the Note to the Main Door!</h3>
+<p>Here is how catastrophic production outages unfold:</p>
+<ul>
+<li>On Sunday morning, an American tourist enters the store. The clerk hands him a small slip of paper: <em>&ldquo;Please use the English Counter on the left&rdquo;</em> (<code>302 -&gt; /en-us/</code>).</li>
+<li>The lazy duty manager (<strong>CDN Edge Cache lacking Vary rules</strong>) thinks: <em>&ldquo;Hey, why write slips all day? Let&rsquo;s just tape this note to the front entrance!&rdquo;</em> He glues the slip to the main glass door.</li>
+<li>That afternoon, a local resident walks in to buy cooking oil. Seeing the glued note, he is forced to the English counter.</li>
+<li>The English counter cashier says: <em>&ldquo;Sir, you need the local grocery counter, please go back to the front door and find the right direction!&rdquo;</em> (Origin code redirects back to <code>/</code>).</li>
+<li>The resident rushes back to the front door, reads the same glued note, and is kicked right back to the English counter&hellip;</li>
+<li>The poor resident sprints between the door and the counter <strong>twenty times</strong>, collapsing from exhaustion—this is the infamous <strong><code>ERR_TOO_MANY_REDIRECTS</code></strong>!</li>
+</ul>
+<h3 id="analogy-6-the-vary-header--the-smart-direction-display-box">Analogy 6: The <code>Vary</code> Header = The Smart Direction Display Box</h3>
+<p>How do we stop the duty manager from being foolish? Management issues a mandatory policy:
+<em>&ldquo;If you post a direction note, you must place it in a Smart Classified Display Box (<code>Vary: CF-IPCountry</code>)! The box must state: &lsquo;This note applies ONLY to visitors wearing the US flag badge. Visitors wearing the JP or DE badge must receive their own distinct direction slips!&rsquo;&rdquo;</em></p>
+<h3 id="analogy-7-restoring-real-client-ip--the-delivery-envelope-signature-vs-the-delivery-driver">Analogy 7: Restoring Real Client IP = The Delivery Envelope Signature vs The Delivery Driver</h3>
+<p>When an order arrives at the central kitchen, only the delivery driver (<strong>CDN Edge Proxy</strong>) steps inside.
+The chef (<strong>Origin Server</strong>) must not assume the meal is for the driver; the chef must open the envelope and read the original customer&rsquo;s name on the invoice (<strong><code>CF-Connecting-IP</code> or <code>X-Forwarded-For</code></strong>) to season the dish according to the customer&rsquo;s tastes!</p>
+<hr>
+<h2 id="4-root-cause-analysis-caching-rfcs-and-divergent-rules">4. Root Cause Analysis: Caching RFCs and Divergent Rules</h2>
+<p>Behind these failures lie precise protocol-level discrepancies between HTTP standards and default proxy behaviors:</p>
+<h3 id="1-rfc-9110-and-the-default-cache-key-blind-spot">1. RFC 9110 and the Default Cache-Key Blind Spot</h3>
+<p>Under <strong>RFC 9110 Section 15.4.3</strong>, a 302 response is not cacheable by default unless accompanied by explicit caching directives.
+However, in standard CDN operations, the default <strong>Cache-Key</strong> is defined solely as:
+$$\text{Cache-Key} = {\text{Request Scheme}} + {\text{Host}} + {\text{Request URI}}$$</p>
+<p>Notice what is absent: <strong>The Cache-Key contains no information about client physical geography or source IP!</strong>
+Once a 302 response is stored under <code>https://example.com/</code>, the edge node serves that identical redirect to every subsequent requester worldwide, blindly returning <code>CF-Cache-Status: HIT</code>.</p>
+<p><img alt="Missing Vary Header Causing CDN Cache Poisoning and 302 Loop" src="/post-images/geoip-cdn-302-redirect-architecture-guide/03-redirect-loop-cache-poisoning.svg"></p>
+<p><em>Figure 4: Missing Vary Header Causing CDN Cache Poisoning and 302 Loop. Detailed stage-by-stage progression from initial US visitor request to corrupted edge cache, collateral damage to Asian users, and eventual browser crash.</em></p>
+<h3 id="2-the-ping-pong-loop-between-edge-and-origin">2. The Ping-Pong Loop between Edge and Origin</h3>
+<p>Production redirect loops occur when logic is split across architectural tiers:</p>
+<ul>
+<li><strong>CDN Edge Tier</strong>: Holds a cached redirect mapping <code>/</code> to <code>/en-us/</code>;</li>
+<li><strong>Origin Application Tier</strong>: Executes dynamic localization code:
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-javascript" data-lang="javascript"><span style="display:flex;"><span><span style="color:#75715e">// Application backend logic
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span><span style="color:#66d9ef">const</span> <span style="color:#a6e22e">country</span> <span style="color:#f92672">=</span> <span style="color:#a6e22e">req</span>.<span style="color:#a6e22e">headers</span>[<span style="color:#e6db74">&#39;cf-ipcountry&#39;</span>] <span style="color:#f92672">||</span> <span style="color:#e6db74">&#39;US&#39;</span>;
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> (<span style="color:#a6e22e">country</span> <span style="color:#f92672">===</span> <span style="color:#e6db74">&#39;JP&#39;</span> <span style="color:#f92672">&amp;&amp;</span> <span style="color:#a6e22e">req</span>.<span style="color:#a6e22e">path</span> <span style="color:#f92672">===</span> <span style="color:#e6db74">&#39;/en-us/&#39;</span>) {
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">return</span> <span style="color:#a6e22e">res</span>.<span style="color:#a6e22e">redirect</span>(<span style="color:#ae81ff">302</span>, <span style="color:#e6db74">&#39;/&#39;</span>); <span style="color:#75715e">// Bounce Japanese user back to root
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>}
+</span></span></code></pre></div></li>
+</ul>
+<p>The edge forces the user to <code>/en-us/</code>, and the origin forces the user back to <code>/</code>. They play ping-pong with the browser until the browser crashes.</p>
+<p><img alt="Real Terminal Trace: CDN Cache Poisoning Evidence" src="/post-images/geoip-cdn-302-redirect-architecture-guide/shot-02-cdn-cache-poisoning-evidence.webp"></p>
+<p><em>Figure 5: Real terminal trace showing cache poisoning. Despite the client explicitly presenting CF-IPCountry: JP, the edge node returns a 302 redirect to /en-us/ marked with cf-cache-status: HIT and Age: 184.</em></p>
+<hr>
+<h2 id="5-architectural-deep-dive-the-four-traffic-steering-paradigms">5. Architectural Deep Dive: The Four Traffic Steering Paradigms</h2>
+<p>Global traffic steering is not limited to origin 302 redirects. Modern enterprise engineering offers four primary architectural patterns, each balancing latency, caching integrity, and complexity:</p>
+<p><img alt="Global Traffic Steering Architecture Matrix" src="/post-images/geoip-cdn-302-redirect-architecture-guide/04-traffic-steering-matrix.svg"></p>
+<p><em>Figure 6: Global Traffic Steering Architecture Matrix. Comprehensive comparison across operational layer, RTT overhead, caching risk, and recommended use cases for GeoDNS, Anycast BGP, Edge 302, and Client-Side Soft Banners.</em></p>
+<h3 id="1-paradigm-1-geodns-rfc-7871-edns-client-subnet">1. Paradigm 1: GeoDNS (RFC 7871 EDNS-Client-Subnet)</h3>
+<ul>
+<li><strong>Mechanism</strong>: Operates at the DNS resolution layer. The authoritative DNS inspects the recursive resolver&rsquo;s IP (or client subnet via RFC 7871 ECS) and returns the A/AAAA record of the nearest data center.</li>
+<li><strong>Latency</strong>: <strong>0 extra HTTP RTT</strong> (occurs before connection handshake).</li>
+<li><strong>Drawbacks</strong>: Many ISP resolvers strip ECS headers; DNS records suffer from caching lag due to TTLs.</li>
+</ul>
+<h3 id="2-paradigm-2-anycast-bgp-routing">2. Paradigm 2: Anycast BGP Routing</h3>
+<ul>
+<li><strong>Mechanism</strong>: Operates at the network routing layer (Layer 3). All edge PoPs advertise the exact same IP address to global Tier-1 carriers. Border routers route packets via the shortest AS-Path.</li>
+<li><strong>Latency</strong>: <strong>0 extra HTTP RTT</strong>.</li>
+<li><strong>Drawbacks</strong>: BGP has no awareness of server application health; route flapping can disrupt long-lived TCP connections.</li>
+</ul>
+<h3 id="3-paradigm-3-cdn-edge-serverless-302-steering-cloudflare-workers--lambdaedge">3. Paradigm 3: CDN Edge Serverless 302 Steering (Cloudflare Workers / Lambda@Edge)</h3>
+<ul>
+<li><strong>Mechanism</strong>: If multi-variable HTTP steering is required (combining GeoIP, Cookies, device types), <strong>do not route back to the origin</strong>. Intercept requests directly inside edge workers, inspect local GeoIP variables, and return the 302 immediately.</li>
+<li><strong>Latency</strong>: Takes only ~15ms, eliminating transoceanic round-trips.</li>
+</ul>
+<p><img alt="Latency Comparison: Origin 302 vs Edge Compute 302" src="/post-images/geoip-cdn-302-redirect-architecture-guide/02-edge-vs-origin-redirect-flow.svg"></p>
+<p><em>Figure 7: Latency Comparison. The legacy origin 302 approach suffers multiple transoceanic round-trips (&gt;600ms TTFB); CDN edge interception delivers the redirect in &lt;30ms, boosting initial response speed by 1500%.</em></p>
+<h3 id="4-paradigm-4-client-side-asynchronous-soft-banner-the-gold-standard">4. Paradigm 4: Client-Side Asynchronous Soft Banner (The Gold Standard)</h3>
+<ul>
+<li><strong>Mechanism</strong>: Adopted by industry leaders like <strong>Apple, Microsoft, Amazon, and Airbnb</strong>.</li>
+<li><strong>Completely eliminate forced HTTP 302 redirects on entry</strong>!</li>
+<li>All users load the fast, fully cached default international homepage (<code>200 OK</code>, <code>Cache HIT</code>).</li>
+<li>Lightweight frontend JavaScript checks client location via an edge-injected header or lightweight API.</li>
+<li>If a locale mismatch is detected, an elegant floating banner appears:
+<blockquote>
+<p><em>&ldquo;It looks like you&rsquo;re in Japan. Would you like to view our Japanese store?&rdquo; [Switch Store] / [Stay on Current]</em></p>
+</blockquote>
+</li>
+<li><strong>Why this wins</strong>:
+<ol>
+<li><strong>Zero Cache Poisoning Risk</strong>: The root page is 100% static and uniformly cached worldwide;</li>
+<li><strong>100% SEO Friendly</strong>: Googlebot (crawling primarily from US IPs) is never blocked from discovering global content;</li>
+<li><strong>User Autonomy</strong>: Traveling international users are never trapped by aggressive geo-fencing.</li>
+</ol>
+</li>
+</ul>
+<hr>
+<h2 id="6-production-hardening-nginx-and-maxmind-geoip2-best-practices">6. Production Hardening: Nginx and MaxMind GeoIP2 Best Practices</h2>
+<p>For teams managing reverse proxy clusters, implement this hardened configuration:</p>
+<h3 id="1-real-client-ip-restoration">1. Real Client IP Restoration</h3>
+<p>Enable <code>ngx_http_realip_module</code> and define trusted CDN CIDR blocks to prevent header spoofing:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-nginx" data-lang="nginx"><span style="display:flex;"><span><span style="color:#75715e"># /etc/nginx/conf.d/realip_cloudflare.conf
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># Declare trusted Cloudflare proxy subnets
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span><span style="color:#66d9ef">set_real_ip_from</span> <span style="color:#ae81ff">173</span><span style="color:#e6db74">.245.48.0/20</span>;
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">set_real_ip_from</span> <span style="color:#ae81ff">103</span><span style="color:#e6db74">.21.244.0/22</span>;
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">set_real_ip_from</span> <span style="color:#ae81ff">103</span><span style="color:#e6db74">.22.200.0/22</span>;
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">set_real_ip_from</span> <span style="color:#ae81ff">103</span><span style="color:#e6db74">.31.4.0/22</span>;
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">set_real_ip_from</span> <span style="color:#ae81ff">141</span><span style="color:#e6db74">.101.64.0/18</span>;
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">set_real_ip_from</span> <span style="color:#ae81ff">108</span><span style="color:#e6db74">.162.192.0/18</span>;
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">set_real_ip_from</span> <span style="color:#ae81ff">190</span><span style="color:#e6db74">.93.240.0/20</span>;
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">set_real_ip_from</span> <span style="color:#ae81ff">188</span><span style="color:#e6db74">.114.96.0/20</span>;
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">set_real_ip_from</span> <span style="color:#ae81ff">197</span><span style="color:#e6db74">.234.240.0/22</span>;
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">set_real_ip_from</span> <span style="color:#ae81ff">198</span><span style="color:#e6db74">.41.128.0/17</span>;
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">set_real_ip_from</span> <span style="color:#ae81ff">162</span><span style="color:#e6db74">.158.0.0/15</span>;
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">set_real_ip_from</span> <span style="color:#ae81ff">104</span><span style="color:#e6db74">.16.0.0/13</span>;
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">set_real_ip_from</span> <span style="color:#ae81ff">104</span><span style="color:#e6db74">.24.0.0/14</span>;
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">set_real_ip_from</span> <span style="color:#ae81ff">172</span><span style="color:#e6db74">.64.0.0/13</span>;
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">set_real_ip_from</span> <span style="color:#ae81ff">131</span><span style="color:#e6db74">.0.72.0/22</span>;
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">set_real_ip_from</span> <span style="color:#ae81ff">2400</span>:<span style="color:#e6db74">cb00::/32</span>;
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">set_real_ip_from</span> 2606:<span style="color:#ae81ff">4700</span>::<span style="color:#e6db74">/32</span>;
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">set_real_ip_from</span> <span style="color:#ae81ff">2803</span>:<span style="color:#e6db74">f800::/32</span>;
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">set_real_ip_from</span> <span style="color:#ae81ff">2405</span>:<span style="color:#e6db74">b500::/32</span>;
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">set_real_ip_from</span> 2405:<span style="color:#ae81ff">8100</span>::<span style="color:#e6db74">/32</span>;
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">set_real_ip_from</span> 2a06:<span style="color:#ae81ff">98</span><span style="color:#e6db74">c0::/29</span>;
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">set_real_ip_from</span> <span style="color:#e6db74">2c0f:f248::/32</span>;
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># Extract true client IP from CDN header
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span><span style="color:#66d9ef">real_ip_header</span> <span style="color:#e6db74">CF-Connecting-IP</span>;
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">real_ip_recursive</span> <span style="color:#66d9ef">on</span>;
+</span></span></code></pre></div><h3 id="2-maxmind-geoip2-mmdb-integration">2. MaxMind GeoIP2 MMDB Integration</h3>
+<p>Query binary <code>.mmdb</code> files directly in memory:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-nginx" data-lang="nginx"><span style="display:flex;"><span><span style="color:#75715e"># /etc/nginx/conf.d/geoip2_engine.conf
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">geoip2</span> <span style="color:#e6db74">/var/lib/GeoIP/GeoLite2-Country.mmdb</span> {
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">auto_reload</span> <span style="color:#ae81ff">15m</span>;
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">$geoip2_data_country_code</span> <span style="color:#e6db74">default=US</span> <span style="color:#e6db74">country</span> <span style="color:#e6db74">iso_code</span>;
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">$geoip2_data_country_name</span> <span style="color:#e6db74">country</span> <span style="color:#e6db74">names</span> <span style="color:#e6db74">en</span>;
+</span></span><span style="display:flex;"><span>}
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">map</span> $geoip2_data_country_code $target_prefix {
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">default</span>     <span style="color:#e6db74">/en-us/</span>;
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">CN</span>          <span style="color:#e6db74">/zh-cn/</span>;
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">JP</span>          <span style="color:#e6db74">/ja-jp/</span>;
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">DE</span>          <span style="color:#e6db74">/de-de/</span>;
+</span></span><span style="display:flex;"><span>}
+</span></span></code></pre></div><h3 id="3-bulletproof-302-redirection-virtual-host">3. Bulletproof 302 Redirection Virtual Host</h3>
+<p>Inject both <code>Vary</code> and <code>Cache-Control</code> safeguards:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-nginx" data-lang="nginx"><span style="display:flex;"><span><span style="color:#75715e"># /etc/nginx/sites-available/example.conf
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">server</span> {
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">listen</span> <span style="color:#ae81ff">443</span> <span style="color:#e6db74">ssl</span> <span style="color:#e6db74">http2</span>;
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">server_name</span> <span style="color:#e6db74">example.com</span>;
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">location</span> = <span style="color:#e6db74">/</span> {
+</span></span><span style="display:flex;"><span>        <span style="color:#75715e"># Safeguard 1: Force CDNs to partition caches by country code
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>        <span style="color:#f92672">add_header</span> <span style="color:#e6db74">Vary</span> <span style="color:#e6db74">&#34;Accept-Encoding,</span> <span style="color:#e6db74">CF-IPCountry&#34;</span> <span style="color:#e6db74">always</span>;
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>        <span style="color:#75715e"># Safeguard 2: Forbid shared proxy caching of this 302 redirect
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>        <span style="color:#f92672">add_header</span> <span style="color:#e6db74">Cache-Control</span> <span style="color:#e6db74">&#34;private,</span> <span style="color:#e6db74">no-cache,</span> <span style="color:#e6db74">no-store,</span> <span style="color:#e6db74">must-revalidate&#34;</span> <span style="color:#e6db74">always</span>;
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>        <span style="color:#75715e"># Safeguard 3: Issue temporary redirect
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>        <span style="color:#f92672">return</span> <span style="color:#ae81ff">302</span> $target_prefix;
+</span></span><span style="display:flex;"><span>    }
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>    <span style="color:#75715e"># Static content endpoints are safe for long-term edge caching
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>    <span style="color:#f92672">location</span> <span style="color:#e6db74">/zh-cn/</span> {
+</span></span><span style="display:flex;"><span>        <span style="color:#f92672">add_header</span> <span style="color:#e6db74">Cache-Control</span> <span style="color:#e6db74">&#34;public,</span> <span style="color:#e6db74">max-age=14400&#34;</span> <span style="color:#e6db74">always</span>;
+</span></span><span style="display:flex;"><span>        <span style="color:#f92672">try_files</span> $uri $uri/ <span style="color:#e6db74">/index.html</span>;
+</span></span><span style="display:flex;"><span>    }
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">location</span> <span style="color:#e6db74">/en-us/</span> {
+</span></span><span style="display:flex;"><span>        <span style="color:#f92672">add_header</span> <span style="color:#e6db74">Cache-Control</span> <span style="color:#e6db74">&#34;public,</span> <span style="color:#e6db74">max-age=14400&#34;</span> <span style="color:#e6db74">always</span>;
+</span></span><span style="display:flex;"><span>        <span style="color:#f92672">try_files</span> $uri $uri/ <span style="color:#e6db74">/index.html</span>;
+</span></span><span style="display:flex;"><span>    }
+</span></span><span style="display:flex;"><span>}
+</span></span></code></pre></div><p><img alt="Nginx Configuration Hardening and Syntax Check" src="/post-images/geoip-cdn-302-redirect-architecture-guide/shot-03-nginx-realip-geoip2-config.webp"></p>
+<p><em>Figure 8: Nginx configuration hardening. Demonstrating realip trusted CIDR definition, GeoIP2 binary database auto-reloading, and strict Vary and Cache-Control headers verified with nginx -t.</em></p>
+<p><img alt="MaxMind mmdblookup CLI Geolocation Inspection" src="/post-images/geoip-cdn-302-redirect-architecture-guide/shot-04-maxmind-mmdb-cli-lookup.webp"></p>
+<p><em>Figure 9: MaxMind MMDB command-line inspection. Directly verifying continent, ISO country code, time zone, and coordinates for sanitized target IPs.</em></p>
+<p><img alt="Browser DevTools Timing Waterfall Trace" src="/post-images/geoip-cdn-302-redirect-architecture-guide/shot-05-browser-devtools-waterfall.webp"></p>
+<p><em>Figure 10: Browser DevTools timing waterfall. Illustrating that the initial 302 redirect resolves in 34ms (TTFB 9.8ms) followed by an edge-cached 200 OK in 28ms.</em></p>
+<hr>
+<h2 id="7-multi-platform-automation-tooling-windows-11--ubuntu-2604--macos-26">7. Multi-Platform Automation Tooling (Windows 11 / Ubuntu 26.04 / macOS 26)</h2>
+<p>To help operators rapidly detect 302 cache poisoning vulnerabilities and redirect loops, we provide zero-dependency diagnostic tools tailored for all three major operating systems.</p>
+<h3 id="core-capabilities">Core Capabilities:</h3>
+<ul>
+<li><strong>Zero Third-Party Dependencies</strong>: Pure native PowerShell, Bash, Zsh, and curl.</li>
+<li><strong>Strict Data Desensitization</strong>: Automatically sanitizes public and private IP addresses.</li>
+<li><strong>Dual Execution Modes</strong>: Interactive colored report mode for humans, and headless JSON output mode (<code>--agent</code>) for AI Agent orchestration and CI/CD pipelines.</li>
+</ul>
+<hr>
+<h3 id="1-windows-11-native-diagnostic-script-audit_geoip_cdn_redirectps1">1. Windows 11 Native Diagnostic Script (<code>audit_geoip_cdn_redirect.ps1</code>)</h3>
+<p>Execute in Windows 11 PowerShell (5.1 or 7+):</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-powershell" data-lang="powershell"><span style="display:flex;"><span><span style="color:#75715e">&lt;#
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e">.</span><span style="color:#e6db74">SYNOPSIS</span><span style="color:#75715e">
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e">    Windows 11 Native GeoIP, CDN &amp; 302 Redirect Health &amp; Vulnerability Auditor
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e">.</span><span style="color:#e6db74">DESCRIPTION</span><span style="color:#75715e">
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e">    Zero third-party dependencies. Full data desensitization. Dual human/Agent mode.
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e">#&gt;</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>[CmdletBinding()]
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">param</span>(
+</span></span><span style="display:flex;"><span>    [<span style="color:#66d9ef">string</span>]$TargetUrl = <span style="color:#e6db74">&#34;https://example.com/&#34;</span>,
+</span></span><span style="display:flex;"><span>    [<span style="color:#66d9ef">switch</span>]$Agent
+</span></span><span style="display:flex;"><span>)
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>[<span style="color:#66d9ef">Net.ServicePointManager</span>]::SecurityProtocol = [<span style="color:#66d9ef">Net.SecurityProtocolType</span>]::Tls12 <span style="color:#f92672">-bor</span> [<span style="color:#66d9ef">Net.SecurityProtocolType</span>]::Tls13
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">function</span> Mask-IP ([<span style="color:#66d9ef">string</span>]$ip) {
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">if</span> (<span style="color:#f92672">-not</span> $ip) { <span style="color:#66d9ef">return</span> <span style="color:#e6db74">&#34;unknown&#34;</span> }
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">return</span> ($ip <span style="color:#f92672">-replace</span> <span style="color:#e6db74">&#39;\b(\d{1,3}\.\d{1,3}\.)\d{1,3}\.\d{1,3}\b&#39;</span>, <span style="color:#e6db74">&#39;$1*.*&#39;</span>)
+</span></span><span style="display:flex;"><span>}
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>$IsAgentMode = $Agent.IsPresent <span style="color:#f92672">-or</span> ($env:AGENT_MODE <span style="color:#f92672">-eq</span> <span style="color:#e6db74">&#34;1&#34;</span>)
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> (<span style="color:#f92672">-not</span> $IsAgentMode) {
+</span></span><span style="display:flex;"><span>    Write-Host <span style="color:#e6db74">&#34;================================================================================&#34;</span> -ForegroundColor Cyan
+</span></span><span style="display:flex;"><span>    Write-Host <span style="color:#e6db74">&#34;  GEO IP · CDN · 302 REDIRECT AUDIT &amp; HARDENING TOOLKIT (Windows 11)&#34;</span> -ForegroundColor Yellow
+</span></span><span style="display:flex;"><span>    Write-Host <span style="color:#e6db74">&#34;  Target : </span>$TargetUrl<span style="color:#e6db74">&#34;</span> -ForegroundColor White
+</span></span><span style="display:flex;"><span>    Write-Host <span style="color:#e6db74">&#34;================================================================================&#34;</span> -ForegroundColor Cyan
+</span></span><span style="display:flex;"><span>}
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>$EgressIP = <span style="color:#e6db74">&#34;unknown&#34;</span>
+</span></span><span style="display:flex;"><span>$GeoCountry = <span style="color:#e6db74">&#34;unknown&#34;</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">try</span> {
+</span></span><span style="display:flex;"><span>    $traceReq = Invoke-WebRequest -Uri <span style="color:#e6db74">&#34;https://www.cloudflare.com/cdn-cgi/trace&#34;</span> -UseBasicParsing -TimeoutSec <span style="color:#ae81ff">5</span> -ErrorAction SilentlyContinue
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">if</span> ($traceReq.Content) {
+</span></span><span style="display:flex;"><span>        <span style="color:#66d9ef">if</span> ($traceReq.Content <span style="color:#f92672">-match</span> <span style="color:#e6db74">&#39;ip=([^\r\n]+)&#39;</span>) { $EgressIP = $matches[<span style="color:#ae81ff">1</span>] }
+</span></span><span style="display:flex;"><span>        <span style="color:#66d9ef">if</span> ($traceReq.Content <span style="color:#f92672">-match</span> <span style="color:#e6db74">&#39;loc=([^\r\n]+)&#39;</span>) { $GeoCountry = $matches[<span style="color:#ae81ff">1</span>] }
+</span></span><span style="display:flex;"><span>    }
+</span></span><span style="display:flex;"><span>} <span style="color:#66d9ef">catch</span> {}
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>$MaskedEgress = Mask-IP $EgressIP
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>$UriObj = [<span style="color:#66d9ef">System.Uri</span>]$TargetUrl
+</span></span><span style="display:flex;"><span>$HostName = $UriObj.Host
+</span></span><span style="display:flex;"><span>$ResolvedIPs = @()
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">try</span> {
+</span></span><span style="display:flex;"><span>    $dnsQuery = [<span style="color:#66d9ef">System.Net.Dns</span>]::GetHostAddresses($HostName)
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">foreach</span> ($addr <span style="color:#66d9ef">in</span> $dnsQuery) {
+</span></span><span style="display:flex;"><span>        $ResolvedIPs += (Mask-IP $addr.IPAddressToString)
+</span></span><span style="display:flex;"><span>    }
+</span></span><span style="display:flex;"><span>} <span style="color:#66d9ef">catch</span> {
+</span></span><span style="display:flex;"><span>    $ResolvedIPs += <span style="color:#e6db74">&#34;DNS_RESOLVE_FAILED&#34;</span>
+</span></span><span style="display:flex;"><span>}
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>$HttpCode = <span style="color:#ae81ff">0</span>
+</span></span><span style="display:flex;"><span>$Location = <span style="color:#e6db74">&#34;&#34;</span>
+</span></span><span style="display:flex;"><span>$VaryHeader = <span style="color:#e6db74">&#34;&#34;</span>
+</span></span><span style="display:flex;"><span>$CacheControl = <span style="color:#e6db74">&#34;&#34;</span>
+</span></span><span style="display:flex;"><span>$CdnProvider = <span style="color:#e6db74">&#34;unknown&#34;</span>
+</span></span><span style="display:flex;"><span>$CdnCacheStatus = <span style="color:#e6db74">&#34;NONE&#34;</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">try</span> {
+</span></span><span style="display:flex;"><span>    $req = [<span style="color:#66d9ef">System.Net.HttpWebRequest</span>]::Create($TargetUrl)
+</span></span><span style="display:flex;"><span>    $req.AllowAutoRedirect = $false
+</span></span><span style="display:flex;"><span>    $req.Timeout = <span style="color:#ae81ff">8000</span>
+</span></span><span style="display:flex;"><span>    $req.UserAgent = <span style="color:#e6db74">&#34;Mozilla/5.0 (Windows NT 10.0; Win64; x64) NativeAudit/2.6&#34;</span>
+</span></span><span style="display:flex;"><span>    
+</span></span><span style="display:flex;"><span>    $response = $req.GetResponse()
+</span></span><span style="display:flex;"><span>    $HttpCode = [<span style="color:#66d9ef">int</span>]$response.StatusCode
+</span></span><span style="display:flex;"><span>    $response.Close()
+</span></span><span style="display:flex;"><span>} <span style="color:#66d9ef">catch</span> [<span style="color:#66d9ef">System.Net.WebException</span>] {
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">if</span> ($_.Response) {
+</span></span><span style="display:flex;"><span>        $HttpCode = [<span style="color:#66d9ef">int</span>]$_.Response.StatusCode
+</span></span><span style="display:flex;"><span>        $Location = $_.Response.Headers[<span style="color:#e6db74">&#34;Location&#34;</span>]
+</span></span><span style="display:flex;"><span>        $VaryHeader = $_.Response.Headers[<span style="color:#e6db74">&#34;Vary&#34;</span>]
+</span></span><span style="display:flex;"><span>        $CacheControl = $_.Response.Headers[<span style="color:#e6db74">&#34;Cache-Control&#34;</span>]
+</span></span><span style="display:flex;"><span>        $CdnCacheStatus = $_.Response.Headers[<span style="color:#e6db74">&#34;CF-Cache-Status&#34;</span>]
+</span></span><span style="display:flex;"><span>        <span style="color:#66d9ef">if</span> (<span style="color:#f92672">-not</span> $CdnCacheStatus) { $CdnCacheStatus = $_.Response.Headers[<span style="color:#e6db74">&#34;X-Cache&#34;</span>] }
+</span></span><span style="display:flex;"><span>        $serverHeader = $_.Response.Headers[<span style="color:#e6db74">&#34;Server&#34;</span>]
+</span></span><span style="display:flex;"><span>        <span style="color:#66d9ef">if</span> ($serverHeader <span style="color:#f92672">-match</span> <span style="color:#e6db74">&#34;cloudflare&#34;</span>) { $CdnProvider = <span style="color:#e6db74">&#34;Cloudflare&#34;</span> }
+</span></span><span style="display:flex;"><span>        <span style="color:#66d9ef">elseif</span> ($serverHeader <span style="color:#f92672">-match</span> <span style="color:#e6db74">&#34;cloudfront&#34;</span>) { $CdnProvider = <span style="color:#e6db74">&#34;CloudFront&#34;</span> }
+</span></span><span style="display:flex;"><span>        <span style="color:#66d9ef">elseif</span> ($serverHeader) { $CdnProvider = $serverHeader }
+</span></span><span style="display:flex;"><span>        $_.Response.Close()
+</span></span><span style="display:flex;"><span>    }
+</span></span><span style="display:flex;"><span>}
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>$HasVaryGeo = $false
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> ($VaryHeader <span style="color:#f92672">-and</span> ($VaryHeader <span style="color:#f92672">-match</span> <span style="color:#e6db74">&#34;CF-IPCountry|X-Country|Geo|Accept-Language&#34;</span>)) {
+</span></span><span style="display:flex;"><span>    $HasVaryGeo = $true
+</span></span><span style="display:flex;"><span>}
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>$CachePoisonRisk = <span style="color:#e6db74">&#34;LOW&#34;</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> ($HttpCode <span style="color:#f92672">-eq</span> <span style="color:#ae81ff">302</span> <span style="color:#f92672">-and</span> <span style="color:#f92672">-not</span> $HasVaryGeo <span style="color:#f92672">-and</span> ($CacheControl <span style="color:#f92672">-match</span> <span style="color:#e6db74">&#34;public&#34;</span> <span style="color:#f92672">-or</span> $CdnCacheStatus <span style="color:#f92672">-eq</span> <span style="color:#e6db74">&#34;HIT&#34;</span>)) {
+</span></span><span style="display:flex;"><span>    $CachePoisonRisk = <span style="color:#e6db74">&#34;HIGH_CRITICAL&#34;</span>
+</span></span><span style="display:flex;"><span>} <span style="color:#66d9ef">elseif</span> ($HttpCode <span style="color:#f92672">-eq</span> <span style="color:#ae81ff">302</span> <span style="color:#f92672">-and</span> <span style="color:#f92672">-not</span> $HasVaryGeo) {
+</span></span><span style="display:flex;"><span>    $CachePoisonRisk = <span style="color:#e6db74">&#34;MEDIUM_WARNING&#34;</span>
+</span></span><span style="display:flex;"><span>}
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>$ResultObj = [<span style="color:#66d9ef">PSCustomObject</span>]@{
+</span></span><span style="display:flex;"><span>    timestamp             = (Get-Date -Format <span style="color:#e6db74">&#34;yyyy-MM-ddTHH:mm:ssZ&#34;</span>)
+</span></span><span style="display:flex;"><span>    target_url            = $TargetUrl
+</span></span><span style="display:flex;"><span>    client_egress_masked  = $MaskedEgress
+</span></span><span style="display:flex;"><span>    detected_country      = $GeoCountry
+</span></span><span style="display:flex;"><span>    cdn_provider          = $CdnProvider
+</span></span><span style="display:flex;"><span>    cdn_cache_status      = $CdnCacheStatus
+</span></span><span style="display:flex;"><span>    http_status           = $HttpCode
+</span></span><span style="display:flex;"><span>    redirect_location     = $Location
+</span></span><span style="display:flex;"><span>    has_vary_geo_header   = $HasVaryGeo
+</span></span><span style="display:flex;"><span>    cache_control         = $CacheControl
+</span></span><span style="display:flex;"><span>    cache_poisoning_risk  = $CachePoisonRisk
+</span></span><span style="display:flex;"><span>    audit_status          = $(<span style="color:#66d9ef">if</span> ($CachePoisonRisk <span style="color:#f92672">-eq</span> <span style="color:#e6db74">&#34;HIGH_CRITICAL&#34;</span>) { <span style="color:#e6db74">&#34;FAILED&#34;</span> } <span style="color:#66d9ef">else</span> { <span style="color:#e6db74">&#34;PASSED&#34;</span> })
+</span></span><span style="display:flex;"><span>}
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> ($IsAgentMode) {
+</span></span><span style="display:flex;"><span>    $ResultObj | ConvertTo-Json -Compress
+</span></span><span style="display:flex;"><span>} <span style="color:#66d9ef">else</span> {
+</span></span><span style="display:flex;"><span>    Write-Host <span style="color:#e6db74">&#34;[*] Client Egress Network:&#34;</span> -ForegroundColor Green
+</span></span><span style="display:flex;"><span>    Write-Host <span style="color:#e6db74">&#34;    Egress IP (Masked) : </span>$MaskedEgress<span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>    Write-Host <span style="color:#e6db74">&#34;    Detected Country   : </span>$GeoCountry<span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>    Write-Host <span style="color:#e6db74">&#34;    Resolved Edge IPs  : </span>$($ResolvedIPs -join <span style="color:#e6db74">&#39;, &#39;</span>)<span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>    Write-Host <span style="color:#e6db74">&#34;&#34;</span>
+</span></span><span style="display:flex;"><span>    Write-Host <span style="color:#e6db74">&#34;[*] Edge Redirection &amp; Header Audit:&#34;</span> -ForegroundColor Green
+</span></span><span style="display:flex;"><span>    Write-Host <span style="color:#e6db74">&#34;    HTTP Status Code   : </span>$HttpCode<span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>    Write-Host <span style="color:#e6db74">&#34;    Redirect Location  : </span>$Location<span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>    Write-Host <span style="color:#e6db74">&#34;    CDN Provider       : </span>$CdnProvider<span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>    Write-Host <span style="color:#e6db74">&#34;    Vary Header        : </span>$VaryHeader<span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>    Write-Host <span style="color:#e6db74">&#34;    Cache-Control      : </span>$CacheControl<span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>    Write-Host <span style="color:#e6db74">&#34;    Edge Cache Status  : </span>$CdnCacheStatus<span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>    Write-Host <span style="color:#e6db74">&#34;&#34;</span>
+</span></span><span style="display:flex;"><span>    
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">if</span> ($CachePoisonRisk <span style="color:#f92672">-eq</span> <span style="color:#e6db74">&#34;HIGH_CRITICAL&#34;</span>) {
+</span></span><span style="display:flex;"><span>        Write-Host <span style="color:#e6db74">&#34;[!] CRITICAL WARNING: High-risk 302 cache poisoning vulnerability detected!&#34;</span> -ForegroundColor Red
+</span></span><span style="display:flex;"><span>        Write-Host <span style="color:#e6db74">&#34;    Reason: 302 response is cached by CDN without Vary: CF-IPCountry partitioning.&#34;</span> -ForegroundColor Red
+</span></span><span style="display:flex;"><span>    } <span style="color:#66d9ef">elseif</span> ($CachePoisonRisk <span style="color:#f92672">-eq</span> <span style="color:#e6db74">&#34;MEDIUM_WARNING&#34;</span>) {
+</span></span><span style="display:flex;"><span>        Write-Host <span style="color:#e6db74">&#34;[i] WARNING: 302 redirect lacks explicit geographic Vary header.&#34;</span> -ForegroundColor Yellow
+</span></span><span style="display:flex;"><span>    } <span style="color:#66d9ef">else</span> {
+</span></span><span style="display:flex;"><span>        Write-Host <span style="color:#e6db74">&#34;[✓] AUDIT PASSED: Edge redirect partitioning is robust.&#34;</span> -ForegroundColor Green
+</span></span><span style="display:flex;"><span>    }
+</span></span><span style="display:flex;"><span>}
+</span></span></code></pre></div><hr>
+<h3 id="2-ubuntu-2604-native-diagnostic-script-audit_geoip_cdn_redirect_ubuntush">2. Ubuntu 26.04 Native Diagnostic Script (<code>audit_geoip_cdn_redirect_ubuntu.sh</code>)</h3>
+<p>Save and run in Ubuntu 26.04:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e">#!/usr/bin/env bash
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span><span style="color:#75715e"># ==============================================================================</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># GeoIP, CDN &amp; 302 Redirect Diagnostic Suite (Ubuntu 26.04 Native)</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># Zero third-party dependencies. Strict desensitization. Human &amp; Agent modes.</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># ==============================================================================</span>
+</span></span><span style="display:flex;"><span>set -euo pipefail
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>TARGET_URL<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>1<span style="color:#66d9ef">:-</span>https://example.com/<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>AGENT_MODE<span style="color:#f92672">=</span><span style="color:#ae81ff">0</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">for</span> arg in <span style="color:#e6db74">&#34;</span>$@<span style="color:#e6db74">&#34;</span>; <span style="color:#66d9ef">do</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">if</span> <span style="color:#f92672">[[</span> <span style="color:#e6db74">&#34;</span>$arg<span style="color:#e6db74">&#34;</span> <span style="color:#f92672">==</span> <span style="color:#e6db74">&#34;--agent&#34;</span> <span style="color:#f92672">]]</span>; <span style="color:#66d9ef">then</span>
+</span></span><span style="display:flex;"><span>        AGENT_MODE<span style="color:#f92672">=</span><span style="color:#ae81ff">1</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">fi</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">done</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> <span style="color:#f92672">[[</span> <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>AGENT_MODE<span style="color:#66d9ef">:-</span>0<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span> <span style="color:#f92672">==</span> <span style="color:#e6db74">&#34;1&#34;</span> <span style="color:#f92672">||</span> <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>AGENT_ENV<span style="color:#66d9ef">:-</span><span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span> <span style="color:#f92672">==</span> <span style="color:#e6db74">&#34;1&#34;</span> <span style="color:#f92672">]]</span>; <span style="color:#66d9ef">then</span>
+</span></span><span style="display:flex;"><span>    AGENT_MODE<span style="color:#f92672">=</span><span style="color:#ae81ff">1</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">fi</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>mask_ip<span style="color:#f92672">()</span> <span style="color:#f92672">{</span>
+</span></span><span style="display:flex;"><span>    local ip<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span>$1<span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>    echo <span style="color:#e6db74">&#34;</span>$ip<span style="color:#e6db74">&#34;</span> | sed -E <span style="color:#e6db74">&#39;s/([0-9]{1,3}\.[0-9]{1,3}\.)[0-9]{1,3}\.[0-9]{1,3}/\1*.* /g&#39;</span>
+</span></span><span style="display:flex;"><span><span style="color:#f92672">}</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>EGRESS_RAW<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>curl -s --max-time <span style="color:#ae81ff">4</span> <span style="color:#e6db74">&#34;https://www.cloudflare.com/cdn-cgi/trace&#34;</span> 2&gt;/dev/null <span style="color:#f92672">||</span> true<span style="color:#66d9ef">)</span>
+</span></span><span style="display:flex;"><span>CLIENT_IP<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>echo <span style="color:#e6db74">&#34;</span>$EGRESS_RAW<span style="color:#e6db74">&#34;</span> | grep <span style="color:#e6db74">&#39;^ip=&#39;</span> | cut -d<span style="color:#f92672">=</span> -f2 <span style="color:#f92672">||</span> echo <span style="color:#e6db74">&#34;unknown&#34;</span><span style="color:#66d9ef">)</span>
+</span></span><span style="display:flex;"><span>CLIENT_LOC<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>echo <span style="color:#e6db74">&#34;</span>$EGRESS_RAW<span style="color:#e6db74">&#34;</span> | grep <span style="color:#e6db74">&#39;^loc=&#39;</span> | cut -d<span style="color:#f92672">=</span> -f2 <span style="color:#f92672">||</span> echo <span style="color:#e6db74">&#34;unknown&#34;</span><span style="color:#66d9ef">)</span>
+</span></span><span style="display:flex;"><span>MASKED_IP<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>mask_ip <span style="color:#e6db74">&#34;</span>$CLIENT_IP<span style="color:#e6db74">&#34;</span><span style="color:#66d9ef">)</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>HEADER_DUMP<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>curl -sI --max-time <span style="color:#ae81ff">6</span> <span style="color:#e6db74">&#34;</span>$TARGET_URL<span style="color:#e6db74">&#34;</span> 2&gt;/dev/null <span style="color:#f92672">||</span> true<span style="color:#66d9ef">)</span>
+</span></span><span style="display:flex;"><span>HTTP_CODE<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>echo <span style="color:#e6db74">&#34;</span>$HEADER_DUMP<span style="color:#e6db74">&#34;</span> | grep -i <span style="color:#e6db74">&#39;^HTTP/&#39;</span> | tail -n1 | awk <span style="color:#e6db74">&#39;{print $2}&#39;</span> <span style="color:#f92672">||</span> echo <span style="color:#e6db74">&#34;0&#34;</span><span style="color:#66d9ef">)</span>
+</span></span><span style="display:flex;"><span>LOCATION<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>echo <span style="color:#e6db74">&#34;</span>$HEADER_DUMP<span style="color:#e6db74">&#34;</span> | grep -i <span style="color:#e6db74">&#39;^location:&#39;</span> | tail -n1 | cut -d<span style="color:#e6db74">&#39; &#39;</span> -f2- | tr -d <span style="color:#e6db74">&#39;\r&#39;</span> <span style="color:#f92672">||</span> echo <span style="color:#e6db74">&#34;&#34;</span><span style="color:#66d9ef">)</span>
+</span></span><span style="display:flex;"><span>VARY<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>echo <span style="color:#e6db74">&#34;</span>$HEADER_DUMP<span style="color:#e6db74">&#34;</span> | grep -i <span style="color:#e6db74">&#39;^vary:&#39;</span> | tail -n1 | cut -d<span style="color:#e6db74">&#39; &#39;</span> -f2- | tr -d <span style="color:#e6db74">&#39;\r&#39;</span> <span style="color:#f92672">||</span> echo <span style="color:#e6db74">&#34;&#34;</span><span style="color:#66d9ef">)</span>
+</span></span><span style="display:flex;"><span>CACHE_CTRL<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>echo <span style="color:#e6db74">&#34;</span>$HEADER_DUMP<span style="color:#e6db74">&#34;</span> | grep -i <span style="color:#e6db74">&#39;^cache-control:&#39;</span> | tail -n1 | cut -d<span style="color:#e6db74">&#39; &#39;</span> -f2- | tr -d <span style="color:#e6db74">&#39;\r&#39;</span> <span style="color:#f92672">||</span> echo <span style="color:#e6db74">&#34;&#34;</span><span style="color:#66d9ef">)</span>
+</span></span><span style="display:flex;"><span>CF_CACHE<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>echo <span style="color:#e6db74">&#34;</span>$HEADER_DUMP<span style="color:#e6db74">&#34;</span> | grep -i <span style="color:#e6db74">&#39;^cf-cache-status:&#39;</span> | tail -n1 | cut -d<span style="color:#e6db74">&#39; &#39;</span> -f2- | tr -d <span style="color:#e6db74">&#39;\r&#39;</span> <span style="color:#f92672">||</span> echo <span style="color:#e6db74">&#34;NONE&#34;</span><span style="color:#66d9ef">)</span>
+</span></span><span style="display:flex;"><span>SERVER<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>echo <span style="color:#e6db74">&#34;</span>$HEADER_DUMP<span style="color:#e6db74">&#34;</span> | grep -i <span style="color:#e6db74">&#39;^server:&#39;</span> | tail -n1 | cut -d<span style="color:#e6db74">&#39; &#39;</span> -f2- | tr -d <span style="color:#e6db74">&#39;\r&#39;</span> <span style="color:#f92672">||</span> echo <span style="color:#e6db74">&#34;unknown&#34;</span><span style="color:#66d9ef">)</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>HAS_VARY_GEO<span style="color:#f92672">=</span>false
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> echo <span style="color:#e6db74">&#34;</span>$VARY<span style="color:#e6db74">&#34;</span> | grep -iE <span style="color:#e6db74">&#39;CF-IPCountry|X-Country|Geo|Accept-Language&#39;</span> &gt;/dev/null 2&gt;&amp;1; <span style="color:#66d9ef">then</span>
+</span></span><span style="display:flex;"><span>    HAS_VARY_GEO<span style="color:#f92672">=</span>true
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">fi</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>RISK<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;LOW&#34;</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> <span style="color:#f92672">[[</span> <span style="color:#e6db74">&#34;</span>$HTTP_CODE<span style="color:#e6db74">&#34;</span> <span style="color:#f92672">==</span> <span style="color:#e6db74">&#34;302&#34;</span> <span style="color:#f92672">&amp;&amp;</span> <span style="color:#e6db74">&#34;</span>$HAS_VARY_GEO<span style="color:#e6db74">&#34;</span> <span style="color:#f92672">==</span> <span style="color:#e6db74">&#34;false&#34;</span> <span style="color:#f92672">]]</span>; <span style="color:#66d9ef">then</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">if</span> <span style="color:#f92672">[[</span> <span style="color:#e6db74">&#34;</span>$CACHE_CTRL<span style="color:#e6db74">&#34;</span> <span style="color:#f92672">=</span>~ public <span style="color:#f92672">||</span> <span style="color:#e6db74">&#34;</span>$CF_CACHE<span style="color:#e6db74">&#34;</span> <span style="color:#f92672">==</span> <span style="color:#e6db74">&#34;HIT&#34;</span> <span style="color:#f92672">]]</span>; <span style="color:#66d9ef">then</span>
+</span></span><span style="display:flex;"><span>        RISK<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;HIGH_CRITICAL&#34;</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">else</span>
+</span></span><span style="display:flex;"><span>        RISK<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;MEDIUM_WARNING&#34;</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">fi</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">fi</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> <span style="color:#f92672">[[</span> <span style="color:#e6db74">&#34;</span>$AGENT_MODE<span style="color:#e6db74">&#34;</span> -eq <span style="color:#ae81ff">1</span> <span style="color:#f92672">]]</span>; <span style="color:#66d9ef">then</span>
+</span></span><span style="display:flex;"><span>    printf <span style="color:#e6db74">&#39;{&#34;timestamp&#34;:&#34;%s&#34;,&#34;target_url&#34;:&#34;%s&#34;,&#34;client_egress_masked&#34;:&#34;%s&#34;,&#34;detected_country&#34;:&#34;%s&#34;,&#34;http_code&#34;:%d,&#34;redirect_location&#34;:&#34;%s&#34;,&#34;has_vary_geo&#34;:%s,&#34;cache_poison_risk&#34;:&#34;%s&#34;,&#34;server&#34;:&#34;%s&#34;}\n&#39;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>        <span style="color:#e6db74">&#34;</span><span style="color:#66d9ef">$(</span>date -u +<span style="color:#e6db74">&#34;%Y-%m-%dT%H:%M:%SZ&#34;</span><span style="color:#66d9ef">)</span><span style="color:#e6db74">&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>        <span style="color:#e6db74">&#34;</span>$TARGET_URL<span style="color:#e6db74">&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>        <span style="color:#e6db74">&#34;</span>$MASKED_IP<span style="color:#e6db74">&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>        <span style="color:#e6db74">&#34;</span>$CLIENT_LOC<span style="color:#e6db74">&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>        <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>HTTP_CODE<span style="color:#66d9ef">:-</span>0<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>        <span style="color:#e6db74">&#34;</span>$LOCATION<span style="color:#e6db74">&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>        <span style="color:#e6db74">&#34;</span>$HAS_VARY_GEO<span style="color:#e6db74">&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>        <span style="color:#e6db74">&#34;</span>$RISK<span style="color:#e6db74">&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>        <span style="color:#e6db74">&#34;</span>$SERVER<span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">else</span>
+</span></span><span style="display:flex;"><span>    echo <span style="color:#e6db74">&#34;================================================================================&#34;</span>
+</span></span><span style="display:flex;"><span>    echo <span style="color:#e6db74">&#34;  GEO IP · CDN · 302 REDIRECT AUDITOR (Ubuntu 26.04 Native)&#34;</span>
+</span></span><span style="display:flex;"><span>    echo <span style="color:#e6db74">&#34;================================================================================&#34;</span>
+</span></span><span style="display:flex;"><span>    echo <span style="color:#e6db74">&#34;[*] Client Egress IP (Masked) : </span>$MASKED_IP<span style="color:#e6db74"> (Country: </span>$CLIENT_LOC<span style="color:#e6db74">)&#34;</span>
+</span></span><span style="display:flex;"><span>    echo <span style="color:#e6db74">&#34;[*] HTTP Status Code          : </span>$HTTP_CODE<span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>    echo <span style="color:#e6db74">&#34;[*] Target Location           : </span>$LOCATION<span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>    echo <span style="color:#e6db74">&#34;[*] Server Identifier         : </span>$SERVER<span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>    echo <span style="color:#e6db74">&#34;[*] Vary Header               : </span><span style="color:#e6db74">${</span>VARY<span style="color:#66d9ef">:-</span>&lt;Not Set&gt;<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>    echo <span style="color:#e6db74">&#34;[*] Cache-Control Policy      : </span><span style="color:#e6db74">${</span>CACHE_CTRL<span style="color:#66d9ef">:-</span>&lt;Not Set&gt;<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>    echo <span style="color:#e6db74">&#34;[*] Edge Cache Status         : </span>$CF_CACHE<span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>    echo <span style="color:#e6db74">&#34;--------------------------------------------------------------------------------&#34;</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">if</span> <span style="color:#f92672">[[</span> <span style="color:#e6db74">&#34;</span>$RISK<span style="color:#e6db74">&#34;</span> <span style="color:#f92672">==</span> <span style="color:#e6db74">&#34;HIGH_CRITICAL&#34;</span> <span style="color:#f92672">]]</span>; <span style="color:#66d9ef">then</span>
+</span></span><span style="display:flex;"><span>        echo -e <span style="color:#e6db74">&#34;\033[31m[!] CRITICAL: 302 redirect is vulnerable to global cache poisoning!\033[0m&#34;</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">elif</span> <span style="color:#f92672">[[</span> <span style="color:#e6db74">&#34;</span>$RISK<span style="color:#e6db74">&#34;</span> <span style="color:#f92672">==</span> <span style="color:#e6db74">&#34;MEDIUM_WARNING&#34;</span> <span style="color:#f92672">]]</span>; <span style="color:#66d9ef">then</span>
+</span></span><span style="display:flex;"><span>        echo -e <span style="color:#e6db74">&#34;\033[33m[i] NOTICE: 302 redirect lacks explicit geographic Vary partitioning.\033[0m&#34;</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">else</span>
+</span></span><span style="display:flex;"><span>        echo -e <span style="color:#e6db74">&#34;\033[32m[✓] SUCCESS: Edge redirect partitioning is properly configured.\033[0m&#34;</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">fi</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">fi</span>
+</span></span></code></pre></div><hr>
+<h3 id="3-macos-26-native-diagnostic-script-audit_geoip_cdn_redirect_macossh">3. macOS 26 Native Diagnostic Script (<code>audit_geoip_cdn_redirect_macos.sh</code>)</h3>
+<p>Save and run in macOS 26 (Zsh / Bash):</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-zsh" data-lang="zsh"><span style="display:flex;"><span><span style="color:#75715e">#!/usr/bin/env zsh
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span><span style="color:#75715e"># ==============================================================================</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># GeoIP, CDN &amp; 302 Redirect Diagnostic Suite (macOS 26 Native)</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># Zero third-party dependencies. Strict desensitization. Human &amp; Agent modes.</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># ==============================================================================</span>
+</span></span><span style="display:flex;"><span>set -eu
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>TARGET_URL<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>1<span style="color:#66d9ef">:-</span>https://example.com/<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>AGENT_MODE<span style="color:#f92672">=</span><span style="color:#ae81ff">0</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">for</span> arg in <span style="color:#e6db74">&#34;</span>$@<span style="color:#e6db74">&#34;</span>; <span style="color:#66d9ef">do</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">if</span> <span style="color:#f92672">[[</span> <span style="color:#e6db74">&#34;</span>$arg<span style="color:#e6db74">&#34;</span> <span style="color:#f92672">==</span> <span style="color:#e6db74">&#34;--agent&#34;</span> <span style="color:#f92672">]]</span>; <span style="color:#66d9ef">then</span>
+</span></span><span style="display:flex;"><span>        AGENT_MODE<span style="color:#f92672">=</span><span style="color:#ae81ff">1</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">fi</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">done</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>mask_ip<span style="color:#f92672">()</span> <span style="color:#f92672">{</span>
+</span></span><span style="display:flex;"><span>    local ip<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span>$1<span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>    echo <span style="color:#e6db74">&#34;</span>$ip<span style="color:#e6db74">&#34;</span> | sed -E <span style="color:#e6db74">&#39;s/([0-9]{1,3}\.[0-9]{1,3}\.)[0-9]{1,3}\.[0-9]{1,3}/\1*.* /g&#39;</span>
+</span></span><span style="display:flex;"><span><span style="color:#f92672">}</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>EGRESS_DATA<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>curl -s --max-time <span style="color:#ae81ff">4</span> <span style="color:#e6db74">&#34;https://www.cloudflare.com/cdn-cgi/trace&#34;</span> 2&gt;/dev/null <span style="color:#f92672">||</span> true<span style="color:#66d9ef">)</span>
+</span></span><span style="display:flex;"><span>RAW_IP<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>echo <span style="color:#e6db74">&#34;</span>$EGRESS_DATA<span style="color:#e6db74">&#34;</span> | awk -F<span style="color:#f92672">=</span> <span style="color:#e6db74">&#39;$1==&#34;ip&#34;{print $2}&#39;</span><span style="color:#66d9ef">)</span>
+</span></span><span style="display:flex;"><span>RAW_LOC<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>echo <span style="color:#e6db74">&#34;</span>$EGRESS_DATA<span style="color:#e6db74">&#34;</span> | awk -F<span style="color:#f92672">=</span> <span style="color:#e6db74">&#39;$1==&#34;loc&#34;{print $2}&#39;</span><span style="color:#66d9ef">)</span>
+</span></span><span style="display:flex;"><span>MASKED_IP<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>mask_ip <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>RAW_IP<span style="color:#66d9ef">:-</span>127.0.0.1<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span><span style="color:#66d9ef">)</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>RESP_HEADERS<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>curl -sI --max-time <span style="color:#ae81ff">6</span> <span style="color:#e6db74">&#34;</span>$TARGET_URL<span style="color:#e6db74">&#34;</span> 2&gt;/dev/null <span style="color:#f92672">||</span> true<span style="color:#66d9ef">)</span>
+</span></span><span style="display:flex;"><span>HTTP_CODE<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>echo <span style="color:#e6db74">&#34;</span>$RESP_HEADERS<span style="color:#e6db74">&#34;</span> | awk <span style="color:#e6db74">&#39;NR==1{print $2}&#39;</span><span style="color:#66d9ef">)</span>
+</span></span><span style="display:flex;"><span>LOCATION<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>echo <span style="color:#e6db74">&#34;</span>$RESP_HEADERS<span style="color:#e6db74">&#34;</span> | awk -F<span style="color:#e6db74">&#39;: &#39;</span> <span style="color:#e6db74">&#39;tolower($1)==&#34;location&#34;{print $2}&#39;</span> | tr -d <span style="color:#e6db74">&#39;\r&#39;</span><span style="color:#66d9ef">)</span>
+</span></span><span style="display:flex;"><span>VARY<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>echo <span style="color:#e6db74">&#34;</span>$RESP_HEADERS<span style="color:#e6db74">&#34;</span> | awk -F<span style="color:#e6db74">&#39;: &#39;</span> <span style="color:#e6db74">&#39;tolower($1)==&#34;vary&#34;{print $2}&#39;</span> | tr -d <span style="color:#e6db74">&#39;\r&#39;</span><span style="color:#66d9ef">)</span>
+</span></span><span style="display:flex;"><span>CACHE_CTRL<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>echo <span style="color:#e6db74">&#34;</span>$RESP_HEADERS<span style="color:#e6db74">&#34;</span> | awk -F<span style="color:#e6db74">&#39;: &#39;</span> <span style="color:#e6db74">&#39;tolower($1)==&#34;cache-control&#34;{print $2}&#39;</span> | tr -d <span style="color:#e6db74">&#39;\r&#39;</span><span style="color:#66d9ef">)</span>
+</span></span><span style="display:flex;"><span>CF_CACHE<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>echo <span style="color:#e6db74">&#34;</span>$RESP_HEADERS<span style="color:#e6db74">&#34;</span> | awk -F<span style="color:#e6db74">&#39;: &#39;</span> <span style="color:#e6db74">&#39;tolower($1)==&#34;cf-cache-status&#34;{print $2}&#39;</span> | tr -d <span style="color:#e6db74">&#39;\r&#39;</span><span style="color:#66d9ef">)</span>
+</span></span><span style="display:flex;"><span>SERVER<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>echo <span style="color:#e6db74">&#34;</span>$RESP_HEADERS<span style="color:#e6db74">&#34;</span> | awk -F<span style="color:#e6db74">&#39;: &#39;</span> <span style="color:#e6db74">&#39;tolower($1)==&#34;server&#34;{print $2}&#39;</span> | tr -d <span style="color:#e6db74">&#39;\r&#39;</span><span style="color:#66d9ef">)</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>HAS_VARY_GEO<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;false&#34;</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> echo <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>VARY<span style="color:#66d9ef">:-</span><span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span> | grep -Ei <span style="color:#e6db74">&#39;CF-IPCountry|X-Country|Geo|Accept-Language&#39;</span> &gt;/dev/null 2&gt;&amp;1; <span style="color:#66d9ef">then</span>
+</span></span><span style="display:flex;"><span>    HAS_VARY_GEO<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;true&#34;</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">fi</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>RISK<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;LOW&#34;</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> <span style="color:#f92672">[[</span> <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>HTTP_CODE<span style="color:#66d9ef">:-</span><span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span> <span style="color:#f92672">==</span> <span style="color:#e6db74">&#34;302&#34;</span> <span style="color:#f92672">&amp;&amp;</span> <span style="color:#e6db74">&#34;</span>$HAS_VARY_GEO<span style="color:#e6db74">&#34;</span> <span style="color:#f92672">==</span> <span style="color:#e6db74">&#34;false&#34;</span> <span style="color:#f92672">]]</span>; <span style="color:#66d9ef">then</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">if</span> <span style="color:#f92672">[[</span> <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>CACHE_CTRL<span style="color:#66d9ef">:-</span><span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span> <span style="color:#f92672">=</span>~ <span style="color:#e6db74">&#34;public&#34;</span> <span style="color:#f92672">||</span> <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>CF_CACHE<span style="color:#66d9ef">:-</span><span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span> <span style="color:#f92672">==</span> <span style="color:#e6db74">&#34;HIT&#34;</span> <span style="color:#f92672">]]</span>; <span style="color:#66d9ef">then</span>
+</span></span><span style="display:flex;"><span>        RISK<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;HIGH_CRITICAL&#34;</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">else</span>
+</span></span><span style="display:flex;"><span>        RISK<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;MEDIUM_WARNING&#34;</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">fi</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">fi</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> <span style="color:#f92672">[[</span> <span style="color:#e6db74">&#34;</span>$AGENT_MODE<span style="color:#e6db74">&#34;</span> -eq <span style="color:#ae81ff">1</span> <span style="color:#f92672">]]</span>; <span style="color:#66d9ef">then</span>
+</span></span><span style="display:flex;"><span>    printf <span style="color:#e6db74">&#39;{&#34;timestamp&#34;:&#34;%s&#34;,&#34;target_url&#34;:&#34;%s&#34;,&#34;client_egress_masked&#34;:&#34;%s&#34;,&#34;detected_country&#34;:&#34;%s&#34;,&#34;http_code&#34;:&#34;%s&#34;,&#34;location&#34;:&#34;%s&#34;,&#34;has_vary_geo&#34;:%s,&#34;risk&#34;:&#34;%s&#34;,&#34;server&#34;:&#34;%s&#34;}\n&#39;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>        <span style="color:#e6db74">&#34;</span><span style="color:#66d9ef">$(</span>date -u +<span style="color:#e6db74">&#34;%Y-%m-%dT%H:%M:%SZ&#34;</span><span style="color:#66d9ef">)</span><span style="color:#e6db74">&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>        <span style="color:#e6db74">&#34;</span>$TARGET_URL<span style="color:#e6db74">&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>        <span style="color:#e6db74">&#34;</span>$MASKED_IP<span style="color:#e6db74">&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>        <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>RAW_LOC<span style="color:#66d9ef">:-</span>unknown<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>        <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>HTTP_CODE<span style="color:#66d9ef">:-</span>0<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>        <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>LOCATION<span style="color:#66d9ef">:-</span>none<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>        <span style="color:#e6db74">&#34;</span>$HAS_VARY_GEO<span style="color:#e6db74">&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>        <span style="color:#e6db74">&#34;</span>$RISK<span style="color:#e6db74">&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>        <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>SERVER<span style="color:#66d9ef">:-</span>unknown<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">else</span>
+</span></span><span style="display:flex;"><span>    echo <span style="color:#e6db74">&#34;\033[1;36m================================================================================\033[0m&#34;</span>
+</span></span><span style="display:flex;"><span>    echo <span style="color:#e6db74">&#34;\033[1;33m  GEO IP · CDN · 302 REDIRECT AUDIT SUITE (macOS 26 Native)\033[0m&#34;</span>
+</span></span><span style="display:flex;"><span>    echo <span style="color:#e6db74">&#34;\033[1;36m================================================================================\033[0m&#34;</span>
+</span></span><span style="display:flex;"><span>    echo <span style="color:#e6db74">&#34;  Egress IP (Masked) : </span>$MASKED_IP<span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>    echo <span style="color:#e6db74">&#34;  Detected Country   : </span><span style="color:#e6db74">${</span>RAW_LOC<span style="color:#66d9ef">:-</span>unknown<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>    echo <span style="color:#e6db74">&#34;  HTTP Status        : </span><span style="color:#e6db74">${</span>HTTP_CODE<span style="color:#66d9ef">:-</span>0<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>    echo <span style="color:#e6db74">&#34;  Redirect Location  : </span><span style="color:#e6db74">${</span>LOCATION<span style="color:#66d9ef">:-</span>&lt;none&gt;<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>    echo <span style="color:#e6db74">&#34;  Vary Header        : </span><span style="color:#e6db74">${</span>VARY<span style="color:#66d9ef">:-</span>&lt;Not Set&gt;<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>    echo <span style="color:#e6db74">&#34;  Cache-Control      : </span><span style="color:#e6db74">${</span>CACHE_CTRL<span style="color:#66d9ef">:-</span>&lt;Not Set&gt;<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>    echo <span style="color:#e6db74">&#34;  Edge Cache Status  : </span><span style="color:#e6db74">${</span>CF_CACHE<span style="color:#66d9ef">:-</span>NONE<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>    echo <span style="color:#e6db74">&#34;--------------------------------------------------------------------------------&#34;</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">if</span> <span style="color:#f92672">[[</span> <span style="color:#e6db74">&#34;</span>$RISK<span style="color:#e6db74">&#34;</span> <span style="color:#f92672">==</span> <span style="color:#e6db74">&#34;HIGH_CRITICAL&#34;</span> <span style="color:#f92672">]]</span>; <span style="color:#66d9ef">then</span>
+</span></span><span style="display:flex;"><span>        echo <span style="color:#e6db74">&#34;\033[1;31m[!] CRITICAL: 302 redirect lacks geo-partitioning and is prone to cache poisoning!\033[0m&#34;</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">elif</span> <span style="color:#f92672">[[</span> <span style="color:#e6db74">&#34;</span>$RISK<span style="color:#e6db74">&#34;</span> <span style="color:#f92672">==</span> <span style="color:#e6db74">&#34;MEDIUM_WARNING&#34;</span> <span style="color:#f92672">]]</span>; <span style="color:#66d9ef">then</span>
+</span></span><span style="display:flex;"><span>        echo <span style="color:#e6db74">&#34;\033[1;33m[i] NOTICE: Missing explicit Vary: CF-IPCountry header.\033[0m&#34;</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">else</span>
+</span></span><span style="display:flex;"><span>        echo <span style="color:#e6db74">&#34;\033[1;32m[✓] HEALTHY: Edge redirection partitioning verified successfully.\033[0m&#34;</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">fi</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">fi</span>
+</span></span></code></pre></div><p><img alt="Automated Multi-Platform Script Execution" src="/post-images/geoip-cdn-302-redirect-architecture-guide/shot-06-automated-script-run.webp"></p>
+<p><em>Figure 11: Multi-platform automated script execution. Demonstrating both interactive command-line output and structured Agent JSON output with full IP desensitization.</em></p>
+<hr>
+<h2 id="8-high-frequency-qa-and-pitfall-guide">8. High-Frequency Q&amp;A and Pitfall Guide</h2>
+<h3 id="q1-why-must-we-never-use-301-permanent-redirection-for-geographic-routing">Q1: Why must we NEVER use 301 Permanent Redirection for geographic routing?</h3>
+<p><strong>Answer</strong>: 301 Moved Permanently is the most stubborn status code on the web.
+When a modern browser encounters a 301, it writes the redirection rule directly into an internal, persistent on-disk database.
+Even if you realize the error and update your server to return 200 or 302, <strong>all users who already visited will continue executing the redirect locally from disk for weeks or months without ever reaching your server</strong>. The only remedy is forcing users to manually wipe their browser cache.
+Geographic routing is inherently dynamic and fluid—always use <strong>302 Found</strong> or <strong>307 Temporary Redirect</strong>!</p>
+<h3 id="q2-if-the-origin-must-issue-a-302-redirect-can-the-cdn-cache-it-how-should-it-be-cached">Q2: If the origin must issue a 302 redirect, can the CDN cache it? How should it be cached?</h3>
+<p><strong>Answer</strong>: Yes, but under two strict prerequisites:</p>
+<ol>
+<li><strong>Prerequisite 1: Declare the Vary header</strong>. The origin must output <code>Vary: Accept-Encoding, CF-IPCountry</code> (Cloudflare) or <code>Vary: CloudFront-Viewer-Country</code> (AWS CloudFront). This forces the CDN to partition its cache internally per country code.</li>
+<li><strong>Prerequisite 2: When in doubt, disable caching on 302 entirely</strong>. Output <code>Cache-Control: private, no-cache, no-store</code> on the 302 response and set Edge Cache TTL for 302 to 0 seconds in the CDN console. Let the 302 always pass through dynamically, while caching the target landing pages (<code>200 OK</code>) aggressively.</li>
+</ol>
+<h3 id="q3-why-do-some-users-get-routed-to-distant-nodes-even-when-geodns-is-enabled">Q3: Why do some users get routed to distant nodes even when GeoDNS is enabled?</h3>
+<p><strong>Answer</strong>: This is caused by two factors:</p>
+<ol>
+<li><strong>The user configured a public DNS (e.g., 8.8.8.8) that does not support RFC 7871 (EDNS Client Subnet, ECS) with your authoritative DNS</strong>. The authoritative DNS sees the public DNS resolver&rsquo;s overseas IP rather than the client&rsquo;s local ISP IP;</li>
+<li><strong>The local carrier routes DNS queries across provincial or national boundaries</strong>. The ultimate solution is migrating to <strong>Anycast BGP</strong>, allowing physical routing protocols to determine shortest network paths.</li>
+</ol>
+<h3 id="q4-how-does-forced-302-redirection-damage-seo-on-google-and-bing">Q4: How does forced 302 redirection damage SEO on Google and Bing?</h3>
+<p><strong>Answer</strong>: Googlebot crawls almost exclusively from US data center IP ranges. If your root URL forces a hard 302 redirect based on IP, Googlebot will <strong>permanently be redirected to <code>/en-us/</code></strong>, completely blinding it from discovering and indexing your <code>/zh-cn/</code>, <code>/ja-jp/</code>, or <code>/de-de/</code> versions.
+Furthermore, if handled improperly, search engines may classify this behavior as <strong>Sneaky Redirects or Cloaking</strong>, triggering site-wide penalties.
+<strong>Solution</strong>: Follow Google&rsquo;s Multi-regional Webmaster Guidelines: implement <code>&lt;link rel=&quot;alternate&quot; hreflang=&quot;xx&quot; href=&quot;...&quot; /&gt;</code> and adopt <strong>Paradigm 4: Client-Side Asynchronous Soft Banners</strong>.</p>
+<h3 id="q5-how-do-top-global-brands-apple-airbnb-solve-this-trade-off">Q5: How do top global brands (Apple, Airbnb) solve this trade-off?</h3>
+<p><strong>Answer</strong>: They follow the golden rule of <strong>&ldquo;Edge static acceleration first, client choice second, Cookie memory third&rdquo;</strong>:</p>
+<ol>
+<li>Visiting <code>apple.com</code> serves the static international homepage directly from the nearest edge cache (<code>HIT</code>, TTFB &lt; 40ms);</li>
+<li>Lightweight JS compares the edge-injected country header with <code>navigator.languages</code>;</li>
+<li>If a mismatch is detected, a non-blocking floating banner appears at the top: <em>&ldquo;You are visiting Apple (United States). Would you like to view our Japanese store?&rdquo;</em></li>
+<li>Once the user makes a choice, it is stored in a cookie. Subsequent visits bypass detection and map directly to the chosen locale, achieving blazing performance without redirect loops.</li>
+</ol>
+<hr>
+<h2 id="9-summary-and-architecture-takeaways">9. Summary and Architecture Takeaways</h2>
+<p>From manual configuration of monolithic servers to coordinated edge compute across thousands of global PoPs; from crude IP blocking to standards-compliant cache negotiation:</p>
+<p><strong>The interplay between GeoIP, CDN edge caching, and HTTP 302 redirection is a masterclass in distributed systems engineering:</strong></p>
+<ul>
+<li>It demands that while we harvest the throughput of edge caching, we remain vigilant of status-code cache poisoning;</li>
+<li>It demands that while we deliver localized experiences, we uphold RFC 9110 and protect our routes with <code>Vary</code> headers;</li>
+<li>And most importantly, it teaches us that optimal architectures avoid crude server-side force in favor of &ldquo;Edge Compute + Client-Side Soft Steering&rdquo;—striking the perfect balance between performance, search indexing, and user experience.</li>
+</ul>
+<p>We hope this architectural deep dive and the provided multi-platform tooling empower your global deployments to run faster, safer, and entirely free of redirect loops!</p>
+        </div>
+    </article>
+
+    
+  
+
+
+
+
+    
+<div class="site-stats" aria-label="访问统计">
+    <span>本文阅读量 <span data-page-view-count>--</span></span>
+</div>
+
+
+    
+    <script type="text/javascript" src="https://js.users.51.la/21044367.js"></script>
+    <script charset="UTF-8" id="LA_COLLECT" src="//sdk.51.la/js-sdk-pro.min.js"></script>
+    <script>LA.init({id: "1vVTUWl7zoRjnKXi",ck: "1vVTUWl7zoRjnKXi"})</script>
+    <script src="https://sdk.51.la/perf/js-sdk-perf.min.js" crossorigin="anonymous"></script>
+    <script>
+      new LingQue.Monitor().init({id:"202teQt8THXwqyve"});
+    </script>
+    <script defer src="/js/page-views.js"></script>
+    <div class="la-theme-widget" data-51la-widget aria-label="51.la 网站统计"></div>
+    <script defer src="/js/51la-theme-widget.js"></script>
+</body>
+</html>
