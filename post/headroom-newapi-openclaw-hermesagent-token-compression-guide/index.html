@@ -218,7 +218,7 @@
 <p>这次我没有替换原来的 NewAPI，也没有让 OpenClaw / HermesAgent 直接改用一个不确定的新网关。真正做法是：在 NewAPI 前面加一层 Headroom 代理，把所有已经使用 OpenAI-compatible 协议的调用改到 <code>http://&lt;headroom-host&gt;:8787/v1</code>，而原来的 NewAPI 入口继续保留。这样 Agent 发来的长上下文先经过 Headroom 压缩，再转发给 NewAPI，最后仍由 NewAPI 统一路由到后端模型。</p>
 <p>最关键的原则只有一句：<strong>先测试，后修改；只迁移测试通过的 OpenAI-compatible 项；非 OpenAI 协议的 fallback 不碰。</strong> 这篇文章既是复盘，也是一份可以直接交给 Agent 或人工照着执行的操作指南。</p>
 </blockquote>
-<p><img alt="Headroom 作为 Agent 请求进入 NewAPI 前的上下文压缩层" src="/post-images/headroom-newapi-openclaw-hermesagent-token-compression-guide/01-hero.png"></p>
+<p><img alt="Headroom 作为 Agent 请求进入 NewAPI 前的上下文压缩层" src="/post-images/headroom-newapi-openclaw-hermesagent-token-compression-guide/01-hero.webp"></p>
 <p><em>封面：Agent 请求先经过 Headroom 压缩层，再进入 NewAPI。图中没有真实主机名、内网地址或密钥。</em></p>
 <hr>
 <h2 id="一问题背景agent-很聪明但也很会吃-token">一、问题背景：Agent 很聪明，但也很会“吃 Token”</h2>
@@ -226,19 +226,19 @@
 <p>但 Agent 的工作方式天然会消耗大量上下文。它会读文件、抓日志、列目录、解释错误、保留历史对话，还会把工具输出再塞回下一轮请求里。一次普通的“帮我查一下服务为什么失败”，很快就会变成几万 token。就像你让同学帮你找作业本，他不仅把作业本拿来，还把整个书包、书桌、抽屉、昨天的聊天记录都搬到你面前。</p>
 <p>Headroom 的定位正好卡在这里。它不是新的模型供应商，也不是要替代 NewAPI 的网关，而是一个“上下文压缩层”。按照 Headroom 项目自己的介绍，它可以以 library、proxy、MCP 等方式工作，目标是把 Agent 读到的日志、工具输出、文件内容和历史上下文压缩后再送给模型。对我这套环境来说，最适合的是 proxy 模式：OpenClaw / HermesAgent 继续讲 OpenAI-compatible 协议，只是 <code>base_url</code> 从 NewAPI 改成 Headroom。</p>
 <p>用生活里的比喻说，NewAPI 是仓库大门，后面连着很多快递公司；Headroom 是大门前的打包台。原来 Agent 抱着一堆蓬松棉被直接进仓库，现在先在打包台抽真空、贴标签、保留取回原件的方法，再交给仓库。仓库还是原来的仓库，快递公司还是原来的快递公司，只是包裹变小了。</p>
-<p><img alt="Headroom sidecar 流程图：保留 NewAPI，在 OpenAI-compatible 流量前插入压缩层" src="/post-images/headroom-newapi-openclaw-hermesagent-token-compression-guide/02-sidecar-flow.png"></p>
+<p><img alt="Headroom sidecar 流程图：保留 NewAPI，在 OpenAI-compatible 流量前插入压缩层" src="/post-images/headroom-newapi-openclaw-hermesagent-token-compression-guide/02-sidecar-flow.webp"></p>
 <p><em>图 1：Headroom 是 sidecar，不是替代 NewAPI。旧入口继续可用，新入口只承接已经验证通过的 OpenAI-compatible 流量。</em></p>
 <hr>
 <h2 id="二问题表现不是接上就完了中间有两个坑">二、问题表现：不是“接上就完了”，中间有两个坑</h2>
 <p>这次真正踩到的第一个坑，是镜像在旧虚拟机位置上启动失败。容器日志里最显眼的是 <code>Fatal Python error: Illegal instruction</code>，退出码是 <code>132</code>。这不是端口写错，也不是环境变量写错，而是 CPU 指令集不匹配：镜像里的某个原生扩展在启动时调用了当前 CPU 不支持的指令。</p>
-<p><img alt="旧宿主机上的 Illegal instruction 脱敏截图" src="/post-images/headroom-newapi-openclaw-hermesagent-token-compression-guide/04-illegal-instruction-terminal.png"></p>
+<p><img alt="旧宿主机上的 Illegal instruction 脱敏截图" src="/post-images/headroom-newapi-openclaw-hermesagent-token-compression-guide/04-illegal-instruction-terminal.webp"></p>
 <p><em>图 2：真实排错过程的脱敏终端截图。<code>Illegal instruction</code> 的重点不是 Python 语法错误，而是底层 CPU 指令集。</em></p>
 <p>这个问题很像你买了一个需要三孔插座的电器，却拿到只有两孔插座的老房间里用。电器没有坏，房间也没有坏，但插不上。后来虚拟机切到新的宿主机，CPU 类型也调整为 host，重新检查后 <code>headroom._core</code> 可以正常加载，<code>headroom-proxy --version</code> 也能输出版本，说明镜像本身可以继续使用，不需要自己重新编译。</p>
 <p>第二个坑更隐蔽：容器里 Headroom 实际监听的是 <code>3000</code>，但最初 stack 暴露和健康检查都写成了 <code>8787</code>。于是外面访问 <code>8787</code> 不通，健康检查也失败。这个问题不是服务没启动，而是“门牌号贴错了”。家里有人在 3000 号房间等你，你却一直敲 8787 号房间，当然没人开门。</p>
-<p><img alt="端口映射不一致与修正后的脱敏截图" src="/post-images/headroom-newapi-openclaw-hermesagent-token-compression-guide/05-port-mismatch-terminal.png"></p>
+<p><img alt="端口映射不一致与修正后的脱敏截图" src="/post-images/headroom-newapi-openclaw-hermesagent-token-compression-guide/05-port-mismatch-terminal.webp"></p>
 <p><em>图 3：真实排错过程的脱敏终端截图。最终是宿主机 <code>8787</code> 映射到容器内 <code>3000</code>，健康检查也打容器内 <code>3000</code>。</em></p>
 <p>修正后，Headroom 的就绪检查返回健康状态，版本显示为 <code>0.26.0</code>，Rust core 也已经加载。更重要的是，用假 token 请求 <code>/v1/chat/completions</code>、<code>/v1/responses</code>、<code>/v1/completions</code> 时，请求能穿过 Headroom 到达 NewAPI，并返回 NewAPI 的认证错误，同时响应头里带有 Headroom 标识。这证明它不是一个孤立的健康页，而是真的在代理 OpenAI-compatible 请求。</p>
-<p><img alt="Headroom readyz / livez 脱敏截图" src="/post-images/headroom-newapi-openclaw-hermesagent-token-compression-guide/03-readyz-terminal.png"></p>
+<p><img alt="Headroom readyz / livez 脱敏截图" src="/post-images/headroom-newapi-openclaw-hermesagent-token-compression-guide/03-readyz-terminal.webp"></p>
 <p><em>图 4：真实就绪检查的脱敏终端截图。<code>ready=true</code> 只能说明 Headroom 自身健康，还要继续测 OpenAI-compatible 请求是否能穿透到后端。</em></p>
 <hr>
 <h2 id="三部署-headroomportainer-stack-的最小可用模板">三、部署 Headroom：Portainer Stack 的最小可用模板</h2>
@@ -289,7 +289,7 @@
 <li>Anthropic 协议的 fallback 不迁移，除非你另行部署并验证了对应协议的兼容入口。</li>
 </ol>
 <p>这套规则很像给一排水管换过滤器。你不能把全屋水管一起剪开，而是先确认每根管子原来有水，再接上新过滤器试水；原来就没水的管子先贴标签，不要混进本次验收。</p>
-<p><img alt="迁移后的 provider 验证矩阵脱敏截图" src="/post-images/headroom-newapi-openclaw-hermesagent-token-compression-guide/06-rollout-matrix-terminal.png"></p>
+<p><img alt="迁移后的 provider 验证矩阵脱敏截图" src="/post-images/headroom-newapi-openclaw-hermesagent-token-compression-guide/06-rollout-matrix-terminal.webp"></p>
 <p><em>图 5：真实迁移后的脱敏验证矩阵。只迁移返回 200 的 OpenAI-compatible 项，失败项和 Anthropic-mode fallback 保持原样。</em></p>
 <hr>
 <h2 id="五openclaw-怎么改本地和远端都一样路径不同">五、OpenClaw 怎么改：本地和远端都一样，路径不同</h2>
@@ -346,7 +346,7 @@
 <div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>systemctl --user restart hermes-gateway
 </span></span><span style="display:flex;"><span>systemctl --user is-active hermes-gateway
 </span></span></code></pre></div><p>我这次只迁移了 <code>chat_completions</code> / OpenAI-compatible 的主模型、custom provider 和可验证 fallback；明确属于 Anthropic 协议的 fallback 保持原样。这样做的好处是：Headroom 只接它擅长接的流量，原有兜底链路不会因为一次迁移被误伤。</p>
-<p><img alt="Agent 任务与人工操作的双 runbook" src="/post-images/headroom-newapi-openclaw-hermesagent-token-compression-guide/07-agent-manual-checklist.png"></p>
+<p><img alt="Agent 任务与人工操作的双 runbook" src="/post-images/headroom-newapi-openclaw-hermesagent-token-compression-guide/07-agent-manual-checklist.webp"></p>
 <p><em>图 6：同一件事可以交给 Agent，也可以人工执行。核心都是“测试先于修改”。</em></p>
 <hr>
 <h2 id="七回滚方案把-base_url-改回去就行">七、回滚方案：把 <code>base_url</code> 改回去就行</h2>

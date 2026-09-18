@@ -213,7 +213,7 @@
 <p><strong>先说结论</strong></p>
 <p>收到 429 就立刻换模型，看起来是在做高可用，实际上可能同时制造三件事：把一个短暂拥堵放大成重试风暴，把本来不该离开某个区域的数据送到不合规的备用线路，再让多个已经接单的模型共同计费。正确做法不是取消 fallback，而是把路由拆成三步：<strong>先用能力、地域、数据分类和预算做硬过滤，再根据健康度、延迟与成本选路，最后只对明确可恢复的错误做有界重试。</strong> 临时限流型 429 和短暂 5xx 可以降级；401、403、余额耗尽、合规拒绝必须停止并暴露根因。本文用一个 Python 标准库、零网络、零凭据的故障实验，实测路由过滤、429 降级、熔断、hedging 成本与审计预算，7 项验收全部通过。</p>
 </blockquote>
-<p><img alt="原创封面：429 不等于重试一切，AI Gateway 要先路由、再约束、最后验证。" src="/post-images/ai-gateway-routing-fallback-circuit-breaker/00-cover.png"></p>
+<p><img alt="原创封面：429 不等于重试一切，AI Gateway 要先路由、再约束、最后验证。" src="/post-images/ai-gateway-routing-fallback-circuit-breaker/00-cover.webp"></p>
 <p><em>图 1：原创确定性 PNG 封面。文中的 provider、价格、延迟、Token 和错误均为本地合成教学数据，不代表任何真实厂商报价或 SLA。</em></p>
 <h2 id="一问题背景fallback-本来是安全网为什么会变成放大器">一、问题背景：fallback 本来是安全网，为什么会变成放大器</h2>
 <p>在 <a href="/post/ai-platform-production-reference-architecture/">AI Platform 旗舰架构</a> 里，我把 AI Gateway 放在控制平面：它不只转发 HTTP，而是要理解模型能力、上下文、数据边界、成本和降级资格。问题是很多系统落地时只写了这样一段逻辑：</p>
@@ -237,7 +237,7 @@
 <p>这像暴雨天打车：附近没车时，平台可以扩大搜索范围；但如果乘客证件失效，换一家车队不会让证件突然有效；如果目的地在交通管制区，也不能偷偷让司机绕过检查站。AI Gateway 要做的是“调度 + 分诊 + 账本”，不是盲目轮询电话号码。</p>
 <h2 id="三先划清边界ai-gateway-不等于-api-gateway">三、先划清边界：AI Gateway 不等于 API Gateway</h2>
 <p>API Gateway 和 AI Gateway 可以部署在相邻层，甚至共享一部分基础设施，但它们回答的问题不同。</p>
-<p><img alt="原创对照图：API Gateway 与 AI Gateway 负责相邻但不同的决策。" src="/post-images/ai-gateway-routing-fallback-circuit-breaker/01-api-vs-ai-gateway.png"></p>
+<p><img alt="原创对照图：API Gateway 与 AI Gateway 负责相邻但不同的决策。" src="/post-images/ai-gateway-routing-fallback-circuit-breaker/01-api-vs-ai-gateway.webp"></p>
 <p><em>图 2：原创图。API Gateway 更像商场大门，检查身份、入口和客流；AI Gateway 更像医院分诊台，还要判断专科能力、病情等级、床位、距离和费用。两层都需要，不能用其中一个冒充另一个。</em></p>
 <p>API Gateway 通常负责：入口认证、URL/协议路由、租户配额、边缘限流、WAF、证书和入口日志。AI Gateway 在此基础上还要处理：</p>
 <ul>
@@ -251,7 +251,7 @@
 <p><a href="/post/newapi-self-hosted-relay-station/">NewAPI 自托管中转站</a> 可以统一模型入口、Token、渠道和用量，是很实用的网关基础；但“有统一入口”不自动等于“有完整路由策略”。生产系统仍需要在它的前后明确请求封套、错误分类、预算、熔断和审计所有权。</p>
 <h2 id="四正确路由的第一步先做硬过滤再谈加权评分">四、正确路由的第一步：先做硬过滤，再谈加权评分</h2>
 <p>很多路由器一上来就计算“哪个模型最便宜、最快”。顺序反了。数据地域、合规、能力和任务类型属于<strong>资格条件</strong>，不满足就是不能参赛；只有合格候选之间，才比较价格和延迟。</p>
-<p><img alt="原创路由漏斗：请求先经过能力、地域和分类硬过滤，再按健康、延迟与价格评分。" src="/post-images/ai-gateway-routing-fallback-circuit-breaker/02-routing-funnel.png"></p>
+<p><img alt="原创路由漏斗：请求先经过能力、地域和分类硬过滤，再按健康、延迟与价格评分。" src="/post-images/ai-gateway-routing-fallback-circuit-breaker/02-routing-funnel.webp"></p>
 <p><em>图 3：原创图。医院不会因为牙科今天便宜，就把骨折患者送去牙科；打车平台也不会因为另一座城市车辆更多，就派一辆根本到不了的车。硬约束先于偏好评分。</em></p>
 <p>我建议每次请求先形成一个不可由模型改写的结构化 envelope，至少包含：</p>
 <div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-json" data-lang="json"><span style="display:flex;"><span>{
@@ -267,7 +267,7 @@
 </span></span><span style="display:flex;"><span>}
 </span></span></code></pre></div><p>这里使用的都是合成值，不含真实租户、主机、地址或凭据。路由器先排除缺能力、地域不符、分类上限不足、最坏成本超过预算的线路；剩余候选再根据滚动健康度、P95 延迟、排队深度、价格和质量评分排序。</p>
 <p>本地实验把四条合成线路放进同一个候选池：一条地域不符，一条缺工具能力，一条最坏成本超出请求预算，只有 <code>route-fit</code> 同时满足全部条件。</p>
-<p><img alt="真实本地实验输出截图：路由器逐条记录排除原因并选择唯一合格线路。" src="/post-images/ai-gateway-routing-fallback-circuit-breaker/10-real-routing-filter.png"></p>
+<p><img alt="真实本地实验输出截图：路由器逐条记录排除原因并选择唯一合格线路。" src="/post-images/ai-gateway-routing-fallback-circuit-breaker/10-real-routing-filter.webp"></p>
 <p><em>图 4：真实本地 stdout 截图。实验没有访问网络；选择结果不是“第一个能连上的”，而是能力、地域、数据分类和成本预算共同过滤后的结果。</em></p>
 <h3 id="能力路由模型名不是能力声明">能力路由：模型名不是能力声明</h3>
 <p>不要在业务代码里写“某模型一定支持 tools”。能力应该是版本化注册信息，并经过最小探测与契约测试。工具调用、严格 JSON、多模态输入、最大上下文、最大输出、流式事件格式都可能随 provider、模型版本和兼容层变化。</p>
@@ -277,7 +277,7 @@
 <p>估算至少要包含输入 Token、允许的最大输出、缓存命中规则、图片/音频计费和可能的重试预留。只看“每百万输入 Token 单价”会低估长输出和多模态任务。对 Agent，还要按<strong>完成一次业务结果的总成本</strong>衡量，而不是单次模型调用的价格。</p>
 <h2 id="五429-不是一种原因必须同时看状态码和错误子码">五、429 不是一种原因：必须同时看状态码和错误子码</h2>
 <p>RFC 6585 定义 429 为 Too Many Requests，并允许服务端返回 <code>Retry-After</code>。现实中的模型 API 还可能用相同 HTTP 状态承载不同业务原因，例如临时速率限制、组织配额耗尽或余额不足。于是“看见 429 就换模型”会把语义压扁。</p>
-<p><img alt="原创错误决策图：临时限流和短暂 5xx 可以有界降级，认证、余额和合规错误必须停止。" src="/post-images/ai-gateway-routing-fallback-circuit-breaker/03-error-decision.png"></p>
+<p><img alt="原创错误决策图：临时限流和短暂 5xx 可以有界降级，认证、余额和合规错误必须停止。" src="/post-images/ai-gateway-routing-fallback-circuit-breaker/03-error-decision.webp"></p>
 <p><em>图 5：原创图。路由决策需要 <code>HTTP status + provider code + 本地策略</code>。同样是 429，<code>rate_limited</code> 可以进入有界 fallback，<code>insufficient_quota</code> 应停止；不能只用状态码做一个巨大 switch。</em></p>
 <p>建议先把各厂商错误归一化为本地稳定分类，再由策略决定动作：</p>
 <table>
@@ -345,14 +345,14 @@
 </ol>
 <p>退避应包含 jitter，避免成千上万客户端在整点同时醒来。<code>Retry-After</code> 是重要信号，但仍要受本地 deadline 和预算约束；上游让你等 30 秒，而用户只剩 800 毫秒，正确结果是尽快失败或走合格备用线路，不是让请求在后台失踪。</p>
 <p>实验中，主线路 80ms 后返回合成 <code>429 rate_limited</code>，网关执行 100ms 确定性退避，备用线路 450ms 完成，总耗时 630ms，仍在 1200ms deadline 内；第三次尝试被统一预算挡住。</p>
-<p><img alt="真实本地实验输出截图：限流型 429 在一次退避后走兼容备用线路，第三次尝试被预算阻止。" src="/post-images/ai-gateway-routing-fallback-circuit-breaker/11-real-bounded-429.png"></p>
+<p><img alt="真实本地实验输出截图：限流型 429 在一次退避后走兼容备用线路，第三次尝试被预算阻止。" src="/post-images/ai-gateway-routing-fallback-circuit-breaker/11-real-bounded-429.webp"></p>
 <p><em>图 6：真实本地 stdout 截图。两次尝试、总成本和剩余时间被放在同一条证据链里；<code>outbound_network_calls=0</code> 说明所有 provider 都是本地合成对象。</em></p>
 <p>相反，实验给主线路依次注入 401、余额耗尽型 429 和合规型 403，三种错误全部被归类为 STOP，备用线路调用次数保持为 0。</p>
-<p><img alt="真实本地实验输出截图：401、余额耗尽型 429 与合规 403 全部停止，没有调用备用线路。" src="/post-images/ai-gateway-routing-fallback-circuit-breaker/12-real-terminal-errors.png"></p>
+<p><img alt="真实本地实验输出截图：401、余额耗尽型 429 与合规 403 全部停止，没有调用备用线路。" src="/post-images/ai-gateway-routing-fallback-circuit-breaker/12-real-terminal-errors.webp"></p>
 <p><em>图 7：真实本地 stdout 截图。“服务更可用”不能以隐藏身份、预算或合规根因为代价；这三类错误应进入告警和修复流程。</em></p>
 <h2 id="七熔断器保护的是整条线路不是某一个请求">七、熔断器：保护的是整条线路，不是某一个请求</h2>
 <p>重试预算回答“这一个请求还能试几次”；熔断器回答“大家是否应该暂时别再敲这扇坏门”。没有熔断，成千上万请求会各自礼貌地重试，把一个局部故障变成全平台排队。</p>
-<p><img alt="原创熔断状态图：CLOSED、OPEN、HALF_OPEN 通过失败阈值、冷却时间与探测恢复。" src="/post-images/ai-gateway-routing-fallback-circuit-breaker/04-circuit-breaker.png"></p>
+<p><img alt="原创熔断状态图：CLOSED、OPEN、HALF_OPEN 通过失败阈值、冷却时间与探测恢复。" src="/post-images/ai-gateway-routing-fallback-circuit-breaker/04-circuit-breaker.webp"></p>
 <p><em>图 8：原创图。家里电路短路后，空气开关先断开；它不会让每件电器继续试十次。冷却后只做一次小探测，确认安全再恢复全部流量。</em></p>
 <p>生产熔断器应注意几个边界：</p>
 <ul>
@@ -365,21 +365,21 @@
 <li>熔断状态变化要进入指标和审计，但不要把凭据 ID 写进公开标签。</li>
 </ul>
 <p>本地实验让同一线路连续三次返回 503，第三次后进入 OPEN；第 4 个请求零上游调用地快速失败。冷却时间没到仍保持 OPEN，到点后只放行一次 HALF_OPEN 探针，探针成功才回到 CLOSED。</p>
-<p><img alt="真实本地实验输出截图：连续 503 打开熔断，冷却前快速失败，半开探针成功后恢复。" src="/post-images/ai-gateway-routing-fallback-circuit-breaker/13-real-circuit-breaker.png"></p>
+<p><img alt="真实本地实验输出截图：连续 503 打开熔断，冷却前快速失败，半开探针成功后恢复。" src="/post-images/ai-gateway-routing-fallback-circuit-breaker/13-real-circuit-breaker.webp"></p>
 <p><em>图 9：真实本地 stdout 截图。实验使用虚拟时钟，所以不用真的等待数秒；状态转换是确定性的，特别适合放进 CI 发布闸门。</em></p>
 <h2 id="八hedging可以降低尾延迟也能让一份答案收到三张账单">八、Hedging：可以降低尾延迟，也能让一份答案收到三张账单</h2>
 <p>Hedging 不是失败后重试，而是第一份请求还没完成时，延迟一小段时间再并发发出相同请求，采用最先返回的答案。它对幂等、只读、尾延迟很长的调用可能有效，但风险也最容易被“平均延迟下降”掩盖。</p>
 <p>实验构造了一个故意悲观的场景：A 在 0ms 接单，B 在 200ms 接单，C 在 400ms 接单；B 最早在 700ms 完成，于是网关采用 B 的答案并取消另外两条。但三条线路都已经接受任务，每条合成成本为 0.036 美元，总成本从 0.036 变成 0.108，正好 3 倍。</p>
-<p><img alt="真实本地实验输出截图：三条 hedged 线路都已接单，只使用一个答案，合成最坏成本达到 3 倍。" src="/post-images/ai-gateway-routing-fallback-circuit-breaker/14-real-hedging-cost.png"></p>
+<p><img alt="真实本地实验输出截图：三条 hedged 线路都已接单，只使用一个答案，合成最坏成本达到 3 倍。" src="/post-images/ai-gateway-routing-fallback-circuit-breaker/14-real-hedging-cost.webp"></p>
 <p><em>图 10：真实本地 stdout 截图。这是用来验证预算护栏的合成最坏案例，不声称每家 provider 都会以相同方式计费。取消到达时，上游可能尚未工作、已做部分工作或已完成，真实账单要以厂商规则和用量回执为准。</em></p>
 <p>如果确实要用 hedging，我会设置这些门槛：只允许无副作用的模型推理；默认最多两路；超过历史 P95/P99 的动态阈值才发第二路；发出前先保留最坏成本；首个有效答案胜出后立即取消；把 loser 的 Token、时间和费用单独计量；一旦进入工具调用阶段绝不复制执行。流式响应还要更谨慎——第一段内容已经展示给用户后，不能悄悄换成另一模型继续拼接。</p>
 <h2 id="九预算不是报表它必须在调用前挡住请求">九、预算不是报表：它必须在调用前挡住请求</h2>
 <p>很多平台“有成本看板”，但账单发生后才展示曲线。那是后视镜，不是刹车。真正的预算控制应采用<strong>先预留、后结算</strong>：根据输入估算、最大输出和价格表先保留额度；调用完成后按实际用量结算并释放差额；失败或 fallback 前重新计算整条请求的累计最坏成本。</p>
 <p>预算至少分四层：单次模型尝试、整次请求、完整 Agent 任务、租户/团队时间窗口。前两层防止一次异常，后两层防止慢性失控。预算耗尽应该返回明确的 BUDGET_EXCEEDED，不应伪装成模型拥堵。</p>
-<p><img alt="原创审计回执：记录策略、候选、排除原因、尝试和成本，同时不保存凭据与原始 Prompt。" src="/post-images/ai-gateway-routing-fallback-circuit-breaker/05-audit-receipt.png"></p>
+<p><img alt="原创审计回执：记录策略、候选、排除原因、尝试和成本，同时不保存凭据与原始 Prompt。" src="/post-images/ai-gateway-routing-fallback-circuit-breaker/05-audit-receipt.webp"></p>
 <p><em>图 11：原创图。路线小票像出租车行程单：要写清为什么派这辆车、绕了哪条路、花了多少；不需要把乘客的银行卡密码和整段私人谈话印上去。</em></p>
 <p>实验里，主线路在合成 503 前已经产生 0.020 美元部分费用，备用线路最坏估算 0.042 美元，两者累计 0.062，超过请求上限 0.050，因此 fallback 在调用前被拒绝。</p>
-<p><img alt="真实本地实验输出截图：累计最坏成本超过请求预算，昂贵备用线路未被调用。" src="/post-images/ai-gateway-routing-fallback-circuit-breaker/15-real-budget-audit.png"></p>
+<p><img alt="真实本地实验输出截图：累计最坏成本超过请求预算，昂贵备用线路未被调用。" src="/post-images/ai-gateway-routing-fallback-circuit-breaker/15-real-budget-audit.webp"></p>
 <p><em>图 12：真实本地 stdout 截图。审计保留 request ID、策略版本、候选、排除原因、尝试和合成成本；凭据脱敏，原始 Prompt 不入这份路由日志。</em></p>
 <p>这也解释了为什么我在 <a href="/post/ai-hidden-bill-token-syndrome/">AI 隐形账单</a> 里强调“每个成功结果成本”：压低单价不等于总成本下降。上下文过长时可以参考 <a href="/post/headroom-newapi-openclaw-hermesagent-token-compression-guide/">Headroom + NewAPI Token 压缩实战</a>，但压缩、路由、重试和 hedging 的节省/浪费必须进入同一本任务账。</p>
 <h2 id="十可观测性与审计回答为什么走这条路">十、可观测性与审计：回答“为什么走这条路”</h2>
@@ -407,7 +407,7 @@
 <li>累计最坏成本超限时在调用前挡住 fallback；</li>
 <li>整个实验零真实凭据、零出站网络。</li>
 </ol>
-<p><img alt="真实本地实验输出截图：AI Gateway 故障实验 7 项验收全部通过。" src="/post-images/ai-gateway-routing-fallback-circuit-breaker/16-real-acceptance.png"></p>
+<p><img alt="真实本地实验输出截图：AI Gateway 故障实验 7 项验收全部通过。" src="/post-images/ai-gateway-routing-fallback-circuit-breaker/16-real-acceptance.webp"></p>
 <p><em>图 13：真实本地 stdout 截图。7/7 PASS 证明的是控制逻辑按预期工作，不证明任何真实 provider 的质量、价格、吞吐或 SLA。</em></p>
 <p>结构化结果会写入 <a href="/post-files/ai-gateway-routing-fallback-circuit-breaker/lab-output/events.jsonl">events.jsonl</a> 与 <a href="/post-files/ai-gateway-routing-fallback-circuit-breaker/lab-output/summary.json">summary.json</a>。所有 provider 名、价格、延迟、Token 和响应均为合成数据，适合教学、回归和 CI，不适合拿来做厂商排行榜。</p>
 <h2 id="十二三平台一键运行windows-11ubuntu-2604macos-26">十二、三平台一键运行：Windows 11、Ubuntu 26.04、macOS 26</h2>

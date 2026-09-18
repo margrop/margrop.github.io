@@ -220,7 +220,7 @@
 <p>I did not replace NewAPI, and I did not point OpenClaw or HermesAgent at an unproven gateway. The actual design is simpler: place Headroom in front of NewAPI, then move only the already validated OpenAI-compatible providers to <code>http://&lt;headroom-host&gt;:8787/v1</code>. The original NewAPI endpoint stays available. Long agent context now goes through Headroom first, gets compressed, then continues to NewAPI for the same routing and model management as before.</p>
 <p>The rule that kept the rollout boring was: <strong>test first, edit second; migrate only OpenAI-compatible providers that pass; leave non-OpenAI fallbacks alone.</strong> This post is both a write-up and a runbook you can hand to an Agent or follow manually.</p>
 </blockquote>
-<p><img alt="Headroom as the context compression layer before agent traffic enters NewAPI" src="/post-images/headroom-newapi-openclaw-hermesagent-token-compression-guide/01-hero.png"></p>
+<p><img alt="Headroom as the context compression layer before agent traffic enters NewAPI" src="/post-images/headroom-newapi-openclaw-hermesagent-token-compression-guide/01-hero.webp"></p>
 <p><em>Cover: agent traffic passes through Headroom before entering NewAPI. The image contains no real hostnames, internal addresses, or secrets.</em></p>
 <hr>
 <h2 id="1-background-agents-are-smart-but-they-eat-tokens">1. Background: agents are smart, but they eat tokens</h2>
@@ -228,19 +228,19 @@
 <p>The problem is how agents work. They read files, collect logs, list directories, explain errors, keep conversation history, and feed tool output back into the next model call. A simple “please investigate why this service failed” can quickly turn into tens of thousands of tokens. In everyday terms, you ask a classmate to bring you a homework notebook, and they bring the notebook, the whole backpack, the desk drawer, and yesterday&rsquo;s chat history.</p>
 <p>Headroom fits exactly at that point. It is not another model provider and it does not need to replace NewAPI. It is a context compression layer. Its own documentation describes several modes: library, proxy, MCP, and agent wrapping. For this environment, proxy mode is the cleanest: OpenClaw and HermesAgent continue speaking OpenAI-compatible API; only their <code>base_url</code> changes from NewAPI to Headroom.</p>
 <p>Think of NewAPI as the warehouse gate. Behind it are many delivery companies. Headroom is a packing table in front of that gate. Previously, the agent carried bulky blankets directly into the warehouse. Now the blankets are vacuum-packed first, labelled, and handed to the same warehouse. The warehouse stays the same. The delivery companies stay the same. The package gets smaller.</p>
-<p><img alt="Headroom sidecar flow: keep NewAPI, insert compression before OpenAI-compatible traffic" src="/post-images/headroom-newapi-openclaw-hermesagent-token-compression-guide/02-sidecar-flow.png"></p>
+<p><img alt="Headroom sidecar flow: keep NewAPI, insert compression before OpenAI-compatible traffic" src="/post-images/headroom-newapi-openclaw-hermesagent-token-compression-guide/02-sidecar-flow.webp"></p>
 <p><em>Figure 1: Headroom is a sidecar, not a NewAPI replacement. The old endpoint remains available; the new endpoint handles only validated OpenAI-compatible traffic.</em></p>
 <hr>
 <h2 id="2-symptoms-two-traps-before-the-happy-path">2. Symptoms: two traps before the happy path</h2>
 <p>The first real trap was that the existing image failed on the old VM placement. The container log showed <code>Fatal Python error: Illegal instruction</code>, and the exit code was <code>132</code>. This was not a port issue and not a missing environment variable. It was a CPU instruction-set mismatch: a native extension inside the image tried to use an instruction the current virtual CPU did not expose.</p>
-<p><img alt="Sanitized screenshot of the Illegal instruction failure on the old host placement" src="/post-images/headroom-newapi-openclaw-hermesagent-token-compression-guide/04-illegal-instruction-terminal.png"></p>
+<p><img alt="Sanitized screenshot of the Illegal instruction failure on the old host placement" src="/post-images/headroom-newapi-openclaw-hermesagent-token-compression-guide/04-illegal-instruction-terminal.webp"></p>
 <p><em>Figure 2: sanitized real terminal output. <code>Illegal instruction</code> points below Python syntax and into CPU capability territory.</em></p>
 <p>The everyday analogy: you bought an appliance that requires a three-prong outlet, then tried to use it in an old room with only a two-prong outlet. The appliance is not broken, and the room is not broken; they just do not match. After the VM was moved to a newer host and the virtual CPU type was exposed as host, <code>headroom._core</code> loaded correctly and <code>headroom-proxy --version</code> printed a version. The existing image was fine; rebuilding it was unnecessary.</p>
 <p>The second trap was subtler. Headroom listened on port <code>3000</code> inside the container, but the first stack published and health-checked <code>8787</code>. The service was waiting in room 3000, while I kept knocking on room 8787. No wonder nobody answered.</p>
-<p><img alt="Sanitized screenshot of the port mismatch and the final fix" src="/post-images/headroom-newapi-openclaw-hermesagent-token-compression-guide/05-port-mismatch-terminal.png"></p>
+<p><img alt="Sanitized screenshot of the port mismatch and the final fix" src="/post-images/headroom-newapi-openclaw-hermesagent-token-compression-guide/05-port-mismatch-terminal.webp"></p>
 <p><em>Figure 3: sanitized real terminal output. The final setup maps host <code>8787</code> to container <code>3000</code>, and the healthcheck also targets container port <code>3000</code>.</em></p>
 <p>After fixing that, Headroom readiness returned healthy, version <code>0.26.0</code>, with the Rust core loaded. More importantly, dummy-token requests to <code>/v1/chat/completions</code>, <code>/v1/responses</code>, and <code>/v1/completions</code> reached NewAPI through Headroom and returned NewAPI authentication errors with Headroom headers. That proves we were not just looking at a green health page; the OpenAI-compatible forwarding path was actually alive.</p>
-<p><img alt="Sanitized Headroom readyz / livez screenshot" src="/post-images/headroom-newapi-openclaw-hermesagent-token-compression-guide/03-readyz-terminal.png"></p>
+<p><img alt="Sanitized Headroom readyz / livez screenshot" src="/post-images/headroom-newapi-openclaw-hermesagent-token-compression-guide/03-readyz-terminal.webp"></p>
 <p><em>Figure 4: sanitized real readiness check. <code>ready=true</code> proves Headroom itself is up; a real OpenAI-compatible request proves the business path.</em></p>
 <hr>
 <h2 id="3-deploying-headroom-a-minimal-portainer-stack">3. Deploying Headroom: a minimal Portainer Stack</h2>
@@ -291,7 +291,7 @@
 <li>Do not migrate Anthropic-mode fallbacks unless you have separately deployed and verified a compatible route for that protocol.</li>
 </ol>
 <p>This is like adding filters to a row of water pipes. You do not cut every pipe at once. You first confirm a pipe has water, attach the filter, test again, and only then move to the next pipe. Pipes that had no water before get labelled, not mixed into the success report.</p>
-<p><img alt="Sanitized provider verification matrix after migration" src="/post-images/headroom-newapi-openclaw-hermesagent-token-compression-guide/06-rollout-matrix-terminal.png"></p>
+<p><img alt="Sanitized provider verification matrix after migration" src="/post-images/headroom-newapi-openclaw-hermesagent-token-compression-guide/06-rollout-matrix-terminal.webp"></p>
 <p><em>Figure 5: sanitized real verification matrix. Only 200-returning OpenAI-compatible providers moved. Broken old providers and Anthropic-mode fallbacks stayed in place.</em></p>
 <hr>
 <h2 id="5-openclaw-changes-same-idea-locally-and-remotely-different-paths">5. OpenClaw changes: same idea locally and remotely, different paths</h2>
@@ -349,7 +349,7 @@
 <div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>systemctl --user restart hermes-gateway
 </span></span><span style="display:flex;"><span>systemctl --user is-active hermes-gateway
 </span></span></code></pre></div><p>In this rollout, I moved only <code>chat_completions</code> / OpenAI-compatible main models, custom providers, and verified fallbacks. Anthropic-mode fallbacks stayed untouched. The result is a narrower but safer change: Headroom handles traffic it has actually proven it can handle, and the existing fallback chain remains intact.</p>
-<p><img alt="Agent runbook and manual runbook for the same migration" src="/post-images/headroom-newapi-openclaw-hermesagent-token-compression-guide/07-agent-manual-checklist.png"></p>
+<p><img alt="Agent runbook and manual runbook for the same migration" src="/post-images/headroom-newapi-openclaw-hermesagent-token-compression-guide/07-agent-manual-checklist.webp"></p>
 <p><em>Figure 6: the same operation can be agent-driven or manual. The center rule is the same: test before editing.</em></p>
 <hr>
 <h2 id="7-rollback-change-base_url-back">7. Rollback: change <code>base_url</code> back</h2>

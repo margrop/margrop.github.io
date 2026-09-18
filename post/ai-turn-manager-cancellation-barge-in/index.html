@@ -246,7 +246,7 @@
 <p>这里有一条必须写进数据库约束或状态机代码的硬规则：<strong>一个 Turn 只能写入一个终态。</strong> <code>COMPLETED</code> 之后迟到的 cancel 只能得到“已经结束”；<code>CANCELLED</code> 之后迟到的模型完成事件必须被丢弃；不可逆提交在取消后才返回成功时，不能为了界面好看把它伪装成 <code>CANCELLED</code>。</p>
 <h2 id="三正常流先立基线ttft-快不等于整轮已经完成">三、正常流先立基线：TTFT 快，不等于整轮已经完成</h2>
 <p>在讨论取消前，先看一条没有故障的本地合成流。Turn 被接受后，检索先完成，模型开始流式输出，61ms 出现首个 Token，110ms 写入唯一的 <code>COMPLETED</code> 终态。这个虚拟时钟不是性能跑分，而是给之后的竞态建立一条可重复的时间轴。</p>
-<p><img alt="真实本地实验截图：正常流在 deadline 内完成，只有一个终态。" src="/post-images/ai-turn-manager-cancellation-barge-in/07-real-baseline-stream.png"></p>
+<p><img alt="真实本地实验截图：正常流在 deadline 内完成，只有一个终态。" src="/post-images/ai-turn-manager-cancellation-barge-in/07-real-baseline-stream.webp"></p>
 <p><em>图 3：真实运行日志截图。脚本通过 socket guard 阻断网络，只执行本地合成事件；<code>provider=synthetic</code>、<code>real_models=0</code>。TTFT 与 E2E 都由同一 Turn 计算，但回答开始、回答结束和业务动作完成仍是三个不同时间点。</em></p>
 <p>为什么要先立基线？因为很多看板把 <code>HTTP 200</code> 或“收到第一个 Token”叫成功。对工具型 Agent，这最多证明它开始说话。用户问“帮我撤销预约”，首 Token 可能 300ms 到达，真正撤销需要 8 秒；如果第 2 秒用户喊停，平台需要知道停的是文字、计划、工具，还是四者全部。</p>
 <h2 id="四取消树不要广播一个布尔值然后祈祷大家看见">四、取消树：不要广播一个布尔值，然后祈祷大家看见</h2>
@@ -262,12 +262,12 @@
 <li>根据事实写 <code>CANCELLED</code>、<code>FAILED</code> 或 <code>RECONCILE_REQUIRED</code>，而不是一律显示取消成功。</li>
 </ol>
 <p>本地实验在 75ms 注入 <code>turn.cancel</code>。检索、模型和 TTS 分别收到了信号；一个 82ms 才到的模型增量被交付门丢弃；83ms 时整轮进入 <code>CANCELLED</code>，传播耗时 8ms。</p>
-<p><img alt="真实本地实验截图：取消传播至三个子任务，迟到增量被 generation gate 丢弃。" src="/post-images/ai-turn-manager-cancellation-barge-in/08-real-cancel-tree.png"></p>
+<p><img alt="真实本地实验截图：取消传播至三个子任务，迟到增量被 generation gate 丢弃。" src="/post-images/ai-turn-manager-cancellation-barge-in/08-real-cancel-tree.webp"></p>
 <p><em>图 5：真实运行日志截图。这里的 8ms 是确定性虚拟时钟，用于验证事件顺序与 SLO 断言，不代表某个模型厂商的真实取消速度。生产验收应在真实链路统计 p50、p95 和 p99。</em></p>
 <h2 id="五deadline-不是每层各设一个-timeout要像分零花钱一样分预算">五、Deadline 不是每层各设一个 Timeout：要像分零花钱一样分预算</h2>
 <p><code>timeout=30s</code> 看起来简单，但如果检索、模型、工具每层都各自拥有 30 秒，整轮可能拖到 90 秒。更糟的是，上层剩 200ms 时仍启动一个可能花 20 秒的写工具，随后页面超时，副作用却继续发生。</p>
 <p>Deadline 是整轮的绝对截止时间；timeout 是某一步最多允许多久。Turn Manager 应把剩余时间当成一份有限预算：先给检索 25ms，再给模型 55ms，保留 10ms 用于收尾；任何子任务获得的是“自身上限”和“父级剩余时间”的较小值。就像家长给孩子 10 元零花钱，买铅笔用了 4 元，后面就不能假装还有 10 元去买本子。</p>
-<p><img alt="真实本地实验截图：总预算耗尽后模型被取消，工具没有启动。" src="/post-images/ai-turn-manager-cancellation-barge-in/10-real-deadline-budget.png"></p>
+<p><img alt="真实本地实验截图：总预算耗尽后模型被取消，工具没有启动。" src="/post-images/ai-turn-manager-cancellation-barge-in/10-real-deadline-budget.webp"></p>
 <p><em>图 6：真实运行日志截图。90ms deadline 到达后，模型收到 <code>deadline_exceeded</code>，规划器明确记录 <code>tool.not_started reason=no_budget</code>，终态是 <code>FAILED/DEADLINE_EXCEEDED</code>，不是模糊的网络错误。</em></p>
 <p>生产中至少区分：用户主动停止、入口 deadline、模型首 Token 超时、流空闲超时、工具执行超时和平台关机排空。它们的重试资格完全不同。用户停止通常不应自动重试；模型首 Token 超时可能允许有界 fallback；已经提交的工具超时则需要按幂等键查询结果，不能盲目再执行。</p>
 <h2 id="六流式输出的真正难点已经在路上的事件不会听话">六、流式输出的真正难点：已经在路上的事件不会听话</h2>
@@ -288,12 +288,12 @@
 <p><img alt="原创时间线：speech_started 后依次清音频、取消旧响应、隔离迟到包并创建新 Turn。" src="/post-images/ai-turn-manager-cancellation-barge-in/03-barge-in-timeline.svg"></p>
 <p><em>图 7：用户感知到的“成功插话”至少包含三件事：马上安静、旧工作停止、旧包不能复活。只做 <code>response.cancel</code> 而不做 <code>audio.clear</code>，缓冲里的声音仍会继续播放。</em></p>
 <p>实验让 generation 7 的语音先播放两个帧，70ms 注入合成的 <code>speech_started</code>。71ms 接受插话，72ms 清掉四个待播帧，73ms 取消旧响应，79ms 丢弃迟到的旧音频，随后 generation 8 完成新回答。</p>
-<p><img alt="真实本地实验截图：语音插话清空音频、取消旧 generation，并让新 Turn 继续。" src="/post-images/ai-turn-manager-cancellation-barge-in/09-real-barge-in.png"></p>
+<p><img alt="真实本地实验截图：语音插话清空音频、取消旧 generation，并让新 Turn 继续。" src="/post-images/ai-turn-manager-cancellation-barge-in/09-real-barge-in.webp"></p>
 <p><em>图 8：真实运行日志截图。没有录制真实声音，也没有连接语音供应商；事件用于验证 Barge-in 的最小协议语义。真实系统还要处理回声消除、VAD 误触发、半双工设备和移动端音频焦点。</em></p>
 <p>VAD 也不能一检测到声音就无条件取消。扬声器回声、键盘敲击、咳嗽都可能被误判。常见策略是把声学置信度、连续语音时长、是否按下说话键、当前回答是否可打断、用户偏好和设备回声状态组合起来；高风险工具不能因为一声咳嗽就取消到不一致状态。语音体验追求“快”，状态机追求“真”，两者要由 Turn Manager 对齐。</p>
 <h2 id="八停止请求必须幂等用户连点三次后台只能刹一次车">八、停止请求必须幂等：用户连点三次，后台只能刹一次车</h2>
 <p>移动网络会重传，前端会因为没收到确认而重试，用户也可能连续点击。若每个 cancel 都新建清理任务，可能重复撤销、重复发通知，甚至把新 Turn 误杀。取消请求应带稳定的 request ID；服务端对状态转换做事务性比较：只有第一次能从 <code>RUNNING</code> 进入 <code>CANCEL_REQUESTED</code>，后续请求返回相同终态，不再产生新的取消副作用。</p>
-<p><img alt="真实本地实验截图：三个停止请求只产生一次取消效果。" src="/post-images/ai-turn-manager-cancellation-barge-in/14-real-idempotent-stop.png"></p>
+<p><img alt="真实本地实验截图：三个停止请求只产生一次取消效果。" src="/post-images/ai-turn-manager-cancellation-barge-in/14-real-idempotent-stop.webp"></p>
 <p><em>图 9：真实运行日志截图。第一次停止写入一次状态转换；相同 request ID 的重试和另一个迟到停止都得到 <code>already_terminal</code>，<code>cancel_effects</code> 仍为 1。幂等不等于忽略请求，而是重复请求得到一致结果。</em></p>
 <p>API 返回也应明确：<code>accepted</code> 表示平台开始取消，<code>already_terminal</code> 表示任务早已结束，<code>reconcile_required</code> 表示外部提交仍需确认。不要让所有分支都返回一个含糊的 200 和“操作成功”。</p>
 <h2 id="九工具取消边界能停止的任务要合作不能撤回的动作要诚实">九、工具取消边界：能停止的任务要合作，不能撤回的动作要诚实</h2>
@@ -301,10 +301,10 @@
 <p><img alt="原创工具边界：可合作工具可以回滚临时工作，已发出的外部提交只能对账。" src="/post-images/ai-turn-manager-cancellation-barge-in/04-tool-cancel-boundary.svg"></p>
 <p><em>图 10：取消不是时光机。commit 之前可以停，commit 已发出后只能停止继续交付、记录幂等键并查询最终结果。把未知结果写成“已取消”会制造比超时更危险的假确定性。</em></p>
 <p>实验里的可合作工具先读取输入，再写一个合成临时结果；65ms 用户停止，70ms 工具在 publish 前观察到信号，删除临时工作，最终副作用为 0。</p>
-<p><img alt="真实本地实验截图：可取消工具在 publish 前观察信号并清理临时工作。" src="/post-images/ai-turn-manager-cancellation-barge-in/11-real-cancellable-tool.png"></p>
+<p><img alt="真实本地实验截图：可取消工具在 publish 前观察信号并清理临时工作。" src="/post-images/ai-turn-manager-cancellation-barge-in/11-real-cancellable-tool.webp"></p>
 <p><em>图 11：真实运行日志截图。生产工具应明确声明 <code>cancellable</code>、检查点和 cleanup 结果；仅仅在工具 schema 写“支持取消”没有意义，Worker 必须能证明它在哪一步停下。</em></p>
 <p>另一个场景故意把取消注入到最棘手的窗口：外部 commit 已经带幂等键发出，但确认尚未返回。此时 Turn Manager 可以停止新文字、停止 TTS、拒绝后续工具，却不能保证那次提交没发生。105ms 合成确认返回，副作用为 1，终态因此是 <code>RECONCILE_REQUIRED</code>，而不是 <code>CANCELLED</code>。</p>
-<p><img alt="真实本地实验截图：取消发生在外部提交之后，平台诚实进入 RECONCILE_REQUIRED。" src="/post-images/ai-turn-manager-cancellation-barge-in/12-real-noncancellable-tool.png"></p>
+<p><img alt="真实本地实验截图：取消发生在外部提交之后，平台诚实进入 RECONCILE_REQUIRED。" src="/post-images/ai-turn-manager-cancellation-barge-in/12-real-noncancellable-tool.webp"></p>
 <p><em>图 12：真实运行日志截图。这不是取消失败，而是正确暴露物理边界。下一步应按 idempotency key 查询、补偿或请求人工确认；绝不能无条件重放。</em></p>
 <p>对工具按取消能力分类很实用：</p>
 <ul>
@@ -320,7 +320,7 @@
 <p><img alt="原创断线续传：客户端从最后确认的序号之后重放，重复序号只确认不重复渲染。" src="/post-images/ai-turn-manager-cancellation-barge-in/05-reconnect-replay.svg"></p>
 <p><em>图 13：事件序号负责顺序，resume token 负责授权，TTL 负责生命周期。只有 seq 没有鉴权会变成越权读取；只有 token 没有 seq 会造成重复展示。</em></p>
 <p>实验在客户端确认 seq 3 后断线，服务端继续持久化 seq 4、5 与终态 6。客户端用 <code>after_seq=3</code> 恢复，收到 4..6；一个重复的 seq 5 被忽略，最终文本恰好是一次 <code>The service is healthy.</code>。</p>
-<p><img alt="真实本地实验截图：断线后按游标重放，重复事件没有重复渲染。" src="/post-images/ai-turn-manager-cancellation-barge-in/13-real-reconnect-replay.png"></p>
+<p><img alt="真实本地实验截图：断线后按游标重放，重复事件没有重复渲染。" src="/post-images/ai-turn-manager-cancellation-barge-in/13-real-reconnect-replay.webp"></p>
 <p><em>图 14：真实运行日志截图。实验验证事件语义，不测试真实网络质量。生产还要限制 resume TTL、绑定用户/设备、压缩事件，并在存储不可用时明确选择“无法续传”而不是悄悄重新执行。</em></p>
 <p>如果用户在断线期间取消，重连后应先看到权威终态，再决定是否重放之前的文本。若 Turn 已 <code>CANCELLED</code>，旧流绝不能因为客户端拿着旧游标重新活过来。generation 与终态检查要发生在每一次 replay，而不只发生在初次连接。</p>
 <h2 id="十一可观测性别只统计取消接口-200">十一、可观测性：别只统计“取消接口 200”</h2>
@@ -342,7 +342,7 @@
 <h2 id="十二可复现实验8-个场景如何证明停不是-ui-幻觉">十二、可复现实验：8 个场景如何证明“停”不是 UI 幻觉</h2>
 <p>本文提供的 <a href="/post-files/ai-turn-manager-cancellation-barge-in/turn_manager_lab.py">Python 标准库实验</a> 不访问网络、不调用真实模型或工具、不读取凭据。运行时会替换 socket 连接与 DNS 入口为 fail-closed 守卫；所有 Turn、工具和事件都是合成数据；虚拟时钟保证截图与事件顺序可重复。</p>
 <p>八个场景分别验证：正常流、取消树、语音插话、deadline 预算、可取消工具、不可取消提交、断线续传和幂等停止。输出包括逐场景日志、<code>events.jsonl</code>、<code>metrics.json</code>、<code>report.json</code> 与总验收日志。</p>
-<p><img alt="真实本地实验截图：8 个场景、24 条断言全部通过。" src="/post-images/ai-turn-manager-cancellation-barge-in/15-real-release-gate.png"></p>
+<p><img alt="真实本地实验截图：8 个场景、24 条断言全部通过。" src="/post-images/ai-turn-manager-cancellation-barge-in/15-real-release-gate.webp"></p>
 <p><em>图 16：真实运行总验收截图。24/24 PASS 证明脚本定义的控制语义一致，不代表通过生产安全认证，也不代表任意供应商都会及时响应取消。外部成本为 0。</em></p>
 <h3 id="人工一键执行">人工一键执行</h3>
 <p>将 <a href="/post-files/ai-turn-manager-cancellation-barge-in/turn-manager-lab.zip">实验文件包</a> 解压到一个新目录。Python 3 是唯一运行时前提，脚本不会安装软件或下载依赖。</p>

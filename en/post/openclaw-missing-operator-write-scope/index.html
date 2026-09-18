@@ -211,13 +211,13 @@
 <div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>missing scope: operator.write
 </span></span></code></pre></div><p>That string changed the direction of the investigation. The provider key was not the root problem. The NewAPI endpoint was not the root problem. The model names were not the root problem either. The failure lived inside OpenClaw&rsquo;s gateway authorization path: when a model override was used, the gateway call switched into a backend/gateway-client mode, but did not force the request to use the already paired stored device identity. The device had <code>operator.write</code>; the request simply did not carry the identity that could prove it.</p>
 <p>The shortest version is this: <strong>the badge existed, but this entrance did not scan it.</strong></p>
-<p><img alt="AI-generated cover showing a gateway protected by two authorization locks" src="/post-images/openclaw-missing-operator-write-scope/cover.png"></p>
+<p><img alt="AI-generated cover showing a gateway protected by two authorization locks" src="/post-images/openclaw-missing-operator-write-scope/cover.webp"></p>
 <h2 id="1-the-background-it-was-just-a-fallback-model-change">1. The Background: It Was &ldquo;Just&rdquo; a Fallback Model Change</h2>
 <p>The original task was routine: add several NewAPI-backed fallback models so that OpenClaw and adjacent agents would not stop responding when the primary model became unavailable. The local model path worked. The provider configuration looked valid. A direct NewAPI model call returned normally.</p>
 <p>Then the gateway path failed.</p>
 <p>The first visible message was <code>Provider authentication failed</code>, which naturally points people toward API keys, base URLs, model aliases, and upstream provider availability. But the deeper gateway error was <code>missing scope: operator.write</code>, and that meant the request had crossed from provider authentication into local authorization.</p>
 <p>The screenshot below is sanitized. It keeps the important command shape and error text, but removes private addresses, host names, device identifiers, and secrets.</p>
-<p><img alt="Real terminal screenshot: gateway model call failing with missing scope: operator.write" src="/post-images/openclaw-missing-operator-write-scope/01-failure-missing-scope.png"></p>
+<p><img alt="Real terminal screenshot: gateway model call failing with missing scope: operator.write" src="/post-images/openclaw-missing-operator-write-scope/01-failure-missing-scope.webp"></p>
 <p>This kind of error is easy to misread because both layers are present. The outer wrapper says provider authentication. The inner failure says local operator scope. If you only follow the first message, you rotate keys. If you only follow the second message, you may re-pair devices unnecessarily. The useful move is to compare call paths.</p>
 <h2 id="2-first-prove-it-is-not-a-provider-problem">2. First, Prove It Is Not a Provider Problem</h2>
 <p>Before changing code, I split the investigation into three checks:</p>
@@ -251,7 +251,7 @@
 <li><code>operator.talk.secrets</code></li>
 </ul>
 <p>That changed the investigation. The device was authorized. The request was not using that authorized device identity.</p>
-<p><img alt="Real terminal screenshot: paired operator device includes operator.write" src="/post-images/openclaw-missing-operator-write-scope/02-device-list-has-scopes.png"></p>
+<p><img alt="Real terminal screenshot: paired operator device includes operator.write" src="/post-images/openclaw-missing-operator-write-scope/02-device-list-has-scopes.webp"></p>
 <p>This is the part that often wastes the most time. A missing-scope error does not always mean the database lacks the scope. It can also mean the active request did not bind to the entity that owns the scope.</p>
 <p>Tracing the gateway code showed a helper that decides whether a gateway call should omit device identity. The intent is understandable: certain loopback backend calls authenticated by a shared token or password may not need a full device identity. But the model override path was being classified in a way that triggered the identity omission while still needing operator authorization later.</p>
 <p>In practical terms, when a command explicitly selected a model such as <code>newapi/glm-latest</code>, the CLI followed a model override branch. That branch called the gateway as a gateway client in backend mode and requested admin scope, but it did not explicitly say: use stored device authentication for this call. The server then treated the request as unbound, cleared unbound scopes, and the later agent RPC reached the authorization check without <code>operator.write</code>.</p>
@@ -270,7 +270,7 @@
 </span></span></span><span style="display:flex;"><span><span style="color:#a6e22e"></span> } : {}
 </span></span></code></pre></div><p><img alt="Diagram: investigation and fix path from failing gateway call to stored device auth" src="/post-images/openclaw-missing-operator-write-scope/07-fix-path.svg"></p>
 <p>After changing a compiled JavaScript bundle, a syntax check is mandatory. A tiny patch can still break runtime loading if it leaves a comma or bracket wrong.</p>
-<p><img alt="Real terminal screenshot: patch applied and node &ndash;check passed" src="/post-images/openclaw-missing-operator-write-scope/03-patch-check.png"></p>
+<p><img alt="Real terminal screenshot: patch applied and node &ndash;check passed" src="/post-images/openclaw-missing-operator-write-scope/03-patch-check.webp"></p>
 <h2 id="6-manual-fix-procedure">6. Manual Fix Procedure</h2>
 <p>Do not start by editing files. First confirm that your system has the same shape of failure.</p>
 <p>Check local and gateway behavior:</p>
@@ -293,7 +293,7 @@
 <div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>node --check <span style="color:#e6db74">&#34;</span>$OPENCLAW_DIST<span style="color:#e6db74">&#34;</span>/capability-cli-*.js
 </span></span><span style="display:flex;"><span>openclaw infer model run --gateway --model newapi/glm-latest --prompt <span style="color:#e6db74">&#34;reply OK only&#34;</span>
 </span></span></code></pre></div><p>In my environment, the gateway path returned <code>OK</code> after the patch.</p>
-<p><img alt="Real terminal screenshot: gateway model call returns OK after the fix" src="/post-images/openclaw-missing-operator-write-scope/04-gateway-success.png"></p>
+<p><img alt="Real terminal screenshot: gateway model call returns OK after the fix" src="/post-images/openclaw-missing-operator-write-scope/04-gateway-success.webp"></p>
 <h2 id="7-one-click-script-for-windows-11">7. One-Click Script for Windows 11</h2>
 <p>This PowerShell script uses only built-in PowerShell behavior plus Node. It searches common global npm locations, creates a backup, patches the bundle, runs <code>node --check</code>, and verifies one gateway call.</p>
 <div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-powershell" data-lang="powershell"><span style="display:flex;"><span>$ErrorActionPreference = <span style="color:#e6db74">&#34;Stop&#34;</span>
@@ -428,7 +428,7 @@
 <li><code>newapi/glm-fallback</code></li>
 </ul>
 <p>The status output showed the configured fallback list and a healthy gateway probe.</p>
-<p><img alt="Real terminal screenshot: fallback model status and gateway connectivity after the fix" src="/post-images/openclaw-missing-operator-write-scope/05-models-status-fallbacks.png"></p>
+<p><img alt="Real terminal screenshot: fallback model status and gateway connectivity after the fix" src="/post-images/openclaw-missing-operator-write-scope/05-models-status-fallbacks.webp"></p>
 <p>This is the broader lesson: a fallback model is not truly usable just because its name appears in configuration. It is usable only when the provider authentication, model alias resolution, gateway identity, and local operator authorization all succeed together.</p>
 <h2 id="12-qa">12. Q&amp;A</h2>
 <p><strong>Q: If the UI says provider authentication failed, should I rotate the API key first?</strong></p>
