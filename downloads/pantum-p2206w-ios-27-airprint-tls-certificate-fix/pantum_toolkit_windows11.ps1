@@ -52,7 +52,7 @@ $PfxFile = Join-Path $BuildDir "pantum_p2206w_825d.pfx"
 # 3. Generate 825-day certificate
 Write-Host "[*] Generating $ValidityDays-day self-signed certificate with SAN..." -ForegroundColor Cyan
 $Subject = "/C=CN/O=Local Printer/CN=printer.local"
-$SanExt = "subjectAltName=DNS:printer.local,DNS:Pantum-******.local,IP:127.0.0.1"
+$SanExt = "subjectAltName=DNS:printer.local,DNS:Pantum-XXXXXX.local,IP:127.0.0.1"
 
 & $OpenSslPath req -x509 -nodes -newkey rsa:2048 -days $ValidityDays `
     -keyout $KeyFile -out $CrtFile `

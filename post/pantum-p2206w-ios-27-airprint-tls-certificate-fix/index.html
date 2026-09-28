@@ -266,9 +266,9 @@
 <h2>二、问题表现与初步摸排：网络没断、硬件没坏，究竟是谁在搞鬼？</h2>
 <p>在动手给设备“开膛破肚”之前，严谨的工程师素养要求我们必须先进行系统的排除法摸排。在局域网技术体系中，一台网络打印机能被手机正常使用，必须跨越三重门槛：<strong>网络层连通、发现层广播、传输层协商</strong>。</p>
 <h3>1. 连通性排查：局域网通路与路由器 AP 隔离</h3>
-<p>首先，在电脑终端中使用 <code>ping 192.168.*.*</code> 测试打印机 IP，响应时间稳定在 2 到 15 毫秒以内，毫无丢包；登录家庭主路由后台，打印机与 iPhone 均连接在同一个 2.4GHz/5GHz 混合 Wi-Fi SSID 之下，路由器并未开启任何“AP 隔离（Guest Isolation）”或多播阻断策略。</p>
+<p>首先，在电脑终端中使用 <code>ping 192.168.X.X</code> 测试打印机 IP，响应时间稳定在 2 到 15 毫秒以内，毫无丢包；登录家庭主路由后台，打印机与 iPhone 均连接在同一个 2.4GHz/5GHz 混合 Wi-Fi SSID 之下，路由器并未开启任何“AP 隔离（Guest Isolation）”或多播阻断策略。</p>
 <h3>2. 硬件与耗材排查：奔图 Web 管理后台巡检</h3>
-<p>在电脑浏览器中输入打印机的局域网地址 <code>http://192.168.*.*</code>，流畅进入奔图 P2206W 的嵌入式 Web 服务器（Embedded Web Server, EWS）。</p>
+<p>在电脑浏览器中输入打印机的局域网地址 <code>http://192.168.X.X</code>，流畅进入奔图 P2206W 的嵌入式 Web 服务器（Embedded Web Server, EWS）。</p>
 <p><img alt="实录截图：奔图 P2206W Web 管理后台产品信息面板（固件与耗材状态良好）" src="/post-images/pantum-p2206w-ios-27-airprint-tls-certificate-fix/04-shot-pantum-web-product-info.webp"></p>
 <p>在“产品信息”面板中清晰可见：</p>
 <ul>
@@ -300,7 +300,7 @@ Pantum-P2206W._ipp._tcp.local. can be reached at Pantum-XXXXXX.local.:631
 <p>既然广播没问题，问题必然出在<strong>“搜到广播之后建立连接”</strong>的刹那！</p>
 <p>回顾 AirPrint 的底层通信规范：iOS 设备在通过 mDNS 解析到打印机的 IP 和端口后，会发起基于 IPP（Internet Printing Protocol）的属性协商。而在现代 iOS 系统中，只要设备声明了安全能力或走加密通道，系统会默认升级或发起 <strong>IPPS（IPP over TLS，基于传输层安全协议）</strong> 握手。</p>
 <p>我们立即祭出网络调试神器 <code>openssl</code>，直接针对打印机的安全端口发起 TLS 握手侦测：</p>
-<pre><code class="language-bash">$ openssl s_client -connect 192.168.*.*:443 -showcerts &lt;/dev/null 2&gt;/dev/null | openssl x509 -text -noout
+<pre><code class="language-bash">$ openssl s_client -connect 192.168.X.X:443 -showcerts &lt;/dev/null 2&gt;/dev/null | openssl x509 -text -noout
 </code></pre>
 <p><img alt="实录截图：OpenSSL 深度探测奔图 P2206W 端口提取出的 10 年出厂证书详情" src="/post-images/pantum-p2206w-ios-27-airprint-tls-certificate-fix/05-shot-openssl-probe-10year-factory-cert.webp"></p>
 <p>终端中赫然打印出的证书元数据，瞬间让真相大白于天下：</p>
@@ -413,7 +413,7 @@ subjectAltName = @alt_names
 [alt_names]
 DNS.1 = Pantum-XXXXXX.local
 DNS.2 = printer.local
-IP.1 = 192.168.*.*
+IP.1 = 192.168.X.X
 EOF
 
 # 2. 生成刚好 825 天有效期的私钥与自签名证书
@@ -432,7 +432,7 @@ openssl pkcs12 -export -out pantum_p2206w_825d.pfx \
 <p>检查输出产物：生成的 <code>pantum_p2206w_825d.pfx</code> 大小通常仅为 2.8KB 左右，完全在 50KB 限制之内，轻量而合规！</p>
 <h3>第三步：登录奔图 Web 后台安装证书</h3>
 <ol>
-<li>在浏览器中打开奔图后台地址 <code>http://192.168.*.*</code>（若提示登录，默认管理员账号通常为 <code>admin</code>，默认密码为 <code>000000</code> 或 <code>admin</code>）；</li>
+<li>在浏览器中打开奔图后台地址 <code>http://192.168.X.X</code>（若提示登录，默认管理员账号通常为 <code>admin</code>，默认密码为 <code>000000</code> 或 <code>admin</code>）；</li>
 <li>在左侧导航栏点击 <strong>“设置 ➔ 协议设置 ➔ SSL/TLS”</strong>；</li>
 <li>在右侧面板的 <strong>“Private Key”</strong> 输入框中，填入刚才打包时设置的私钥密码（如 <code>123456</code>）；</li>
 <li>点击 <strong>“选择文件（Choose File）”</strong>，选中刚刚生成的 <code>pantum_p2206w_825d.pfx</code> 文件；</li>
@@ -465,7 +465,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-Write-Host "[*] 启动奔图 P2206W iOS 27 AirPrint 证书一键修复工具 (Windows 11)..." -ForegroundColor Cyan
+Write-Host "[•] 启动奔图 P2206W iOS 27 AirPrint 证书一键修复工具 (Windows 11)..." -ForegroundColor Cyan
 
 # 校验 OpenSSL
 $OpenSsl = Get-Command "openssl" -ErrorAction SilentlyContinue
@@ -483,7 +483,7 @@ $CrtFile = Join-Path $BuildDir "pantum_p2206w.crt"
 $PfxFile = Join-Path $BuildDir "pantum_p2206w_825d.pfx"
 
 # 生成合规证书
-Write-Host "[*] 正在生成 $ValidityDays 天有效期 RSA-2048 自签名证书..." -ForegroundColor Cyan
+Write-Host "[•] 正在生成 $ValidityDays 天有效期 RSA-2048 自签名证书..." -ForegroundColor Cyan
 &amp; $OpenSslPath req -x509 -nodes -newkey rsa:2048 -days $ValidityDays `
     -keyout $KeyFile -out $CrtFile `
     -subj "/C=CN/O=Local Printer/CN=printer.local" `
@@ -495,7 +495,7 @@ Write-Host "[+] 证书生成成功: $PfxFile ($((Get-Item $PfxFile).Length) 字�
 
 # 自动推送到打印机 EWS 后台
 if ($PrinterHost -ne "") {
-    Write-Host "[*] 正在推送到打印机 http://$PrinterHost/docertificate ..." -ForegroundColor Cyan
+    Write-Host "[•] 正在推送到打印机 http://$PrinterHost/docertificate ..." -ForegroundColor Cyan
     $Uri = "http://$PrinterHost/docertificate"
     $Boundary = [System.Guid]::NewGuid().ToString()
     $LF = "`r`n"
@@ -527,7 +527,7 @@ PRINTER_HOST="${1:-192.168.1.xxx}"
 VALIDITY_DAYS="${2:-825}"
 PASSWORD="${3:-123456}"
 
-echo "[*] 正在为奔图 P2206W 构建 825 天合规 TLS 证书 (Ubuntu 26.04)..."
+echo "[•] 正在为奔图 P2206W 构建 825 天合规 TLS 证书 (Ubuntu 26.04)..."
 BUILD_DIR="./build"
 mkdir -p "$BUILD_DIR"
 
@@ -550,7 +550,7 @@ echo "[+] PKCS#12 证书打包完成: $PFX_FILE ($(wc -c &lt; "$PFX_FILE") 字�
 
 # 3. 自动注入到奔图打印机 EWS 接口
 if [[ -n "$PRINTER_HOST" ]]; then
-    echo "[*] 正在执行全自动 HTTP POST 注入..."
+    echo "[•] 正在执行全自动 HTTP POST 注入..."
     HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "http://${PRINTER_HOST}/docertificate" \
         -F "sslcertkey=${PASSWORD}" \
         -F "input_file_upload=@${PFX_FILE};type=application/x-pkcs12" || echo "000")
@@ -569,7 +569,7 @@ PRINTER_HOST="${1:-192.168.1.xxx}"
 VALIDITY_DAYS="${2:-825}"
 PASSWORD="${3:-123456}"
 
-print -P "%F{cyan}[*] 启动 macOS 26 原生奔图打印机修复工具...%f"
+print -P "%F{cyan}[•] 启动 macOS 26 原生奔图打印机修复工具...%f"
 
 BUILD_DIR="./build"
 mkdir -p "$BUILD_DIR"
@@ -656,11 +656,11 @@ fi
 <ul>
 <li><strong>全套工具压缩包</strong>：<a href="/downloads/pantum-p2206w-ios-27-airprint-tls-certificate-fix/pantum-toolkit.zip">pantum-toolkit.zip</a></li>
 <li><strong>SHA-256 完整性校验哈希</strong>：
-<pre><code class="language-text">e464b47e780557d884a03ee8b9c9e1b19d5dfca43fe4858585b9b7b9b628eff5  pantum-toolkit.zip
+<pre><code class="language-text">2bd210a9e05a8ae6736abde9726263fc37b556443f6d9b4a9ed8c9da87c7aab2  pantum-toolkit.zip
 5e8c08c5f93a4310047886149807f144b35ef75164eea063ab255b88d3c10a95  pantum_core_agent.py
-5f1dd4578e54b8bafb2ced1ae1913c3f5e62c3077aa2220800e1ddfec25f67cd  pantum_toolkit_windows11.ps1
-7b8d43a14d06777c6935bceeade9750135f510e02f0cae0f021d53f1ac702848  pantum_toolkit_ubuntu2604.sh
-a1e48903f9b665e21a7e77b159842fdb87004d266283c58c9beb3364b5c04c68  pantum_toolkit_macos26.zsh
+b5c66f6b788b9f16b635be27814aa29d09faa946f1785723d633cf93097c547b  pantum_toolkit_windows11.ps1
+e1a1776b338988fe6a534c7df3122d8775f845e72ab32a9cfb9be4f4a4d7ade0  pantum_toolkit_ubuntu2604.sh
+f5ff3c8f9aef481c144edf9d56edd6d67feb656fb78fd6258cac503c7d7aa35e  pantum_toolkit_macos26.zsh
 </code></pre>
 </li>
 </ul>

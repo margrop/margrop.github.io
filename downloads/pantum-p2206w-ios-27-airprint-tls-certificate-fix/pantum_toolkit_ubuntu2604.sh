@@ -38,7 +38,7 @@ PFX_FILE="$BUILD_DIR/pantum_p2206w_825d.pfx"
 
 # 1. Generate 825-day certificate
 echo -e "${CYAN}[*] Generating ${VALIDITY_DAYS}-day RSA-2048 certificate with SAN...${NC}"
-SAN_EXT="subjectAltName=DNS:printer.local,DNS:Pantum-******.local,IP:127.0.0.1"
+SAN_EXT="subjectAltName=DNS:printer.local,DNS:Pantum-XXXXXX.local,IP:127.0.0.1"
 
 openssl req -x509 -nodes -newkey rsa:2048 -days "$VALIDITY_DAYS" \
     -keyout "$KEY_FILE" -out "$CRT_FILE" \
