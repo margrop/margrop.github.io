@@ -223,7 +223,7 @@
 <p>追凶的结论让人哭笑不得：这个驱动包自带的安装脚本里，赫然写着一行 <code>export autoinstall_all_kernels=1</code>——把 DKMS 的&quot;给系统里所有内核各编译一份&quot;开关拧到了最大。而 DKMS 判断&quot;内核是否存在&quot;的依据，不是 dpkg 数据库，而是 <code>/lib/modules/</code> 下的目录名单加上对应 headers（内核头文件）是否还在。旧内核的镜像卸了，四套 headers 却原封不动地留在系统里，于是幽灵们拿到了&quot;开工许可&quot;。</p>
 <p>修复只要三步：卸掉孤儿 headers → 清掉为幽灵内核编译的 DKMS 条目 → 删掉残留目录。本文完整复盘排查过程，并给出 Windows 11 / Ubuntu 26.04 / macOS 26 三个平台的一键体检脚本（默认演练模式），以及「人工执行」和「交给 Agent 自动配置」两种用法。</p>
 </blockquote>
-<p><img alt="原创封面：谁在给「幽灵内核」派活？" src="/post-images/dkms-ghost-kernels/00-cover.svg"></p>
+<p><img src="/post-images/dkms-ghost-kernels/00-cover.svg" alt="原创封面：谁在给「幽灵内核」派活？"></p>
 <p><em>图 1：原创封面图。PVE 主机装上一个驱动，DKMS 流水线却连夜给 4 个&quot;幽灵内核&quot;各交付了一套编译产物。</em></p>
 <h2 id="一问题背景给核显插上一卡多虚的翅膀">一、问题背景：给核显插上&quot;一卡多虚&quot;的翅膀</h2>
 <p>我的家庭实验室里有一台 PVE 物理节点，CPU 自带的 Intel 核显除了给控制台输出画面，大部分时间都在吃灰。为了让这颗核显物尽其用，我打算用 SR-IOV（单根 I/O 虚拟化）把它切成多个虚拟显卡（VF），直通给几台虚拟机分别用——硬件只有一份，算力大家分，这正是 All in Boom 家庭服务器的经典玩法。</p>
@@ -232,10 +232,10 @@
 <p>装完之后我习惯性瞄了一眼状态，然后愣住了。</p>
 <h2 id="二问题表现dkms-status-里躺着一堆查无此人的内核">二、问题表现：dkms status 里躺着一堆&quot;查无此人&quot;的内核</h2>
 <p>先把问题全景画出来：</p>
-<p><img alt="问题全景：装 1 个驱动，DKMS 却交出 5 份编译产物" src="/post-images/dkms-ghost-kernels/01-symptom.svg"></p>
+<p><img src="/post-images/dkms-ghost-kernels/01-symptom.svg" alt="问题全景：装 1 个驱动，DKMS 却交出 5 份编译产物"></p>
 <p><em>图 2：问题全景。系统里实际安装的内核镜像只有 7.0.14-16-pve 一个，DKMS 却交付了 5 份编译产物。</em></p>
 <p><code>dkms status</code> 的真实输出是这样的：</p>
-<p><img alt="dkms status 里的四个幽灵内核" src="/post-images/dkms-ghost-kernels/02-terminal-dkms-status-before.svg"></p>
+<p><img src="/post-images/dkms-ghost-kernels/02-terminal-dkms-status-before.svg" alt="dkms status 里的四个幽灵内核"></p>
 <p><em>图 3：真实命令输出。四条 6.17.x 的条目状态都是 installed——编译成功、安装成功，但对应内核根本不存在。</em></p>
 <p>疑点非常直白：<strong>这台机器上运行且仅安装了一个内核镜像 <code>7.0.14-16-pve</code>，DKMS 却为 4 个 6.17.x 版本也各编译了一份模块</strong>。更诡异的是，这几个版本的内核镜像早在装驱动之前就被我卸载了——升级到 7.0 系列后清理旧内核是标准操作，<code>apt</code> 里连一个 6.17 的 <code>proxmox-kernel-*</code> 包都不剩。</p>
 <p>也就是说，DKMS 在给 4 个&quot;幽灵内核&quot;打工：编译它们永远用不上的模块。这既不是报错也不是警告，一切&quot;看起来都很成功&quot;，只是磁盘在悄悄变胖（<code>/var/lib/dkms</code> 里躺着 110M，其中约 70M 属于幽灵），编译时间也翻了五倍。</p>
@@ -243,45 +243,45 @@
 <h3 id="31-先排除人为因素">3.1 先排除人为因素</h3>
 <p>按照惯例，先把自己疑心的部分排除掉：</p>
 <table>
-<thead>
-<tr>
-<th>猜测</th>
-<th>验证方式</th>
-<th>结论</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>驱动包装错了版本？</td>
-<td>核对 deb 包版本与 GitHub Release</td>
-<td>排除，就是最新版</td>
-</tr>
-<tr>
-<td>手动编译过残留？</td>
-<td><code>/var/lib/dkms</code> 只有本次安装的时间戳</td>
-<td>排除</td>
-</tr>
-<tr>
-<td>有人动过 dkms 配置？</td>
-<td><code>/etc/dkms/framework.conf</code> 干干净净</td>
-<td>排除</td>
-</tr>
-<tr>
-<td>DKMS 自己抽风？</td>
-<td>同样操作在干净虚拟机里复现，照样编出 4 份</td>
-<td>实锤：行为是确定性的</td>
-</tr>
-</tbody>
+  <thead>
+      <tr>
+          <th>猜测</th>
+          <th>验证方式</th>
+          <th>结论</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>驱动包装错了版本？</td>
+          <td>核对 deb 包版本与 GitHub Release</td>
+          <td>排除，就是最新版</td>
+      </tr>
+      <tr>
+          <td>手动编译过残留？</td>
+          <td><code>/var/lib/dkms</code> 只有本次安装的时间戳</td>
+          <td>排除</td>
+      </tr>
+      <tr>
+          <td>有人动过 dkms 配置？</td>
+          <td><code>/etc/dkms/framework.conf</code> 干干净净</td>
+          <td>排除</td>
+      </tr>
+      <tr>
+          <td>DKMS 自己抽风？</td>
+          <td>同样操作在干净虚拟机里复现，照样编出 4 份</td>
+          <td>实锤：行为是确定性的</td>
+      </tr>
+  </tbody>
 </table>
 <p>最后一个验证很关键：这不是灵异事件，是<strong>确定性逻辑</strong>。那么 DKMS 到底依据什么决定&quot;要给哪些内核编译&quot;？</p>
 <h3 id="32-dkms-的住户名单libmodules">3.2 DKMS 的&quot;住户名单&quot;：/lib/modules</h3>
 <p>DKMS 是个用户态框架，它不查 dpkg 数据库，它眼中的&quot;系统里有哪些内核&quot;，就是 <strong><code>/lib/modules/</code> 目录下有哪些子目录</strong>——每个内核版本安装时会在这里拥有一个以版本号命名的目录，相当于小区的住户名单。列一下这份名单：</p>
-<p><img alt="/lib/modules 名单与 headers 检查" src="/post-images/dkms-ghost-kernels/04-terminal-lib-modules-before.svg"></p>
+<p><img src="/post-images/dkms-ghost-kernels/04-terminal-lib-modules-before.svg" alt="/lib/modules 名单与 headers 检查"></p>
 <p><em>图 4：真实命令输出。名单上有 8 个版本：4 个 6.17 带 headers（黄色），3 个 6.14 是连 headers 都没有的空目录，外加运行中的 7.0。</em></p>
 <p>名单比想象的要长——除了运行中的 7.0.14-16-pve，还有 4 个 6.17 和 3 个 6.14。那 3 个 6.14 目录是历次升级留下的&quot;空壳&quot;（<code>ls -A</code> 数出来是 0 个文件），内核镜像卸载时没能把它们一并带走。</p>
 <h3 id="33-dkms-的图纸柜headers">3.3 DKMS 的&quot;图纸柜&quot;：headers</h3>
 <p>但&quot;名单上有名字&quot;只是必要条件。编译内核模块需要内核头文件（headers）——相当于按原图纸施工，没有图纸，装修队只能跳过这一户。检查方法就是看 <code>/lib/modules/&lt;版本&gt;/build</code> 链接是否存在（这个链接由 headers 包创建）。而 headers 是不是还装着，得问 dpkg：</p>
-<p><img alt="四套旧内核的 headers 还在系统里" src="/post-images/dkms-ghost-kernels/03-terminal-headers-before.svg"></p>
+<p><img src="/post-images/dkms-ghost-kernels/03-terminal-headers-before.svg" alt="四套旧内核的 headers 还在系统里"></p>
 <p><em>图 5：真实命令输出（删去列）。内核镜像只剩 7.0 系列，但 4 套 6.17 的 headers 包原封不动地躺在系统里。</em></p>
 <p>至此，对照组凑齐了，结论也就出来了：</p>
 <ul>
@@ -292,22 +292,22 @@
 <h2 id="四问题根因一行-export-打开的全量编译开关">四、问题根因：一行 <code>export</code> 打开的&quot;全量编译&quot;开关</h2>
 <h3 id="41-驱动包自带脚本里的那一行">4.1 驱动包自带脚本里的那一行</h3>
 <p>名单和图纸只是&quot;客观条件&quot;，还得有人下令开工。翻出这个 deb 包自带的安装脚本（postinst，包在安装/配置阶段执行的钩子）：</p>
-<p><img alt="postinst 里的 autoinstall_all_kernels=1" src="/post-images/dkms-ghost-kernels/05-terminal-postinst.svg"></p>
+<p><img src="/post-images/dkms-ghost-kernels/05-terminal-postinst.svg" alt="postinst 里的 autoinstall_all_kernels=1"></p>
 <p><em>图 6：真实文件内容。安装脚本在第一件事就把 <code>autoinstall_all_kernels</code> 设为 1。</em></p>
 <p>这个变量是 DKMS 官方维护脚本（<code>/usr/lib/dkms/common.postinst</code>）识别的开关。看看官方代码怎么解读它：</p>
-<p><img alt="common.postinst 的判断逻辑" src="/post-images/dkms-ghost-kernels/06-terminal-common-postinst.svg"></p>
+<p><img src="/post-images/dkms-ghost-kernels/06-terminal-common-postinst.svg" alt="common.postinst 的判断逻辑"></p>
 <p><em>图 7：真实文件内容（节选）。变量一被导出，&ldquo;只编当前内核&quot;的默认分支整个被跳过。</em></p>
 <p>语义翻译过来就是：<strong>不设这个变量时，DKMS 默认只给&quot;当前运行内核 + 最新内核&quot;编译；变量一旦被导出，改为遍历系统里的全部内核</strong>。而这正是 i915-sriov-dkms 打包者的选择——上游在 debian 打包脚本里显式加上了这行 export。</p>
 <p>这个行为甚至有官方&quot;病历&quot;可查：Launchpad 上有一份针对 dkms 包的 Bug 报告，标题就叫&quot;DKMS only builds modules for the currently booted kernel version&rdquo;（DKMS 只为当前引导的内核编译），报告里明确写道：默认行为源自 <code>autoinstall_all_kernels</code> 未设置，希望设为 yes 来让所有内核都获得模块：</p>
-<p><img alt="Launchpad Bug #2120641 的原始描述" src="/post-images/dkms-ghost-kernels/11-web-launchpad.webp"></p>
+<p><img src="/post-images/dkms-ghost-kernels/11-web-launchpad.webp" alt="Launchpad Bug #2120641 的原始描述"></p>
 <p><em>图 8：真实网页截图。Launchpad Bug 报告从反方向印证了这个开关的存在与默认值。</em></p>
 <h3 id="42-把整个决策链条画出来">4.2 把整个决策链条画出来</h3>
-<p><img alt="DKMS 选择内核的决策流程" src="/post-images/dkms-ghost-kernels/07-decision-flow.svg"></p>
+<p><img src="/post-images/dkms-ghost-kernels/07-decision-flow.svg" alt="DKMS 选择内核的决策流程"></p>
 <p><em>图 9：DKMS 在包安装阶段的决策流程。headers 是否在场，是幽灵能否被编译的分水岭。</em></p>
 <p>根因一句话总结：<strong>i915-sriov-dkms 的安装脚本导出 <code>autoinstall_all_kernels=1</code> → DKMS 遍历 <code>/lib/modules/</code> 全部名单 → 4 个 6.17 幽灵&quot;名单在册 + 图纸（headers）齐全&quot; → 每人获得一份专属编译产物；6.14 幽灵因图纸缺失幸免。</strong></p>
 <h3 id="43-打个比方小区物业的装修队">4.3 打个比方：小区物业的装修队</h3>
 <p>如果觉得 DKMS、headers 这些词太抽象，用一个小区的比喻讲，小学生也能听懂：</p>
-<p><img alt="小区物业装修队的比喻" src="/post-images/dkms-ghost-kernels/08-analogy-property.svg"></p>
+<p><img src="/post-images/dkms-ghost-kernels/08-analogy-property.svg" alt="小区物业装修队的比喻"></p>
 <p><em>图 10：小区比喻。名单 + 图纸缺一不可，而&quot;楼还在不在&quot;根本不在装修队的检查清单里。</em></p>
 <ul>
 <li><strong>DKMS 是小区物业的装修队</strong>，工作守则写着：照着「住户名单 + 图纸柜」，给每个有图纸的住户定制一套家具；</li>
@@ -319,9 +319,9 @@
 <p>整个事件里没有谁是&quot;坏蛋&quot;：上游想让所有已装内核启动时都能用上显卡虚拟化，逻辑自洽；DKMS 忠实执行名单，恪尽职守；真正的坑在于——<strong>装修队检查名单和图纸，却从不确认&quot;这栋楼还存不存在&quot;</strong>。</p>
 <h2 id="五如何解决把幽灵从名单上划掉">五、如何解决：把幽灵从名单上划掉</h2>
 <p>思路顺着根因倒推就行，三步：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># 1) 卸掉孤儿 headers（镜像已卸载、headers 还在的，就是孤儿）</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># 1) 卸掉孤儿 headers（镜像已卸载、headers 还在的，就是孤儿）</span>
 </span></span><span style="display:flex;"><span>apt-get purge -y proxmox-headers-6.17.13-2-pve proxmox-headers-6.17.13-21-pve <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>                 proxmox-headers-6.17.13-4-pve proxmox-headers-6.17.4-2-pve
+</span></span></span><span style="display:flex;"><span>                 proxmox-headers-6.17.13-4-pve proxmox-headers-6.17.4-2-pve
 </span></span><span style="display:flex;"><span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># 2) 清掉为幽灵内核编译的 DKMS 条目</span>
 </span></span><span style="display:flex;"><span><span style="color:#66d9ef">for</span> k in 6.17.13-2-pve 6.17.13-21-pve 6.17.13-4-pve 6.17.4-2-pve; <span style="color:#66d9ef">do</span>
@@ -330,9 +330,9 @@
 </span></span><span style="display:flex;"><span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># 3) 删掉 /lib/modules 下的残留空目录（确认对应内核包已不存在）</span>
 </span></span><span style="display:flex;"><span>rm -rf /lib/modules/6.17.13-2-pve /lib/modules/6.17.13-21-pve <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>       /lib/modules/6.17.13-4-pve /lib/modules/6.17.4-2-pve
+</span></span></span><span style="display:flex;"><span>       /lib/modules/6.17.13-4-pve /lib/modules/6.17.4-2-pve
 </span></span></code></pre></div><p>做完之后跑一遍&quot;复检三连&quot;：</p>
-<p><img alt="清理完成后的复检三连" src="/post-images/dkms-ghost-kernels/10-terminal-after.svg"></p>
+<p><img src="/post-images/dkms-ghost-kernels/10-terminal-after.svg" alt="清理完成后的复检三连"></p>
 <p><em>图 11：真实命令输出。<code>dkms status</code> 从 5 条变 1 条，<code>linux-version list</code> 只剩运行内核，DKMS 缓存从 110M 瘦身到 39M。</em></p>
 <p><code>dkms status</code> 只剩当前内核一条 <code>installed</code>、<code>linux-version list</code> 只剩一行、<code>/var/lib/dkms</code> 从 110M 瘦到 39M——三条全中，修复完成。当前内核的模块安然无恙，显卡虚拟化功能不受任何影响。</p>
 <h2 id="六一键自动体检脚本">六、一键自动体检脚本</h2>
@@ -342,12 +342,12 @@
 <li><strong>绝不碰运行中内核</strong>：<code>uname -r</code> 命中的目录无条件 KEEP，另设 <code>dpkg -S</code> 占用检查，任何仍被已安装软件包占有的目录一律跳过；</li>
 <li><strong>元包保护</strong>：<code>proxmox-headers-7.0</code> 这类版本号不完整的元包不自动处理，宁可漏杀不可误杀。</li>
 </ul>
-<p><img alt="脚本演练输出实录" src="/post-images/dkms-ghost-kernels/09-terminal-fix-dryrun.svg"></p>
+<p><img src="/post-images/dkms-ghost-kernels/09-terminal-fix-dryrun.svg" alt="脚本演练输出实录"></p>
 <p><em>图 12：真实演练输出（dry-run）。四个 6.17 幽灵被标记为 GHOST，运行内核被保护，元包被跳过，复核段一目了然。</em></p>
 <h3 id="方法一人工一键执行">方法一：人工一键执行</h3>
 <p><strong>Ubuntu 26.04 / PVE 节点（<code>fix-dkms-ghost-kernels.sh</code>）</strong>——本机直接跑，或传 <code>root@目标节点</code> 远程体检另一台：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e">#!/usr/bin/env bash
-</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span><span style="color:#75715e"># fix-dkms-ghost-kernels.sh — 清理&#34;幽灵内核&#34;：为已卸载内核残留的 DKMS 构建、孤儿 headers、残留目录</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e">#!/usr/bin/env bash
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"># fix-dkms-ghost-kernels.sh — 清理&#34;幽灵内核&#34;：为已卸载内核残留的 DKMS 构建、孤儿 headers、残留目录</span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># 本机体检:   sudo bash fix-dkms-ghost-kernels.sh</span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># 本机清理:   sudo bash fix-dkms-ghost-kernels.sh --apply</span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># 远程体检:   bash fix-dkms-ghost-kernels.sh root@&lt;目标节点IP&gt;</span>
@@ -470,7 +470,7 @@
 </span></span><span style="display:flex;"><span>  bash -s $APPLY_ARG <span style="color:#f92672">&lt;&lt;&lt;</span><span style="color:#e6db74">&#34;</span>$PAYLOAD<span style="color:#e6db74">&#34;</span>
 </span></span><span style="display:flex;"><span><span style="color:#66d9ef">fi</span>
 </span></span></code></pre></div><p><strong>Windows 11（<code>Fix-DkmsGhostKernels.ps1</code>）</strong>——用系统自带 OpenSSH 客户端远程体检/清理，PowerShell 里执行 <code>.\Fix-DkmsGhostKernels.ps1 -Target &quot;root@&lt;目标节点IP&gt;&quot;</code>（加 <code>-Apply</code> 才真正清理）。特别说明：脚本刻意做成纯 ASCII——Windows PowerShell 5.1 会把无 BOM 的 UTF-8 脚本按本地代码页误读，中文字符串轻则乱码、重则解析报错，纯 ASCII 是最稳的选择：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-powershell" data-lang="powershell"><span style="display:flex;"><span><span style="color:#75715e"># Fix-DkmsGhostKernels.ps1 - Check &amp; clean &#34;ghost kernels&#34; on a remote Ubuntu/Debian/PVE node.</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-powershell" data-lang="powershell"><span style="display:flex;"><span><span style="color:#75715e"># Fix-DkmsGhostKernels.ps1 - Check &amp; clean &#34;ghost kernels&#34; on a remote Ubuntu/Debian/PVE node.</span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># Dry run : .\Fix-DkmsGhostKernels.ps1 -Target &#34;root@&lt;server-ip&gt;&#34;</span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># Apply   : .\Fix-DkmsGhostKernels.ps1 -Target &#34;root@&lt;server-ip&gt;&#34; -Apply</span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># Uses only the built-in OpenSSH client. (ASCII-only on purpose: Windows PowerShell 5.1</span>
@@ -590,8 +590,8 @@
 </span></span><span style="display:flex;"><span>  Write-Host <span style="color:#e6db74">&#34;Failed. Check the SSH connection and the output above.&#34;</span> -ForegroundColor Red
 </span></span><span style="display:flex;"><span>}
 </span></span></code></pre></div><p><strong>macOS 26（<code>fix-dkms-ghost-kernels-macos.zsh</code>）</strong>——终端里执行 <code>bash fix-dkms-ghost-kernels-macos.zsh root@&lt;目标节点IP&gt;</code>（加 <code>--apply</code> 才真正清理）：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e">#!/usr/bin/env zsh
-</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span><span style="color:#75715e"># fix-dkms-ghost-kernels-macos.zsh — macOS 26 一键体检/清理远程节点的&#34;幽灵内核&#34;</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e">#!/usr/bin/env zsh
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"># fix-dkms-ghost-kernels-macos.zsh — macOS 26 一键体检/清理远程节点的&#34;幽灵内核&#34;</span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># 体检: bash fix-dkms-ghost-kernels-macos.zsh root@&lt;目标节点IP&gt;</span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># 清理: bash fix-dkms-ghost-kernels-macos.zsh root@&lt;目标节点IP&gt; --apply</span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># 只依赖系统自带的 ssh，目标机需为 Ubuntu / Debian / Proxmox VE。</span>
@@ -701,7 +701,7 @@
 </span></span></code></pre></div><p>三个脚本执行完，核对输出末尾的「复核」段：<code>dkms status</code> 只剩运行内核、<code>/lib/modules</code> 只剩真实存在的内核，即为体检通过；确认无误后加 <code>--apply</code> / <code>-Apply</code> 重新执行一遍，就完成了清理。</p>
 <h3 id="方法二agent-自动配置">方法二：Agent 自动配置</h3>
 <p>更省事的做法是把问题直接丢给 AI Agent（ZCode、Claude Code 等均可），你只需要提供 SSH 连接方式。下面这段提示词可以直接复制：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>请帮我检查并清理一台 Proxmox VE / Ubuntu 服务器上的 DKMS&#34;幽灵内核&#34;——即内核镜像
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>请帮我检查并清理一台 Proxmox VE / Ubuntu 服务器上的 DKMS&#34;幽灵内核&#34;——即内核镜像
 </span></span><span style="display:flex;"><span>已卸载、但系统里仍残留其 DKMS 编译产物、孤儿 headers 包和 /lib/modules 残留目录。
 </span></span><span style="display:flex;"><span>请严格按以下步骤操作：
 </span></span><span style="display:flex;"><span>
@@ -743,7 +743,7 @@
 <p><strong>Q6：我就是不想要全量编译，能从根上关掉吗？</strong></p>
 <p>A：可以绕过 deb 包的 postinst，手动注册 DKMS：把源码目录放到 <code>/usr/src/i915-sriov-dkms-&lt;版本&gt;</code> 后执行 <code>dkms add</code> 和 <code>dkms install -m i915-sriov-dkms -v &lt;版本&gt; -k $(uname -r)</code>，只给当前内核编译。但要注意：后续每次内核升级后需要自己补编译（这正是 deb 包 + 全量编译帮你自动做的事）。取舍归你自己。</p>
 <h2 id="参考资料">参考资料</h2>
-<p><img alt="Debian Wiki 的 DkmsPackaging 页面" src="/post-images/dkms-ghost-kernels/12-web-debian-wiki.webp"></p>
+<p><img src="/post-images/dkms-ghost-kernels/12-web-debian-wiki.webp" alt="Debian Wiki 的 DkmsPackaging 页面"></p>
 <p><em>图 13：真实网页截图。Debian Wiki 的 DkmsPackaging 页面记录了 DKMS 打包与 common.postinst 的官方约定。</em></p>
 <ul>
 <li><a href="https://github.com/strongtz/i915-sriov-dkms">strongtz/i915-sriov-dkms（GitHub）</a>——本文主角，i915/xe 驱动的 SR-IOV 社区移植版</li>

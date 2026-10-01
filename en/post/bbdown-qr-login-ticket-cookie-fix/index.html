@@ -214,49 +214,49 @@
 <p>If your BBDown is still 1.6.3 (released August 2024, the last official release before the repository was archived), QR code login has been silently broken since Bilibili changed its login API. The phone app says login succeeded, but the credential file only stores a short-lived &ldquo;pickup ticket&rdquo; (a ticket parameter). The real login cookie (SESSDATA) never arrives. Every download then reports that you are not logged in, no matter how many times you scan.</p>
 <p>This article walks through the reproduction, analysis, root cause, and fix, and provides one-command repair scripts for Windows 11, Ubuntu 26.04, and macOS 26, with both manual and Agent-driven usage. The scripts only talk to Bilibili&rsquo;s official passport endpoints and never touch a third-party server. All credential fields in the real outputs below are masked.</p>
 </blockquote>
-<p><img alt="AI-generated cover: after scanning you receive a temporary ticket that must be exchanged once more for the real cookie." src="/post-images/bbdown-qr-login-ticket-cookie-fix/00-ai-cover.webp"></p>
+<p><img src="/post-images/bbdown-qr-login-ticket-cookie-fix/00-ai-cover.webp" alt="AI-generated cover: after scanning you receive a temporary ticket that must be exchanged once more for the real cookie."></p>
 <p><em>Figure 1: AI-generated cover. The fix is not &ldquo;log in again&rdquo;. It is adding back the missing exchange step in the middle of the flow.</em></p>
 <h2 id="1-background-a-growing-piece-of-login-folklore">1. Background: a growing piece of login folklore</h2>
 <p>BBDown is a popular command-line Bilibili downloader that works with aria2c and ffmpeg to batch-download videos, anime series, and collections. Whether you are logged in matters a lot: without a login you get limited quality; after logging in, 1080P high-bitrate and premium quality become selectable.</p>
 <p>On a machine that had been used for video downloads for a long time, BBDown 1.6.3 showed a classic pattern. Running &ldquo;BBDown login&rdquo; and scanning the QR code with the phone app said login succeeded. Back on the computer, downloading said &ldquo;you are not logged in&rdquo;. Scanning again changed nothing. Oddly, BBDownTV.data (the TV-side login) stayed healthy, and the &ldquo;-tv&rdquo; parse mode kept working.</p>
-<p><img alt="The official BBDown repository: archived, frozen at 1.6.3." src="/post-images/bbdown-qr-login-ticket-cookie-fix/shot-01-bbdown-repo.webp"></p>
+<p><img src="/post-images/bbdown-qr-login-ticket-cookie-fix/shot-01-bbdown-repo.webp" alt="The official BBDown repository: archived, frozen at 1.6.3."></p>
 <p><em>Figure 2: The official repository is archived and read-only, so &ldquo;upgrade to the latest version&rdquo; is not a way out. We need to understand the problem and add the missing step ourselves.</em></p>
 <h2 id="2-symptoms-the-scan-succeeded-the-login-did-not">2. Symptoms: the scan succeeded, the login did not</h2>
 <p>Reproducing is trivial — parse any video:</p>
-<p><img alt="Real pre-fix output: first the not-logged-in warning, then a parse error." src="/post-images/bbdown-qr-login-ticket-cookie-fix/shot-06-before-error.webp"></p>
+<p><img src="/post-images/bbdown-qr-login-ticket-cookie-fix/shot-06-before-error.webp" alt="Real pre-fix output: first the not-logged-in warning, then a parse error."></p>
 <p><em>Figure 3: Real session output before the fix (credentials and paths masked). Note that &ldquo;loading local cookie&rdquo; is immediately followed by &ldquo;you are not logged in&rdquo;: the program did read the credential file, but found no valid login state inside.</em></p>
-<p><img alt="What BBDown.data actually contains after scanning: a ticket, not a cookie." src="/post-images/bbdown-qr-login-ticket-cookie-fix/shot-07-data-before.webp"></p>
+<p><img src="/post-images/bbdown-qr-login-ticket-cookie-fix/shot-07-data-before.webp" alt="What BBDown.data actually contains after scanning: a ticket, not a cookie."></p>
 <p><em>Figure 4: The full content of the credential file after a &ldquo;successful&rdquo; scan (ticket masked). There is no SESSDATA anywhere in the file.</em></p>
 <p>Putting the two observations together: the scan step works (Bilibili did authenticate your phone), but the &ldquo;store the login state&rdquo; step silently failed. The program believes it stored the login; in reality it stored a temporary voucher that expires within minutes.</p>
 <h2 id="3-analysis-from-is-it-the-old-version-to-reading-the-source">3. Analysis: from &ldquo;is it the old version&rdquo; to reading the source</h2>
 <p>Two instincts come first: the cookie expired, or the version is too old. Both fail. If the cookie had expired, one fresh scan would fix it, and we scanned many times. And the newest official release is 1.6.3 from August 2024 — exactly what this machine already runs.</p>
-<p><img alt="The releases page: 1.6.3 is still the latest official release." src="/post-images/bbdown-qr-login-ticket-cookie-fix/shot-02-releases.webp"></p>
+<p><img src="/post-images/bbdown-qr-login-ticket-cookie-fix/shot-02-releases.webp" alt="The releases page: 1.6.3 is still the latest official release."></p>
 <p><em>Figure 5: The releases page. Note that 1.6.2 once shipped &ldquo;QR login API fix&rdquo; — this login path has been broken by API changes before.</em></p>
 <p>Since upgrading cannot help, the next stop is the source. BBDown is open source, and the login logic lives in BBDownLoginUtil.cs: generate a QR code, poll the status every second, and once success is returned, parse the returned URL, convert its query parameters into a semicolon-separated cookie string, and write it to BBDown.data.</p>
-<p><img alt="The old flow: the returned URL carried the cookies directly, one step." src="/post-images/bbdown-qr-login-ticket-cookie-fix/01-old-login-flow.svg"></p>
+<p><img src="/post-images/bbdown-qr-login-ticket-cookie-fix/01-old-login-flow.svg" alt="The old flow: the returned URL carried the cookies directly, one step."></p>
 <p><em>Figure 6: In 2024 and earlier, the success URL contained SESSDATA and bili_jct directly, and BBDown stored them as-is. The code matched the platform behavior of its time perfectly.</em></p>
 <p>The code is not wrong — it is outdated. It assumes &ldquo;after a successful scan, the cookie is inside the returned URL&rdquo;. Bilibili later removed that assumption.</p>
 <h2 id="4-root-cause-bilibili-split-issuing-the-cookie-into-two-steps">4. Root cause: Bilibili split &ldquo;issuing the cookie&rdquo; into two steps</h2>
 <p>Capturing a real login flow confirms it: after a successful scan today, the poll response URL no longer carries SESSDATA. Instead it is a cross-domain confirmation address with a ticket parameter. Only when a browser visits that address do the Set-Cookie headers deliver the real login state.</p>
-<p><img alt="The new flow: BBDown 1.6.3 stops at step two and stores the ticket as if it were a cookie." src="/post-images/bbdown-qr-login-ticket-cookie-fix/02-new-ticket-flow.svg"></p>
+<p><img src="/post-images/bbdown-qr-login-ticket-cookie-fix/02-new-ticket-flow.svg" alt="The new flow: BBDown 1.6.3 stops at step two and stores the ticket as if it were a cookie."></p>
 <p><em>Figure 7: The breakpoint is visible. BBDown stores the ticket URL&rsquo;s parameters verbatim, and never performs the missing step of visiting the cross-domain address to collect the cookies.</em></p>
-<p><img alt="At download time the program looks for SESSDATA in the old format, finds none, and reports &ldquo;not logged in&rdquo; every time." src="/post-images/bbdown-qr-login-ticket-cookie-fix/03-ticket-locker-analogy.svg"></p>
+<p><img src="/post-images/bbdown-qr-login-ticket-cookie-fix/03-ticket-locker-analogy.svg" alt="At download time the program looks for SESSDATA in the old format, finds none, and reports “not logged in” every time."></p>
 <p><em>Figure 8: A parcel-locker analogy. The ticket is like a pickup text message: it proves a parcel is waiting for you, but it cannot open the locker door, and it expires within minutes. The cookie is the door code. BBDown stuffed the message into the door seam, and of course the door did not move. The fix first exchanges the message for the code at the counter, then opens the door.</em></p>
 <p>There is also a trap: the ticket is extremely short-lived. An early attempt to reuse the old ticket still sitting in BBDown.data failed with a bare 302 redirect — it was long dead. The repair must scan and exchange in the same session; old tickets cannot be redeemed.</p>
 <h2 id="5-the-fix-adding-the-exchange-step-back">5. The fix: adding the exchange step back</h2>
 <p>The repair script does little, but every link matters: generate the QR code, poll, exchange the ticket at the cross-domain endpoint, collect the Set-Cookie headers, write BBDown.data back in the exact format BBDown expects (query string, commas escaped as %2C, semicolon separators), and finally parse a video to verify.</p>
-<p><img alt="The repair pipeline: from the user&rsquo;s point of view only &ldquo;scan and confirm&rdquo; remains." src="/post-images/bbdown-qr-login-ticket-cookie-fix/04-fix-pipeline.svg"></p>
+<p><img src="/post-images/bbdown-qr-login-ticket-cookie-fix/04-fix-pipeline.svg" alt="The repair pipeline: from the user’s point of view only “scan and confirm” remains."></p>
 <p><em>Figure 9: A seven-step pipeline. The script simply does, on the command line, what the browser has always done automatically.</em></p>
 <p>A real successful run:</p>
-<p><img alt="Repair log: exchange, store, done (SESSDATA masked)." src="/post-images/bbdown-qr-login-ticket-cookie-fix/shot-08-fix-log.webp"></p>
+<p><img src="/post-images/bbdown-qr-login-ticket-cookie-fix/shot-08-fix-log.webp" alt="Repair log: exchange, store, done (SESSDATA masked)."></p>
 <p><em>Figure 10: Real session output. The &ldquo;new flow&rdquo; branch after the scan is exactly the step the old BBDown never performed.</em></p>
 <p>After the fix, the warning disappears and the full quality list is back:</p>
-<p><img alt="Real post-fix output: logged in, parse succeeded." src="/post-images/bbdown-qr-login-ticket-cookie-fix/shot-09-after-success.webp"></p>
+<p><img src="/post-images/bbdown-qr-login-ticket-cookie-fix/shot-09-after-success.webp" alt="Real post-fix output: logged in, parse succeeded."></p>
 <p><em>Figure 11: Real session output after the fix (download links truncated). The acceptance criterion is simple: no &ldquo;not logged in&rdquo; line, and a complete quality list.</em></p>
 <h3 id="51-one-command-scripts-manual-execution">5.1 One-command scripts (manual execution)</h3>
 <p>All three platforms share the same core file, bbdown_login_core.py (full listing below). The wrapper prepares the environment, calls the core, and verifies automatically. Nothing depends on a third-party cloud service — only built-in system tools and two pure-Python libraries.</p>
 <p>Core script bbdown_login_core.py (identical on all platforms, placed next to the wrapper):</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-python" data-lang="python"><span style="display:flex;"><span><span style="color:#75715e">#!/usr/bin/env python3</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-python" data-lang="python"><span style="display:flex;"><span><span style="color:#75715e">#!/usr/bin/env python3</span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># -*- coding: utf-8 -*-</span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># bbdown_login_core.py — BBDown QR login repair core</span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># Talks only to Bilibili&#39;s official passport endpoints; writes only local BBDown.data</span>
@@ -407,7 +407,7 @@
 </span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> __name__ <span style="color:#f92672">==</span> <span style="color:#e6db74">&#34;__main__&#34;</span>:
 </span></span><span style="display:flex;"><span>    main()
 </span></span></code></pre></div><p>Windows 11 wrapper Fix-BBDown-Login.ps1 (save as UTF-8, next to the core script):</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-powershell" data-lang="powershell"><span style="display:flex;"><span><span style="color:#66d9ef">param</span>(
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-powershell" data-lang="powershell"><span style="display:flex;"><span><span style="color:#66d9ef">param</span>(
 </span></span><span style="display:flex;"><span>    [<span style="color:#66d9ef">string</span>]$BBDownDir = (Get-Location).Path,
 </span></span><span style="display:flex;"><span>    [<span style="color:#66d9ef">switch</span>]$CheckOnly
 </span></span><span style="display:flex;"><span>)
@@ -453,11 +453,11 @@
 </span></span><span style="display:flex;"><span>    Write-Host <span style="color:#e6db74">&#34;BBDown.exe not found in </span>$BBDownDir<span style="color:#e6db74">; skip verify.&#34;</span>
 </span></span><span style="display:flex;"><span>}
 </span></span></code></pre></div><p>Usage: dry check with &ldquo;powershell -ExecutionPolicy Bypass -File .\Fix-BBDown-Login.ps1 -CheckOnly&rdquo;; repair with &ldquo;powershell -ExecutionPolicy Bypass -File .\Fix-BBDown-Login.ps1 -BBDownDir &ldquo;C:\path\to\BBDown&rdquo;&rdquo;.</p>
-<p><img alt="Windows-side reference: the official WinGet documentation." src="/post-images/bbdown-qr-login-ticket-cookie-fix/shot-03-winget.webp"></p>
+<p><img src="/post-images/bbdown-qr-login-ticket-cookie-fix/shot-03-winget.webp" alt="Windows-side reference: the official WinGet documentation."></p>
 <p><em>Figure 12: When Python 3 is missing, the script installs it silently with Windows&rsquo; built-in WinGet — a system component, not a third-party updater.</em></p>
 <p>Ubuntu 26.04 wrapper fix-bbdown-login-ubuntu2604.sh:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e">#!/usr/bin/env bash
-</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>set -euo pipefail
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e">#!/usr/bin/env bash
+</span></span></span><span style="display:flex;"><span>set -euo pipefail
 </span></span><span style="display:flex;"><span>SCRIPT_DIR<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#66d9ef">$(</span>cd <span style="color:#e6db74">&#34;</span><span style="color:#66d9ef">$(</span>dirname <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>BASH_SOURCE[0]<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span><span style="color:#66d9ef">)</span><span style="color:#e6db74">&#34;</span> <span style="color:#f92672">&amp;&amp;</span> pwd<span style="color:#66d9ef">)</span><span style="color:#e6db74">&#34;</span>
 </span></span><span style="display:flex;"><span>CORE<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span>$SCRIPT_DIR<span style="color:#e6db74">/bbdown_login_core.py&#34;</span>
 </span></span><span style="display:flex;"><span><span style="color:#f92672">[</span> -f <span style="color:#e6db74">&#34;</span>$CORE<span style="color:#e6db74">&#34;</span> <span style="color:#f92672">]</span> <span style="color:#f92672">||</span> <span style="color:#f92672">{</span> echo <span style="color:#e6db74">&#34;bbdown_login_core.py not found next to this script&#34;</span>; exit 1; <span style="color:#f92672">}</span>
@@ -498,11 +498,11 @@
 </span></span><span style="display:flex;"><span>  echo <span style="color:#e6db74">&#34;BBDown binary not found in </span>$DATA_DIR<span style="color:#e6db74">; skip verify.&#34;</span>
 </span></span><span style="display:flex;"><span><span style="color:#66d9ef">fi</span>
 </span></span></code></pre></div><p>Usage: dry check with &ldquo;bash fix-bbdown-login-ubuntu2604.sh &ndash;check&rdquo;; repair with &ldquo;bash fix-bbdown-login-ubuntu2604.sh /path/to/bbdown-dir&rdquo;.</p>
-<p><img alt="Ubuntu-side reference: the apt-get manpage (26.04 series)." src="/post-images/bbdown-qr-login-ticket-cookie-fix/shot-05-aptget.webp"></p>
+<p><img src="/post-images/bbdown-qr-login-ticket-cookie-fix/shot-05-aptget.webp" alt="Ubuntu-side reference: the apt-get manpage (26.04 series)."></p>
 <p><em>Figure 13: The script installs python3-venv through the system package manager only when missing; everything else stays inside its own venv.</em></p>
 <p>macOS 26 wrapper fix-bbdown-login-macos26.zsh:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-zsh" data-lang="zsh"><span style="display:flex;"><span><span style="color:#75715e">#!/bin/zsh
-</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>set -euo pipefail
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-zsh" data-lang="zsh"><span style="display:flex;"><span><span style="color:#75715e">#!/bin/zsh
+</span></span></span><span style="display:flex;"><span>set -euo pipefail
 </span></span><span style="display:flex;"><span>SCRIPT_DIR<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>0:A:h<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
 </span></span><span style="display:flex;"><span>CORE<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span>$SCRIPT_DIR<span style="color:#e6db74">/bbdown_login_core.py&#34;</span>
 </span></span><span style="display:flex;"><span><span style="color:#f92672">[</span> -f <span style="color:#e6db74">&#34;</span>$CORE<span style="color:#e6db74">&#34;</span> <span style="color:#f92672">]</span> <span style="color:#f92672">||</span> <span style="color:#f92672">{</span> echo <span style="color:#e6db74">&#34;bbdown_login_core.py not found next to this script&#34;</span>; exit 1; <span style="color:#f92672">}</span>
@@ -544,11 +544,11 @@
 </span></span><span style="display:flex;"><span><span style="color:#66d9ef">else</span>
 </span></span><span style="display:flex;"><span>  echo <span style="color:#e6db74">&#34;BBDown binary not found in </span>$DATA_DIR<span style="color:#e6db74">; skip verify.&#34;</span>
 </span></span><span style="display:flex;"><span><span style="color:#66d9ef">fi</span>
-</span></span></code></pre></div><p><img alt="macOS-side reference: the Homebrew manpage." src="/post-images/bbdown-qr-login-ticket-cookie-fix/shot-04-homebrew.webp"></p>
+</span></span></code></pre></div><p><img src="/post-images/bbdown-qr-login-ticket-cookie-fix/shot-04-homebrew.webp" alt="macOS-side reference: the Homebrew manpage."></p>
 <p><em>Figure 14: This repair does not need Homebrew. If you manage BBDown with brew, note that its install location may differ from a manually downloaded binary — pass the directory of the binary you actually use.</em></p>
 <h3 id="52-one-command-scripts-agent-driven-configuration">5.2 One-command scripts (Agent-driven configuration)</h3>
 <p>If you already run a local command-executing Agent (Codex, Claude Code, HermesAgent, etc.), hand it this brief:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>Please fix the &#34;not logged in&#34; problem of BBDown QR login on this machine. Requirements:
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>Please fix the &#34;not logged in&#34; problem of BBDown QR login on this machine. Requirements:
 </span></span><span style="display:flex;"><span>1. Locate the BBDown executable directory and the actual BBDown.data path (in 1.6.3 it lives next to the exe).
 </span></span><span style="display:flex;"><span>2. Inspect BBDown.data: if it contains ticket= but no SESSDATA=, apply the fix described in the article; otherwise report the actual content to the user first.
 </span></span><span style="display:flex;"><span>3. Choose the repair path by OS: Windows 11 via PowerShell, Ubuntu 26.04 via bash, macOS 26 via zsh; create an isolated venv with the system Python, install the two pure-Python libraries requests and qrcode, then run the core login script.

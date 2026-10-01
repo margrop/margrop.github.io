@@ -221,7 +221,7 @@
 <p>The root cause is almost funny: the driver package&rsquo;s own install script contains a single line — <code>export autoinstall_all_kernels=1</code> — which cranks DKMS&rsquo;s &ldquo;build a copy for every kernel on the system&rdquo; switch to maximum. And DKMS does not consult the dpkg database to decide whether a kernel &ldquo;exists&rdquo;: it reads the directory roster under <code>/lib/modules/</code> and checks whether the matching headers are still installed. The old kernel images were gone, but four sets of headers were still sitting in the system — so the ghosts got their work permit.</p>
 <p>The fix takes three steps: purge the orphan headers → remove the DKMS builds for ghost kernels → delete the leftover directories. This post walks through the full investigation and ships one-click health-check scripts for Windows 11 / Ubuntu 26.04 / macOS 26 (dry-run by default), in both &ldquo;run it yourself&rdquo; and &ldquo;hand it to an AI agent&rdquo; flavors.</p>
 </blockquote>
-<p><img alt="Original cover: who is assigning work to the ghost kernels?" src="/post-images/dkms-ghost-kernels/00-cover.svg"></p>
+<p><img src="/post-images/dkms-ghost-kernels/00-cover.svg" alt="Original cover: who is assigning work to the ghost kernels?"></p>
 <p><em>Figure 1: Original cover art. One driver installed on the PVE host — and the DKMS pipeline delivers a full set of build artifacts to four &ldquo;ghost kernels&rdquo; overnight.</em></p>
 <h2 id="1-background-giving-the-igpu-one-card-many-vms-superpowers">1. Background: Giving the iGPU &ldquo;one card, many VMs&rdquo; Superpowers</h2>
 <p>One of the physical nodes in my home lab has an Intel iGPU that mostly collects dust after lighting up the console. To put it to work, I wanted to use SR-IOV (Single Root I/O Virtualization) to slice it into multiple virtual functions (VFs) and pass them through to several VMs — one piece of hardware, shared by everyone. A classic homelab play.</p>
@@ -230,10 +230,10 @@
 <p>After installing, I habitually glanced at the status — and froze.</p>
 <h2 id="2-symptoms-a-bunch-of-kernels-that-do-not-exist">2. Symptoms: A Bunch of Kernels That Do Not Exist</h2>
 <p>The full picture first:</p>
-<p><img alt="The full picture: install one driver, DKMS ships five sets of artifacts" src="/post-images/dkms-ghost-kernels/01-symptom.svg"></p>
+<p><img src="/post-images/dkms-ghost-kernels/01-symptom.svg" alt="The full picture: install one driver, DKMS ships five sets of artifacts"></p>
 <p><em>Figure 2: The full picture. Only one kernel image (7.0.14-16-pve) is actually installed, yet DKMS delivered five sets of build artifacts.</em></p>
 <p>Here is the real <code>dkms status</code> output:</p>
-<p><img alt="Four ghost kernels in dkms status" src="/post-images/dkms-ghost-kernels/02-terminal-dkms-status-before.svg"></p>
+<p><img src="/post-images/dkms-ghost-kernels/02-terminal-dkms-status-before.svg" alt="Four ghost kernels in dkms status"></p>
 <p><em>Figure 3: Real command output. All four 6.17.x entries read installed — built successfully, installed successfully, for kernels that do not exist.</em></p>
 <p>The suspicious part is blunt: <strong>this machine runs exactly one kernel image, <code>7.0.14-16-pve</code>, but DKMS also built modules for four 6.17.x versions</strong>. Stranger still, those kernel image packages had been uninstalled before the driver was installed — cleaning up old kernels after upgrading to the 7.0 series is standard practice, and not a single 6.17 <code>proxmox-kernel-*</code> package remained in apt.</p>
 <p>In other words, DKMS was working for four &ldquo;ghost kernels&rdquo;, compiling modules they would never use. There was no error and no warning — everything &ldquo;looked successful&rdquo;. The disk was just quietly getting fatter (<code>/var/lib/dkms</code> held 110MB, of which ~70MB belonged to the ghosts), and the build took five times longer than it should have.</p>
@@ -241,45 +241,45 @@
 <h3 id="31-rule-out-the-human-factor-first">3.1 Rule Out the Human Factor First</h3>
 <p>As always, eliminate the obvious suspects first:</p>
 <table>
-<thead>
-<tr>
-<th>Suspicion</th>
-<th>How I checked</th>
-<th>Verdict</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Wrong driver package?</td>
-<td>Compared the deb version with the GitHub release</td>
-<td>Ruled out — latest version</td>
-</tr>
-<tr>
-<td>Leftovers from manual builds?</td>
-<td><code>/var/lib/dkms</code> only had this install&rsquo;s timestamps</td>
-<td>Ruled out</td>
-</tr>
-<tr>
-<td>Someone touched dkms config?</td>
-<td><code>/etc/dkms/framework.conf</code> was pristine</td>
-<td>Ruled out</td>
-</tr>
-<tr>
-<td>DKMS acting up?</td>
-<td>Reproduced on a clean VM: same four builds</td>
-<td>Confirmed: deterministic behavior</td>
-</tr>
-</tbody>
+  <thead>
+      <tr>
+          <th>Suspicion</th>
+          <th>How I checked</th>
+          <th>Verdict</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>Wrong driver package?</td>
+          <td>Compared the deb version with the GitHub release</td>
+          <td>Ruled out — latest version</td>
+      </tr>
+      <tr>
+          <td>Leftovers from manual builds?</td>
+          <td><code>/var/lib/dkms</code> only had this install&rsquo;s timestamps</td>
+          <td>Ruled out</td>
+      </tr>
+      <tr>
+          <td>Someone touched dkms config?</td>
+          <td><code>/etc/dkms/framework.conf</code> was pristine</td>
+          <td>Ruled out</td>
+      </tr>
+      <tr>
+          <td>DKMS acting up?</td>
+          <td>Reproduced on a clean VM: same four builds</td>
+          <td>Confirmed: deterministic behavior</td>
+      </tr>
+  </tbody>
 </table>
 <p>The last check matters most: this is not a haunting, it is <strong>deterministic logic</strong>. So what does DKMS actually use to decide &ldquo;which kernels to build for&rdquo;?</p>
 <h3 id="32-dkmss-roster-libmodules">3.2 DKMS&rsquo;s &ldquo;Roster&rdquo;: /lib/modules</h3>
 <p>DKMS is a user-space framework. It never queries the dpkg database; the &ldquo;kernels on this system&rdquo; are simply <strong>the subdirectories under <code>/lib/modules/</code></strong> — every installed kernel version gets a directory named after itself there. Think of it as the residential roster of an apartment complex. Let&rsquo;s read the roster:</p>
-<p><img alt="The /lib/modules roster and headers check" src="/post-images/dkms-ghost-kernels/04-terminal-lib-modules-before.svg"></p>
+<p><img src="/post-images/dkms-ghost-kernels/04-terminal-lib-modules-before.svg" alt="The /lib/modules roster and headers check"></p>
 <p><em>Figure 4: Real command output. Eight versions on the roster: four 6.17s with headers (yellow), three 6.14s that are empty shells without headers, plus the running 7.0.</em></p>
 <p>The roster is longer than expected — besides the running 7.0.14-16-pve, there are four 6.17s and three 6.14s. Those 6.14 directories are empty shells left behind by past upgrades (<code>ls -A</code> counts zero files); uninstalling the kernel images never took the directories with them.</p>
 <h3 id="33-dkmss-blueprint-cabinet-headers">3.3 DKMS&rsquo;s &ldquo;Blueprint Cabinet&rdquo;: headers</h3>
 <p>But being on the roster is only necessary, not sufficient. Compiling a kernel module requires the kernel headers — the original blueprints. Without blueprints, the renovation crew simply skips that apartment. The check is whether the <code>/lib/modules/&lt;version&gt;/build</code> symlink exists (created by the headers package). Whether the headers are still installed is a question for dpkg:</p>
-<p><img alt="Four sets of old-kernel headers still installed" src="/post-images/dkms-ghost-kernels/03-terminal-headers-before.svg"></p>
+<p><img src="/post-images/dkms-ghost-kernels/03-terminal-headers-before.svg" alt="Four sets of old-kernel headers still installed"></p>
 <p><em>Figure 5: Real command output (columns trimmed). Only the 7.0-series kernel images remain, but four sets of 6.17 headers were sitting in the system untouched.</em></p>
 <p>Now the control group is complete, and the conclusion writes itself:</p>
 <ul>
@@ -290,22 +290,22 @@
 <h2 id="4-root-cause-one-export-that-opens-the-build-for-everything-switch">4. Root Cause: One <code>export</code> That Opens the &ldquo;Build for Everything&rdquo; Switch</h2>
 <h3 id="41-the-line-in-the-drivers-own-script">4.1 The Line in the Driver&rsquo;s Own Script</h3>
 <p>The roster and the blueprints are only the objective conditions; someone still has to order the work. Let&rsquo;s open the deb package&rsquo;s own install script (the postinst — a hook that runs during package install/configure):</p>
-<p><img alt="autoinstall_all_kernels=1 in the postinst" src="/post-images/dkms-ghost-kernels/05-terminal-postinst.svg"></p>
+<p><img src="/post-images/dkms-ghost-kernels/05-terminal-postinst.svg" alt="autoinstall_all_kernels=1 in the postinst"></p>
 <p><em>Figure 6: Real file content. The very first thing the install script does is set <code>autoinstall_all_kernels</code> to 1.</em></p>
 <p>This variable is a switch recognized by DKMS&rsquo;s official maintainer script (<code>/usr/lib/dkms/common.postinst</code>). Here is how the official code interprets it:</p>
-<p><img alt="The common.postinst logic" src="/post-images/dkms-ghost-kernels/06-terminal-common-postinst.svg"></p>
+<p><img src="/post-images/dkms-ghost-kernels/06-terminal-common-postinst.svg" alt="The common.postinst logic"></p>
 <p><em>Figure 7: Real file content (excerpt). Once the variable is exported, the &ldquo;build for the current kernel only&rdquo; default branch is skipped entirely.</em></p>
 <p>Translated into plain language: <strong>without this variable, DKMS by default builds only for the &ldquo;currently running kernel + newest kernel&rdquo;; once the variable is exported, it iterates over every kernel on the system.</strong> That is exactly the choice made by the i915-sriov-dkms maintainers — the upstream Debian packaging adds this export explicitly.</p>
 <p>The behavior even has an official &ldquo;medical record&rdquo;: a Launchpad bug against the dkms package titled &ldquo;DKMS only builds modules for the currently booted kernel version&rdquo;, which states that the default comes from <code>autoinstall_all_kernels</code> being unset and requests setting it to yes so that all kernels get modules:</p>
-<p><img alt="The original Launchpad Bug #2120641 description" src="/post-images/dkms-ghost-kernels/11-web-launchpad.webp"></p>
+<p><img src="/post-images/dkms-ghost-kernels/11-web-launchpad.webp" alt="The original Launchpad Bug #2120641 description"></p>
 <p><em>Figure 8: Real web screenshot. The Launchpad bug report confirms this switch&rsquo;s existence and default value — from the opposite direction.</em></p>
 <h3 id="42-the-whole-decision-chain-drawn-out">4.2 The Whole Decision Chain, Drawn Out</h3>
-<p><img alt="How DKMS picks the kernels to serve" src="/post-images/dkms-ghost-kernels/07-decision-flow.svg"></p>
+<p><img src="/post-images/dkms-ghost-kernels/07-decision-flow.svg" alt="How DKMS picks the kernels to serve"></p>
 <p><em>Figure 9: DKMS&rsquo;s decision flow during package installation. Whether headers are present is the dividing line for whether a ghost gets compiled.</em></p>
 <p>Root cause in one sentence: <strong>i915-sriov-dkms&rsquo;s install script exports <code>autoinstall_all_kernels=1</code> → DKMS iterates over the full <code>/lib/modules/</code> roster → the four 6.17 ghosts are &ldquo;on the roster + blueprints (headers) present&rdquo; → each receives its own set of build artifacts; the three 6.14 ghosts are spared for lack of blueprints.</strong></p>
 <h3 id="43-an-analogy-the-property-managements-renovation-crew">4.3 An Analogy: The Property Management&rsquo;s Renovation Crew</h3>
 <p>If DKMS and headers feel too abstract, here is an apartment-complex analogy a primary-schooler can follow:</p>
-<p><img alt="The property management renovation crew analogy" src="/post-images/dkms-ghost-kernels/08-analogy-property.svg"></p>
+<p><img src="/post-images/dkms-ghost-kernels/08-analogy-property.svg" alt="The property management renovation crew analogy"></p>
 <p><em>Figure 10: The analogy. Roster + blueprints are both required — and &ldquo;does the building still exist&rdquo; is simply not on the crew&rsquo;s checklist.</em></p>
 <ul>
 <li><strong>DKMS is the renovation crew of the property management office</strong>, and its rulebook reads: following the &ldquo;residential roster + blueprint cabinet&rdquo;, custom-build a set of furniture for every resident whose blueprints are on file;</li>
@@ -317,9 +317,9 @@
 <p>Nobody in this story is a villain: upstream wants the driver available no matter which installed kernel you boot — perfectly reasonable; DKMS faithfully serves the roster — diligent and obedient. The real trap is that <strong>the crew checks the roster and the blueprints, but never verifies that the building still exists.</strong></p>
 <h2 id="5-the-fix-cross-the-ghosts-off-the-roster">5. The Fix: Cross the Ghosts Off the Roster</h2>
 <p>Just reverse the root cause — three steps:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># 1) Purge the orphan headers (image uninstalled + headers still present = orphan)</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># 1) Purge the orphan headers (image uninstalled + headers still present = orphan)</span>
 </span></span><span style="display:flex;"><span>apt-get purge -y proxmox-headers-6.17.13-2-pve proxmox-headers-6.17.13-21-pve <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>                 proxmox-headers-6.17.13-4-pve proxmox-headers-6.17.4-2-pve
+</span></span></span><span style="display:flex;"><span>                 proxmox-headers-6.17.13-4-pve proxmox-headers-6.17.4-2-pve
 </span></span><span style="display:flex;"><span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># 2) Remove the DKMS builds for the ghost kernels</span>
 </span></span><span style="display:flex;"><span><span style="color:#66d9ef">for</span> k in 6.17.13-2-pve 6.17.13-21-pve 6.17.13-4-pve 6.17.4-2-pve; <span style="color:#66d9ef">do</span>
@@ -328,9 +328,9 @@
 </span></span><span style="display:flex;"><span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># 3) Delete the leftover dirs under /lib/modules (confirm the kernel packages are gone)</span>
 </span></span><span style="display:flex;"><span>rm -rf /lib/modules/6.17.13-2-pve /lib/modules/6.17.13-21-pve <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>       /lib/modules/6.17.13-4-pve /lib/modules/6.17.4-2-pve
+</span></span></span><span style="display:flex;"><span>       /lib/modules/6.17.13-4-pve /lib/modules/6.17.4-2-pve
 </span></span></code></pre></div><p>Then run the &ldquo;verification trio&rdquo;:</p>
-<p><img alt="The verification trio after cleanup" src="/post-images/dkms-ghost-kernels/10-terminal-after.svg"></p>
+<p><img src="/post-images/dkms-ghost-kernels/10-terminal-after.svg" alt="The verification trio after cleanup"></p>
 <p><em>Figure 11: Real command output. <code>dkms status</code> drops from five entries to one, <code>linux-version list</code> shows only the running kernel, and the DKMS cache slims down from 110M to 39M.</em></p>
 <p>One <code>installed</code> entry for the current kernel in <code>dkms status</code>, a single line from <code>linux-version list</code>, <code>/var/lib/dkms</code> down from 110M to 39M — all three checks pass. The current kernel&rsquo;s modules are untouched, and GPU virtualization keeps working.</p>
 <h2 id="6-one-click-health-check-scripts">6. One-Click Health-Check Scripts</h2>
@@ -340,12 +340,12 @@
 <li><strong>The running kernel is never touched</strong>: directories matching <code>uname -r</code> are unconditionally KEEPed; an additional <code>dpkg -S</code> ownership check skips any directory still owned by an installed package;</li>
 <li><strong>Meta-package protection</strong>: meta packages like <code>proxmox-headers-7.0</code> with incomplete version strings are never auto-removed — better to miss than to misfire.</li>
 </ul>
-<p><img alt="Real dry-run output of the script" src="/post-images/dkms-ghost-kernels/09-terminal-fix-dryrun.svg"></p>
+<p><img src="/post-images/dkms-ghost-kernels/09-terminal-fix-dryrun.svg" alt="Real dry-run output of the script"></p>
 <p><em>Figure 12: Real dry-run output. The four 6.17 ghosts are flagged GHOST, the running kernel is protected, the meta package is skipped, and the verification block tells the whole story.</em></p>
 <h3 id="method-1-run-it-yourself">Method 1: Run It Yourself</h3>
 <p><strong>Ubuntu 26.04 / PVE node (<code>fix-dkms-ghost-kernels.sh</code>)</strong> — run locally, or pass <code>root@&lt;target-node&gt;</code> to check a remote machine:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e">#!/usr/bin/env bash
-</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span><span style="color:#75715e"># fix-dkms-ghost-kernels.sh — clean &#34;ghost kernels&#34;: leftover DKMS builds, orphan headers,</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e">#!/usr/bin/env bash
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"># fix-dkms-ghost-kernels.sh — clean &#34;ghost kernels&#34;: leftover DKMS builds, orphan headers,</span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># leftover dirs for kernels whose images are already uninstalled</span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># Local check :  sudo bash fix-dkms-ghost-kernels.sh</span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># Local clean :  sudo bash fix-dkms-ghost-kernels.sh --apply</span>
@@ -469,7 +469,7 @@
 </span></span><span style="display:flex;"><span>  bash -s $APPLY_ARG <span style="color:#f92672">&lt;&lt;&lt;</span><span style="color:#e6db74">&#34;</span>$PAYLOAD<span style="color:#e6db74">&#34;</span>
 </span></span><span style="display:flex;"><span><span style="color:#66d9ef">fi</span>
 </span></span></code></pre></div><p><strong>Windows 11 (<code>Fix-DkmsGhostKernels.ps1</code>)</strong> — remote check/cleanup over the built-in OpenSSH client; run <code>.\Fix-DkmsGhostKernels.ps1 -Target &quot;root@&lt;server-ip&gt;&quot;</code> in PowerShell (add <code>-Apply</code> to actually clean). Note the script is intentionally ASCII-only: Windows PowerShell 5.1 misreads BOM-less UTF-8 scripts using the legacy code page, which garbles non-ASCII strings or even breaks parsing — plain ASCII is the robust choice:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-powershell" data-lang="powershell"><span style="display:flex;"><span><span style="color:#75715e"># Fix-DkmsGhostKernels.ps1 - Check &amp; clean &#34;ghost kernels&#34; on a remote Ubuntu/Debian/PVE node.</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-powershell" data-lang="powershell"><span style="display:flex;"><span><span style="color:#75715e"># Fix-DkmsGhostKernels.ps1 - Check &amp; clean &#34;ghost kernels&#34; on a remote Ubuntu/Debian/PVE node.</span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># Dry run : .\Fix-DkmsGhostKernels.ps1 -Target &#34;root@&lt;server-ip&gt;&#34;</span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># Apply   : .\Fix-DkmsGhostKernels.ps1 -Target &#34;root@&lt;server-ip&gt;&#34; -Apply</span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># Uses only the built-in OpenSSH client. (ASCII-only on purpose: Windows PowerShell 5.1</span>
@@ -589,8 +589,8 @@
 </span></span><span style="display:flex;"><span>  Write-Host <span style="color:#e6db74">&#34;Failed. Check the SSH connection and the output above.&#34;</span> -ForegroundColor Red
 </span></span><span style="display:flex;"><span>}
 </span></span></code></pre></div><p><strong>macOS 26 (<code>fix-dkms-ghost-kernels-macos.zsh</code>)</strong> — run <code>bash fix-dkms-ghost-kernels-macos.zsh root@&lt;server-ip&gt;</code> in Terminal (add <code>--apply</code> to actually clean):</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e">#!/usr/bin/env zsh
-</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span><span style="color:#75715e"># fix-dkms-ghost-kernels-macos.zsh — check/clean &#34;ghost kernels&#34; on a remote node from macOS 26</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e">#!/usr/bin/env zsh
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"># fix-dkms-ghost-kernels-macos.zsh — check/clean &#34;ghost kernels&#34; on a remote node from macOS 26</span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># Check: bash fix-dkms-ghost-kernels-macos.zsh root@&lt;server-ip&gt;</span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># Clean: bash fix-dkms-ghost-kernels-macos.zsh root@&lt;server-ip&gt; --apply</span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># Uses only the built-in ssh; the target must be Ubuntu / Debian / Proxmox VE.</span>
@@ -700,7 +700,7 @@
 </span></span></code></pre></div><p>After any of the three scripts finishes, check the &ldquo;Verification&rdquo; block at the end: <code>dkms status</code> listing only the running kernel and <code>/lib/modules</code> matching <code>/boot/vmlinuz-*</code> means the system is healthy; once you confirm the dry-run report, re-run with <code>--apply</code> / <code>-Apply</code> to clean.</p>
 <h3 id="method-2-hand-it-to-an-ai-agent">Method 2: Hand It to an AI Agent</h3>
 <p>The lazier route is to hand the whole problem to an AI agent (ZCode, Claude Code, etc.) — you only need to provide SSH access. This prompt can be copied as-is:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>Please check and clean the DKMS &#34;ghost kernels&#34; on a Proxmox VE / Ubuntu server —
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>Please check and clean the DKMS &#34;ghost kernels&#34; on a Proxmox VE / Ubuntu server —
 </span></span><span style="display:flex;"><span>kernel images that were uninstalled but left behind DKMS builds, orphan header
 </span></span><span style="display:flex;"><span>packages, and leftover /lib/modules directories. Follow these steps exactly:
 </span></span><span style="display:flex;"><span>
@@ -745,7 +745,7 @@
 <p><strong>Q6: I just don&rsquo;t want build-all. Can I turn it off at the root?</strong></p>
 <p>A: Yes — bypass the deb package&rsquo;s postinst and register with DKMS manually: put the source tree under <code>/usr/src/i915-sriov-dkms-&lt;version&gt;</code>, then <code>dkms add</code> and <code>dkms install -m i915-sriov-dkms -v &lt;version&gt; -k $(uname -r)</code> to build for the current kernel only. Caveat: you must recompile manually after every kernel upgrade — which is exactly what the deb package plus build-all automates for you. Your call.</p>
 <h2 id="references">References</h2>
-<p><img alt="The DkmsPackaging page on the Debian Wiki" src="/post-images/dkms-ghost-kernels/12-web-debian-wiki.webp"></p>
+<p><img src="/post-images/dkms-ghost-kernels/12-web-debian-wiki.webp" alt="The DkmsPackaging page on the Debian Wiki"></p>
 <p><em>Figure 13: Real web screenshot. The Debian Wiki&rsquo;s DkmsPackaging page documents DKMS packaging and the common.postinst conventions.</em></p>
 <ul>
 <li><a href="https://github.com/strongtz/i915-sriov-dkms">strongtz/i915-sriov-dkms (GitHub)</a> — the protagonist of this post, the community SR-IOV port of the i915/xe drivers</li>

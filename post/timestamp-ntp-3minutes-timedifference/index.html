@@ -210,7 +210,7 @@
 <p>服务器上的时间不是一个&quot;看起来差不多就行&quot;的东西。它由三层东西组成：<strong>时间戳</strong>（从 1970 年开始数秒的全球统一编号）、<strong>时区</strong>（数字怎么显示成人话）和<strong>时钟源</strong>（这个数字由谁来校准）。 cheap 的石英晶振每天可能走偏几秒，虚拟机暂停恢复、断电、CMOS 电池老化都会放大偏差；一旦没有 NTP 帮忙定期校准，就会出现：证书&quot;未生效&quot;、Kerberos 登录被拒、日志顺序错乱、两步验证口令永远对不上。</p>
 <p>修复思路只有一句话：<strong>让系统自带的时间服务常开，指向系统自带的公共时间源，并定期验证</strong>。本文给出 Windows 11、Ubuntu 26.04、macOS 26 三套一键脚本（只调用系统内置工具，不装第三方软件），以及人工执行与 Agent 自动配置两种方法。</p>
 </blockquote>
-<p><img alt="本文原创封面：一只慢了 3 分钟的表" src="/post-images/timestamp-ntp-3minutes-timeDifference/01-cover.webp"></p>
+<p><img src="/post-images/timestamp-ntp-3minutes-timeDifference/01-cover.webp" alt="本文原创封面：一只慢了 3 分钟的表"></p>
 <p><em>图 1：表针看着都正常，只有和&quot;标准答案&quot;对表的那一刻才知道它慢了 3 分钟。</em></p>
 <h2 id="一问题背景凌晨的证书告警">一、问题背景：凌晨的证书告警</h2>
 <p>先讲一个剥去敏感信息后非常典型的故事。</p>
@@ -222,7 +222,7 @@
 <ol>
 <li><strong>HTTPS 证书校验失败，报&quot;尚未生效&quot;</strong>。证书像牛奶盒上的保质期，写着&quot;从此刻起生效、到彼刻为止&quot;。校验的机器时钟慢了，它以为的&quot;现在&quot;还停在有效期开始之前，就像拿着 9 月 14 日的日历去检查 9 月 10 日生产的牛奶——一口咬定&quot;保质期还没到，拒收&quot;。</li>
 </ol>
-<p><img alt="原创示意图：证书有效期与慢了的时钟" src="/post-images/timestamp-ntp-3minutes-timeDifference/02-cert-window.svg"></p>
+<p><img src="/post-images/timestamp-ntp-3minutes-timeDifference/02-cert-window.svg" alt="原创示意图：证书有效期与慢了的时钟"></p>
 <p><em>图 2：证书校验只看一瞬间。校验方的&quot;现在&quot;落在有效期窗口外面，再新的证书也会被拒。</em></p>
 <ol start="2">
 <li>
@@ -237,7 +237,7 @@
 <h3 id="31-时间戳给每一秒发一个全球统一的号码">3.1 时间戳：给每一秒发一个全球统一的号码</h3>
 <p>计算机里最常用的时间表示叫 <strong>Unix 时间戳</strong>：从 <strong>1970 年 1 月 1 日 00:00:00（UTC）</strong> 这个约定俗成的&quot;起点&quot;开始，数到现在一共过了多少秒。起点那一刻是第 0 号，过一秒加 1。写这篇文章时，号已经发到了 17.89 亿多。</p>
 <p>它就像超市小票上的流水号，或者运动会计时牌：<strong>不管你在北京还是纽约，同一瞬间只有一个号码</strong>。这个性质非常重要——字符串形式的时间（&ldquo;2026-09-14 08:30:00&rdquo;）会跟着时区变出无数种写法，而时间戳永远只有一种答案。所以数据库、日志、接口签名、分布式锁，底层几乎都靠时间戳说话。</p>
-<p><img alt="原创示意图：时间戳是数出来的秒数" src="/post-images/timestamp-ntp-3minutes-timeDifference/03-timeline.svg"></p>
+<p><img src="/post-images/timestamp-ntp-3minutes-timeDifference/03-timeline.svg" alt="原创示意图：时间戳是数出来的秒数"></p>
 <p><em>图 3：同一瞬间，人看是&quot;日期 + 时间&quot;，机器存是一个整数。整数只有一种，字符串有很多种。</em></p>
 <p>顺便把几个容易混的词摆正：</p>
 <ul>
@@ -247,18 +247,18 @@
 </ul>
 <h3 id="32-服务器上的时间都藏在哪">3.2 服务器上的时间都藏在哪</h3>
 <p>随手打开任何一台现代电脑，都能看到这套体系在运转。下面这张是 Windows 的&quot;日期和时间&quot;面板（真实截图）：日期、时间、时区一目了然，并且明确写着&quot;此时区未实行夏令时&quot;。</p>
-<p><img alt="真实截图：Windows 日期和时间面板" src="/post-images/timestamp-ntp-3minutes-timeDifference/04-shot-timedate-cpl.webp"></p>
+<p><img src="/post-images/timestamp-ntp-3minutes-timeDifference/04-shot-timedate-cpl.webp" alt="真实截图：Windows 日期和时间面板"></p>
 <p><em>图 4：Windows 控制面板里的&quot;日期和时间&quot;。时钟图案 + 时区 + 夏令时标记，就是&quot;墙钟&quot;三要素。</em></p>
 <p>但面板只回答&quot;显示什么&quot;。真正的问题藏在下面两处：<strong>机器内部的钟走得准不准</strong>（硬件层），以及<strong>它有没有定期和标准时间对表</strong>（协议层）。这正是下一节的内容。</p>
 <h2 id="四问题根因钟自己会走偏而这台机器没对表">四、问题根因：钟自己会走偏，而这台机器没对表</h2>
 <h3 id="41-石英晶振一块每天快几秒的便宜手表">4.1 石英晶振：一块&quot;每天快几秒&quot;的便宜手表</h3>
 <p>计算机计时靠主板上的石英晶振。石英晶振的原理是给一块石英晶体通电，让它以固定频率振荡（绝大多数主板上是 32768 赫兹，也就是每秒振 32768 下），数振荡次数就是数时间。</p>
 <p>听起来很精密，但它是物理器件：温度变化、元件老化、电压波动都会让&quot;每秒振多少下&quot;发生微小漂移。普通消费级晶振的实际精度大约是每天快或慢 1 到几秒——<strong>相当于一块每天快两秒的便宜手表</strong>。戴过这种表的人都知道，不是表坏了，是需要定期对表。虚拟机更夸张：宿主机资源紧张时虚拟机被&quot;暂停再恢复&quot;，醒来就发现自己的表掉队了一截；CMOS 电池老化、断电重启，也会让硬件钟把时间记丢。</p>
-<p><img alt="原创示意图：时钟漂移曲线" src="/post-images/timestamp-ntp-3minutes-timeDifference/05-drift.svg"></p>
+<p><img src="/post-images/timestamp-ntp-3minutes-timeDifference/05-drift.svg" alt="原创示意图：时钟漂移曲线"></p>
 <p><em>图 5：无人校时的钟每天偏一点，两周就能差出半分钟；开着自动对时的钟始终贴着零线。</em></p>
 <h3 id="42-实锤查一下最后一次成功对表">4.2 实锤：查一下&quot;最后一次成功对表&quot;</h3>
 <p>怎么确认一台机器&quot;没在对表&quot;？Windows 上用系统自带的 <code>w32tm</code> 命令就能看到。下面是我在一台真实 Windows 11 机器上的截图，它恰好处于典型的&quot;自由跑&quot;状态：</p>
-<p><img alt="真实截图：w32tm 显示 Stratum 0、来源为本地 CMOS 时钟" src="/post-images/timestamp-ntp-3minutes-timeDifference/06-shot-w32tm.webp"></p>
+<p><img src="/post-images/timestamp-ntp-3minutes-timeDifference/06-shot-w32tm.webp" alt="真实截图：w32tm 显示 Stratum 0、来源为本地 CMOS 时钟"></p>
 <p><em>图 6：<code>w32tm /query /status</code> 显示 Stratum: 0、Source: Local CMOS Clock——时间服务在跑，但只参考自己的硬件钟，没有对过表。</em></p>
 <p>逐行解读一下这张真实输出：<strong>Stratum: 0 (unspecified)</strong> 表示&quot;不知道自己跟谁对过时&quot;；<strong>Source: Local CMOS Clock</strong> 表示当前时间来源是主板上的硬件钟，也就是&quot;只信自己&quot;；<strong>Last Successful Sync Time: unspecified</strong> 表示从没成功对过表。这台机器显示层一切正常，内部却在&quot;裸奔&quot;——这正是那次凌晨故障的根因：<strong>显示正常 ≠ 校准正常</strong>。</p>
 <p>把根因链完整写出来就是：<strong>晶振漂移/虚拟机暂停 → 无 NTP 校准 → 时钟慢了 3 分钟 → 一切依赖&quot;有效期&quot;和&quot;先后顺序&quot;的检查开始乱吹哨</strong>。</p>
@@ -271,12 +271,12 @@
 <li><strong>Stratum 2 / 3</strong>：向上一层对时、再向下转播的服务器，像&quot;省转播站&quot;&ldquo;村里喇叭&rdquo;；</li>
 <li>最底下是千千万万客户端：你的手机、电脑、服务器。</li>
 </ul>
-<p><img alt="原创示意图：NTP 层级" src="/post-images/timestamp-ntp-3minutes-timeDifference/07-stratum.svg"></p>
+<p><img src="/post-images/timestamp-ntp-3minutes-timeDifference/07-stratum.svg" alt="原创示意图：NTP 层级"></p>
 <p><em>图 7：层级越低离标准答案越远，但每层误差都很小；普通服务器用 Stratum 2/3 完全够用。</em></p>
 <p>这不是&quot;传话游戏&quot;式的逐层放大失真——<strong>每一层都不是照抄上一层的话，而是自己重新测量、重新校准</strong>，所以误差不会像谣言一样越传越大。RFC 5905（NTP 版本 4）把整套算法写得明明白白，公网上普通客户端拿到毫秒级精度是常态。</p>
 <h3 id="52-它是怎么对表的打一个时间电话">5.2 它是怎么对表的：打一个&quot;时间电话&quot;</h3>
 <p>对表的难点在于：问&quot;现在几点&quot;要花时间，问完再听答案，时间又过去了——<strong>网络延迟会污染答案</strong>。NTP 的办法非常聪明：一次问答记 4 个时间戳。</p>
-<p><img alt="原创示意图：NTP 往返测偏移" src="/post-images/timestamp-ntp-3minutes-timeDifference/08-ntp-exchange.svg"></p>
+<p><img src="/post-images/timestamp-ntp-3minutes-timeDifference/08-ntp-exchange.svg" alt="原创示意图：NTP 往返测偏移"></p>
 <p><em>图 8：T1/T4 是自己记录的时刻，T2/T3 是对方记录的时刻。一来一回，偏差和延迟都能算出来。</em></p>
 <p>打个比方：你打电话问朋友&quot;现在几点&quot;，朋友说&quot;我这边 10 点 05 分整&quot;。你没法立刻信，因为你不知道这句话在电话里&quot;走&quot;了多久。于是你们多问一句、多答一句，把&quot;我什么时候问的、他什么时候听到、他什么时候答的、我什么时候听到&quot;四个时刻都记下来——<strong>来回的时间一对称，就能把延迟抵消掉</strong>，剩下的差值就是你手表的偏差。NTP 会连续做这种测量，取最可信的结果。</p>
 <h3 id="53-知道偏差之后慢慢追还是直接跳">5.3 知道偏差之后：慢慢追，还是直接跳？</h3>
@@ -287,7 +287,7 @@
 <p>下面的脚本默认<strong>先只做体检</strong>；确认要修复时再带参数执行。文中公共时间源均为官方公开域名，可按所在地区自行替换。</p>
 </blockquote>
 <h3 id="61-windows-11">6.1 Windows 11</h3>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-powershell" data-lang="powershell"><span style="display:flex;"><span><span style="color:#75715e">&lt;#
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-powershell" data-lang="powershell"><span style="display:flex;"><span><span style="color:#75715e">&lt;#
 </span></span></span><span style="display:flex;"><span><span style="color:#75715e">fix-time-windows11.ps1 —— 检查并修复 Windows 11 时间同步（仅系统内置工具）
 </span></span></span><span style="display:flex;"><span><span style="color:#75715e">体检：      powershell -ExecutionPolicy Bypass -File .\fix-time-windows11.ps1
 </span></span></span><span style="display:flex;"><span><span style="color:#75715e">修复：      右键开始菜单 -&gt; 终端(管理员)，再执行
@@ -320,14 +320,14 @@
 </span></span><span style="display:flex;"><span>Write-Host <span style="color:#e6db74">&#34;== 4. 复检 ==&#34;</span>
 </span></span><span style="display:flex;"><span>w32tm /query /status
 </span></span></code></pre></div><p>Windows 上打开&quot;设置 &gt; 时间和语言 &gt; 日期和时间&quot;，也能看到同样能力的图形界面版本：&ldquo;自动设置时间&quot;开关 + &ldquo;立即同步&quot;按钮；经典控制面板的&quot;Internet 时间&quot;页则能看到最近一次同步是否成功：</p>
-<p><img alt="真实截图：Internet 时间标签页" src="/post-images/timestamp-ntp-3minutes-timeDifference/10-shot-internet-time.webp"></p>
+<p><img src="/post-images/timestamp-ntp-3minutes-timeDifference/10-shot-internet-time.webp" alt="真实截图：Internet 时间标签页"></p>
 <p><em>图 9：Windows 真实界面——&ldquo;已将计算机设置为自动与 time.windows.com 同步&rdquo;，并给出最近一次成功对表的记录。</em></p>
 <p>点击&quot;更改设置&quot;后能看到 NTP 服务器配置项，这就是 <code>w32tm</code> 命令在图形界面的对应物：</p>
-<p><img alt="真实截图：Internet 时间设置对话框" src="/post-images/timestamp-ntp-3minutes-timeDifference/11-shot-ntp-server.webp"></p>
+<p><img src="/post-images/timestamp-ntp-3minutes-timeDifference/11-shot-ntp-server.webp" alt="真实截图：Internet 时间设置对话框"></p>
 <p><em>图 10：服务器下拉框里就是公共时间源域名，勾选同步 + 立即更新，和脚本做的是同一件事。</em></p>
 <h3 id="62-ubuntu-2604">6.2 Ubuntu 26.04</h3>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e">#!/usr/bin/env bash
-</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span><span style="color:#75715e"># fix-time-ubuntu2604.sh —— 检查并修复 Ubuntu 26.04 时间同步（系统内置 systemd-timesyncd）</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e">#!/usr/bin/env bash
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"># fix-time-ubuntu2604.sh —— 检查并修复 Ubuntu 26.04 时间同步（系统内置 systemd-timesyncd）</span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># 体检：  bash fix-time-ubuntu2604.sh</span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># 修复：  sudo bash fix-time-ubuntu2604.sh run</span>
 </span></span><span style="display:flex;"><span>set -euo pipefail
@@ -360,11 +360,11 @@
 </span></span><span style="display:flex;"><span>echo <span style="color:#e6db74">&#34;== 4. 复检 ==&#34;</span>
 </span></span><span style="display:flex;"><span>timedatectl
 </span></span></code></pre></div><p>我在一台真实 Ubuntu 服务器上执行体检部分的输出如下（<code>System clock synchronized: yes</code> 与 <code>NTP service: active</code> 就是&quot;对表正常&quot;的铁证）：</p>
-<p><img alt="真实截图：服务器 timedatectl 输出" src="/post-images/timestamp-ntp-3minutes-timeDifference/09-shot-linux-timedatectl.webp"></p>
+<p><img src="/post-images/timestamp-ntp-3minutes-timeDifference/09-shot-linux-timedatectl.webp" alt="真实截图：服务器 timedatectl 输出"></p>
 <p><em>图 11：真实服务器输出。本地时间与 UTC 各显各的，同步状态与 NTP 服务一目了然，时间戳与高精度时间同屏可见。</em></p>
 <h3 id="63-macos-26">6.3 macOS 26</h3>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-zsh" data-lang="zsh"><span style="display:flex;"><span><span style="color:#75715e">#!/bin/zsh
-</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span><span style="color:#75715e"># fix-time-macos26.zsh —— 检查并修复 macOS 26 时间同步（系统内置 systemsetup / sntp）</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-zsh" data-lang="zsh"><span style="display:flex;"><span><span style="color:#75715e">#!/bin/zsh
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"># fix-time-macos26.zsh —— 检查并修复 macOS 26 时间同步（系统内置 systemsetup / sntp）</span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># 体检与修复都需要管理员权限：</span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># 体检：  sudo zsh fix-time-macos26.zsh</span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># 修复：  sudo zsh fix-time-macos26.zsh run</span>
@@ -395,7 +395,7 @@
 </span></span></code></pre></div><p>三个脚本都遵循同一个结构：<strong>先体检（只读）→ 再修复（需管理员）→ 最后复检</strong>。人工执行时，把体检输出留档，修复后对比，就是一次完整的小运维。</p>
 <h2 id="七agent-自动配置给边界和验收而不是给一句帮我修">七、Agent 自动配置：给边界和验收，而不是给一句&quot;帮我修&rdquo;</h2>
 <p>如果你手边有 Codex、Claude Code、OpenClaw、HermesAgent 这类可以执行本地命令的 Agent，直接把下面这段指令交给它即可。重点是第 3、4、6 条——<strong>先列清单再执行、只用系统内置工具、修完必须回读验收</strong>：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>请检查并修复本机的系统时间同步。先识别当前系统是 Windows 11、Ubuntu 26.04 还是 macOS 26，再执行对应流程。要求：
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>请检查并修复本机的系统时间同步。先识别当前系统是 Windows 11、Ubuntu 26.04 还是 macOS 26，再执行对应流程。要求：
 </span></span><span style="display:flex;"><span>1. 先只做体检：当前时间、时区、系统时间服务状态（Windows 的 W32Time/w32tm、Ubuntu 的 systemd-timesyncd、macOS 的 systemsetup），以及是否真正处于&#34;已同步&#34;状态。
 </span></span><span style="display:flex;"><span>2. 只使用系统内置工具，不安装任何第三方软件；时间源只用系统自带的公共域名（time.windows.com、ntp.ubuntu.com、time.apple.com 等官方公开地址）。
 </span></span><span style="display:flex;"><span>3. 修复类命令执行前，先列出每条命令的作用，征得我同意后再执行。
@@ -406,10 +406,10 @@
 <h2 id="八验收两个不用装任何东西的办法">八、验收：两个不用装任何东西的办法</h2>
 <p>修复完怎么确认&quot;真的准了&quot;？两个简单办法：</p>
 <p><strong>办法一：看第三方对时网站。</strong> 浏览器打开 time.is 这类对时服务，它会显示你本机时钟与它的参考钟相差多少：</p>
-<p><img alt="真实截图：time.is 对时页面" src="/post-images/timestamp-ntp-3minutes-timeDifference/12-shot-timeis.webp"></p>
+<p><img src="/post-images/timestamp-ntp-3minutes-timeDifference/12-shot-timeis.webp" alt="真实截图：time.is 对时页面"></p>
 <p><em>图 12：time.is 显示标准北京时间。页面会给出本机时钟与其参考钟的偏差，日常肉眼验收足够用。</em></p>
 <p><strong>办法二：看 HTTP 响应头。</strong> 每个网页服务器的响应里都带着 <code>Date</code> 头，用的正是全球统一的 GMT/UTC 计法。拿系统自带的 curl 问一下任何网站，把服务器的&quot;现在&quot;和你本机的&quot;现在&quot;对一对：</p>
-<p><img alt="真实截图：HTTP Date 响应头" src="/post-images/timestamp-ntp-3minutes-timeDifference/13-shot-http-date.webp"></p>
+<p><img src="/post-images/timestamp-ntp-3minutes-timeDifference/13-shot-http-date.webp" alt="真实截图：HTTP Date 响应头"></p>
 <p><em>图 13：同一瞬间，服务器说 &ldquo;00:47:03 GMT&rdquo;，本机说 &ldquo;08:47:04 +08:00&rdquo;——换算过来只差 1 秒，说明本机时间健康。</em></p>
 <p>图 13 还顺便演示了一个知识点：<strong>服务器之间的时间信息全部用 UTC 表达</strong>，时区只在你显示给人类看的时候才登场。</p>
 <h2 id="九qa关于时间最常见的六个问题">九、Q&amp;A：关于时间，最常见的六个问题</h2>
@@ -423,7 +423,7 @@
 <p>老 32 位系统的时间戳用带符号 32 位整数存秒数，最多数到 2038 年 1 月 19 日就会&quot;里程表爆表&quot;变成负数。64 位系统数到宇宙热寂也用不完，所以现代 64 位 Linux、macOS、Windows 都不受影响；需要操心的主要是嵌入式老设备，处理方式也简单——换 64 位时间类型。</p>
 <p><strong>Q5：代码里测量&quot;某操作花了多久&quot;，用时间戳行吗？</strong></p>
 <p>不推荐，应该用<strong>单调时钟</strong>。墙钟可能被 NTP 突然调快调慢，用StartTime = 墙钟一算，耗时可能算出负数。单调时钟像跑步计时器，只管流逝、只进不退，专治&quot;测量耗时&quot;。一句话分工：<strong>记录业务时刻用墙钟 + 时间戳，测量耗时长短用单调时钟</strong>。</p>
-<p><img alt="原创示意图：墙钟 vs 单调时钟" src="/post-images/timestamp-ntp-3minutes-timeDifference/14-monotonic.svg"></p>
+<p><img src="/post-images/timestamp-ntp-3minutes-timeDifference/14-monotonic.svg" alt="原创示意图：墙钟 vs 单调时钟"></p>
 <p><em>图 14：挂钟会被&quot;调准&quot;而突然倒退；秒表只管流逝。测耗时请用右边那只。</em></p>
 <p><strong>Q6：一直开着对时服务，费电/费流量/有风险吗？</strong></p>
 <p>开销可以忽略：NTP 客户端通常每 64 秒到 1024 秒才发一个很小的 UDP 包。风险方向恰恰相反——<strong>不对时的风险才是真风险</strong>。唯一要注意的是给系统的时间服务留好网络通路（有些&quot;安全加固&quot;把 NTP 端口一封，机器就回到&quot;自由跑&quot;状态了）。</p>

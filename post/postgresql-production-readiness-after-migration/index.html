@@ -215,19 +215,19 @@
 <p><strong>先说结论</strong></p>
 <p>从 MySQL 迁到 PostgreSQL、数据核对一致、参数也调好了，仍然不能证明它可以上线。真正的生产就绪，至少要亲手撞过四道墙：<strong>连接耗尽时业务会怎样、慢 SQL 能否在证据链里被找到、死元组能否被及时回收、误删之后能否恢复到正确时刻</strong>。我在一个不发布宿主端口、只放合成数据的 PostgreSQL 18.6 沙盒里做了破坏性彩排：150 个直连撞出 <code>too many clients</code>；同样 150 个客户端经过 PgBouncer 后只占约 21 个数据库后端连接，完成 35,751 笔事务且 0 失败；一条查询从 61.953ms 降到 2.153ms；18 万条死元组经普通 VACUUM 变为 0；最后删掉一行，再用基础备份和 22 个归档 WAL 把它恢复回来。本文是 PostgreSQL 系列的收尾篇，也附上 Windows 11、Ubuntu 26.04、macOS 26 三套一键实验脚本和 Agent 自动验收指令。</p>
 </blockquote>
-<p><img alt="原创封面：迁移通过不等于生产就绪，必须通过连接、查询、清理和恢复四道闸。" src="/post-images/postgresql-production-readiness-after-migration/00-cover.svg"></p>
+<p><img src="/post-images/postgresql-production-readiness-after-migration/00-cover.svg" alt="原创封面：迁移通过不等于生产就绪，必须通过连接、查询、清理和恢复四道闸。"></p>
 <p><em>图 1：原创 SVG 封面。所有数字均来自本文可下载的隔离实验，不是容量承诺，也不是拿别人的跑分拼出来的故事。</em></p>
 <h2 id="一为什么还要有一篇收尾">一、为什么还要有一篇「收尾」</h2>
 <p>这个系列已经回答了三个问题：第一篇解释<a href="/post/why-projects-switch-from-mysql-to-postgresql/">为什么越来越多项目从 MySQL 转向 PostgreSQL</a>；第二篇完成<a href="/post/mysql-to-postgresql-migration-guide/">从 MySQL 到 PostgreSQL 的迁移与核对</a>；第三篇把<a href="/post/postgresql-production-tuning-ten-knobs/">搬家后必须调整的 10 个生产开关</a>拧了一遍。</p>
 <p>但它们共同缺少最后一个动词：<strong>证明</strong>。</p>
 <p>迁移像把一家医院从旧楼搬进新楼。病历都搬到了、灯也亮了、空调也调好了，并不代表明天可以接诊。你还要试一次停电，看看备用电源是否接管；要让很多人同时挂号，看看窗口是否堵死；还要故意拿错一份病历，再确认能不能追回正确版本。数据库上线也是这样：配置表是「我们觉得可以」，故障彩排才是「证据说可以」。</p>
-<p><img alt="原创路线图：PostgreSQL 系列从选型、迁移、调优走到故障彩排。" src="/post-images/postgresql-production-readiness-after-migration/01-series-map.svg"></p>
+<p><img src="/post-images/postgresql-production-readiness-after-migration/01-series-map.svg" alt="原创路线图：PostgreSQL 系列从选型、迁移、调优走到故障彩排。"></p>
 <p><em>图 2：原创图。选型、迁移、调优、验证不是四篇互不相干的文章，而是一条链；最后一环没测，前三环的成功仍可能在上线当天归零。</em></p>
 <p>本文不会把一个小沙盒伪装成生产容量测试。实验只回答「机制是否按预期工作」：连接池是否真的折叠连接、执行计划是否真的变化、VACUUM 是否真的清掉死元组、PITR 是否真的找回目标时刻之前的数据。真实系统还要用真实数据分布、真实并发模型和真实磁盘再跑一轮。</p>
 <h2 id="二问题表现四种平时没事上线就出事">二、问题表现：四种「平时没事，上线就出事」</h2>
 <h3 id="21-第-101-位客人把门堵死">2.1 第 101 位客人把门堵死</h3>
 <p>PostgreSQL 采用一连接一后端进程的模型。连接不是网页标签页，多开几个无所谓；它更像餐厅里的专属服务员，每个人都要占内存、进程和调度时间。实验把 <code>max_connections</code> 固定在 100，然后直接发起 150 个客户端：</p>
-<p><img alt="真实实验输出截图：150 个客户端直连 PostgreSQL，连接上限被击穿。" src="/post-images/postgresql-production-readiness-after-migration/01-real-connection-wall.webp"></p>
+<p><img src="/post-images/postgresql-production-readiness-after-migration/01-real-connection-wall.webp" alt="真实实验输出截图：150 个客户端直连 PostgreSQL，连接上限被击穿。"></p>
 <p><em>图 3：真实实验输出截图，地址已经脱敏。进程非零退出，第 111 个客户端创建连接时收到 <code>FATAL: sorry, too many clients already</code>。这不是「慢一点」，而是请求根本进不了数据库。</em></p>
 <p>生产事故里更糟的一幕是：连接全被业务占满后，DBA 的诊断连接也进不去。只把 <code>max_connections</code> 从 100 改成 500，等于看见餐厅排队就临时招 400 名服务员——厨房面积没变，所有人反而互相碰撞。</p>
 <h3 id="22-同一条-sql读了不该读的-30-万行">2.2 同一条 SQL，读了不该读的 30 万行</h3>
@@ -248,10 +248,10 @@
 <p>下面逐道闸复盘真实实验。</p>
 <h2 id="四第一道闸连接池不是加速器是限流阀">四、第一道闸：连接池不是加速器，是限流阀</h2>
 <p>PgBouncer 的 transaction pooling 可以把大量客户端会话复用到较少的数据库连接上。它像餐厅门口的领位员：150 位客人可以先拿号，后厨不必同时配 150 名厨师；某一桌点单结束，厨师马上服务下一桌。</p>
-<p><img alt="原创图解：150 个客户端经过 PgBouncer transaction 模式复用到有限后端连接。" src="/post-images/postgresql-production-readiness-after-migration/02-pool-restaurant.svg"></p>
+<p><img src="/post-images/postgresql-production-readiness-after-migration/02-pool-restaurant.svg" alt="原创图解：150 个客户端经过 PgBouncer transaction 模式复用到有限后端连接。"></p>
 <p><em>图 4：原创图。transaction 模式按事务归还连接，因此会话级状态、临时表、部分 prepared statement 用法必须先查兼容性，不能只改连接地址就宣布完成。</em></p>
 <p>同样的 150 客户端、同一数据库和同一隔离网络，换到 PgBouncer 之后：</p>
-<p><img alt="真实实验输出截图：PgBouncer 承接 150 个客户端，0 笔事务失败。" src="/post-images/postgresql-production-readiness-after-migration/02-real-pgbouncer.webp"></p>
+<p><img src="/post-images/postgresql-production-readiness-after-migration/02-real-pgbouncer.webp" alt="真实实验输出截图：PgBouncer 承接 150 个客户端，0 笔事务失败。"></p>
 <p><em>图 5：真实实验输出截图。负载期间数据库后端连接约 21 个；12 秒完成 35,751 笔只读事务，失败数 0，平均延迟 50.076ms，吞吐 2,995.425 TPS。这个数字只描述本次沙盒，不等于你的生产容量。</em></p>
 <p>上线前至少确认这些问题：</p>
 <ul>
@@ -264,12 +264,12 @@
 <p>结论不是「永远用 transaction 模式」，而是<strong>明确选择模式，并用应用行为验证兼容性</strong>。</p>
 <h2 id="五第二道闸慢-sql-要从猜变成查案">五、第二道闸：慢 SQL 要从「猜」变成「查案」</h2>
 <p>本次查询条件为 <code>customer_id = 4241 AND status = 'paid'</code>。建索引前，执行计划走 <code>Parallel Seq Scan</code>：</p>
-<p><img alt="真实实验输出截图：建索引前为 Parallel Seq Scan。" src="/post-images/postgresql-production-readiness-after-migration/03-real-slow-before.webp"></p>
+<p><img src="/post-images/postgresql-production-readiness-after-migration/03-real-slow-before.webp" alt="真实实验输出截图：建索引前为 Parallel Seq Scan。"></p>
 <p><em>图 6：真实实验输出截图。3 个执行进程每个返回约 10 行，同时过滤掉约 99,990 行；总执行时间 61.953ms。这里真正重要的不是「61」，而是扫描策略和被丢弃行数。</em></p>
 <p>然后创建与筛选条件匹配的复合索引并执行 <code>ANALYZE</code>：</p>
-<p><img alt="真实实验输出截图：建复合索引后改为 Bitmap Index Scan 和 Bitmap Heap Scan。" src="/post-images/postgresql-production-readiness-after-migration/04-real-slow-after.webp"></p>
+<p><img src="/post-images/postgresql-production-readiness-after-migration/04-real-slow-after.webp" alt="真实实验输出截图：建复合索引后改为 Bitmap Index Scan 和 Bitmap Heap Scan。"></p>
 <p><em>图 7：真实实验输出截图。索引找到 30 个条目，再访问 30 个准确 heap block，总执行时间 2.153ms；本次运行约快 28.8 倍。缓存、并发和数据分布变化后倍率也会变化。</em></p>
-<p><img alt="原创图解：没有目录卡片要翻遍书架，有复合索引可直接定位 30 行。" src="/post-images/postgresql-production-readiness-after-migration/03-query-rescue.svg"></p>
+<p><img src="/post-images/postgresql-production-readiness-after-migration/03-query-rescue.svg" alt="原创图解：没有目录卡片要翻遍书架，有复合索引可直接定位 30 行。"></p>
 <p><em>图 8：原创图。索引像图书馆目录，不是书越多目录越多越好；每个索引都会增加写入成本、占磁盘并需要维护。只为高价值查询建有证据支持的索引。</em></p>
 <p>推荐的查案顺序是：</p>
 <ol>
@@ -281,20 +281,20 @@
 <p><code>pg_stat_statements</code> 像机场的航班总榜，告诉你哪条航线累计延误最多；单条慢日志像一名旅客的投诉。两者都需要，但不能只凭投诉决定扩建跑道。</p>
 <h2 id="六第三道闸普通-vacuum-回收的是可复用空间">六、第三道闸：普通 VACUUM 回收的是「可复用空间」</h2>
 <p>实验先更新 15 万行、再删除 3 万行，统计视图观察到 18 万条 dead tuples：</p>
-<p><img alt="真实实验输出截图：普通 VACUUM 前观察到 180,000 条死元组。" src="/post-images/postgresql-production-readiness-after-migration/05-real-dead-tuples-before.webp"></p>
+<p><img src="/post-images/postgresql-production-readiness-after-migration/05-real-dead-tuples-before.webp" alt="真实实验输出截图：普通 VACUUM 前观察到 180,000 条死元组。"></p>
 <p><em>图 9：真实实验输出截图。为了得到稳定证据，实验暂时关闭该表 autovacuum，制造垃圾后执行 ANALYZE 与统计刷新；生产环境不要长期关闭 autovacuum。</em></p>
 <p>执行普通 <code>VACUUM (ANALYZE)</code> 后：</p>
-<p><img alt="真实实验输出截图：普通 VACUUM 后死元组为 0，但总大小仍约 90MB。" src="/post-images/postgresql-production-readiness-after-migration/06-real-dead-tuples-after.webp"></p>
+<p><img src="/post-images/postgresql-production-readiness-after-migration/06-real-dead-tuples-after.webp" alt="真实实验输出截图：普通 VACUUM 后死元组为 0，但总大小仍约 90MB。"></p>
 <p><em>图 10：真实实验输出截图。<code>n_dead_tup</code> 变为 0，<code>vacuum_count</code> 增加；总大小仍约 90MB。这恰好纠正了「VACUUM 一定缩文件」的常见误解。</em></p>
-<p><img alt="原创图解：普通 VACUUM 是整理衣柜，不是把房子缩小。" src="/post-images/postgresql-production-readiness-after-migration/04-vacuum-closet.svg"></p>
+<p><img src="/post-images/postgresql-production-readiness-after-migration/04-vacuum-closet.svg" alt="原创图解：普通 VACUUM 是整理衣柜，不是把房子缩小。"></p>
 <p><em>图 11：原创图。普通 VACUUM 把格子标记为可复用，通常不会把文件尾部空间立即还给操作系统；<code>VACUUM FULL</code> 会重写并锁表，<code>pg_repack</code> 也需要额外空间和操作评估。</em></p>
 <p>生产监控不要只看当前 dead tuples，还要看趋势与原因：长事务是否阻止回收、autovacuum 是否被取消、表级 scale factor 是否适合超大表、<code>relfrozenxid</code> 年龄是否逼近风险线。保洁不是「今天扫过一次」就永远干净，而是客流、垃圾产生速度和保洁能力三者的持续平衡。</p>
 <h2 id="七第四道闸亲手删一次再把时间拨回来">七、第四道闸：亲手删一次，再把时间拨回来</h2>
 <p>PITR 的原理很像游戏存档：基础备份是某一刻的完整存档，归档 WAL 是之后每一步操作的录像。恢复时先加载存档，再把录像播放到误操作之前按暂停。</p>
-<p><img alt="原创时间线：基础备份、目标行写入、恢复目标、误删和恢复。" src="/post-images/postgresql-production-readiness-after-migration/05-pitr-timeline.svg"></p>
+<p><img src="/post-images/postgresql-production-readiness-after-migration/05-pitr-timeline.svg" alt="原创时间线：基础备份、目标行写入、恢复目标、误删和恢复。"></p>
 <p><em>图 12：原创图。恢复目标必须在事故之前且包含目标事务。生产恢复应优先在旁路实例完成校验，避免把唯一的原库直接改造成恢复试验场。</em></p>
 <p>实验流程是：完成基础备份；插入标记行并切换 WAL；记录恢复目标；再删除该行并切换 WAL；确认当前库查询为 0 行；停止源库，把基础备份复制到新卷；配置 <code>recovery.signal</code>、<code>restore_command</code> 与 <code>recovery_target_time</code>；启动隔离恢复实例并查询标记行。</p>
-<p><img alt="真实实验输出截图：误删后为 0 行，PITR 恢复后为 1 行。" src="/post-images/postgresql-production-readiness-after-migration/07-real-pitr.webp"></p>
+<p><img src="/post-images/postgresql-production-readiness-after-migration/07-real-pitr.webp" alt="真实实验输出截图：误删后为 0 行，PITR 恢复后为 1 行。"></p>
 <p><em>图 13：真实实验输出截图。事故后目标行数为 0，归档目录中有 22 个 WAL 文件；恢复实例进入 running/ready 状态，目标行和内容均恢复。实验没有发布宿主端口。</em></p>
 <p>这证明的是「恢复链条可工作」，不是生产 RTO。真实 RTO 还包含下载备份、拉取归档、回放大量 WAL、业务校验、DNS/连接切换和沟通决策。真正的验收表应该写：</p>
 <ul>
@@ -305,10 +305,10 @@
 <li>恢复后如何处理时间线分叉和旧主库，避免双写？</li>
 </ul>
 <h2 id="八最终验收不是一张服务为绿的截图">八、最终验收：不是一张「服务为绿」的截图</h2>
-<p><img alt="原创清单：连接、查询、VACUUM、恢复四道闸全部有证据才允许切流。" src="/post-images/postgresql-production-readiness-after-migration/06-launch-gates.svg"></p>
+<p><img src="/post-images/postgresql-production-readiness-after-migration/06-launch-gates.svg" alt="原创清单：连接、查询、VACUUM、恢复四道闸全部有证据才允许切流。"></p>
 <p><em>图 14：原创图。生产就绪是四个绿色闸门，不是 <code>SELECT 1</code> 成功一次。任何一项没有负责人、阈值和演练证据，都应该标成未知，而不是默认通过。</em></p>
 <p>完整脚本最后会生成一份验收摘要：</p>
-<p><img alt="真实实验输出截图：六项 PostgreSQL 生产就绪实验全部 PASS。" src="/post-images/postgresql-production-readiness-after-migration/08-real-acceptance.webp"></p>
+<p><img src="/post-images/postgresql-production-readiness-after-migration/08-real-acceptance.webp" alt="真实实验输出截图：六项 PostgreSQL 生产就绪实验全部 PASS。"></p>
 <p><em>图 15：真实实验输出截图。直连上限、池化并发、慢 SQL 计划变化、死元组回收、PITR 找回误删行、无宿主端口，六项全部通过。</em></p>
 <p>建议把切流拆成三个时间尺度：</p>
 <p><strong>T-30 天</strong>：冻结数据类型映射；用生产规模副本跑 Top SQL；确定 PgBouncer 模式；定义 RPO/RTO；完成第一次恢复演练；建立 dead tuples、冻结年龄、归档失败、连接等待告警。</p>
@@ -322,15 +322,15 @@
 <p>下载完整包：<a href="/post-files/postgresql-production-readiness-after-migration-three-platforms.zip">PostgreSQL 三平台生产就绪实验 ZIP</a>。包内含 Compose、PgBouncer、SQL、PITR、三平台入口、Agent 指令及<a href="/post-files/postgresql-production-readiness-after-migration/reference-results/11-acceptance-summary.txt">脱敏参考结果</a>。ZIP 的 SHA-256 为 <code>7b1e0ce68cc52dc36b76cf60bcae6c2e8094153560e2cd7e8536fea66f3cf471</code>。</p>
 <h3 id="91-人工一键执行">9.1 人工一键执行</h3>
 <p><strong>Windows 11</strong>：需要 Docker Desktop 的 Linux 容器引擎和 WSL 2 集成。解压后在 PowerShell 中执行：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-powershell" data-lang="powershell"><span style="display:flex;"><span>Set-ExecutionPolicy -Scope <span style="color:#66d9ef">Process</span> Bypass
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-powershell" data-lang="powershell"><span style="display:flex;"><span>Set-ExecutionPolicy -Scope <span style="color:#66d9ef">Process</span> Bypass
 </span></span><span style="display:flex;"><span>.\Run-Windows11.ps1
 </span></span></code></pre></div><p>脚本入口可单独下载：<a href="/post-files/postgresql-production-readiness-after-migration/Run-Windows11.ps1">Run-Windows11.ps1</a>。它通过 Windows 自带的 WSL 运行同一份 <code>run-lab.sh</code>，避免维护一套行为不同的「缩水版」实验。</p>
 <p><strong>Ubuntu 26.04</strong>：Docker Engine 与 Compose v2 就绪后：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>chmod +x run-lab.sh run-ubuntu-26.04.sh
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>chmod +x run-lab.sh run-ubuntu-26.04.sh
 </span></span><span style="display:flex;"><span>./run-ubuntu-26.04.sh
 </span></span></code></pre></div><p>入口：<a href="/post-files/postgresql-production-readiness-after-migration/run-ubuntu-26.04.sh">run-ubuntu-26.04.sh</a>。</p>
 <p><strong>macOS 26</strong>：启动本地 Docker 运行时后：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-zsh" data-lang="zsh"><span style="display:flex;"><span>chmod +x run-lab.sh run-macos-26.zsh
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-zsh" data-lang="zsh"><span style="display:flex;"><span>chmod +x run-lab.sh run-macos-26.zsh
 </span></span><span style="display:flex;"><span>./run-macos-26.zsh
 </span></span></code></pre></div><p>入口：<a href="/post-files/postgresql-production-readiness-after-migration/run-macos-26.zsh">run-macos-26.zsh</a>。</p>
 <p>三者最终都执行同一核心脚本：<a href="/post-files/postgresql-production-readiness-after-migration/run-lab.sh">run-lab.sh</a>。成功标准不是命令退出码看起来为 0，而是 <code>results/11-acceptance-summary.txt</code> 六行全部为 <code>[PASS]</code>，并确认实验容器、网络和卷完成定向清理。</p>

@@ -226,7 +226,7 @@
 <p>一次测速软件给出的“最高速度”，只能回答某个时刻、某条线路、某个服务端的一个瞬间。要判断一条链路能不能稳定承载备份、远程桌面、容器拉镜像或 Agent 调用，最好用自己能控制的两端，反复发送<strong>固定大小</strong>的数据，并同时记录方向、耗时、退出码、波动和错误原因。<code>dd</code> 正好能把数据量钉死，<code>ssh</code> 负责把字节送过网络，另一端的 <code>dd of=/dev/null</code> 负责接住后立即丢弃。</p>
 <p>本文把 <code>dd | ssh | dd</code> 变成一套可复用的网络实验：先解释为什么“跑一次”不够，再展示上传、下载、长稳和故障判读；最后给出 Windows 11、Ubuntu 26.04、macOS 26 三套一键脚本，以及人工执行和 Agent 自动配置两种方法。脚本默认小流量、只写 <code>/dev/null</code>，不依赖第三方测速服务。文中的实测数字来自脱敏的隔离实验，不是任何线路的 SLA 承诺。</p>
 </blockquote>
-<p><img alt="原创封面：dd、SSH 与远端 /dev/null 组成网络测速和稳定性实验。" src="/post-images/dd-network-speed-stability/00-cover.svg"></p>
+<p><img src="/post-images/dd-network-speed-stability/00-cover.svg" alt="原创封面：dd、SSH 与远端 /dev/null 组成网络测速和稳定性实验。"></p>
 <p><em>图 1：原创 SVG 封面。核心思想只有一句话：速度是一个数字，稳定性是一组分布。</em></p>
 <h2 id="一问题背景为什么测速-800-mbps仍然会卡">一、问题背景：为什么“测速 800 Mbps”仍然会卡</h2>
 <h3 id="11-一次测速像只看了一秒钟的天气">1.1 一次测速像只看了一秒钟的天气</h3>
@@ -235,9 +235,9 @@
 <p>打个比方：你在小区门口测到水管瞬时流量很大，不代表把水送到顶楼、连续接水半小时也不会忽大忽小。网络也有“水压”：平均速度、方向不对称、瞬时排队、重传和连接建立时间，都会影响实际体验。</p>
 <h3 id="12-dd-为什么能帮忙">1.2 <code>dd</code> 为什么能帮忙</h3>
 <p><code>dd</code> 原本是一个字节搬运工：从 <code>if</code>（input file）读数据，按 <code>bs</code>（block size）分块，读 <code>count</code> 个块，再写到 <code>of</code>（output file）。<code>/dev/zero</code> 会源源不断地产生零字节，<code>/dev/null</code> 会把收到的字节吃掉。因此我们可以把它放在网络管道两端：</p>
-<p><img alt="原创流程图：本地 dd 产生固定字节流，经 SSH 到远端 dd 后丢弃。" src="/post-images/dd-network-speed-stability/01-dd-pipeline.svg"></p>
+<p><img src="/post-images/dd-network-speed-stability/01-dd-pipeline.svg" alt="原创流程图：本地 dd 产生固定字节流，经 SSH 到远端 dd 后丢弃。"></p>
 <p><em>图 2：原创图。测试不会在远端留下大文件，但测到的是“本机生产数据 → SSH 加密 → 网络路径 → 远端接收”的端到端时间。</em></p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>本地 dd if=/dev/zero  ── stdin/stdout ──&gt;  ssh  ──&gt;  远端 dd of=/dev/null
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>本地 dd if=/dev/zero  ── stdin/stdout ──&gt;  ssh  ──&gt;  远端 dd of=/dev/null
 </span></span></code></pre></div><p>它的优点是简单、可审计、两端都能看见退出码；缺点也要说清楚：这不是裸 TCP 线速仪，它包含 SSH 握手、加密、远端 shell 和两端 CPU 的开销。正因为如此，它更接近“这条 SSH 通道能给我的应用多少吞吐”，而不是宣传页上的理论带宽。</p>
 <h2 id="二先把-dd-的几个开关弄懂最容易被忽略的是-iflagfullblock">二、先把 <code>dd</code> 的几个开关弄懂：最容易被忽略的是 <code>iflag=fullblock</code></h2>
 <h3 id="21-四个参数就是四个量杯">2.1 四个参数就是四个量杯</h3>
@@ -250,106 +250,106 @@
 <p><code>status=progress</code> 很适合现场看进度，但它不是所有 BSD 版本都一致支持，所以脚本把诊断输出重定向掉，自己用墙上时钟计算耗时。真正跨管道时还要加 <code>iflag=fullblock</code>：它告诉 <code>dd</code>，一次 <code>read()</code> 只拿到半个块时不要急着把它算成一个完整记录，继续读到块填满。</p>
 <p>如果没有这个选项，管道可能出现这样的错觉：本来以为发送了 4 MiB，实际上因为一次只读到 64 KiB，<code>count=4</code> 很快就结束了。数据量变小，速度数字反而变得“漂亮”。这就像规定“数四杯水”，却把四个半杯也当成四杯，账面完成得很快，水桶却没装满。</p>
 <p>本地基线也要使用完整块：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>dd iflag<span style="color:#f92672">=</span>fullblock <span style="color:#66d9ef">if</span><span style="color:#f92672">=</span>/dev/zero bs<span style="color:#f92672">=</span><span style="color:#ae81ff">1048576</span> count<span style="color:#f92672">=</span><span style="color:#ae81ff">32</span> <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  of<span style="color:#f92672">=</span>/dev/null 2&gt;/dev/null
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>dd iflag<span style="color:#f92672">=</span>fullblock <span style="color:#66d9ef">if</span><span style="color:#f92672">=</span>/dev/zero bs<span style="color:#f92672">=</span><span style="color:#ae81ff">1048576</span> count<span style="color:#f92672">=</span><span style="color:#ae81ff">32</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span>  of<span style="color:#f92672">=</span>/dev/null 2&gt;/dev/null
 </span></span></code></pre></div><h3 id="22-四只时钟决定一个结果">2.2 四只时钟决定一个结果</h3>
 <p>一次 <code>dd</code> 传输至少同时包含四段时间：产生/读取数据、建立 SSH、真正在线路上传输、远端进程接收。把它们混成一个数字没关系，但报告里必须说明定义，否则别人无法复现。</p>
-<p><img alt="原创信息图：payload、SSH 建连、线路传输、远端 sink 四只时钟共同组成墙上时间。" src="/post-images/dd-network-speed-stability/02-four-clocks.svg"></p>
+<p><img src="/post-images/dd-network-speed-stability/02-four-clocks.svg" alt="原创信息图：payload、SSH 建连、线路传输、远端 sink 四只时钟共同组成墙上时间。"></p>
 <p><em>图 3：原创图。小 payload 时，握手时间占比很大；大 payload 更接近持续吞吐，但会消耗更多流量。</em></p>
 <h2 id="三测试设计先做基线再测两个方向最后看分布">三、测试设计：先做基线，再测两个方向，最后看分布</h2>
 <h3 id="31-三种测试回答三种问题">3.1 三种测试回答三种问题</h3>
-<p><img alt="原创对照表：本地基线、上传、下载分别对应不同的数据路径。" src="/post-images/dd-network-speed-stability/03-direction-matrix.svg"></p>
+<p><img src="/post-images/dd-network-speed-stability/03-direction-matrix.svg" alt="原创对照表：本地基线、上传、下载分别对应不同的数据路径。"></p>
 <p><em>图 4：原创图。上传快不代表下载快，单向结果不能替代双向结果。</em></p>
 <table>
-<thead>
-<tr>
-<th>测试</th>
-<th>数据路径</th>
-<th>主要回答的问题</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>本地基线</td>
-<td><code>dd → /dev/null</code></td>
-<td>本机产生和丢弃字节的上限是多少？</td>
-</tr>
-<tr>
-<td>上传</td>
-<td>本地 <code>dd</code> → SSH → 远端 <code>dd</code></td>
-<td>客户端到服务端的路径怎样？</td>
-</tr>
-<tr>
-<td>下载</td>
-<td>远端 <code>dd</code> → SSH → 本地 <code>dd</code></td>
-<td>服务端到客户端的路径怎样？</td>
-</tr>
-</tbody>
+  <thead>
+      <tr>
+          <th>测试</th>
+          <th>数据路径</th>
+          <th>主要回答的问题</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>本地基线</td>
+          <td><code>dd → /dev/null</code></td>
+          <td>本机产生和丢弃字节的上限是多少？</td>
+      </tr>
+      <tr>
+          <td>上传</td>
+          <td>本地 <code>dd</code> → SSH → 远端 <code>dd</code></td>
+          <td>客户端到服务端的路径怎样？</td>
+      </tr>
+      <tr>
+          <td>下载</td>
+          <td>远端 <code>dd</code> → SSH → 本地 <code>dd</code></td>
+          <td>服务端到客户端的路径怎样？</td>
+      </tr>
+  </tbody>
 </table>
 <h3 id="32-单位别混mib-不是-mbmbps-也不是-mibs">3.2 单位别混：MiB 不是 MB，Mbps 也不是 MiB/s</h3>
 <p>本文用 <code>MiB</code>（2²⁰ 字节）计算，因为 <code>bs=1048576</code> 很明确。网络设备常用十进制 <code>Mbps</code>（10⁶ bit/s）。换算时先把 <code>MiB/s × 8</code> 得到 Mib/s，再根据需要换成 Mbps；不要把 <code>100 MiB/s</code> 直接写成 <code>100 Mbps</code>。测速报告至少写出 payload、方向、墙上耗时和单位。</p>
 <h3 id="33-固定-payload重复-510-轮">3.3 固定 payload，重复 5～10 轮</h3>
 <p>只跑一轮无法分辨“偶然排队”和“长期波动”。建议从 16 或 32 MiB、5 轮开始；链路允许时再把 payload 提到 64 或 128 MiB。总流量大约是：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>总流量 ≈ payload × 轮数 × 方向数
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>总流量 ≈ payload × 轮数 × 方向数
 </span></span></code></pre></div><p>例如 32 MiB × 5 轮 × 2 个方向，就是约 320 MiB（不含 SSH 协议开销）。先征得链路所有者同意，别在共享出口上做“压力测试”。</p>
-<p><img alt="原创循环图：同一 payload 重复多轮，记录秒数、退出码，再计算平均值、极值和 CV。" src="/post-images/dd-network-speed-stability/04-stability-loop.svg"></p>
+<p><img src="/post-images/dd-network-speed-stability/04-stability-loop.svg" alt="原创循环图：同一 payload 重复多轮，记录秒数、退出码，再计算平均值、极值和 CV。"></p>
 <p><em>图 5：原创图。稳定性不是“最后一次成功”，而是整组样本的形状。</em></p>
 <h2 id="四手工跑一轮两端都不落盘">四、手工跑一轮：两端都不落盘</h2>
 <h3 id="41-先确认远端真的有-dd">4.1 先确认远端真的有 <code>dd</code></h3>
 <p>远端只需要一个可登录的 POSIX shell、<code>dd</code> 和 <code>/dev/null</code>。先做只读检查，不要上来就发大流量：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>ssh -T -o BatchMode<span style="color:#f92672">=</span>yes -o Compression<span style="color:#f92672">=</span>no <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  testuser@test-endpoint <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  <span style="color:#e6db74">&#39;command -v dd &amp;&amp; command -v sh&#39;</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>ssh -T -o BatchMode<span style="color:#f92672">=</span>yes -o Compression<span style="color:#f92672">=</span>no <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span>  testuser@test-endpoint <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span>  <span style="color:#e6db74">&#39;command -v dd &amp;&amp; command -v sh&#39;</span>
 </span></span></code></pre></div><p>首次连接应人工核对主机指纹。代码里的 <code>testuser@test-endpoint</code> 只是占位符，公开文章和脚本里不放真实地址、机器名或密钥。</p>
 <h3 id="42-上传本地生产远端接收">4.2 上传：本地生产，远端接收</h3>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>/usr/bin/time -p sh -c <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  <span style="color:#e6db74">&#39;dd iflag=fullblock if=/dev/zero bs=1048576 count=64 2&gt;/dev/null |
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>/usr/bin/time -p sh -c <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span>  <span style="color:#e6db74">&#39;dd iflag=fullblock if=/dev/zero bs=1048576 count=64 2&gt;/dev/null |
 </span></span></span><span style="display:flex;"><span><span style="color:#e6db74">   ssh -T -o BatchMode=yes -o Compression=no \
 </span></span></span><span style="display:flex;"><span><span style="color:#e6db74">     testuser@test-endpoint \
 </span></span></span><span style="display:flex;"><span><span style="color:#e6db74">     &#34;dd iflag=fullblock of=/dev/null bs=1048576 count=64 2&gt;/dev/null&#34; \
 </span></span></span><span style="display:flex;"><span><span style="color:#e6db74">   &gt;/dev/null&#39;</span>
 </span></span></code></pre></div><p><code>time</code> 打印的 <code>real</code> 就是这一次的墙上耗时。因为块大小固定为 1 MiB，粗略吞吐是 <code>64 ÷ real</code> MiB/s。若退出码不是 0，先看 SSH 错误，不要把失败强行写成“0 MiB/s”。</p>
 <h3 id="43-下载远端生产本地接收">4.3 下载：远端生产，本地接收</h3>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>/usr/bin/time -p sh -c <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  <span style="color:#e6db74">&#39;ssh -T -o BatchMode=yes -o Compression=no \
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>/usr/bin/time -p sh -c <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span>  <span style="color:#e6db74">&#39;ssh -T -o BatchMode=yes -o Compression=no \
 </span></span></span><span style="display:flex;"><span><span style="color:#e6db74">     testuser@test-endpoint \
 </span></span></span><span style="display:flex;"><span><span style="color:#e6db74">     &#34;dd iflag=fullblock if=/dev/zero bs=1048576 count=64 2&gt;/dev/null&#34; |
 </span></span></span><span style="display:flex;"><span><span style="color:#e6db74">   dd iflag=fullblock of=/dev/null bs=1048576 count=64 2&gt;/dev/null&#39;</span>
 </span></span></code></pre></div><p>这两个方向一定要分开跑。很多家庭宽带、VPN、云主机安全策略和 Wi-Fi 节能机制都会造成上下行不对称。</p>
 <h3 id="44-最小重复循环">4.4 最小重复循环</h3>
 <p>不想马上下载完整脚本，可以先用下面的 Bash 片段。它使用 <code>pipefail</code>，任一端失败都会让这一轮失败：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>set -o pipefail
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>set -o pipefail
 </span></span><span style="display:flex;"><span><span style="color:#66d9ef">for</span> round in <span style="color:#ae81ff">1</span> <span style="color:#ae81ff">2</span> <span style="color:#ae81ff">3</span> <span style="color:#ae81ff">4</span> 5; <span style="color:#66d9ef">do</span>
 </span></span><span style="display:flex;"><span>  start<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>perl -MTime::HiRes<span style="color:#f92672">=</span>time -e <span style="color:#e6db74">&#39;printf &#34;%.6f&#34;, time&#39;</span><span style="color:#66d9ef">)</span>
 </span></span><span style="display:flex;"><span>  dd iflag<span style="color:#f92672">=</span>fullblock <span style="color:#66d9ef">if</span><span style="color:#f92672">=</span>/dev/zero bs<span style="color:#f92672">=</span><span style="color:#ae81ff">1048576</span> count<span style="color:#f92672">=</span><span style="color:#ae81ff">32</span> 2&gt;/dev/null |
 </span></span><span style="display:flex;"><span>    ssh -T -o BatchMode<span style="color:#f92672">=</span>yes -o Compression<span style="color:#f92672">=</span>no <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>      testuser@test-endpoint <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>      <span style="color:#e6db74">&#39;dd iflag=fullblock of=/dev/null bs=1048576 count=32 2&gt;/dev/null&#39;</span> <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>    &gt;/dev/null
+</span></span></span><span style="display:flex;"><span>      testuser@test-endpoint <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span>      <span style="color:#e6db74">&#39;dd iflag=fullblock of=/dev/null bs=1048576 count=32 2&gt;/dev/null&#39;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span>    &gt;/dev/null
 </span></span><span style="display:flex;"><span>  rc<span style="color:#f92672">=</span>$?
 </span></span><span style="display:flex;"><span>  end<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>perl -MTime::HiRes<span style="color:#f92672">=</span>time -e <span style="color:#e6db74">&#39;printf &#34;%.6f&#34;, time&#39;</span><span style="color:#66d9ef">)</span>
 </span></span><span style="display:flex;"><span>  seconds<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>awk -v s<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span>$start<span style="color:#e6db74">&#34;</span> -v e<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span>$end<span style="color:#e6db74">&#34;</span> <span style="color:#e6db74">&#39;BEGIN { print e-s }&#39;</span><span style="color:#66d9ef">)</span>
 </span></span><span style="display:flex;"><span>  rate<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>awk -v s<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span>$seconds<span style="color:#e6db74">&#34;</span> <span style="color:#e6db74">&#39;BEGIN { print 32/s }&#39;</span><span style="color:#66d9ef">)</span>
 </span></span><span style="display:flex;"><span>  printf <span style="color:#e6db74">&#39;upload round=%d rc=%d seconds=%.3f MiB/s=%.1f\n&#39;</span> <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>    <span style="color:#e6db74">&#34;</span>$round<span style="color:#e6db74">&#34;</span> <span style="color:#e6db74">&#34;</span>$rc<span style="color:#e6db74">&#34;</span> <span style="color:#e6db74">&#34;</span>$seconds<span style="color:#e6db74">&#34;</span> <span style="color:#e6db74">&#34;</span>$rate<span style="color:#e6db74">&#34;</span>
+</span></span></span><span style="display:flex;"><span>    <span style="color:#e6db74">&#34;</span>$round<span style="color:#e6db74">&#34;</span> <span style="color:#e6db74">&#34;</span>$rc<span style="color:#e6db74">&#34;</span> <span style="color:#e6db74">&#34;</span>$seconds<span style="color:#e6db74">&#34;</span> <span style="color:#e6db74">&#34;</span>$rate<span style="color:#e6db74">&#34;</span>
 </span></span><span style="display:flex;"><span><span style="color:#66d9ef">done</span>
 </span></span></code></pre></div><h2 id="五一次真实实验平均值不错但上传波动更大">五、一次真实实验：平均值不错，但上传波动更大</h2>
 <p>我在一条经过授权的隔离 SSH 路径上，用 32 MiB payload 各跑 5 轮。地址、用户名和机器信息均已从截图中移除；<code>Compression=no</code>，两端都用 <code>/dev/null</code>，所以结果不代表磁盘性能，也不代表互联网 SLA。</p>
 <h3 id="51-本地基线生产者不是瓶颈">5.1 本地基线：生产者不是瓶颈</h3>
-<p><img alt="真实终端截图：本地 dd 生产者/接收端基线，使用 fullblock，32 MiB 三轮均成功。" src="/post-images/dd-network-speed-stability/08-real-local-baseline.webp"></p>
+<p><img src="/post-images/dd-network-speed-stability/08-real-local-baseline.webp" alt="真实终端截图：本地 dd 生产者/接收端基线，使用 fullblock，32 MiB 三轮均成功。"></p>
 <p><em>图 6：真实终端输出的脱敏截图。本地基线约 4,043～5,173 MiB/s，远高于后面的 SSH 路径，说明这次实验主要观察网络和加密通道。</em></p>
 <h3 id="52-上传平均约-380-mibscv-167">5.2 上传：平均约 38.0 MiB/s，CV 16.7%</h3>
-<p><img alt="真实终端截图：本地 dd 经 SSH 上传到远端 dd，五轮全部成功但速度有明显散布。" src="/post-images/dd-network-speed-stability/09-real-upload.webp"></p>
+<p><img src="/post-images/dd-network-speed-stability/09-real-upload.webp" alt="真实终端截图：本地 dd 经 SSH 上传到远端 dd，五轮全部成功但速度有明显散布。"></p>
 <p><em>图 7：真实终端输出的脱敏截图。五轮为 43.5、33.6、42.8、27.6、42.4 MiB/s；最慢与最快相差约 36.6%。</em></p>
 <h3 id="53-下载平均约-689-mibscv-47">5.3 下载：平均约 68.9 MiB/s，CV 4.7%</h3>
-<p><img alt="真实终端截图：远端 dd 经 SSH 下载到本地 dd，五轮速度较集中。" src="/post-images/dd-network-speed-stability/10-real-download.webp"></p>
+<p><img src="/post-images/dd-network-speed-stability/10-real-download.webp" alt="真实终端截图：远端 dd 经 SSH 下载到本地 dd，五轮速度较集中。"></p>
 <p><em>图 8：真实终端输出的脱敏截图。五轮为 70.7、72.4、70.7、63.2、67.8 MiB/s；这条样本的下载方向明显比上传稳定。</em></p>
 <h3 id="54-汇总零失败不等于没有长尾">5.4 汇总：零失败不等于没有长尾</h3>
-<p><img alt="真实终端截图：五轮上传/下载汇总，包含平均值、极值、CV 和失败数。" src="/post-images/dd-network-speed-stability/11-real-stability.webp"></p>
+<p><img src="/post-images/dd-network-speed-stability/11-real-stability.webp" alt="真实终端截图：五轮上传/下载汇总，包含平均值、极值、CV 和失败数。"></p>
 <p><em>图 9：真实终端输出的脱敏截图。两方向共 10 轮没有传输失败，但上传 CV 明显高于下载；这只是一个时间窗口，不能替代不同时间段的复测。</em></p>
 <p>同一实验还做了 5 次 ICMP 探测：丢包率为 0%，平均 RTT 约 104 ms，但最大 RTT 突然达到约 519 ms。这个组合很典型：<strong>没有丢包，不代表没有排队长尾</strong>。远程终端卡顿、语音断续或 Agent 首字延迟变大，往往先表现为尾延迟，而不是 ping 直接丢包。</p>
 <h2 id="六怎样读结果把快不快拆成四个问题">六、怎样读结果：把“快不快”拆成四个问题</h2>
-<p><img alt="原创判读图：速度用 MiB/s，稳定性用 CV、退出码和失败原因共同描述。" src="/post-images/dd-network-speed-stability/07-interpretation.svg"></p>
+<p><img src="/post-images/dd-network-speed-stability/07-interpretation.svg" alt="原创判读图：速度用 MiB/s，稳定性用 CV、退出码和失败原因共同描述。"></p>
 <p><em>图 10：原创图。像看体检报告一样看测速：一个平均值不能替代方向、波动和错误分类。</em></p>
 <ol>
 <li><strong>吞吐</strong>：<code>payload / wall-clock seconds</code>。先比较同一 payload、同一方向，再谈不同链路。</li>
@@ -365,13 +365,13 @@
 <li><strong>突然 <code>Connection refused</code> 或超时</strong>：先判定端口/防火墙/服务状态，再讨论带宽。错误本身就是证据。</li>
 <li><strong>结果只有几百 KiB，却显示很高速度</strong>：优先怀疑管道短读和缺少 <code>iflag=fullblock</code>。</li>
 </ul>
-<p><img alt="真实终端截图：故意使用关闭端口得到 Connection refused，同时保留 ping 的 RTT/丢包上下文。" src="/post-images/dd-network-speed-stability/12-real-error.webp"></p>
+<p><img src="/post-images/dd-network-speed-stability/12-real-error.webp" alt="真实终端截图：故意使用关闭端口得到 Connection refused，同时保留 ping 的 RTT/丢包上下文。"></p>
 <p><em>图 11：真实终端输出的脱敏截图。连接失败不能悄悄转换成 0 MiB/s；把错误分类保留下来，排障才有方向。</em></p>
 <h2 id="七安全边界测速脚本最怕顺手写满磁盘">七、安全边界：测速脚本最怕“顺手写满磁盘”</h2>
 <h3 id="71-ofdevnull-和-oftestbin-是两回事">7.1 <code>of=/dev/null</code> 和 <code>of=./test.bin</code> 是两回事</h3>
 <p>网络测速只需要测字节流，不需要留下文件。不要把远端 sink 改成当前目录，也不要在生产盘上加 <code>conv=fsync</code> 伪装网络测试；那会把磁盘写入、文件系统缓存和网络混在一起，还可能把空间打满。若确实要测“网络 + 落盘”，请另写一个有容量上限、可清理、得到授权的磁盘实验。</p>
 <h3 id="72-四条护栏">7.2 四条护栏</h3>
-<p><img alt="原创安全清单：/dev/null、流量预算、主机信任和可中止的 deadline。" src="/post-images/dd-network-speed-stability/06-safety-guardrails.svg"></p>
+<p><img src="/post-images/dd-network-speed-stability/06-safety-guardrails.svg" alt="原创安全清单：/dev/null、流量预算、主机信任和可中止的 deadline。"></p>
 <p><em>图 12：原创图。测试前先问“我是否有权限、最坏会产生多少流量、失败时怎样停”。</em></p>
 <ol>
 <li><strong>先获授权</strong>：只测自己拥有或明确获准的两端；共享出口不要随意跑长时间大 payload。</li>
@@ -388,30 +388,30 @@
 </ul>
 <p>三套脚本的行为保持一致：默认 16 MiB、每个方向 5 轮；远端和本地都把字节送进 <code>/dev/null</code>；使用 <code>iflag=fullblock</code> 防止短读；打印每轮 <code>seconds</code>、<code>MiB/s</code>、退出码和最终 CV；任何一轮失败，脚本返回非零退出码。</p>
 <h3 id="81-ubuntu-2604">8.1 Ubuntu 26.04</h3>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>chmod +x dd-network-test-ubuntu2604.sh
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>chmod +x dd-network-test-ubuntu2604.sh
 </span></span><span style="display:flex;"><span>./dd-network-test-ubuntu2604.sh <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  --remote-host test-endpoint <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  --remote-user testuser <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  --size-mib <span style="color:#ae81ff">32</span> --rounds <span style="color:#ae81ff">5</span> --direction both
+</span></span></span><span style="display:flex;"><span>  --remote-host test-endpoint <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span>  --remote-user testuser <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span>  --size-mib <span style="color:#ae81ff">32</span> --rounds <span style="color:#ae81ff">5</span> --direction both
 </span></span></code></pre></div><p>先看计划、不发字节：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>./dd-network-test-ubuntu2604.sh --remote-host test-endpoint --dry-run
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>./dd-network-test-ubuntu2604.sh --remote-host test-endpoint --dry-run
 </span></span></code></pre></div><p>脚本只使用系统已有的 <code>bash</code>、<code>dd</code>、<code>ssh</code>、<code>awk</code>，计时优先使用系统 Perl，找不到时才回退到 Python 标准库；没有调用第三方测速 API。</p>
 <h3 id="82-macos-26">8.2 macOS 26</h3>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-zsh" data-lang="zsh"><span style="display:flex;"><span>chmod +x dd-network-test-macos26.zsh
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-zsh" data-lang="zsh"><span style="display:flex;"><span>chmod +x dd-network-test-macos26.zsh
 </span></span><span style="display:flex;"><span>./dd-network-test-macos26.zsh <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  --remote-host test-endpoint <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  --remote-user testuser <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>  --size-mib <span style="color:#ae81ff">32</span> --rounds <span style="color:#ae81ff">5</span> --direction both
+</span></span></span><span style="display:flex;"><span>  --remote-host test-endpoint <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span>  --remote-user testuser <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span>  --size-mib <span style="color:#ae81ff">32</span> --rounds <span style="color:#ae81ff">5</span> --direction both
 </span></span></code></pre></div><p>macOS 版本使用系统 zsh 和 OpenSSH，不要求安装 WSL 或额外测速软件。若本机 <code>dd</code> 报告不认识 <code>iflag=fullblock</code>，先升级系统或在经过审核的环境里使用兼容的 GNU coreutils；不要直接删掉该选项后把短读当成完整块。</p>
 <h3 id="83-windows-11">8.3 Windows 11</h3>
 <p>Windows 原生没有 <code>/dev/zero</code>，所以 PowerShell 脚本用 .NET 生成零字节并写入 Windows 自带的 <code>ssh.exe</code> 标准输入，远端仍由 <code>dd</code> 接收；下载方向则读取 SSH 标准输出后丢弃，不需要 WSL，也不会创建临时文件。</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-powershell" data-lang="powershell"><span style="display:flex;"><span>Set-ExecutionPolicy -Scope <span style="color:#66d9ef">Process</span> Bypass
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-powershell" data-lang="powershell"><span style="display:flex;"><span>Set-ExecutionPolicy -Scope <span style="color:#66d9ef">Process</span> Bypass
 </span></span><span style="display:flex;"><span>&amp; .\dd-network-test-windows11.ps1 `
 </span></span><span style="display:flex;"><span>  -RemoteHost test-endpoint `
 </span></span><span style="display:flex;"><span>  -RemoteUser testuser `
 </span></span><span style="display:flex;"><span>  -SizeMiB <span style="color:#ae81ff">32</span> -Rounds <span style="color:#ae81ff">5</span> -Direction both
 </span></span></code></pre></div><p>如果系统没有 OpenSSH Client，先在“可选功能”中启用微软提供的组件；脚本不会替你下载来路不明的 <code>dd.exe</code>。</p>
-<p><img alt="真实终端截图：Ubuntu、macOS 脚本语法检查通过，PowerShell 结构检查通过；PowerShell 需在 Windows 上做最终运行验收。" src="/post-images/dd-network-speed-stability/13-real-script-check.webp"></p>
+<p><img src="/post-images/dd-network-speed-stability/13-real-script-check.webp" alt="真实终端截图：Ubuntu、macOS 脚本语法检查通过，PowerShell 结构检查通过；PowerShell 需在 Windows 上做最终运行验收。"></p>
 <p><em>图 13：真实检查输出的脱敏截图。当前写作环境是 macOS，因此 PowerShell 做了静态结构检查；拿到 Windows 11 后还应执行一次小 payload 的真实回环。</em></p>
 <h2 id="九人工自动执行-vs-agent-自动配置">九、人工自动执行 vs Agent 自动配置</h2>
 <h3 id="91-人工自动执行先-dry-run再放行流量">9.1 人工自动执行：先 dry-run，再放行流量</h3>
@@ -425,7 +425,7 @@
 <p>人工方式的价值是第一次建立“这条链路平时长什么样”的直觉。不要把脚本输出里的地址和用户名直接贴到公开工单或文章里，先做脱敏。</p>
 <h3 id="92-agent-自动配置给它边界清楚的任务单">9.2 Agent 自动配置：给它边界清楚的任务单</h3>
 <p>你可以把下面的提示词交给已有的 Codex、Claude Code、OpenClaw 或其他 Agent。它要求 Agent 先盘点、再预演、最后才发流量：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>请在当前机器上建立一份“dd + SSH 网络测速与稳定性基线”，但只操作我明确授权的远端 endpoint。
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>请在当前机器上建立一份“dd + SSH 网络测速与稳定性基线”，但只操作我明确授权的远端 endpoint。
 </span></span><span style="display:flex;"><span>
 </span></span><span style="display:flex;"><span>要求：
 </span></span><span style="display:flex;"><span>1. 先识别操作系统，选择 dd-network-test-windows11.ps1、dd-network-test-ubuntu2604.sh 或 dd-network-test-macos26.zsh；

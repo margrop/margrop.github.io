@@ -214,7 +214,7 @@
 <p>A user can click once while a queue delivers the task to a Worker twice. The Worker may intend to run once while the outside world receives two restarts, two emails, or even two charges. The dangerous interval is tiny but fundamental: <strong>the side effect has succeeded, and the Worker crashes before saving <code>COMPLETED</code>.</strong> The queue cannot inspect the outside world, so an at-least-once system redelivers. The answer is not to believe that a broker can magically provide end-to-end exactly-once behavior. It is to combine a durable task state machine, a stable idempotency key, a receiver-side uniqueness constraint, leases, fencing tokens, a transactional outbox, reconciliation, and compensation.</p>
 <p>I built a zero-network lab using only Python&rsquo;s standard library and local SQLite. It first reproduces one intent causing two effects, then proves that two deliveries converge on one safe effect. It also demonstrates lease takeover, rejection of a stale Worker, outbox recovery across two crash points, and compensation when a receiver cannot deduplicate. Everything is synthetic: no model, server, credential, or third-party service is touched. The final acceptance gate passes 7/7 checks. One-click entry points for Windows 11, Ubuntu 26.04, and macOS 26 are included.</p>
 </blockquote>
-<p><img alt="Original cover: why one request can become two restarts, and how an idempotent receiver blocks the second effect." src="/post-images/ai-agent-worker-crash-idempotency/00-cover.svg"></p>
+<p><img src="/post-images/ai-agent-worker-crash-idempotency/00-cover.svg" alt="Original cover: why one request can become two restarts, and how an idempotent receiver blocks the second effect."></p>
 <p><em>Figure 1: Original cover created for this article. “Server restart” is represented by a synthetic row in a local database. The lab never connects to or operates a real machine.</em></p>
 <h2 id="1-background-one-user-click-does-not-mean-one-delivery">1. Background: One User Click Does Not Mean One Delivery</h2>
 <p>In the <a href="/en/post/ai-platform-production-reference-architecture/">production AI Platform reference architecture</a>, I included a Worker crash in the release gate. That article showed the outcome, but it did not fully open the most dangerous millisecond. This article fills that gap.</p>
@@ -229,13 +229,13 @@
 <li>An Agent edits the same file or configuration twice, using the first result as input to the second mutation.</li>
 </ul>
 <p>Teams often call this a “duplicate model tool call.” The model, however, may have emitted one tool intent. What repeated was the <strong>delivery and side-effect protocol of a durable task</strong>. Looking only at prompts and conversation history therefore fixes the wrong layer.</p>
-<p><img alt="Original timeline: the dangerous crash window lies between a successful side effect and the COMPLETED record." src="/post-images/ai-agent-worker-crash-idempotency/01-danger-window.svg"></p>
+<p><img src="/post-images/ai-agent-worker-crash-idempotency/01-danger-window.svg" alt="Original timeline: the dangerous crash window lies between a successful side effect and the COMPLETED record."></p>
 <p><em>Figure 2: The Worker has crossed the outside world&rsquo;s point of no return while the local task still says RUNNING. The process may disappear for one millisecond, but the uncertainty remains until the system reconciles it.</em></p>
 <h2 id="2-symptoms-every-log-line-can-look-like-a-healthy-retry">2. Symptoms: Every Log Line Can Look Like a Healthy Retry</h2>
 <p>A typical incident looks deceptively reasonable. There is one <code>task_id</code>. A first Worker claims it, the external endpoint accepts the operation, and then the Worker loses its process, database connection, or power before persisting completion. Its lease expires. A second Worker claims the same task, calls the same tool, and successfully stores <code>COMPLETED</code>.</p>
 <p>If the logs contain only “start, failure, retry, complete,” Operations sees a beautiful recovery sequence: attempt one failed and attempt two succeeded. The user sees two actions. <strong>A successful task state does not prove that the business effect happened once.</strong></p>
 <p>In the naive path of my lab, the injected fault happens after <code>action=ACCEPTED</code> and before <code>COMPLETED</code>. Delivery one creates one synthetic restart. Recovery redelivers the task, and delivery two creates another:</p>
-<p><img alt="Real lab output: one intent causes two naive effects across two deliveries." src="/post-images/ai-agent-worker-crash-idempotency/01-real-naive-double-effect.webp"></p>
+<p><img src="/post-images/ai-agent-worker-crash-idempotency/01-real-naive-double-effect.webp" alt="Real lab output: one intent causes two naive effects across two deliveries."></p>
 <p><em>Figure 3: Real local lab-output capture. Delivery one is accepted and then crashes. The queue redelivers, delivery two is accepted, and <code>observed_side_effects=2</code>. All behavior is local and synthetic.</em></p>
 <p>The window is not limited to a dramatic process crash. It can also appear when:</p>
 <ul>
@@ -263,7 +263,7 @@
 <p>A practical end-to-end objective is: <strong>a task may arrive more than once, but all attempts for one business intent converge on at most one accepted effect. If the outcome is ambiguous, stop blind retries and move to query, reconciliation, or compensation.</strong></p>
 <h3 id="33-conversation-history-is-not-business-state">3.3 Conversation History Is Not Business State</h3>
 <p>A model message saying “the restart completed” is text, not a fact record. A reliable task must distinguish at least <code>PENDING</code>, <code>LEASED/RUNNING</code>, <code>COMPLETED</code>, <code>UNKNOWN</code>, and <code>RECONCILING</code>. The task remains recoverable after a chat closes, context is compacted, or the model is replaced.</p>
-<p><img alt="Original task state machine: an ambiguous outcome enters UNKNOWN and RECONCILING rather than blindly retrying." src="/post-images/ai-agent-worker-crash-idempotency/02-task-state-machine.svg"></p>
+<p><img src="/post-images/ai-agent-worker-crash-idempotency/02-task-state-machine.svg" alt="Original task state machine: an ambiguous outcome enters UNKNOWN and RECONCILING rather than blindly retrying."></p>
 <p><em>Figure 4: Simplified state machine. A production implementation may add <code>WAITING_APPROVAL</code>, <code>FAILED_RETRYABLE</code>, <code>FAILED_TERMINAL</code>, <code>CANCEL_REQUESTED</code>, <code>CANCELLED</code>, and <code>COMPENSATING</code>. Every transition still needs a precondition and version.</em></p>
 <p>This is also a central lesson in <a href="/en/post/12-factor-agents-agent-principles/">12-Factor Agents</a>: execution state and business state must line up so an Agent can pause, resume, and be audited. Hiding state inside a prompt merely disguises a database problem as a language problem.</p>
 <h2 id="4-first-defense-generate-a-stable-idempotency-key-for-the-business-intent">4. First Defense: Generate a Stable Idempotency Key for the Business Intent</h2>
@@ -277,7 +277,7 @@
 <li>the tool schema or business-semantics version.</li>
 </ul>
 <p>One option is to hash canonical JSON:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-python" data-lang="python"><span style="display:flex;"><span>canonical <span style="color:#f92672">=</span> json<span style="color:#f92672">.</span>dumps({
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-python" data-lang="python"><span style="display:flex;"><span>canonical <span style="color:#f92672">=</span> json<span style="color:#f92672">.</span>dumps({
 </span></span><span style="display:flex;"><span>    <span style="color:#e6db74">&#34;tenant&#34;</span>: tenant_id,
 </span></span><span style="display:flex;"><span>    <span style="color:#e6db74">&#34;task&#34;</span>: task_id,
 </span></span><span style="display:flex;"><span>    <span style="color:#e6db74">&#34;action&#34;</span>: tool_name,
@@ -290,7 +290,7 @@
 <p>An <code>already_done = true</code> variable inside the Worker is useless after the process dies. A local “processed” row inserted before the external call is also dangerous. If that row commits and the Worker crashes before calling the external endpoint, recovery may treat the marker as success and permanently skip the operation.</p>
 <p>The strongest design lets the <strong>component that causes the effect</strong> accept an idempotency key and atomically return the result of the first request. That may be a payment provider&rsquo;s request key, a business unique index on an order table, a conditional object-store write, a resource-version compare-and-swap, or an Inbox table in a tool adapter.</p>
 <p>The local lab treats a SQLite table as the synthetic effect receiver and makes <code>idempotency_key</code> its primary key. The first request inserts the result and then crashes. The second request carries the same key, so it retrieves the first result instead of executing again:</p>
-<p><img alt="Real lab output: two deliveries use one idempotency key, and the second is deduplicated." src="/post-images/ai-agent-worker-crash-idempotency/02-real-idempotent-recovery.webp"></p>
+<p><img src="/post-images/ai-agent-worker-crash-idempotency/02-real-idempotent-recovery.webp" alt="Real lab output: two deliveries use one idempotency key, and the second is deduplicated."></p>
 <p><em>Figure 5: Real local lab-output capture. Both deliveries have the same key. The first is <code>EXECUTED</code>, the second is <code>DEDUPLICATED</code>, and only one effect exists when the task reaches <code>COMPLETED</code>.</em></p>
 <h3 id="42-an-idempotency-store-is-not-a-permanent-junk-drawer">4.2 An Idempotency Store Is Not a Permanent Junk Drawer</h3>
 <p>The record should include the key, request digest, state, result digest, first-seen time, completion time, and expiry policy. Reusing one key with different arguments must return a conflict, not silently return a result for the wrong request. Retention must cover the queue&rsquo;s maximum retry and delay, the manual recovery window, and any disaster-replay horizon. Payments, inventory, and regulated actions may need a longer business-reconciliation period.</p>
@@ -298,19 +298,19 @@
 <h2 id="5-second-defense-leases-enable-takeover-fencing-tokens-reject-the-resurrected-worker">5. Second Defense: Leases Enable Takeover; Fencing Tokens Reject the Resurrected Worker</h2>
 <p>A lease resembles a library card. Worker A owns the task for a bounded interval and renews it with heartbeats. Once it expires, Worker B can take over. The expiration does not make Worker A&rsquo;s process vanish. It may be paused, partitioned, asleep, or waking up, then continue to execute.</p>
 <p>With only a lease, A and B can briefly believe they may write. <strong>A lease tells Workers who should work; a fencing token tells the receiver whose work is still valid.</strong> Every takeover receives a monotonically increasing generation such as 41 and 42. The receiver remembers the largest generation it has accepted and rejects anything smaller.</p>
-<p><img alt="Original diagram: the new Worker obtains a larger fencing token, and the receiver rejects the stale token." src="/post-images/ai-agent-worker-crash-idempotency/03-lease-fencing.svg"></p>
+<p><img src="/post-images/ai-agent-worker-crash-idempotency/03-lease-fencing.svg" alt="Original diagram: the new Worker obtains a larger fencing token, and the receiver rejects the stale token."></p>
 <p><em>Figure 6: The real guard stands at the receiver. Telling the old Worker “your lease expired” is insufficient because it may not hear the message. The resource must enforce a conditional write.</em></p>
 <p>The lab uses a logical clock rather than wall time. Worker A gets token 1 at <code>t=100</code>, with a lease ending at 105. At <code>t=106</code>, Worker B takes over and receives token 2. B&rsquo;s write is accepted. A then wakes with token 1, and the receiver returns <code>REJECTED_STALE</code>:</p>
-<p><img alt="Real lab output: after lease takeover, the stale Worker&rsquo;s late effect is rejected by fencing." src="/post-images/ai-agent-worker-crash-idempotency/03-real-lease-fencing.webp"></p>
+<p><img src="/post-images/ai-agent-worker-crash-idempotency/03-real-lease-fencing.webp" alt="Real lab output: after lease takeover, the stale Worker’s late effect is rejected by fencing."></p>
 <p><em>Figure 7: Real local lab-output capture. <code>worker-a</code> and <code>worker-b</code> are synthetic role labels, not machine names. Only the current owner can conditionally complete the task.</em></p>
 <p>Three production details matter. Lease acquisition and token increment must be atomic. Time comparisons should happen in one authoritative store rather than on drifting machine clocks. The receiver must actually compare the token. Printing a generation number in a log does not create a fence.</p>
 <h2 id="6-third-defense-transactional-outbox-closes-business-committed-message-missing">6. Third Defense: Transactional Outbox Closes “Business Committed, Message Missing”</h2>
 <p>Another gap appears between a task database and a messaging system. Business state commits, and the process crashes just before publishing the event. Reversing the order creates the mirror-image failure: the event is visible while the business transaction rolls back.</p>
 <p>The Transactional Outbox pattern works like a restaurant cash register that records both the paid order and a “tell the kitchen” ticket in the same ledger transaction. A separate Dispatcher scans unsent tickets, publishes them, and marks them sent. A committed business change can no longer permanently lose its event.</p>
-<p><img alt="Original diagram: the business row and Outbox row commit together, then a Dispatcher retries safely." src="/post-images/ai-agent-worker-crash-idempotency/04-outbox.svg"></p>
+<p><img src="/post-images/ai-agent-worker-crash-idempotency/04-outbox.svg" alt="Original diagram: the business row and Outbox row commit together, then a Dispatcher retries safely."></p>
 <p><em>Figure 8: Outbox prevents loss. Receiver deduplication by <code>event_id</code> prevents duplicate effect. Production systems normally need both.</em></p>
 <p>The lab injects two failures. First it crashes after the local transaction commits but before publication. A Dispatcher recovers and sends the event downstream, then crashes after downstream acceptance but before setting <code>sent</code>. Dispatch two necessarily sends again, but the downstream unique <code>event_id</code> deduplicates it:</p>
-<p><img alt="Real lab output: Outbox recovers from two crash points and produces one downstream effect." src="/post-images/ai-agent-worker-crash-idempotency/04-real-outbox-recovery.webp"></p>
+<p><img src="/post-images/ai-agent-worker-crash-idempotency/04-real-outbox-recovery.webp" alt="Real lab output: Outbox recovers from two crash points and produces one downstream effect."></p>
 <p><em>Figure 9: Real local lab-output capture. There are two dispatch attempts and one downstream effect. The Outbox Dispatcher is itself at-least-once, so a downstream Inbox or idempotency key is still required.</em></p>
 <p>Outbox is not a universal distributed transaction. It cannot automatically make an endpoint safe if that endpoint offers no query, idempotency, or reversal. It keeps local facts and pending events together; the end-to-end receiving protocol remains a design responsibility.</p>
 <h2 id="7-what-if-the-external-system-cannot-deduplicate-query-first-reconcile-next-compensate-last">7. What If the External System Cannot Deduplicate? Query First, Reconcile Next, Compensate Last</h2>
@@ -324,7 +324,7 @@
 <li>Push the receiver toward an idempotency key or conditional write instead of making the caller guess forever.</li>
 </ol>
 <p>The lab models a reservation receiver with no idempotency support. Attempt one creates a reservation but loses the acknowledgment. A blind retry creates another. Reconciliation finds two ACTIVE records, and compensation cancels the duplicate so one remains:</p>
-<p><img alt="Real lab output: a non-idempotent receiver duplicates an action, then reconciliation compensates." src="/post-images/ai-agent-worker-crash-idempotency/05-real-compensation.webp"></p>
+<p><img src="/post-images/ai-agent-worker-crash-idempotency/05-real-compensation.webp" alt="Real lab output: a non-idempotent receiver duplicates an action, then reconciliation compensates."></p>
 <p><em>Figure 10: Real local lab-output capture. Compensation limits damage; it is not exactly once. An email cannot be “unread,” and a refund does not erase the customer&rsquo;s experience, so receiver-side idempotency remains preferable.</em></p>
 <h2 id="8-a-production-execution-protocol-you-can-implement">8. A Production Execution Protocol You Can Implement</h2>
 <p>Put the pieces together and a high-risk tool call can follow this protocol:</p>
@@ -355,28 +355,28 @@
 <li><code>compensation_total</code>, compensation success, and reconciliation wait time.</li>
 </ul>
 <p>Evidence should connect task, intent, attempt, an idempotency-key digest, tool version, fence, logical lease owner, outcome source, and trace ID. Do not trade privacy for apparently rich logging by adding full arguments or actual machine identities.</p>
-<p><img alt="Real lab metrics: delivery, effect, rejection, and compensation counts can be checked together." src="/post-images/ai-agent-worker-crash-idempotency/07-real-metrics.webp"></p>
+<p><img src="/post-images/ai-agent-worker-crash-idempotency/07-real-metrics.webp" alt="Real lab metrics: delivery, effect, rejection, and compensation counts can be checked together."></p>
 <p><em>Figure 11: Real local <code>metrics.json</code> capture. The naive path creates two effects while the safe path creates one. Outbox produces one downstream effect; network and real-credential counters are both zero.</em></p>
 <p>The most useful SLO is not “no retries.” It is: <strong>redelivery may occur; duplicate accepted business effect remains zero; ambiguous outcomes are reconciled within a defined time; late writes from old Workers are rejected.</strong></p>
 <h2 id="10-one-click-lab-on-windows-11-ubuntu-2604-and-macos-26">10. One-Click Lab on Windows 11, Ubuntu 26.04, and macOS 26</h2>
 <p>The complete <a href="/post-files/ai-agent-worker-crash-idempotency/worker_crash_lab.py">worker_crash_lab.py</a> uses only <code>sqlite3</code>, <code>hashlib</code>, <code>json</code>, and filesystem APIs from Python&rsquo;s standard library. It never accesses the network, reads environment variables, loads a credential, or calls a real tool. See the <a href="/post-files/ai-agent-worker-crash-idempotency/README.md">README</a> for the exact boundary.</p>
 <h3 id="101-windows-11-powershell">10.1 Windows 11 PowerShell</h3>
 <p>Download <a href="/post-files/ai-agent-worker-crash-idempotency/Run-Windows11.ps1">Run-Windows11.ps1</a> and the Python file into the same directory, then run:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-powershell" data-lang="powershell"><span style="display:flex;"><span>Set-ExecutionPolicy -Scope <span style="color:#66d9ef">Process</span> Bypass
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-powershell" data-lang="powershell"><span style="display:flex;"><span>Set-ExecutionPolicy -Scope <span style="color:#66d9ef">Process</span> Bypass
 </span></span><span style="display:flex;"><span>.\Run-Windows11.ps1
 </span></span></code></pre></div><p>The script prefers the Windows Python Launcher through <code>py -3</code> and falls back to <code>python.exe</code>. It does not install software or contact a third-party service.</p>
 <h3 id="102-ubuntu-2604">10.2 Ubuntu 26.04</h3>
 <p>Download <a href="/post-files/ai-agent-worker-crash-idempotency/run-ubuntu-26.04.sh">run-ubuntu-26.04.sh</a> and the Python file into one directory:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>chmod +x run-ubuntu-26.04.sh
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>chmod +x run-ubuntu-26.04.sh
 </span></span><span style="display:flex;"><span>./run-ubuntu-26.04.sh
 </span></span></code></pre></div><h3 id="103-macos-26">10.3 macOS 26</h3>
 <p>Download <a href="/post-files/ai-agent-worker-crash-idempotency/run-macos-26.sh">run-macos-26.sh</a> and the Python file into one directory:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>chmod +x run-macos-26.sh
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>chmod +x run-macos-26.sh
 </span></span><span style="display:flex;"><span>./run-macos-26.sh
 </span></span></code></pre></div><p>All three entry points run the same standard-library lab and require seven <code>[PASS]</code> lines plus <code>result=PASS</code>. The <code>--clean</code> option may remove only a result directory named <code>lab-output</code> or <code>reference-run</code>, deliberately bounding cleanup.</p>
 <h3 id="104-manual-automated-execution">10.4 Manual Automated Execution</h3>
 <p>Without a platform entry point, run:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>python3 worker_crash_lab.py --clean
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>python3 worker_crash_lab.py --clean
 </span></span></code></pre></div><p>Open <code>lab-output/results/06-acceptance-summary.txt</code> and require 7/7. Then inspect the <a href="/post-files/ai-agent-worker-crash-idempotency/lab-output/metrics.json">reference-run metrics.json</a>: <code>naive_side_effects=2</code>, <code>safe_side_effects=1</code>, <code>downstream_effects=1</code>, and <code>network_calls=0</code>. <code>[EXPECTED RISK]</code> in the naive scenario is not a failed lab; it proves that the dangerous control case was genuinely reproduced.</p>
 <h3 id="105-agent-automated-configuration-and-acceptance">10.5 Agent-Automated Configuration and Acceptance</h3>
 <p>Give <a href="/post-files/ai-agent-worker-crash-idempotency/AGENT-PROMPT.md">AGENT-PROMPT.md</a> to an Agent allowed to execute local commands. It requires the Agent to inspect the files and safety boundary before selecting the current platform entry point. A failure must preserve evidence and explain the cause; editing output to manufacture a PASS is forbidden.</p>
@@ -386,10 +386,10 @@
 </blockquote>
 <p>Agent automation is like asking a highly motivated apprentice to run an experiment: provide the bench, boundaries, and acceptance sheet instead of merely saying “prove idempotency works.”</p>
 <h2 id="11-acceptance-result-what-the-lab-provesand-what-it-does-not">11. Acceptance Result: What the Lab Proves—and What It Does Not</h2>
-<p><img alt="Original acceptance matrix: repeated delivery is allowed; repeated business effect is not." src="/post-images/ai-agent-worker-crash-idempotency/05-acceptance-matrix.svg"></p>
+<p><img src="/post-images/ai-agent-worker-crash-idempotency/05-acceptance-matrix.svg" alt="Original acceptance matrix: repeated delivery is allowed; repeated business effect is not."></p>
 <p><em>Figure 12: A release gate checks a business invariant, not merely HTTP 200, process liveness, or an empty queue.</em></p>
 <p>The reference run used a local Python 3 standard library and passed all seven checks: the danger window is reproducible; two safe deliveries produce one effect; a stale Worker is fenced; two Outbox dispatches produce one downstream effect; compensation leaves one valid reservation; safe tasks reach a terminal state; and privacy/network counters remain zero.</p>
-<p><img alt="Real lab output: all seven release gates pass." src="/post-images/ai-agent-worker-crash-idempotency/06-real-acceptance.webp"></p>
+<p><img src="/post-images/ai-agent-worker-crash-idempotency/06-real-acceptance.webp" alt="Real lab output: all seven release gates pass."></p>
 <p><em>Figure 13: Real local lab-output capture, 7/7 PASS. The Python version shown belongs only to this reference run. The lab does not pretend to replace a real broker, external API, concurrent load, or production failure drill.</em></p>
 <p>It proves protocol logic and an acceptance method. It does not prove that SQLite is a production queue, nor that a local transaction can wrap every remote tool. Before launch, add multi-process concurrency, real broker redelivery, database failover, long network partitions, receiver throttling, idempotency-record expiry, approval timeout, and disaster-recovery tests.</p>
 <h2 id="12-qa">12. Q&amp;A</h2>

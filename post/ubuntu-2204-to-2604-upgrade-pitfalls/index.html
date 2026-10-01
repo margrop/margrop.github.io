@@ -215,18 +215,18 @@
 <p>先说结论</p>
 <p>Ubuntu 22.04 到 26.04 没有直达车，官方只支持逐级接力：22.04 到 24.04，再从 24.04 到 26.04。我最近把一台跑了 Portainer、博客导航和小工具的小服务器这样升了上去，全程两次重启、约 1.5GB 下载，但真正花时间的不是下载，而是三个意外：一个 37.8MB 的第三方软件包以 6KB/s 的速度龟速爬行；一个正在同步的镜像把升级工具包“切”成了两个大小，直接被拒收；以及最隐蔽的一个——26.04 明明已经发布，升级器却说“没有可用的 LTS”，因为元数据里一个标志位没有翻转。这篇文章把三个坑的表现、分析、根因和解法一次讲透，最后给出一键接力升级脚本，支持人工执行和交给 AI Agent 执行两种方式。</p>
 </blockquote>
-<p><img alt="Ubuntu 22.04 直升 26.04：三个坑的封面图" src="/post-images/ubuntu-2204-to-2604-upgrade-pitfalls/00-ai-cover.webp"></p>
+<p><img src="/post-images/ubuntu-2204-to-2604-upgrade-pitfalls/00-ai-cover.webp" alt="Ubuntu 22.04 直升 26.04：三个坑的封面图"></p>
 <p><em>图 1：本文封面。三次卡住，三种沉默，一根接力棒。</em></p>
 <h2 id="一问题背景一台-2204-老机器和一条接力赛道">一、问题背景：一台 22.04 老机器和一条“接力赛道”</h2>
 <p>先交代环境。出问题的机器是一台小服务器，2022 年装的 Ubuntu 22.04 LTS，上面用 Docker 跑着 Portainer、导航页、笔记服务和几个小工具，属于“挂了会心疼、但有三分钟维护窗口”的角色。机器一直跟着 <code>apt upgrade</code> 打补丁，所以系统本身是健康的 22.04.5。</p>
 <p>而终点线那头，Ubuntu 26.04 LTS 已经在 2026 年 4 月发布，官方下载页早就挂出了新版镜像。</p>
-<p><img alt="Ubuntu 官方下载页已提供 26.04 LTS" src="/post-images/ubuntu-2204-to-2604-upgrade-pitfalls/web-02-ubuntu-download.webp"></p>
+<p><img src="/post-images/ubuntu-2204-to-2604-upgrade-pitfalls/web-02-ubuntu-download.webp" alt="Ubuntu 官方下载页已提供 26.04 LTS"></p>
 <p><em>图 2：Ubuntu 官网桌面版下载页，26.04 LTS 已经是默认推荐。</em></p>
 <p>关键规则只有一条：LTS 之间的升级必须逐级走。Ubuntu 官方的生命周期页面写得很清楚，每个 LTS 支持五年，升级器只认“相邻的下一个 LTS”。</p>
-<p><img alt="Ubuntu 官方发布周期页面" src="/post-images/ubuntu-2204-to-2604-upgrade-pitfalls/web-03-release-cycle.webp"></p>
+<p><img src="/post-images/ubuntu-2204-to-2604-upgrade-pitfalls/web-03-release-cycle.webp" alt="Ubuntu 官方发布周期页面"></p>
 <p><em>图 3：Ubuntu 官方发布周期说明。22.04 与 26.04 之间隔着 24.04，升级路径必须经过它。</em></p>
 <p>打个比方，LTS 升级是一场接力赛。你是第一棒（22.04），终点是第三棒（26.04），但棒必须先交到第二棒（24.04）手里，跑完属于它的那一程，才能继续往前传。你不能站在起点把棒直接扔向终点——规则不允许，掉棒的风险也最大。</p>
-<p><img alt="LTS 升级接力赛示意" src="/post-images/ubuntu-2204-to-2604-upgrade-pitfalls/01-lts-relay-race.svg"></p>
+<p><img src="/post-images/ubuntu-2204-to-2604-upgrade-pitfalls/01-lts-relay-race.svg" alt="LTS 升级接力赛示意"></p>
 <p><em>图 4：接力赛比喻。每一棒都要完整跑完“全量升级、重启、验证”，do-release-upgrade 只接“相邻的下一棒”。</em></p>
 <p>所以整个计划很朴素：22.04 全量升级，第一次 do-release-upgrade，重启；24.04 全量升级，第二次 do-release-upgrade，重启；验收。听起来半小时的事，实际跑了两个多小时——多出来的时间全是学费，也就是下面这三个坑。</p>
 <h2 id="二问题表现三次卡住三种沉默">二、问题表现：三次卡住，三种沉默</h2>
@@ -238,7 +238,7 @@
 <h2 id="三坑一第三方源把全量升级拖进-6kbs-的泥潭">三、坑一：第三方源，把全量升级拖进 6KB/s 的泥潭</h2>
 <h3 id="表现">表现</h3>
 <p>升级前的例行全量升级（<code>apt update</code> 加 <code>apt full-upgrade</code>）进行到下载阶段时，日志停在了 NodeSource 的 nodejs 包上。十分钟后我用另一只终端看了一眼：</p>
-<p><img alt="apt 卡在 NodeSource 37.8MB 的包上" src="/post-images/ubuntu-2204-to-2604-upgrade-pitfalls/shot-02-nodesource-stuck.webp"></p>
+<p><img src="/post-images/ubuntu-2204-to-2604-upgrade-pitfalls/shot-02-nodesource-stuck.webp" alt="apt 卡在 NodeSource 37.8MB 的包上"></p>
 <p><em>图 5：真实日志。同一个 37.8MB 的 deb 包，十分钟只落了 3.8MB，折合大约 6KB/s。</em></p>
 <h3 id="分析">分析</h3>
 <p>国内访问 Ubuntu 官方镜像和华为云、阿里云这类国内镜像通常很快，但 NodeSource、Docker 官方源这类第三方仓库走的是海外 CDN，某些网络环境下的高峰期速度可能低到没法看。apt 是串行下载的：它卡在第三个包，后面哪怕有一百个包来自快镜像，也得排队等它。</p>
@@ -247,15 +247,15 @@
 <p>根因不是“apt 慢”，而是“升级路径上混入了速度不可控的外部依赖”。22.04 全量升级本身只需要从国内镜像拉 1GB 左右，5 分钟内能完成；但第三方源里一个 37.8MB 的包就把整条流水线堵死了。</p>
 <h3 id="解法">解法</h3>
 <p>系统发行版升级本来就会临时禁用第三方源（do-release-upgrade 会把 sources.list.d 里的第三方仓库注释掉），那不如我自己来：先备份、再移走、跑完再恢复。这样全量升级只走国内镜像，几分钟结束：</p>
-<p><img alt="禁用第三方源后全量升级完成" src="/post-images/ubuntu-2204-to-2604-upgrade-pitfalls/shot-03-third-party-disabled.webp"></p>
+<p><img src="/post-images/ubuntu-2204-to-2604-upgrade-pitfalls/shot-03-third-party-disabled.webp" alt="禁用第三方源后全量升级完成"></p>
 <p><em>图 6：把 nodesource 和 docker 的源改名为 .disabled 暂时退场，全量升级干净利落地跑完。</em></p>
-<p><img alt="22.04 全量升级完成的退出码" src="/post-images/ubuntu-2204-to-2604-upgrade-pitfalls/shot-01-jammy-full-upgrade.webp"></p>
+<p><img src="/post-images/ubuntu-2204-to-2604-upgrade-pitfalls/shot-01-jammy-full-upgrade.webp" alt="22.04 全量升级完成的退出码"></p>
 <p><em>图 7：update、upgrade、autoremove 三步退出码全为 0，且无需重启，第一棒准备就绪。</em></p>
 <p>注意细节：这里是“mv 暂存”而不是“删除”，文件原样保留，升级结束后改回原名即可。Node 和 Docker 的软件本体不受影响，只是这几分钟里不检查它们的更新。</p>
 <h2 id="四坑二镜像同步了一半升级工具包直接被拒收">四、坑二：镜像同步了一半，升级工具包直接被拒收</h2>
 <h3 id="表现-1">表现</h3>
 <p>第一棒交出去，<code>do-release-upgrade</code> 启动，却在几十秒内就退出了：</p>
-<p><img alt="升级工具包下载失败" src="/post-images/ubuntu-2204-to-2604-upgrade-pitfalls/shot-04-upgrade-tool-fetch-error.webp"></p>
+<p><img src="/post-images/ubuntu-2204-to-2604-upgrade-pitfalls/shot-04-upgrade-tool-fetch-error.webp" alt="升级工具包下载失败"></p>
 <p><em>图 8：真实报错。升级工具包期望 1267251 字节，镜像只给得出 1275049 字节，大小对不上直接 Err。</em></p>
 <h3 id="分析-1">分析</h3>
 <p><code>do-release-upgrade</code> 的工作方式分两步：先从 changelogs.ubuntu.com 拿一份“版本目录”（meta-release），得知下一个版本是什么、升级工具包在哪；再把几 MB 的升级工具包（noble.tar.gz）从你配置的软件镜像下载下来，验签后执行。卡住的是第二步。</p>
@@ -268,13 +268,13 @@
 <h2 id="五坑三2604-早已发布升级器却说没有可用版本">五、坑三：26.04 早已发布，升级器却说“没有可用版本”</h2>
 <h3 id="表现-2">表现</h3>
 <p>这是最有意思的一个坑。第二阶段一切就绪，24.04.5 加新内核 6.8，<code>do-release-upgrade</code> 却给出了这样的回答：</p>
-<p><img alt="升级器声称没有可用的 LTS" src="/post-images/ubuntu-2204-to-2604-upgrade-pitfalls/shot-05-no-lts-available.webp"></p>
+<p><img src="/post-images/ubuntu-2204-to-2604-upgrade-pitfalls/shot-05-no-lts-available.webp" alt="升级器声称没有可用的 LTS"></p>
 <p><em>图 9：真实输出。“There is no development version of an LTS available”，退出码 1。</em></p>
 <p>到这一步没有任何报错可查——网络是通的，镜像刚换过，24.04 也是刚升完的新系统。升级器只是“不认为”存在一个可以去的 LTS。</p>
 <h3 id="分析-2">分析</h3>
 <p>上一篇文章（Ubuntu 26.04 升级指南，见文末相关阅读）提过：LTS 到 LTS 的常规升级提示，通常要等新版本的第一个点版本（26.04.1）发布后才对普通用户开放。现在已经是 26.04.1 发布之后，常规通道理应打开。那升级器在看什么？</p>
 <p>答案是 <code>/etc/update-manager/meta-release</code> 配置指向的“版本目录”。把这个目录拉下来看，resolute（26.04 的开发代号）的条目就在里面：</p>
-<p><img alt="meta-release-lts 中的 resolute 条目" src="/post-images/ubuntu-2204-to-2604-upgrade-pitfalls/web-01-meta-release-lts.webp"></p>
+<p><img src="/post-images/ubuntu-2204-to-2604-upgrade-pitfalls/web-01-meta-release-lts.webp" alt="meta-release-lts 中的 resolute 条目"></p>
 <p><em>图 10：官方 meta-release-lts 页面。resolute 条目就在列表末尾，版本 26.04.1 LTS。</em></p>
 <p>条目里有一个字段叫 <code>Supported</code>，我抓到的值是 0。这就是全部真相：升级器判断“要不要推荐这个升级”时，看的不是版本号有多新，而是这个标志位。Supported 为 0，在它眼里等同于“暂停营业”。</p>
 <h3 id="根因-2">根因</h3>
@@ -286,27 +286,27 @@
 <li>在副本里把 resolute 的 Supported 从 0 改成 1；</li>
 <li>把 <code>/etc/update-manager/meta-release</code> 里的 URI_LTS 指向这份本地副本（file:// 协议），清掉升级器自己的缓存标记，重新运行。</li>
 </ol>
-<p><img alt="给 meta-release 打本地补丁" src="/post-images/ubuntu-2204-to-2604-upgrade-pitfalls/shot-06-meta-release-patch.webp"></p>
+<p><img src="/post-images/ubuntu-2204-to-2604-upgrade-pitfalls/shot-06-meta-release-patch.webp" alt="给 meta-release 打本地补丁"></p>
 <p><em>图 11：真实执行过程。三行 Python 翻转标志位，URI_LTS 指向本地副本。</em></p>
-<p><img alt="营业牌比喻示意" src="/post-images/ubuntu-2204-to-2604-upgrade-pitfalls/02-supported-flag.svg"></p>
+<p><img src="/post-images/ubuntu-2204-to-2604-upgrade-pitfalls/02-supported-flag.svg" alt="营业牌比喻示意"></p>
 <p><em>图 12：Supported 标志就像店铺门口的营业牌。升级器不看你多想去，只看牌子上写什么。</em></p>
 <p>有两条安全边界必须说清楚。第一，这个补丁只翻转“推荐开关”，不伪造任何软件包，升级工具包和所有 deb 仍然走官方 GPG 验签，签名对不上照样拒绝执行。第二，它是临时桥，不是永久改装——升级完成后必须把 URI_LTS 换回官方地址，否则你的系统会永远读一份过期的“营业时间表”。文末的一键脚本里，这个补丁是自动打、自动撤的。</p>
 <h2 id="六冲线两次重启之后">六、冲线：两次重启之后</h2>
 <p>补丁打完，第二棒顺利交出。24.04 阶段完成、重启进新内核：</p>
-<p><img alt="24.04 阶段完成" src="/post-images/ubuntu-2204-to-2604-upgrade-pitfalls/shot-07-noble-done.webp"></p>
+<p><img src="/post-images/ubuntu-2204-to-2604-upgrade-pitfalls/shot-07-noble-done.webp" alt="24.04 阶段完成"></p>
 <p><em>图 13：第一棒终点。Ubuntu 24.04.5，内核 6.8.0，开机 0 分钟。</em></p>
 <p>第二阶段跑了约 45 分钟，其中 1.2GB 的包下载占了三分之二，剩下是解包和配置。最后：</p>
-<p><img alt="26.04 阶段完成" src="/post-images/ubuntu-2204-to-2604-upgrade-pitfalls/shot-08-resolute-done.webp"></p>
+<p><img src="/post-images/ubuntu-2204-to-2604-upgrade-pitfalls/shot-08-resolute-done.webp" alt="26.04 阶段完成"></p>
 <p><em>图 14：终点线。Ubuntu 26.04.1 LTS，内核 7.0.0，release_rc=0。</em></p>
 <p>最关心的 Docker 全家桶在重启后自动归位，六个容器全部自愈，node 也在恢复源之后升到了新版本：</p>
-<p><img alt="容器自动恢复" src="/post-images/ubuntu-2204-to-2604-upgrade-pitfalls/shot-09-docker-recovered.webp"></p>
+<p><img src="/post-images/ubuntu-2204-to-2604-upgrade-pitfalls/shot-09-docker-recovered.webp" alt="容器自动恢复"></p>
 <p><em>图 15：重启后 docker ps 一览，六个容器全部 Up，无需任何人工干预。</em></p>
 <p>顺手把升级前的两个第三方源恢复：Docker 的源代号从旧版本改成 26.04 的代号，NodeSource 用的是发行版无关的 nodistro 通道，原样启用即可。收尾再做一次全量升级确认干净，整个迁移结束。</p>
 <h2 id="七一键全自动人工执行与-agent-执行">七、一键全自动：人工执行与 Agent 执行</h2>
 <p>把上面的经验固化成一个脚本。它只依赖 Ubuntu 自带工具（bash、apt、do-release-upgrade、systemd、curl），不依赖任何第三方服务；每一阶段落盘日志、状态可续跑、重启自动接续；第三方源自动暂存恢复；meta-release 补丁只在“确认需要”时自动打、结束自动撤。</p>
 <p>人工执行：把脚本保存为 <code>ubuntu-lts-relay.sh</code>，然后 <code>sudo bash ubuntu-lts-relay.sh</code>。可以加 <code>--target 24.04</code> 只升一级。中途随时可以 Ctrl-C 观察，重跑脚本会从断点继续。</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e">#!/usr/bin/env bash
-</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span><span style="color:#75715e"># ubuntu-lts-relay.sh —— Ubuntu LTS 接力升级一键脚本（仅官方路径，逐级升级）</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e">#!/usr/bin/env bash
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"># ubuntu-lts-relay.sh —— Ubuntu LTS 接力升级一键脚本（仅官方路径，逐级升级）</span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># 依赖：bash / apt / do-release-upgrade / systemd / curl，均系统自带</span>
 </span></span><span style="display:flex;"><span>set -euo pipefail
 </span></span><span style="display:flex;"><span>
@@ -351,7 +351,7 @@
 </span></span><span style="display:flex;"><span>  export DEBIAN_FRONTEND<span style="color:#f92672">=</span>noninteractive NEEDRESTART_MODE<span style="color:#f92672">=</span>a
 </span></span><span style="display:flex;"><span>  apt-get update -qq
 </span></span><span style="display:flex;"><span>  apt-get -y -q -o Dpkg::Options::<span style="color:#f92672">=</span>--force-confdef <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>    -o Dpkg::Options::<span style="color:#f92672">=</span>--force-confold full-upgrade
+</span></span></span><span style="display:flex;"><span>    -o Dpkg::Options::<span style="color:#f92672">=</span>--force-confold full-upgrade
 </span></span><span style="display:flex;"><span>  apt-get -y -q autoremove
 </span></span><span style="display:flex;"><span><span style="color:#f92672">}</span>
 </span></span><span style="display:flex;"><span>
@@ -362,7 +362,7 @@
 </span></span><span style="display:flex;"><span>  codename<span style="color:#f92672">=</span>$next
 </span></span><span style="display:flex;"><span>  curl -fsSL <span style="color:#e6db74">&#34;</span>$META_SRC<span style="color:#e6db74">&#34;</span> -o /etc/update-manager/meta-release-lts.local
 </span></span><span style="display:flex;"><span>  <span style="color:#66d9ef">if</span> ! grep -A5 <span style="color:#e6db74">&#34;^Dist: </span>$codename<span style="color:#e6db74">&#34;</span> /etc/update-manager/meta-release-lts.local <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>      | head -6 | grep -q <span style="color:#e6db74">&#34;Supported: 0&#34;</span>; <span style="color:#66d9ef">then</span>
+</span></span></span><span style="display:flex;"><span>      | head -6 | grep -q <span style="color:#e6db74">&#34;Supported: 0&#34;</span>; <span style="color:#66d9ef">then</span>
 </span></span><span style="display:flex;"><span>    rm -f /etc/update-manager/meta-release-lts.local
 </span></span><span style="display:flex;"><span>    log <span style="color:#e6db74">&#34;目标版本已对普通用户开放，无需桥接&#34;</span>
 </span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">return</span> <span style="color:#ae81ff">0</span>
@@ -380,7 +380,7 @@
 </span></span></span><span style="display:flex;"><span><span style="color:#e6db74">PY</span>
 </span></span><span style="display:flex;"><span>  cp -n /etc/update-manager/meta-release /etc/update-manager/meta-release.bak
 </span></span><span style="display:flex;"><span>  sed -i <span style="color:#e6db74">&#34;s|^URI_LTS = .*|URI_LTS = file:///etc/update-manager/meta-release-lts.local|&#34;</span> <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>    /etc/update-manager/meta-release
+</span></span></span><span style="display:flex;"><span>    /etc/update-manager/meta-release
 </span></span><span style="display:flex;"><span>  rm -f /var/lib/ubuntu-release-upgrader/release-upgrade-available
 </span></span><span style="display:flex;"><span>  echo <span style="color:#e6db74">&#34;bridge=on&#34;</span> &gt;&gt; <span style="color:#e6db74">&#34;</span>$STATE<span style="color:#e6db74">&#34;</span>
 </span></span><span style="display:flex;"><span>  log <span style="color:#e6db74">&#34;meta-release 桥接已启用（结束后自动撤销）&#34;</span>
@@ -416,7 +416,7 @@
 </span></span><span style="display:flex;"><span>run_release_stage<span style="color:#f92672">(){</span>                 <span style="color:#75715e"># 一棒：do-release-upgrade 非交互执行</span>
 </span></span><span style="display:flex;"><span>  export DEBIAN_FRONTEND<span style="color:#f92672">=</span>noninteractive NEEDRESTART_MODE<span style="color:#f92672">=</span>a
 </span></span><span style="display:flex;"><span>  <span style="color:#66d9ef">do</span>-release-upgrade -f DistUpgradeViewNonInteractive &lt;/dev/null <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>    | tee -a <span style="color:#e6db74">&#34;</span>$LOG<span style="color:#e6db74">&#34;</span>
+</span></span></span><span style="display:flex;"><span>    | tee -a <span style="color:#e6db74">&#34;</span>$LOG<span style="color:#e6db74">&#34;</span>
 </span></span><span style="display:flex;"><span><span style="color:#f92672">}</span>
 </span></span><span style="display:flex;"><span>
 </span></span><span style="display:flex;"><span>main<span style="color:#f92672">(){</span>
@@ -446,7 +446,7 @@
 </span></span><span style="display:flex;"><span>main <span style="color:#e6db74">&#34;</span>$@<span style="color:#e6db74">&#34;</span>
 </span></span></code></pre></div><p>脚本几处设计说明：<code>bridge_meta_release</code> 只在“目标版本已发布但标志位仍为 0”时才动手，如果官方已经放开，它什么都不改；systemd 单元负责重启后自动续跑，全部完成后自删；所有日志集中在 <code>/var/log/lts-relay.log</code>。</p>
 <p>交给 AI Agent 执行时，重点不是让它“会敲命令”，而是把验收标准和边界写进提示词。可以直接复制下面这段：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>请把主机 &lt;HOST&gt; 按官方路径升级到 Ubuntu 26.04 LTS：
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>请把主机 &lt;HOST&gt; 按官方路径升级到 Ubuntu 26.04 LTS：
 </span></span><span style="display:flex;"><span>1. 先运行预检（版本、磁盘、reboot-required、Docker 业务状态），把结果给我确认；
 </span></span><span style="display:flex;"><span>2. 确认后执行 ubuntu-lts-relay.sh，用 nohup 或 tmux 托管，全程记录日志；
 </span></span><span style="display:flex;"><span>3. 每个阶段重启后检查续跑状态，读取 /var/log/lts-relay.log 确认推进；

@@ -214,7 +214,7 @@
 <p>用户只点了一次，队列却可能把任务交给 Worker 两次；Worker 只「想」执行一次，外部世界却可能真的收到两次重启、两封邮件甚至两笔扣款。最危险的窗口发生在：<strong>副作用已经成功，Worker 还没来得及保存 <code>COMPLETED</code> 就崩溃。</strong> 队列看不见外部世界，只能按「至少一次投递」重新交付。解决办法不是相信某个消息队列能魔法般提供端到端 Exactly-once，而是把持久任务状态机、稳定的幂等键、接收端唯一约束、租约、fencing token、Transactional Outbox、对账与补偿组合起来。</p>
 <p>我写了一个只用 Python 标准库和本地 SQLite 的零网络实验。它先复现「一次意图、两次副作用」，再证明两次投递只产生一次安全副作用；随后演示 Worker 接管、旧 Worker 拒写、Outbox 在两处崩溃后恢复，以及不支持幂等的接收端如何补偿。全部是合成数据，不访问模型、服务器、凭据或第三方服务，最终 7/7 项验收通过。Windows 11、Ubuntu 26.04 和 macOS 26 的一键脚本均随文提供。</p>
 </blockquote>
-<p><img alt="原创封面：一次请求为何变成两次重启，以及幂等接收端怎样拦住第二次副作用。" src="/post-images/ai-agent-worker-crash-idempotency/00-cover.svg"></p>
+<p><img src="/post-images/ai-agent-worker-crash-idempotency/00-cover.svg" alt="原创封面：一次请求为何变成两次重启，以及幂等接收端怎样拦住第二次副作用。"></p>
 <p><em>图 1：本文原创封面。标题中的「服务器重启」在实验中是本地数据库里的合成副作用，没有连接或操作任何真实设备。</em></p>
 <h2 id="1-问题背景用户的一次点击不等于系统的一次投递">1. 问题背景：用户的一次点击，不等于系统的一次投递</h2>
 <p>在 <a href="/post/ai-platform-production-reference-architecture/">AI Platform 旗舰架构</a> 中，我把 Worker 崩溃放进了生产验收，但那篇文章只展示了结果，没有把最危险的一毫秒完全拆开。这篇专门补上这块拼图。</p>
@@ -229,13 +229,13 @@
 <li>Agent 对同一个文件或配置连续改两次，第二次把第一次的结果当成输入。</li>
 </ul>
 <p>很多团队把这些叫作「模型重复调用」。但模型可能只生成了一次工具意图，真正重复的是<strong>持久任务的投递与副作用协议</strong>。如果只盯 Prompt 和聊天记录，很容易修错地方。</p>
-<p><img alt="原创时间线：副作用成功与 COMPLETED 落库之间，就是最危险的崩溃窗口。" src="/post-images/ai-agent-worker-crash-idempotency/01-danger-window.svg"></p>
+<p><img src="/post-images/ai-agent-worker-crash-idempotency/01-danger-window.svg" alt="原创时间线：副作用成功与 COMPLETED 落库之间，就是最危险的崩溃窗口。"></p>
 <p><em>图 2：Worker 已经越过外部世界的「不可撤销线」，本地任务记录却仍停在 RUNNING。进程可能只消失一毫秒，但不确定性会一直留到有人对账。</em></p>
 <h2 id="2-问题表现为什么日志里每一行都像是正常重试">2. 问题表现：为什么日志里每一行都像是「正常重试」</h2>
 <p>典型现场长这样：任务表中只有一个 <code>task_id</code>，第一次 Worker 领取任务，外部接口返回成功；Worker 随后失去进程、连接或电源，没有写入完成状态。租约到期后，第二个 Worker 领取同一任务，再次调用相同工具，最后顺利写入 <code>COMPLETED</code>。</p>
 <p>如果日志只记录「开始、失败、重试、完成」，运维人员看到的甚至是一条漂亮的恢复链：第一次失败，第二次成功。可用户看到的是两次动作。<strong>任务状态成功，不等于业务副作用只发生一次。</strong></p>
 <p>我在实验的朴素路径中故意把崩溃点放在 <code>action=ACCEPTED</code> 之后、<code>COMPLETED</code> 之前。第一次投递产生一次合成重启，恢复后第二次投递又产生一次：</p>
-<p><img alt="真实实验输出：一次意图经两次投递产生两个朴素副作用。" src="/post-images/ai-agent-worker-crash-idempotency/01-real-naive-double-effect.webp"></p>
+<p><img src="/post-images/ai-agent-worker-crash-idempotency/01-real-naive-double-effect.webp" alt="真实实验输出：一次意图经两次投递产生两个朴素副作用。"></p>
 <p><em>图 3：真实本地实验输出截图。<code>delivery=1</code> 的副作用已被接受，随后注入崩溃；队列重投后 <code>delivery=2</code> 再次被接受，最终 <code>observed_side_effects=2</code>。实验为零网络合成逻辑。</em></p>
 <p>这个窗口不只来自进程真的崩溃，还可能来自：</p>
 <ul>
@@ -263,7 +263,7 @@
 <p>端到端更现实的目标是：<strong>允许任务重复到达，但同一业务意图的已接受副作用最多一份；无法确定时不盲重试，而是进入查询、对账或补偿。</strong></p>
 <h3 id="33-聊天记录不能承担业务状态">3.3 聊天记录不能承担业务状态</h3>
 <p>模型回复「已经重启」只是文本，不能代替事实记录。可靠任务至少要分清 <code>PENDING</code>、<code>LEASED/RUNNING</code>、<code>COMPLETED</code>、<code>UNKNOWN</code> 和 <code>RECONCILING</code>。聊天窗口关掉、上下文被压缩或模型换代，任务仍应能恢复。</p>
-<p><img alt="原创任务状态机：不确定结果必须进入 UNKNOWN 与 RECONCILING，而不是假装失败后直接重试。" src="/post-images/ai-agent-worker-crash-idempotency/02-task-state-machine.svg"></p>
+<p><img src="/post-images/ai-agent-worker-crash-idempotency/02-task-state-machine.svg" alt="原创任务状态机：不确定结果必须进入 UNKNOWN 与 RECONCILING，而不是假装失败后直接重试。"></p>
 <p><em>图 4：简化状态机。生产系统还会加入 <code>WAITING_APPROVAL</code>、<code>FAILED_RETRYABLE</code>、<code>FAILED_TERMINAL</code>、<code>CANCEL_REQUESTED</code>、<code>CANCELLED</code> 和 <code>COMPENSATING</code>；关键是每条边都有前置条件和版本。</em></p>
 <p>这也呼应 <a href="/post/12-factor-agents-agent-principles/">12-Factor Agents</a> 的原则：执行状态和业务状态必须统一，Agent 才能暂停、恢复和审计；把状态藏在 Prompt 里，只是在把数据库问题伪装成语言问题。</p>
 <h2 id="4-第一层解法为业务意图生成稳定幂等键">4. 第一层解法：为「业务意图」生成稳定幂等键</h2>
@@ -277,7 +277,7 @@
 <li>工具 schema 或业务语义版本。</li>
 </ul>
 <p>可以对规范化 JSON 做哈希：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-python" data-lang="python"><span style="display:flex;"><span>canonical <span style="color:#f92672">=</span> json<span style="color:#f92672">.</span>dumps({
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-python" data-lang="python"><span style="display:flex;"><span>canonical <span style="color:#f92672">=</span> json<span style="color:#f92672">.</span>dumps({
 </span></span><span style="display:flex;"><span>    <span style="color:#e6db74">&#34;tenant&#34;</span>: tenant_id,
 </span></span><span style="display:flex;"><span>    <span style="color:#e6db74">&#34;task&#34;</span>: task_id,
 </span></span><span style="display:flex;"><span>    <span style="color:#e6db74">&#34;action&#34;</span>: tool_name,
@@ -290,7 +290,7 @@
 <p>只在 Worker 内存里放 <code>already_done = true</code> 没用，进程死亡后它也消失。只在本地任务库中提前插入「已处理」同样危险：如果标记成功、外部调用尚未发生就崩溃，恢复进程可能因为命中标记而永远漏做。</p>
 <p>真正有价值的是让<strong>产生副作用的一方</strong>接受幂等键，并用唯一约束原子地返回第一次结果。可以是支付平台支持的请求键、订单表上的业务唯一索引、对象存储的条件写、资源版本的 Compare-And-Swap，或工具适配器中的去重收件箱（Inbox）。</p>
 <p>本地实验把 SQLite 表当成合成接收端，<code>idempotency_key</code> 是主键。第一次请求插入结果后崩溃，第二次请求仍带同一个键，因此不是再次执行，而是取回第一次结果：</p>
-<p><img alt="真实实验输出：两次投递使用同一幂等键，第二次被去重。" src="/post-images/ai-agent-worker-crash-idempotency/02-real-idempotent-recovery.webp"></p>
+<p><img src="/post-images/ai-agent-worker-crash-idempotency/02-real-idempotent-recovery.webp" alt="真实实验输出：两次投递使用同一幂等键，第二次被去重。"></p>
 <p><em>图 5：真实本地实验输出截图。两次 delivery 的 key 完全相同；第一次 <code>EXECUTED</code>，第二次 <code>DEDUPLICATED</code>，最终副作用为 1，任务才写成 <code>COMPLETED</code>。</em></p>
 <h3 id="42-幂等记录不是永久垃圾桶">4.2 幂等记录不是永久垃圾桶</h3>
 <p>幂等表至少保存 key、请求摘要、状态、结果摘要、首次时间、完成时间和过期策略。同一个 key 携带不同参数时应返回冲突，而不是偷偷复用旧结果。保留期必须覆盖队列最大重试时间、人工恢复窗口和消息可能滞留的最长时间；涉及支付、库存或审计时，通常还要遵守业务对账周期。</p>
@@ -298,19 +298,19 @@
 <h2 id="5-第二层解法租约负责接管fencing-token-负责拒绝复活的旧-worker">5. 第二层解法：租约负责接管，Fencing Token 负责拒绝「复活的旧 Worker」</h2>
 <p>租约像图书馆借书证：Worker A 在一段时间内拥有任务；它按心跳续租，超过期限后 Worker B 可以接管。但借书证过期不会让 Worker A 的进程原地消失。它可能只是网络卡住、系统休眠或长时间暂停，恢复后仍继续执行。</p>
 <p>如果只有租约，A 和 B 会在短时间内都认为自己可以写。<strong>租约解决「谁应该工作」，fencing token 解决「接收端现在还认谁」。</strong> 每次接管都获得单调递增的代数，例如 41、42。接收端记住见过的最大代数，任何小于它的写入都拒绝。</p>
-<p><img alt="原创图：新 Worker 拿到更大的 fencing token，接收端拒绝旧 token 的迟到写入。" src="/post-images/ai-agent-worker-crash-idempotency/03-lease-fencing.svg"></p>
+<p><img src="/post-images/ai-agent-worker-crash-idempotency/03-lease-fencing.svg" alt="原创图：新 Worker 拿到更大的 fencing token，接收端拒绝旧 token 的迟到写入。"></p>
 <p><em>图 6：真正的门卫在接收端。仅仅告诉旧 Worker「你的租约过期了」不够，因为它可能听不见；资源本身必须执行条件写。</em></p>
 <p>实验使用逻辑时钟避免依赖墙上时间：A 在 <code>t=100</code> 取得 token 1，租约到 <code>105</code>；<code>t=106</code> 时 B 接管并取得 token 2。B 的写入先被接受，随后 A 带 token 1 醒来，接收端直接返回 <code>REJECTED_STALE</code>：</p>
-<p><img alt="真实实验输出：租约接管后旧 Worker 的迟到副作用被 fencing token 拒绝。" src="/post-images/ai-agent-worker-crash-idempotency/03-real-lease-fencing.webp"></p>
+<p><img src="/post-images/ai-agent-worker-crash-idempotency/03-real-lease-fencing.webp" alt="真实实验输出：租约接管后旧 Worker 的迟到副作用被 fencing token 拒绝。"></p>
 <p><em>图 7：真实本地实验输出截图。注意 <code>worker-a</code> / <code>worker-b</code> 只是合成角色标签，不是计算机名。最终只有当前所有者能条件完成任务。</em></p>
 <p>生产实现要注意三点：租约获取与 token 增长必须原子；时间判断应由同一个可信存储完成，避免各主机时钟漂移；接收端必须真的比较 token。只在日志里打印一个 token，并不会产生保护作用。</p>
 <h2 id="6-第三层解法transactional-outbox-解决业务已提交消息却没发出去">6. 第三层解法：Transactional Outbox 解决「业务已提交，消息却没发出去」</h2>
 <p>另一个常见缝隙发生在任务数据库与消息系统之间：业务状态已经提交，Worker 正要发布事件时崩溃。若先发消息后写业务，又会反过来出现「消息已发、业务没提交」。</p>
 <p>Transactional Outbox 的做法像餐厅收银：订单与「需要通知后厨」的小票在同一本账里一次写入。独立 Dispatcher 不断扫描未发送的小票，发给下游后再标记。这样业务提交不会永久丢消息。</p>
-<p><img alt="原创图：业务行和 Outbox 行在同一事务中提交，Dispatcher 可以安全重试。" src="/post-images/ai-agent-worker-crash-idempotency/04-outbox.svg"></p>
+<p><img src="/post-images/ai-agent-worker-crash-idempotency/04-outbox.svg" alt="原创图：业务行和 Outbox 行在同一事务中提交，Dispatcher 可以安全重试。"></p>
 <p><em>图 8：Outbox 解决「不丢」，下游按 <code>event_id</code> 去重解决「不重复」。两者不是二选一。</em></p>
 <p>实验连续在两个地方注入故障：先在本地事务提交后、发布前崩溃；Dispatcher 恢复并把事件送到下游，又在下游接受后、<code>sent</code> 标记前崩溃。第二次 dispatch 必然再次发送，但下游的唯一 <code>event_id</code> 把它去重：</p>
-<p><img alt="真实实验输出：Outbox 在两处崩溃后恢复，下游最终只有一个副作用。" src="/post-images/ai-agent-worker-crash-idempotency/04-real-outbox-recovery.webp"></p>
+<p><img src="/post-images/ai-agent-worker-crash-idempotency/04-real-outbox-recovery.webp" alt="真实实验输出：Outbox 在两处崩溃后恢复，下游最终只有一个副作用。"></p>
 <p><em>图 9：真实本地实验输出截图。两次 dispatch、一个 downstream effect。Outbox Dispatcher 自身仍是 at-least-once，因此下游 Inbox/幂等键不可省略。</em></p>
 <p>Outbox 也不是万能分布式事务。它无法让不支持查询、幂等或撤销的外部动作自动变安全；它保证本地事实与待发送事件不分家，端到端仍要设计接收协议。</p>
 <h2 id="7-外部系统不支持幂等怎么办先查再对账最后才补偿">7. 外部系统不支持幂等怎么办：先查，再对账，最后才补偿</h2>
@@ -324,7 +324,7 @@
 <li>推动接收端增加幂等键或条件写，而不是永远在调用方猜。</li>
 </ol>
 <p>实验模拟一个不支持幂等键的预约端：第一次已创建，但 ACK 丢失；盲重试又创建一条。对账发现两条 ACTIVE，补偿取消重复项，最后只留一条：</p>
-<p><img alt="真实实验输出：不支持幂等的接收端出现重复，随后对账并补偿。" src="/post-images/ai-agent-worker-crash-idempotency/05-real-compensation.webp"></p>
+<p><img src="/post-images/ai-agent-worker-crash-idempotency/05-real-compensation.webp" alt="真实实验输出：不支持幂等的接收端出现重复，随后对账并补偿。"></p>
 <p><em>图 10：真实本地实验输出截图。补偿是止损方案，不是 Exactly-once。取消邮件不能让收件人「没看见」，退款也不等于用户没有受影响，因此优先建设接收端幂等。</em></p>
 <h2 id="8-一套可落地的生产执行协议">8. 一套可落地的生产执行协议</h2>
 <p>把上面拼起来，一次高风险工具调用可以按以下流程运行：</p>
@@ -355,28 +355,28 @@
 <li><code>compensation_total</code>、成功率和人工对账等待时间。</li>
 </ul>
 <p>每条证据至少串起 task、intent、attempt、幂等键摘要、工具版本、fence、租约所有者的逻辑 ID、结果来源与 trace ID。不要用完整请求参数或真实机器名换取「看起来详细」的日志。</p>
-<p><img alt="真实实验指标截图：投递次数、副作用数、拒绝与补偿结果能同时核对。" src="/post-images/ai-agent-worker-crash-idempotency/07-real-metrics.webp"></p>
+<p><img src="/post-images/ai-agent-worker-crash-idempotency/07-real-metrics.webp" alt="真实实验指标截图：投递次数、副作用数、拒绝与补偿结果能同时核对。"></p>
 <p><em>图 11：真实本地 <code>metrics.json</code> 输出截图。朴素路径 2 次副作用，安全路径 1 次；Outbox 下游 1 次；网络调用与真实凭据均为 0。</em></p>
 <p>最重要的 SLO 不是「没有重试」，而是：<strong>重复投递允许发生，重复已接受副作用必须为 0；不确定结果必须在规定时间内被对账；旧 Worker 的迟到写入必须被拒绝。</strong></p>
 <h2 id="10-一键实验windows-11ubuntu-2604macos-26">10. 一键实验：Windows 11、Ubuntu 26.04、macOS 26</h2>
 <p>完整实验由 <a href="/post-files/ai-agent-worker-crash-idempotency/worker_crash_lab.py">worker_crash_lab.py</a> 提供，只使用 <code>sqlite3</code>、<code>hashlib</code>、<code>json</code> 和文件 API。它不会访问网络、读取环境变量、加载凭据或调用真实工具。详细边界见 <a href="/post-files/ai-agent-worker-crash-idempotency/README.md">README</a>。</p>
 <h3 id="101-windows-11-powershell">10.1 Windows 11 PowerShell</h3>
 <p>下载 <a href="/post-files/ai-agent-worker-crash-idempotency/Run-Windows11.ps1">Run-Windows11.ps1</a> 与 Python 脚本到同一目录，然后执行：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-powershell" data-lang="powershell"><span style="display:flex;"><span>Set-ExecutionPolicy -Scope <span style="color:#66d9ef">Process</span> Bypass
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-powershell" data-lang="powershell"><span style="display:flex;"><span>Set-ExecutionPolicy -Scope <span style="color:#66d9ef">Process</span> Bypass
 </span></span><span style="display:flex;"><span>.\Run-Windows11.ps1
 </span></span></code></pre></div><p>脚本优先使用 Windows Python Launcher 的 <code>py -3</code>，否则使用 <code>python.exe</code>；不会自动安装软件或请求第三方服务。</p>
 <h3 id="102-ubuntu-2604">10.2 Ubuntu 26.04</h3>
 <p>下载 <a href="/post-files/ai-agent-worker-crash-idempotency/run-ubuntu-26.04.sh">run-ubuntu-26.04.sh</a> 与 Python 脚本到同一目录：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>chmod +x run-ubuntu-26.04.sh
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>chmod +x run-ubuntu-26.04.sh
 </span></span><span style="display:flex;"><span>./run-ubuntu-26.04.sh
 </span></span></code></pre></div><h3 id="103-macos-26">10.3 macOS 26</h3>
 <p>下载 <a href="/post-files/ai-agent-worker-crash-idempotency/run-macos-26.sh">run-macos-26.sh</a> 与 Python 脚本到同一目录：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>chmod +x run-macos-26.sh
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>chmod +x run-macos-26.sh
 </span></span><span style="display:flex;"><span>./run-macos-26.sh
 </span></span></code></pre></div><p>三套入口都运行同一份标准库实验，并强制检查 7 行 <code>[PASS]</code> 与 <code>result=PASS</code>。<code>--clean</code> 只允许删除名称为 <code>lab-output</code> 或 <code>reference-run</code> 的结果目录，避免把清理范围放大。</p>
 <h3 id="104-人工自动执行">10.4 人工自动执行</h3>
 <p>如果不使用入口脚本，也可以人工运行：</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>python3 worker_crash_lab.py --clean
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>python3 worker_crash_lab.py --clean
 </span></span></code></pre></div><p>然后打开 <code>lab-output/results/06-acceptance-summary.txt</code>，确认 7/7；再检查 <a href="/post-files/ai-agent-worker-crash-idempotency/lab-output/metrics.json">参考运行 metrics.json</a> 中 <code>naive_side_effects=2</code>、<code>safe_side_effects=1</code>、<code>downstream_effects=1</code>、<code>network_calls=0</code>。朴素场景出现 <code>[EXPECTED RISK]</code> 不是实验失败，而是先证明故障确实可复现。</p>
 <h3 id="105-agent-自动配置与验收">10.5 Agent 自动配置与验收</h3>
 <p>把 <a href="/post-files/ai-agent-worker-crash-idempotency/AGENT-PROMPT.md">AGENT-PROMPT.md</a> 交给可以执行本机命令的 Agent。它要求 Agent 先读脚本、确认安全边界，再选择当前系统入口；失败时保留证据并解释，禁止改写验收文件制造 PASS。</p>
@@ -386,10 +386,10 @@
 </blockquote>
 <p>Agent 自动化像请一个执行力很强的实习生做实验：要给它实验台、边界和验收表，而不是只说「帮我证明幂等没问题」。</p>
 <h2 id="11-验收结果我到底证明了什么又没有证明什么">11. 验收结果：我到底证明了什么，又没有证明什么</h2>
-<p><img alt="原创验收矩阵：允许重复投递，不允许重复业务副作用。" src="/post-images/ai-agent-worker-crash-idempotency/05-acceptance-matrix.svg"></p>
+<p><img src="/post-images/ai-agent-worker-crash-idempotency/05-acceptance-matrix.svg" alt="原创验收矩阵：允许重复投递，不允许重复业务副作用。"></p>
 <p><em>图 12：发布闸门应检查业务不变量，而不只是 HTTP 200、进程存活或队列清空。</em></p>
 <p>本次参考运行使用本地 Python 3 标准库，七项全部通过：危险窗口可复现；两次安全投递只有一次副作用；旧 Worker 被 fencing 拒绝；Outbox 两次 dispatch 只有一次下游效果；补偿后只剩一条有效预约；安全任务进入终态；隐私与网络边界为零。</p>
-<p><img alt="真实实验输出：七项发布闸门全部 PASS。" src="/post-images/ai-agent-worker-crash-idempotency/06-real-acceptance.webp"></p>
+<p><img src="/post-images/ai-agent-worker-crash-idempotency/06-real-acceptance.webp" alt="真实实验输出：七项发布闸门全部 PASS。"></p>
 <p><em>图 13：真实本地实验输出截图，7/7 PASS。截图中的 Python 版本仅代表这次参考运行；实验没有声称替代真实队列、外部 API、并发压力或生产故障演练。</em></p>
 <p>它证明的是协议逻辑和验收思路，不证明 SQLite 就是生产队列，也不证明所有远端工具都能被一个本地事务包住。真正上线前还要做多进程并发、真实 Broker 重投、数据库故障转移、长时间网络分区、接收端限流、幂等记录过期、人工审批超时和灾备恢复测试。</p>
 <h2 id="12-qa">12. Q&amp;A</h2>

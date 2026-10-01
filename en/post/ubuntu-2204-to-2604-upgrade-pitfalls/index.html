@@ -215,18 +215,18 @@
 <p>Short version</p>
 <p>There is no direct flight from Ubuntu 22.04 to 26.04; the official path is a relay: 22.04 to 24.04, then 24.04 to 26.04. I recently upgraded a small server running Portainer and a few self-hosted tools this way. The two reboots and roughly 1.5 GB of downloads were not what cost time — three surprises were: a 37.8 MB third-party package crawling at 6 KB/s; a mirror mid-sync that served an upgrade tool with mismatched size, which apt flatly rejected; and the subtlest one of all — 26.04 was long released, yet the upgrader claimed no LTS was available, because one flag in the release metadata had not been flipped. This post walks through all three pits (symptoms, analysis, root cause, fix), then gives a one-command relay upgrade script that works both for manual runs and for handing the whole thing to an AI Agent.</p>
 </blockquote>
-<p><img alt="Cover: three pits on the road from 22.04 to 26.04" src="/post-images/ubuntu-2204-to-2604-upgrade-pitfalls/00-ai-cover.webp"></p>
+<p><img src="/post-images/ubuntu-2204-to-2604-upgrade-pitfalls/00-ai-cover.webp" alt="Cover: three pits on the road from 22.04 to 26.04"></p>
 <p><em>Figure 1: cover art. Three stalls, three kinds of silence, one relay baton.</em></p>
 <h2 id="1-background-an-old-2204-box-and-a-relay-track">1. Background: an old 22.04 box and a relay track</h2>
 <p>The machine in question is a small server installed with Ubuntu 22.04 LTS back in 2022, running Portainer, a start page, a note-taking app and a few small tools inside Docker. It always followed <code>apt upgrade</code>, so the system itself was a healthy 22.04.5.</p>
 <p>At the finish line, Ubuntu 26.04 LTS was released in April 2026, and the official download page had been offering the new images for months.</p>
-<p><img alt="Ubuntu&rsquo;s download page already ships 26.04 LTS" src="/post-images/ubuntu-2204-to-2604-upgrade-pitfalls/web-02-ubuntu-download.webp"></p>
+<p><img src="/post-images/ubuntu-2204-to-2604-upgrade-pitfalls/web-02-ubuntu-download.webp" alt="Ubuntu’s download page already ships 26.04 LTS"></p>
 <p><em>Figure 2: ubuntu.com desktop download page, with 26.04 LTS as the default recommendation.</em></p>
 <p>One rule matters here: LTS-to-LTS upgrades must go step by step. Ubuntu&rsquo;s lifecycle pages are explicit — each LTS is supported for five years, and the upgrader only recognizes the adjacent next LTS.</p>
-<p><img alt="Ubuntu&rsquo;s official release cycle page" src="/post-images/ubuntu-2204-to-2604-upgrade-pitfalls/web-03-release-cycle.webp"></p>
+<p><img src="/post-images/ubuntu-2204-to-2604-upgrade-pitfalls/web-03-release-cycle.webp" alt="Ubuntu’s official release cycle page"></p>
 <p><em>Figure 3: Ubuntu&rsquo;s official release cycle. 24.04 sits between 22.04 and 26.04, and the upgrade path must pass through it.</em></p>
 <p>Think of an LTS upgrade as a relay race. You run the first leg (22.04), the finish is the third leg (26.04), but the baton must be handed to the second runner (24.04), who completes their own leg before passing it on. You cannot throw the baton from the start line straight to the finish — the rules forbid it, and the drop risk is highest that way.</p>
-<p><img alt="The relay race analogy for LTS upgrades" src="/post-images/ubuntu-2204-to-2604-upgrade-pitfalls/01-lts-relay-race.svg"></p>
+<p><img src="/post-images/ubuntu-2204-to-2604-upgrade-pitfalls/01-lts-relay-race.svg" alt="The relay race analogy for LTS upgrades"></p>
 <p><em>Figure 4: the relay analogy. Every leg must fully run &ldquo;full upgrade, reboot, verify&rdquo;; do-release-upgrade only takes the adjacent next leg.</em></p>
 <p>So the plan was plain: full-upgrade 22.04, first do-release-upgrade, reboot; full-upgrade 24.04, second do-release-upgrade, reboot; acceptance checks. It sounded like thirty minutes. It took over two — the difference was tuition, paid at the three pits below.</p>
 <h2 id="2-symptoms-three-stalls-three-kinds-of-silence">2. Symptoms: three stalls, three kinds of silence</h2>
@@ -238,7 +238,7 @@
 <h2 id="3-pit-one-a-third-party-repo-drags-the-full-upgrade-into-6-kbs-mud">3. Pit one: a third-party repo drags the full upgrade into 6 KB/s mud</h2>
 <h3 id="symptom">Symptom</h3>
 <p>The routine pre-upgrade full upgrade stalled at the NodeSource nodejs package during download. Ten minutes later, a look from a second terminal showed this:</p>
-<p><img alt="apt stuck on a NodeSource 37.8 MB package" src="/post-images/ubuntu-2204-to-2604-upgrade-pitfalls/shot-02-nodesource-stuck.webp"></p>
+<p><img src="/post-images/ubuntu-2204-to-2604-upgrade-pitfalls/shot-02-nodesource-stuck.webp" alt="apt stuck on a NodeSource 37.8 MB package"></p>
 <p><em>Figure 5: real logs. The same 37.8 MB deb gained 3.8 MB in ten minutes — roughly 6 KB/s.</em></p>
 <h3 id="analysis">Analysis</h3>
 <p>Access to Chinese mirrors (Huawei Cloud, Aliyun and friends) is usually fast, but third-party repos like NodeSource or Docker&rsquo;s official repo ride overseas CDNs, and at peak times on some networks the speed can drop to unusable. apt downloads serially: stuck on one package, everything behind it — even from a fast mirror — waits in line.</p>
@@ -247,15 +247,15 @@
 <p>The root cause is not &ldquo;apt is slow&rdquo; but &ldquo;uncontrollable external dependencies sit on the upgrade path&rdquo;. The 22.04 full upgrade itself pulls about 1 GB from a domestic mirror in minutes; one 37.8 MB package from a slow third-party repo jammed the entire pipeline.</p>
 <h3 id="fix">Fix</h3>
 <p>A release upgrade disables third-party repos anyway (do-release-upgrade comments them out), so I did it myself first: back up, move aside, restore afterwards. The full upgrade then ran on the domestic mirror only and finished in minutes:</p>
-<p><img alt="Third-party repos disabled, full upgrade finished" src="/post-images/ubuntu-2204-to-2604-upgrade-pitfalls/shot-03-third-party-disabled.webp"></p>
+<p><img src="/post-images/ubuntu-2204-to-2604-upgrade-pitfalls/shot-03-third-party-disabled.webp" alt="Third-party repos disabled, full upgrade finished"></p>
 <p><em>Figure 6: renaming the NodeSource and Docker lists to .disabled temporarily, the full upgrade ran clean.</em></p>
-<p><img alt="Exit codes of the finished 22.04 full upgrade" src="/post-images/ubuntu-2204-to-2604-upgrade-pitfalls/shot-01-jammy-full-upgrade.webp"></p>
+<p><img src="/post-images/ubuntu-2204-to-2604-upgrade-pitfalls/shot-01-jammy-full-upgrade.webp" alt="Exit codes of the finished 22.04 full upgrade"></p>
 <p><em>Figure 7: update, upgrade, autoremove all returned 0, no reboot required — the first leg is ready.</em></p>
 <p>Note the detail: files are &ldquo;mv-stashed&rdquo;, not deleted. Rename them back after the upgrade. Node and Docker binaries are untouched — only their update checks pause for a few minutes.</p>
 <h2 id="4-pit-two-a-half-synced-mirror-gets-the-upgrade-tool-rejected">4. Pit two: a half-synced mirror gets the upgrade tool rejected</h2>
 <h3 id="symptom-1">Symptom</h3>
 <p>The first leg handed over, <code>do-release-upgrade</code> started and exited within a minute:</p>
-<p><img alt="The upgrade tool download failed" src="/post-images/ubuntu-2204-to-2604-upgrade-pitfalls/shot-04-upgrade-tool-fetch-error.webp"></p>
+<p><img src="/post-images/ubuntu-2204-to-2604-upgrade-pitfalls/shot-04-upgrade-tool-fetch-error.webp" alt="The upgrade tool download failed"></p>
 <p><em>Figure 8: real error. The tool was expected at 1,267,251 bytes, the mirror served 1,275,049 — size mismatch, immediate Err.</em></p>
 <h3 id="analysis-1">Analysis</h3>
 <p>do-release-upgrade works in two steps: fetch a release catalog (meta-release) from changelogs.ubuntu.com to learn what the next release is and where its upgrade tool lives; then download a few-MB upgrade tool tarball (noble.tar.gz) from your configured package mirror, verify its signature, and run it. Step two stalled.</p>
@@ -268,12 +268,12 @@
 <h2 id="5-pit-three-2604-was-long-released-but-the-upgrader-says-otherwise">5. Pit three: 26.04 was long released, but the upgrader says otherwise</h2>
 <h3 id="symptom-2">Symptom</h3>
 <p>The most interesting pit. Stage two was ready — 24.04.5 on the new 6.8 kernel — and <code>do-release-upgrade</code> answered:</p>
-<p><img alt="The upgrader claims no LTS is available" src="/post-images/ubuntu-2204-to-2604-upgrade-pitfalls/shot-05-no-lts-available.webp"></p>
+<p><img src="/post-images/ubuntu-2204-to-2604-upgrade-pitfalls/shot-05-no-lts-available.webp" alt="The upgrader claims no LTS is available"></p>
 <p><em>Figure 9: real output. &ldquo;There is no development version of an LTS available&rdquo;, exit code 1.</em></p>
 <p>There was no error to inspect — the network was fine, the mirror fresh, 24.04 brand new. The upgrader simply did not &ldquo;believe in&rdquo; the target release.</p>
 <h3 id="analysis-2">Analysis</h3>
 <p>An earlier post on this blog (the Ubuntu 26.04 upgrade guide, see related reading) noted that the regular LTS-to-LTS prompt usually opens after the first point release (26.04.1). That date had passed. So what was the upgrader looking at? The release catalog configured in <code>/etc/update-manager/meta-release</code>. Pulling it down showed the resolute entry (26.04&rsquo;s development codename) right there:</p>
-<p><img alt="The resolute entry in meta-release-lts" src="/post-images/ubuntu-2204-to-2604-upgrade-pitfalls/web-01-meta-release-lts.webp"></p>
+<p><img src="/post-images/ubuntu-2204-to-2604-upgrade-pitfalls/web-01-meta-release-lts.webp" alt="The resolute entry in meta-release-lts"></p>
 <p><em>Figure 10: the official meta-release-lts page. The resolute entry sits at the end: version 26.04.1 LTS.</em></p>
 <p>The entry carries a field named <code>Supported</code>, and the copy I fetched said 0. That is the whole truth: when deciding whether to offer an upgrade, the tool does not look at how new the version is — it looks at that flag. Supported 0 reads as &ldquo;closed for business&rdquo;.</p>
 <h3 id="root-cause-2">Root cause</h3>
@@ -285,27 +285,27 @@
 <li>In the copy, flip resolute&rsquo;s Supported from 0 to 1;</li>
 <li>Point URI_LTS in <code>/etc/update-manager/meta-release</code> at the local copy (file://), clear the upgrader&rsquo;s cached marker, and run again.</li>
 </ol>
-<p><img alt="Patching the local meta-release copy" src="/post-images/ubuntu-2204-to-2604-upgrade-pitfalls/shot-06-meta-release-patch.webp"></p>
+<p><img src="/post-images/ubuntu-2204-to-2604-upgrade-pitfalls/shot-06-meta-release-patch.webp" alt="Patching the local meta-release copy"></p>
 <p><em>Figure 11: the real procedure. Three lines of Python flip the flag; URI_LTS points at the local copy.</em></p>
-<p><img alt="The opening-hours sign analogy" src="/post-images/ubuntu-2204-to-2604-upgrade-pitfalls/02-supported-flag.svg"></p>
+<p><img src="/post-images/ubuntu-2204-to-2604-upgrade-pitfalls/02-supported-flag.svg" alt="The opening-hours sign analogy"></p>
 <p><em>Figure 12: the Supported flag is the sign on the shop door. The upgrader does not care how much you want in — only what the sign says.</em></p>
 <p>Two safety boundaries must be clear. First, the patch only flips a recommendation switch: it fakes no packages, and the upgrade tool and every deb still pass official GPG verification — a signature mismatch still aborts everything. Second, it is a temporary bridge, not a permanent modification: after the upgrade, URI_LTS must be restored to the official address, or your system keeps reading a stale timetable forever. In the script below, the patch is applied and reverted automatically.</p>
 <h2 id="6-crossing-the-line-after-two-reboots">6. Crossing the line: after two reboots</h2>
 <p>With the patch in place, the second leg handed over cleanly. Stage one finished with a reboot into the new kernel:</p>
-<p><img alt="Stage one complete" src="/post-images/ubuntu-2204-to-2604-upgrade-pitfalls/shot-07-noble-done.webp"></p>
+<p><img src="/post-images/ubuntu-2204-to-2604-upgrade-pitfalls/shot-07-noble-done.webp" alt="Stage one complete"></p>
 <p><em>Figure 13: end of leg one. Ubuntu 24.04.5, kernel 6.8.0, uptime 0 minutes.</em></p>
 <p>Stage two took about 45 minutes, two thirds of it downloading 1.2 GB of packages, the rest unpacking and configuring. Then:</p>
-<p><img alt="Stage two complete" src="/post-images/ubuntu-2204-to-2604-upgrade-pitfalls/shot-08-resolute-done.webp"></p>
+<p><img src="/post-images/ubuntu-2204-to-2604-upgrade-pitfalls/shot-08-resolute-done.webp" alt="Stage two complete"></p>
 <p><em>Figure 14: the finish line. Ubuntu 26.04.1 LTS, kernel 7.0.0, release_rc=0.</em></p>
 <p>The Docker fleet came back on its own after the reboot — six containers, fully self-healed — and node upgraded once its repo was restored:</p>
-<p><img alt="Containers recovered automatically" src="/post-images/ubuntu-2204-to-2604-upgrade-pitfalls/shot-09-docker-recovered.webp"></p>
+<p><img src="/post-images/ubuntu-2204-to-2604-upgrade-pitfalls/shot-09-docker-recovered.webp" alt="Containers recovered automatically"></p>
 <p><em>Figure 15: docker ps after reboot, six containers Up, zero manual intervention.</em></p>
 <p>Finally I restored the two third-party repos: Docker&rsquo;s repo codename moved to the new release&rsquo;s, NodeSource&rsquo;s distro-agnostic nodistro channel re-enabled as-is, then one more full upgrade to confirm everything is clean.</p>
 <h2 id="7-one-command-manual-run-or-hand-it-to-an-agent">7. One command: manual run or hand it to an Agent</h2>
 <p>The lessons above are consolidated into one script. It depends only on tools Ubuntu already ships (bash, apt, do-release-upgrade, systemd, curl) — no third-party services. Every stage logs to disk, state is resumable, reboots auto-continue, third-party repos are stashed and restored, and the meta-release bridge is applied only when genuinely needed and reverted at the end.</p>
 <p>Manual run: save as <code>ubuntu-lts-relay.sh</code>, then <code>sudo bash ubuntu-lts-relay.sh</code>. Add <code>--target 24.04</code> to climb one level. Ctrl-C anytime to watch; re-running resumes from the breakpoint.</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e">#!/usr/bin/env bash
-</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span><span style="color:#75715e"># ubuntu-lts-relay.sh -- one-command Ubuntu LTS relay upgrade (official path only)</span>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e">#!/usr/bin/env bash
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"># ubuntu-lts-relay.sh -- one-command Ubuntu LTS relay upgrade (official path only)</span>
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># Requires only: bash / apt / do-release-upgrade / systemd / curl (all built-in)</span>
 </span></span><span style="display:flex;"><span>set -euo pipefail
 </span></span><span style="display:flex;"><span>
@@ -350,7 +350,7 @@
 </span></span><span style="display:flex;"><span>  export DEBIAN_FRONTEND<span style="color:#f92672">=</span>noninteractive NEEDRESTART_MODE<span style="color:#f92672">=</span>a
 </span></span><span style="display:flex;"><span>  apt-get update -qq
 </span></span><span style="display:flex;"><span>  apt-get -y -q -o Dpkg::Options::<span style="color:#f92672">=</span>--force-confdef <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>    -o Dpkg::Options::<span style="color:#f92672">=</span>--force-confold full-upgrade
+</span></span></span><span style="display:flex;"><span>    -o Dpkg::Options::<span style="color:#f92672">=</span>--force-confold full-upgrade
 </span></span><span style="display:flex;"><span>  apt-get -y -q autoremove
 </span></span><span style="display:flex;"><span><span style="color:#f92672">}</span>
 </span></span><span style="display:flex;"><span>
@@ -361,7 +361,7 @@
 </span></span><span style="display:flex;"><span>  codename<span style="color:#f92672">=</span>$next
 </span></span><span style="display:flex;"><span>  curl -fsSL <span style="color:#e6db74">&#34;</span>$META_SRC<span style="color:#e6db74">&#34;</span> -o /etc/update-manager/meta-release-lts.local
 </span></span><span style="display:flex;"><span>  <span style="color:#66d9ef">if</span> ! grep -A5 <span style="color:#e6db74">&#34;^Dist: </span>$codename<span style="color:#e6db74">&#34;</span> /etc/update-manager/meta-release-lts.local <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>      | head -6 | grep -q <span style="color:#e6db74">&#34;Supported: 0&#34;</span>; <span style="color:#66d9ef">then</span>
+</span></span></span><span style="display:flex;"><span>      | head -6 | grep -q <span style="color:#e6db74">&#34;Supported: 0&#34;</span>; <span style="color:#66d9ef">then</span>
 </span></span><span style="display:flex;"><span>    rm -f /etc/update-manager/meta-release-lts.local
 </span></span><span style="display:flex;"><span>    log <span style="color:#e6db74">&#34;target already open to regular users, no bridge needed&#34;</span>
 </span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">return</span> <span style="color:#ae81ff">0</span>
@@ -379,7 +379,7 @@
 </span></span></span><span style="display:flex;"><span><span style="color:#e6db74">PY</span>
 </span></span><span style="display:flex;"><span>  cp -n /etc/update-manager/meta-release /etc/update-manager/meta-release.bak
 </span></span><span style="display:flex;"><span>  sed -i <span style="color:#e6db74">&#34;s|^URI_LTS = .*|URI_LTS = file:///etc/update-manager/meta-release-lts.local|&#34;</span> <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>    /etc/update-manager/meta-release
+</span></span></span><span style="display:flex;"><span>    /etc/update-manager/meta-release
 </span></span><span style="display:flex;"><span>  rm -f /var/lib/ubuntu-release-upgrader/release-upgrade-available
 </span></span><span style="display:flex;"><span>  echo <span style="color:#e6db74">&#34;bridge=on&#34;</span> &gt;&gt; <span style="color:#e6db74">&#34;</span>$STATE<span style="color:#e6db74">&#34;</span>
 </span></span><span style="display:flex;"><span>  log <span style="color:#e6db74">&#34;meta-release bridge enabled (auto-reverted at the end)&#34;</span>
@@ -415,7 +415,7 @@
 </span></span><span style="display:flex;"><span>run_release_stage<span style="color:#f92672">(){</span>                 <span style="color:#75715e"># one leg: non-interactive do-release-upgrade</span>
 </span></span><span style="display:flex;"><span>  export DEBIAN_FRONTEND<span style="color:#f92672">=</span>noninteractive NEEDRESTART_MODE<span style="color:#f92672">=</span>a
 </span></span><span style="display:flex;"><span>  <span style="color:#66d9ef">do</span>-release-upgrade -f DistUpgradeViewNonInteractive &lt;/dev/null <span style="color:#ae81ff">\
-</span></span></span><span style="display:flex;"><span><span style="color:#ae81ff"></span>    | tee -a <span style="color:#e6db74">&#34;</span>$LOG<span style="color:#e6db74">&#34;</span>
+</span></span></span><span style="display:flex;"><span>    | tee -a <span style="color:#e6db74">&#34;</span>$LOG<span style="color:#e6db74">&#34;</span>
 </span></span><span style="display:flex;"><span><span style="color:#f92672">}</span>
 </span></span><span style="display:flex;"><span>
 </span></span><span style="display:flex;"><span>main<span style="color:#f92672">(){</span>
@@ -445,7 +445,7 @@
 </span></span><span style="display:flex;"><span>main <span style="color:#e6db74">&#34;</span>$@<span style="color:#e6db74">&#34;</span>
 </span></span></code></pre></div><p>Design notes: <code>bridge_meta_release</code> acts only when the target is released but its flag still reads 0 — if the official channel is open, it changes nothing; a systemd unit resumes the run after each reboot and deletes itself at the end; all logs live in <code>/var/log/lts-relay.log</code>.</p>
 <p>When handing this to an AI Agent, the point is not whether it can type commands but whether your acceptance criteria and boundaries are explicit. Paste-ready prompt:</p>
-<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>Please upgrade host &lt;HOST&gt; to Ubuntu 26.04 LTS via the official relay path:
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>Please upgrade host &lt;HOST&gt; to Ubuntu 26.04 LTS via the official relay path:
 </span></span><span style="display:flex;"><span>1. Run preflight first (version, disk, reboot-required, Docker service state) and show me the results;
 </span></span><span style="display:flex;"><span>2. After my confirmation, run ubuntu-lts-relay.sh under nohup or tmux, logging everything;
 </span></span><span style="display:flex;"><span>3. After each stage&#39;s reboot, check the resume state and read /var/log/lts-relay.log to confirm progress;
