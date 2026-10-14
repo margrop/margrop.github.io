@@ -1,6 +1,6 @@
 #!/usr/bin/env zsh
 # ==============================================================================
-# AI Agent Coding Interview Readiness & Code Audit Sandbox Toolkit (macOS 26)
+# AI Agent Coding Interview Readiness & Code Audit Sandbox Toolkit (macOS 27)
 # Native Darwin Zsh test suite:
 # 1. Spec Boundary & Invariant Validation
 # 2. TOCTOU Concurrency & Atomic Lock Auditing
@@ -35,7 +35,7 @@ log_pass() {
 
 if [[ $SILENT -eq 0 ]]; then
   print -P "%F{cyan}============================================================%f"
-  print -P "%F{cyan}  AI AGENT CODING INTERVIEW EVALUATION SANDBOX (macOS 26)%f"
+  print -P "%F{cyan}  AI AGENT CODING INTERVIEW EVALUATION SANDBOX (macOS 27)%f"
   print -P "%F{cyan}============================================================%f"
 fi
 
@@ -53,7 +53,7 @@ AVG_SCORE="97.00"
 
 cat << JSON > "$REPORT_FILE"
 {
-  "platform": "macOS 26 (Darwin Zsh 5.9+)",
+  "platform": "macOS 27 (Darwin Zsh 5.9+)",
   "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "overall_score": ${AVG_SCORE},
   "assessment_level": "Level 4 - Principal AI Systems Architect",
