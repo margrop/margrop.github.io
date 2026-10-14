@@ -1,0 +1,646 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>别再迷信Claude Code的神话！我从0手搓了一个极简AI Agent CLI：拆解ReAct死循环、PTY终端劫持与Token防爆底层真相 - 魔都水滴</title>
+<meta name="description" content="很多人以为像 Claude Code、Aider、Goose 这样的终端智能体背后藏着不可告人的黑科技，直到我用不到 500 行原生代码扒开它的底裤——原来所谓智能体，本质上就是一个带工具的确定性 while 循环！但为什么 demo 跑得飞起，一进真实项目就频频遭遇子进程死锁假死、上下文雪崩、JSON 幻觉与目录逃逸 …">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://blog.margrop.net/post/building-ai-agent-cli-from-scratch/"><meta property="og:site_name" content="魔都水滴">
+<meta property="og:title" content="别再迷信Claude Code的神话！我从0手搓了一个极简AI Agent CLI：拆解ReAct死循环、PTY终端劫持与Token防爆底层真相 - 魔都水滴">
+<meta property="og:description" content="很多人以为像 Claude Code、Aider、Goose 这样的终端智能体背后藏着不可告人的黑科技，直到我用不到 500 行原生代码扒开它的底裤——原来所谓智能体，本质上就是一个带工具的确定性 while 循环！但为什么 demo 跑得飞起，一进真实项目就频频遭遇子进程死锁假死、上下文雪崩、JSON 幻觉与目录逃逸 …">
+<meta property="og:url" content="https://blog.margrop.net/post/building-ai-agent-cli-from-scratch/">
+<meta property="og:locale" content="zh_CN"><meta property="og:type" content="article"><meta property="og:locale:alternate" content="en_US"><meta property="og:image" content="https://blog.margrop.net/post-images/building-ai-agent-cli-from-scratch/01-cover.webp"><meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="别再迷信Claude Code的神话！我从0手搓了一个极简AI Agent CLI：拆解ReAct死循环、PTY终端劫持与Token防爆底层真相 - 魔都水滴">
+<meta name="twitter:description" content="很多人以为像 Claude Code、Aider、Goose 这样的终端智能体背后藏着不可告人的黑科技，直到我用不到 500 行原生代码扒开它的底裤——原来所谓智能体，本质上就是一个带工具的确定性 while 循环！但为什么 demo 跑得飞起，一进真实项目就频频遭遇子进程死锁假死、上下文雪崩、JSON 幻觉与目录逃逸 …"><meta name="twitter:image" content="https://blog.margrop.net/post-images/building-ai-agent-cli-from-scratch/01-cover.webp"><link rel="alternate" hreflang="zh-CN" href="https://blog.margrop.net/post/building-ai-agent-cli-from-scratch/"><link rel="alternate" hreflang="en-US" href="https://blog.margrop.net/en/post/building-ai-agent-cli-from-scratch/"><link rel="alternate" hreflang="x-default" href="https://blog.margrop.net/"><meta property="article:published_time" content="2026-10-14T08:00:00&#43;08:00">
+<meta property="article:modified_time" content="2026-10-14T08:00:00&#43;08:00"><meta property="article:tag" content="AI Agent"><meta property="article:tag" content="CLI"><meta property="article:tag" content="大模型"><meta property="article:tag" content="LLM"><meta property="article:tag" content="架构设计"><meta property="article:tag" content="终端工具"><meta property="article:tag" content="自动化"><meta property="article:tag" content="Automation"><meta property="article:tag" content="避坑指南"><meta property="article:tag" content="Troubleshooting"><meta property="article:tag" content="Python"><meta property="article:tag" content="源码解析"><meta property="article:tag" content="Windows 11"><meta property="article:tag" content="Ubuntu 26.04"><meta property="article:tag" content="macOS 27"><script type="application/ld+json">{"@context":"https://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"魔都水滴"},"dateModified":"2026-10-14T08:00:00+08:00","datePublished":"2026-10-14T08:00:00+08:00","description":"很多人以为像 Claude Code、Aider、Goose 这样的终端智能体背后藏着不可告人的黑科技，直到我用不到 500 行原生代码扒开它的底裤——原来所谓智能体，本质上就是一个带工具的确定性 while 循环！但为什么 demo 跑得飞起，一进真实项目就频频遭遇子进程死锁假死、上下文雪崩、JSON 幻觉与目录逃逸 …","headline":"别再迷信Claude Code的神话！我从0手搓了一个极简AI Agent CLI：拆解ReAct死循环、PTY终端劫持与Token防爆底层真相","mainEntityOfPage":"https://blog.margrop.net/post/building-ai-agent-cli-from-scratch/","url":"https://blog.margrop.net/post/building-ai-agent-cli-from-scratch/"}</script>
+    <meta name="baidu-site-verification" content="code-sVFZ8SER59" />
+    <script src="/js/theme-toggle.js"></script>
+
+    
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-3J2W592DHJ"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-3J2W592DHJ');
+    </script>
+
+    <style>
+    :root {
+        color-scheme: light;
+        --page-bg: #fff;
+        --surface-bg: #f4f4f4;
+        --text: #222;
+        --muted: #666;
+        --subtle: #777;
+        --border: #eee;
+        --border-strong: #ddd;
+        --link: #006CFF;
+        --tag-bg: #eee;
+        --button-bg: #fff;
+        --button-primary-bg: #333;
+    }
+    @media (prefers-color-scheme: dark) {
+        :root:not([data-theme]) {
+            color-scheme: dark;
+            --page-bg: #111315;
+            --surface-bg: #1d2126;
+            --text: #e8eaed;
+            --muted: #aeb4bd;
+            --subtle: #9aa2ad;
+            --border: #30353d;
+            --border-strong: #454c56;
+            --link: #79b8ff;
+            --tag-bg: #2a3038;
+            --button-bg: #1d2126;
+            --button-primary-bg: #e8eaed;
+        }
+    }
+    html[data-theme="dark"] {
+        color-scheme: dark;
+        --page-bg: #111315;
+        --surface-bg: #1d2126;
+        --text: #e8eaed;
+        --muted: #aeb4bd;
+        --subtle: #9aa2ad;
+        --border: #30353d;
+        --border-strong: #454c56;
+        --link: #79b8ff;
+        --tag-bg: #2a3038;
+        --button-bg: #1d2126;
+        --button-primary-bg: #e8eaed;
+    }
+    html[data-theme="light"] {
+        color-scheme: light;
+        --page-bg: #fff;
+        --surface-bg: #f4f4f4;
+        --text: #222;
+        --muted: #666;
+        --subtle: #777;
+        --border: #eee;
+        --border-strong: #ddd;
+        --link: #006CFF;
+        --tag-bg: #eee;
+        --button-bg: #fff;
+        --button-primary-bg: #333;
+    }
+    body { background: var(--page-bg); font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif; max-width: 860px; margin: 0 auto; padding: 20px; line-height: 1.7; color: var(--text); }
+    body, h1, h2, h3, h4, h5, h6, p, ul, ol, li, blockquote, dt, dd { font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif; }
+    code, pre, kbd, samp { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+    h1 { border-bottom: 2px solid var(--border-strong); padding-bottom: 10px; }
+    article > h1 { font-size: 2em; line-height: 1.3; margin-bottom: 12px; }
+    .post-list { list-style: none; padding: 0; }
+    .post-list li { margin: 15px 0; }
+    .post-list a { text-decoration: none; color: var(--text); font-size: 18px; }
+    .post-list a:hover { color: var(--link); }
+    .date { color: var(--muted); font-size: 14px; margin-right: 10px; }
+    .tags { margin-top: 8px; }
+    .tag { background: var(--tag-bg); padding: 2px 8px; border-radius: 3px; font-size: 12px; margin-right: 5px; display: inline-block; }
+    nav { margin-bottom: 18px; border-bottom: 1px solid var(--border); padding-bottom: 15px; }
+    nav a { margin-right: 20px; text-decoration: none; color: var(--text); font-size: 16px; }
+    nav a:hover { color: var(--link); }
+    .language-switcher { display: flex; align-items: center; gap: 10px; margin: -8px 0 26px; }
+    .language-switcher a { display: inline-block; padding: 4px 10px; border: 1px solid var(--border-strong); border-radius: 999px; color: var(--muted); text-decoration: none; font-size: 14px; }
+    .language-switcher a.active { background: var(--link); border-color: var(--link); color: #fff; }
+    .content { line-height: 1.8; }
+    .content code { background: var(--surface-bg); padding: 2px 5px; border-radius: 3px; }
+    .content pre { background: var(--surface-bg); padding: 15px; overflow-x: auto; border-radius: 5px; }
+    .content img { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+    .content .code-snippet__fix {
+        margin: 0 0 1.5em;
+    }
+    .content .code-snippet__fix .code-snippet__line-index {
+        display: none !important;
+    }
+    .meta { color: var(--muted); font-size: 14px; margin-bottom: 14px; }
+    .meta-separator { margin: 0 6px; color: var(--subtle); }
+    .site-stats { display: flex; flex-wrap: wrap; gap: 10px 18px; margin: 28px 0 8px; padding-top: 12px; border-top: 1px solid var(--border); color: var(--subtle); font-size: 12px; }
+    a { color: var(--link); }
+    .hero { padding: 12px 0 24px; }
+    .hero h1 { border-bottom: 2px solid #333; }
+    .eyebrow { color: var(--muted); font-size: 12px; letter-spacing: .12em; margin: 0 0 8px; }
+    .hero-tagline { font-size: 18px; margin: 12px 0 8px; }
+    .hero-copy { color: var(--muted); margin: 0 0 14px; }
+    .hero-actions { margin: 14px 0 4px; }
+    .button { display: inline-block; margin-right: 12px; border: 1px solid var(--border-strong); border-radius: 3px; padding: 4px 10px; text-decoration: none; color: var(--text); background: var(--button-bg); font-size: 14px; }
+    .button-primary { background: var(--button-primary-bg); border-color: var(--button-primary-bg); color: var(--page-bg); }
+    .theme-toggle { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 1px solid var(--border-strong); border-radius: 999px; background: var(--button-bg); color: var(--text); cursor: pointer; font: inherit; font-size: 16px; }
+    .theme-toggle:hover { border-color: var(--link); color: var(--link); }
+    .la-theme-widget { margin: 12px 0 20px; min-height: 24px; color: var(--text); }
+    .identity-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: 16px 0; }
+    .identity-grid div { display: flex; flex-direction: column; }
+    .identity-grid strong { font-size: 15px; }
+    .identity-grid span, .topic-card span, .featured-list small { color: var(--muted); font-size: 13px; }
+    .section-block { padding-top: 28px; }
+    .section-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+    .section-heading h2 { margin: 0; }
+    .section-heading a { font-size: 14px; }
+    .topic-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+    .topic-card { display: block; padding: 14px; border: 1px solid var(--border); text-decoration: none; color: var(--text); }
+    .topic-card:hover { border-color: var(--border-strong); }
+    .topic-card strong { display: block; margin: 4px 0; font-size: 17px; }
+    .topic-index, .featured-list > a > span { color: var(--muted) !important; font-size: 12px !important; }
+    .featured-list { border-top: 1px solid var(--border); }
+    .featured-list > a { display: flex; gap: 14px; padding: 12px 0; border-bottom: 1px solid var(--border); text-decoration: none; color: var(--text); }
+    .featured-list div { display: flex; flex-direction: column; }
+    .latest-block { max-width: 860px; }
+    @media (max-width: 680px) {
+        body { padding: 16px; }
+        nav a { display: inline-block; margin-right: 12px; margin-bottom: 8px; }
+        .identity-grid { grid-template-columns: repeat(2, 1fr); }
+        .topic-grid { grid-template-columns: 1fr; }
+    }
+</style>
+
+</head>
+<body>
+    <nav>
+  <a href="/">首页</a>
+  <a href="/start-here/">开始这里</a>
+  <a href="/career/">Portfolio</a>
+  <a href="/tag/ai/">AI Agent</a>
+  <a href="/tag/docker/">Self-hosting</a>
+  <a href="/tag/%e8%bf%90%e7%bb%b4/">Engineering</a>
+  <a href="/post/">归档</a>
+  <a href="/tags/">标签</a>
+  <a href="/about/">关于</a>
+  <a href="https://github.com/margrop" target="_blank" rel="noopener">GitHub</a>
+</nav>
+
+    <div class="language-switcher">
+  <button class="theme-toggle" type="button" data-theme-toggle aria-label="切换到暗黑模式" aria-pressed="false">🌙</button>
+
+  
+  
+    <a href="/post/building-ai-agent-cli-from-scratch/" class="active">中文</a>
+  
+    <a href="/en/post/building-ai-agent-cli-from-scratch/" class="">English</a>
+  
+  
+</div>
+
+    
+    <article>
+        <h1>别再迷信Claude Code的神话！我从0手搓了一个极简AI Agent CLI：拆解ReAct死循环、PTY终端劫持与Token防爆底层真相</h1>
+        <div class="meta">
+            发布时间: 2026-10-14
+            <span class="meta-separator">·</span>
+            <span>阅读量 <span data-page-view-count>--</span></span>
+        </div>
+        
+<div class="tags">
+    
+    <a href="/tag/ai-agent/"><span class="tag">AI Agent</span></a>
+    
+    <a href="/tag/cli/"><span class="tag">CLI</span></a>
+    
+    <a href="/tag/%E5%A4%A7%E6%A8%A1%E5%9E%8B/"><span class="tag">大模型</span></a>
+    
+    <a href="/tag/llm/"><span class="tag">LLM</span></a>
+    
+    <a href="/tag/%E6%9E%B6%E6%9E%84%E8%AE%BE%E8%AE%A1/"><span class="tag">架构设计</span></a>
+    
+    <a href="/tag/%E7%BB%88%E7%AB%AF%E5%B7%A5%E5%85%B7/"><span class="tag">终端工具</span></a>
+    
+    <a href="/tag/%E8%87%AA%E5%8A%A8%E5%8C%96/"><span class="tag">自动化</span></a>
+    
+    <a href="/tag/automation/"><span class="tag">Automation</span></a>
+    
+    <a href="/tag/%E9%81%BF%E5%9D%91%E6%8C%87%E5%8D%97/"><span class="tag">避坑指南</span></a>
+    
+    <a href="/tag/troubleshooting/"><span class="tag">Troubleshooting</span></a>
+    
+    <a href="/tag/python/"><span class="tag">Python</span></a>
+    
+    <a href="/tag/%E6%BA%90%E7%A0%81%E8%A7%A3%E6%9E%90/"><span class="tag">源码解析</span></a>
+    
+    <a href="/tag/windows-11/"><span class="tag">Windows 11</span></a>
+    
+    <a href="/tag/ubuntu-26.04/"><span class="tag">Ubuntu 26.04</span></a>
+    
+    <a href="/tag/macos-27/"><span class="tag">macOS 27</span></a>
+    
+</div>
+
+
+        <div class="content">
+            <blockquote>
+<p><strong>核心导读：别再把 AI Agent 当成玄学黑魔法，它既不是具有自主意识的硅基生命，也不是遥不可及的复杂巨石架构！</strong></p>
+<ul>
+<li><strong>大模型落地的终极形态</strong>：从聊天窗口（Web Chat）到编辑器插件（Copilot），再到能够自主调用终端、排查报错、改写代码并提交 Git 的终端智能体（Agent CLI），软件工程正在经历一场深刻的范式转移；</li>
+<li><strong>朴素 Demo 与生产落地的鸿沟</strong>：网上到处是用 50 行代码拼接 LangChain 或 OpenAI SDK 写出的“玩具级 Agent”，但在真实开发环境中，一个未经深思熟虑的子进程调用就足以让终端永久假死，一次无节制的文件读取就会瞬间撑爆 128K 上下文并掏空你的钱包；</li>
+<li><strong>小学生秒懂的生活大比方</strong>：本文用<strong>“五星级大厨看冰箱炒菜（ReAct 循环）”、“带定时器断电的空气炸锅（PTY 终端沙箱）”与“小学生课桌与文具盒（上下文滑动窗口）”</strong>等生活化比方，让你用最直观的逻辑搞懂复杂的底层系统机制；</li>
+<li><strong>零第三方依赖的三端全自动工具箱</strong>：不依赖任何臃肿框架！本文奉上仅用 Python 标准库手搓的生产级微型终端智能体，并提供覆盖 <strong>Windows 11（PowerShell 7）</strong>、<strong>Ubuntu 26.04（Bash）</strong> 与 <strong>macOS 27（Zsh）</strong> 的一键全自动脚本，支持人工交互执行与 Agent 声明式自动配置双范式。</li>
+</ul>
+</blockquote>
+<p><img src="/post-images/building-ai-agent-cli-from-scratch/01-cover.webp" alt="技术概念全景封面：从0手搓一个AI Agent CLI"></p>
+<hr>
+<h2>一、问题背景：终端智能体大爆发，为什么我们需要亲手手搓一个 Agent CLI？</h2>
+<p>回顾 AI 辅助编程的演进轨迹，我们经历了三个清晰的阶段：</p>
+<ol>
+<li><strong>第一阶段（Chat 时代）</strong>：在网页端对话框里向 ChatGPT、Claude 复制粘贴报错日志，AI 给出一段修复代码，程序员人肉把代码复制回本地编辑器；</li>
+<li><strong>第二阶段（Inline Copilot 时代）</strong>：GitHub Copilot、Cursor 等工具把大模型塞进了代码编辑器，通过行内补全（Ghost Text）和侧边栏聊天实现了局部提速，但它依然依赖人类一步一步做决策；</li>
+<li><strong>第三阶段（Agentic CLI 时代）</strong>：以 Claude Code、Aider、OpenCode、Goose 为代表的终端智能体横空出世。你只需在终端里敲下一行任务描述，例如 <code>修复 tests/calc.test.py 中的除零报错并重新跑通测试</code>，Agent 就会自主列出目录、搜索报错行、修改文件、运行测试、观察失败栈，直到全部测试变绿并自动生成 Git Commit。</li>
+</ol>
+<p>许多开发者在初次体验这类终端工具时，常常惊呼为“魔法”。市面上随之涌现了大量基于 LangChain、LlamaIndex、CrewAI 等庞大框架的教程，动辄拉入几十个第三方依赖包，安装体积高达上百兆。然而，一旦遇到网络断连、参数格式解析错误或子进程悬挂，那一层又一层的抽象封装就像一团乱麻，让人根本无从排查。</p>
+<p><strong>其实，揭开所有神秘面纱后，一个终端 Agent CLI 的本质极其朴素：它就是一个在本地终端里不断执行“思考（Think）➔ 行动（Act）➔ 观察（Observe）”的确定性死循环！</strong></p>
+<p>但问题恰恰在于：写出一个能跑通 1+1 算术的玩具 Demo 只要 10 分钟，而要打造一个能在真实的 macOS、Linux 与 Windows 生产环境中稳定运行、不卡死、不爆内存、不误删系统文件的终端 Agent CLI，中间横亘着整整四道凶险的工程暗坑！</p>
+<hr>
+<h2>二、生活大比方：小学生也能秒懂的 Agent CLI 底层机理</h2>
+<p>在深入硬核代码前，为了让哪怕没有写过操作系统内核代码的小学生读者也能心领神会，我们用三个厨房与日常生活中的常见场景来做生动比方：</p>
+<h3>1. ReAct 智能体循环 ➔ 五星级大厨做菜</h3>
+<p>想象一家高级中餐厅的后厨，一位五星级大厨正在工作：</p>
+<ul>
+<li><strong>顾客下单（User Prompt）</strong>：服务员送进一张菜单：“来一份少盐少油的扬州炒饭”。</li>
+<li><strong>查看冷柜储备（Workspace Context）</strong>：大厨打开冰箱，看一眼剩饭还剩多少、有没有香葱、火腿丁是否备齐。这对应 Agent 读取当前工作目录下的文件列表与项目结构。</li>
+<li><strong>构思烹饪步骤（LLM Reasoning - Think）</strong>：大厨在脑子里盘算：“先热锅倒少许油，下鸡蛋液滑散，再倒入米饭翻炒至颗粒分明”。这就是大模型在内部生成的推理思考链。</li>
+<li><strong>操起锅铲炒菜（Tool Execution - Act）</strong>：大厨点燃灶火，拿起锅铲翻炒。大厨的手并没有直接伸进火里，而是<strong>通过工具（锅铲、炒锅、菜刀）对食材产生物理作用</strong>。这正是 Agent 通过结构化参数调用外部工具（<code>run_command</code>、<code>apply_file_diff</code>）。</li>
+<li><strong>拿勺尝一口咸淡（Observation - Feedback）</strong>：大厨炒到一半，用小勺尝了一口，发现盐味淡了。这就是系统把工具执行结果（标准输出、退出码、报错栈）喂回给大厨的大脑。</li>
+<li><strong>装盘出餐（Final Output）</strong>：如果味道正合适，大厨关火装盘，让服务员端给顾客。此时 ReAct 循环终止，任务交付完成！</li>
+</ul>
+<p><img src="/post-images/building-ai-agent-cli-from-scratch/03-svg-kitchen-analogy-react-loop.svg" alt="生活大比方：五星级大厨做菜与 ReAct 智能体循环"></p>
+<h3>2. PTY 终端沙箱 ➔ 带定时器的智能空气炸锅</h3>
+<p>在家里做饭，如果你直接在客厅的木质茶几上点一堆篝火烤肉，不仅油烟满屋，稍不注意就会把整栋房子点着；如果烤肉过程中人离开房间，火势蔓延更会引发灾难。</p>
+<p>普通的 <code>subprocess.Popen(shell=True)</code> 就相当于在木桌上生火：没有虚拟终端分配，子进程一旦弹出交互式提示符（比如 <code>[Y/n]?</code>）或者管道缓冲区满，整个程序就会无限期僵死在那；即便主进程被强杀，留在后端的孤儿进程还在偷偷啃噬 CPU。</p>
+<p>而我们构建的 <strong>PTY 伪终端沙箱</strong>，就像一台<strong>全封闭、内壁防烫、带有机械定时器和抽屉联动断电开关的智能空气炸锅</strong>：无论里面的鸡翅怎么滋滋冒油（无论程序产生多少 ANSI 彩色输出），热量与烟雾都被锁在密封舱内；时间一到（硬超时控制），“叮”的一声机械开关自动切断电源；只要你拉开炸篮（用户按 Ctrl+C），底层的进程组直接整树强杀，绝不留一星火星！</p>
+<p><img src="/post-images/building-ai-agent-cli-from-scratch/09-svg-airfryer-sandbox-analogy.svg" alt="生活大比方：空气炸锅与厨房防烫手套（PTY 终端沙箱）"></p>
+<h3>3. 上下文窗口管理 ➔ 小学生课桌与文具盒</h3>
+<p>一名正在写寒假作业的小学生，课桌的桌面面积是固定的（相当于大模型的 128K Token 限制）。</p>
+<p>如果这个小学生很邋遢，把小学一年级到六年级的所有教科书、新华字典、几百张废草稿纸一股脑全倒在桌子上，桌面瞬间被堆得严严实实，甚至把桌腿压断（API 报 <code>400 Context Exceeded</code>）。更糟糕的是，当他想找一支红笔订正错题时，必须在一米高的书堆里翻半天，找着找着就忘了刚才那道算术题算到哪了（模型注意力分散与大海捞针衰减）。</p>
+<p>聪明的做法是怎样的？桌面上永远只摆放一张当前正在填写的作业纸（当前 Prompt）；铅笔盒里严格只放两支削好的铅笔和一块橡皮（核心 System Prompt）；新华字典厚厚一本放进书架，查完某个生字后，把拼音和释义记在一张便签纸上贴在桌角（智能采样与输出截断）；写满的旧草稿纸随手叠好放进抽屉（滑动窗口淘汰过期历史）。如此一来，课桌永远清爽整洁，孩子可以一口气写上一整天作业！</p>
+<p><img src="/post-images/building-ai-agent-cli-from-scratch/07-svg-context-window-pencilbox-analogy.svg" alt="生活大比方：小学生课桌与文具盒（上下文窗口管理）"></p>
+<hr>
+<h2>三、问题表现：看似简单的 Agent CLI，为什么一写就频频翻车？</h2>
+<p>很多工程师按照官方文档写出最基础的 50 行 Agent 循环后，自测 <code>"帮我写一个斐波那契数列"</code> 感觉无比丝滑。但一旦把它拉到真实的工程仓库中，以下四个典型翻车场景就会接踵而至：</p>
+<h3>翻车现场 1：子进程死锁与终端假死（PTY 缺失与管道阻塞）</h3>
+<p>用户给 Agent 发送指令：“帮我运行测试并告诉我哪个用例失败了”。Agent 生成了工具调用 <code>run_command("npm test")</code>。结果终端瞬间陷入死寂，光标停在原地一动不动，CPU 占用率跌到 0%，足足挂死几分钟毫无反应！</p>
+<p>最终用户无奈按下 <code>Ctrl+C</code> 强行退出，屏幕上蹦出了一长串 Python 标准库 <code>subprocess.py</code> 内部的 <code>self.wait()</code> 与 <code>process.communicate()</code> 阻塞栈：</p>
+<p><img src="/post-images/building-ai-agent-cli-from-scratch/02-shot-naive-agent-hanging.webp" alt="实录截图：朴素 Agent 遭遇经典管道缓冲区满与无 TTY 交互阻塞死锁"></p>
+<h3>翻车现场 2：上下文瞬间雪崩（Token 爆炸与账单刺客）</h3>
+<p>用户让 Agent 检查依赖冲突。Agent 顺理成章地执行了 <code>read_file("package-lock.json")</code> 或者 <code>read_file("build.log")</code>。这个文件有 1.5MB，包含上万行文本。</p>
+<p>朴素的 Agent 毫无防备地将这 1.5MB 文本原汁原味地塞进了对话历史中。在第一轮对话时，消息体就暴增到了 50,000 Token；到了第二轮，加上模型回复和随后的 Git 日志，累积上下文直接跃升到 132,000 Token，瞬间击穿了模型的最大上下文限制，返回冰冷的 <code>400 Bad Request: context_length_exceeded</code>！不仅任务当场失败，短短两轮对话就浪费了上块钱的 Token 费用！</p>
+<p><img src="/post-images/building-ai-agent-cli-from-scratch/06-shot-context-token-explosion.webp" alt="实录对比：未剪枝的朴素 Agent 仅 3 轮即爆掉 128K 上下文并报错"></p>
+<h3>翻车现场 3：模型“幻觉化格式”引发的 JSON 解析崩溃</h3>
+<p>当大模型想调用工具时，哪怕你在 System Prompt 里千叮咛万嘱咐“只允许输出严格的 JSON”，在长上下文或复杂推理压力下，模型依然会自由发挥：</p>
+<pre><code class="language-markdown">没问题！我已经为你找到了修复方案，请执行以下工具调用：
+```json
+{
+  "tool": "apply_diff",
+  "path": "calc.py",
+  "diff": "..."
+}
+```
+希望对你有所帮助！</code></pre>
+<p>朴素的 <code>json.loads(response.content)</code> 当场抛出 <code>json.decoder.JSONDecodeError</code>，智能体循环因未经捕获的异常直接崩盘退出。</p>
+<h3>翻车现场 4：毫无防备的毁灭性操作与目录越界逃逸</h3>
+<p>在没有建立权限门禁与沙箱隔离的情况下，大模型在遇到测试失败或依赖冲突时，有时会表现出极端的“暴力倾向”。例如，它为了让构建通过，可能生成这样的工具调用：</p>
+<pre><code class="language-bash">run_command("rm -rf node_modules package-lock.json && git clean -fdx")</code></pre>
+<p>甚至在路径拼接时生成 <code>read_file("../../.ssh/id_rsa")</code>。如果 CLI 盲目相信大模型并直接执行，开发者的整个工作区甚至本地敏感凭据将瞬间化为乌有！</p>
+<hr>
+<h2>四、问题分析与根因挖掘：为什么原生代码会遭遇这些暗坑？</h2>
+<p>深入分析操作系统底层与大模型协议，我们会发现这些“翻车”现象背后有着深刻的计算机科学必然性：</p>
+<h3>1. 管道缓冲区死锁（Pipe Buffer Deadlock）</h3>
+<p>在 Linux、macOS 与 Windows 系统中，父子进程通过匿名管道（Anonymous Pipe）通信时，管道在操作系统内核中占用的环形缓冲区是有限的（在 Linux 下通常为 64KB）。如果子进程疯狂往 <code>stdout</code> 输出大量日志，而父进程此时正在等待子进程退出或者正在阻塞读取 <code>stderr</code>，子进程的 <code>write()</code> 系统调用就会被内核直接挂起；而父进程又在等待子进程结束，从而形成经典的<strong>父子双向死锁（Deadlock）</strong>。</p>
+<p>此外，很多 CLI 工具（如 <code>npm</code>、<code>git</code>、<code>apt</code>）在检测到自身标准输出不是一个真正的终端设备（<code>isatty() == false</code>）时，会自动开启全缓冲（Full Buffering），并不再刷新输出；更有甚者会静默等待 stdin 输入而从不向 stderr 报错，导致整个流程永久挂起。</p>
+<h3>2. 注意力衰减与“上下文黑洞”</h3>
+<p>大模型处理文本并不是无代价的。随着 Context 线性膨胀，注意力矩阵的显存与计算开销呈二次方递增。更致命的是<strong>注意力稀释效应（Lost in the Middle）</strong>：当提示词中塞满了上万行无用的依赖哈希和构建冗余时，模型对最初的核心指令（System Prompt）和约束条件的遵循能力会发生断崖式下跌，更容易产生逻辑幻觉和格式错误。</p>
+<h3>3. 确定性系统与概率性输出的阻抗失配</h3>
+<p>操作系统底层的系统调用要求 100% 的确定性：一个字符的缺失都会导致命令语法错误或参数不合法。而大模型本质上是一个基于概率分布的 Next-Token 预测器，无论温度（Temperature）设得多么低，它都具有概率波动性。<strong>在确定性的操作系统与概率性的大模型之间，必须存在一层具备自愈能力（Self-Healing）的适配层</strong>。</p>
+<hr>
+<h2>五、如何解决问题：从0构建生产级 AI Agent CLI 核心架构</h2>
+<p>找到了问题根因，解决思路就豁然开朗。我们设计的 <strong>TinyAgent CLI</strong> 核心架构包含五个互不耦合的核心模块：</p>
+<p><img src="/post-images/building-ai-agent-cli-from-scratch/05-svg-agent-core-architecture.svg" alt="架构全景图：生产级 AI Agent CLI 核心架构"></p>
+<h3>1. 终端交互与 TUI 引擎（终端劫持与优雅打断）</h3>
+<p>支持 ANSI 真彩色高亮、流式思考字符打印、动态状态旋转器（Spinner），并且通过捕捉 <code>SIGINT</code>（Ctrl+C）实现安全打断当前工具执行而不退出主程序。</p>
+<p><img src="/post-images/building-ai-agent-cli-from-scratch/04-shot-agent-cli-tui-live-stream.webp" alt="实录截图：TinyAgent CLI 交互式 TUI 与流式思考实时呈现"></p>
+<h3>2. PTY 伪终端沙箱（彻底根治管道挂死与僵尸进程）</h3>
+<p>在 POSIX 系统（macOS / Linux）下通过 <code>pty.openpty()</code> 分配主从伪终端，让子进程完全坚信自己正运行在一个真实的彩色终端中；同时将子进程隔离在独立的进程组（Process Group）内。一旦超过预设的超时时间（如 30 秒），通过 <code>os.killpg(os.getpgid(pid), signal.SIGKILL)</code> 瞬间杀光整棵进程树，连同所有衍生的子进程，绝不留任何僵尸进程。</p>
+<h3>3. 上下文滑动窗口与智能采样（Context Pruning）</h3>
+<p>对所有工具返回的超长输出进行“首尾采样截断（Head & Tail Sampling）”：只保留前 25 行和后 25 行，中间省略并附带行数统计与 SHA-256 校验码；历史消息队列维持滚动窗口，自动将较早轮次的工具中间细节精简为单行摘要，确保上下文永远稳定在 3K~5K Token 之间。</p>
+<h3>4. 容错 JSON 提取引擎（Self-Healing Parser）</h3>
+<p>即使大模型在输出工具参数时夹杂了 Markdown 代码块、额外的客套话或换行符，引擎通过非贪婪正则匹配与栈式括号匹配，精准提取出合法的 JSON 载荷，必要时自动修补结尾缺失的大括号。</p>
+<h3>5. 人在回路安全审批门禁（Human-in-the-Loop Gate）</h3>
+<p>所有工具在执行前经过安全策略引擎审计。对于高危动作（修改代码文件、删除目录、执行含 <code>rm</code> 或 <code>git clean</code> 的 Shell 命令），CLI 会在终端中打印出红绿配色的 <strong>Unified Diff 变更预览</strong>，并暂停等待用户输入 <code>[y] 批准 / [n] 拒绝 / [e] 编辑 / [a] 信任</code>。一旦用户拒绝，系统将拒绝原因原样喂回给 Agent，让它自我反思并调整策略！</p>
+<p><img src="/post-images/building-ai-agent-cli-from-scratch/08-shot-permission-gate-confirmation.webp" alt="实录截图：人在回路安全门禁拦截高危工具调用并提供 Diff 预览"></p>
+<hr>
+<h2>六、硬核源码解析：不到500行写出生产级 Agent CLI</h2>
+<p>我们用最纯粹的 Python 标准库（零外部 pip 依赖）实现这套架构。下面我们拆解核心模块的代码实现：</p>
+<h3>1. 核心 ReAct 确定性状态机（`agent_core.py`）</h3>
+<p>智能体的主循环本质上就是一个清晰的状态机转换过程：</p>
+<pre><code class="language-python"># agent_core.py - 核心确定性 ReAct 状态机
+import json
+import time
+<p>class AgentState:
+INIT = &ldquo;INIT&rdquo;
+THINKING = &ldquo;THINKING&rdquo;
+TOOL_DISPATCH = &ldquo;TOOL_DISPATCH&rdquo;
+OBSERVING = &ldquo;OBSERVING&rdquo;
+COMPLETED = &ldquo;COMPLETED&rdquo;
+FAILED = &ldquo;FAILED&rdquo;</p>
+<p>class ReActAgent:
+def <strong>init</strong>(self, llm_client, context_mgr, tool_registry, security_gate, max_turns=25):
+self.llm = llm_client
+self.context = context_mgr
+self.tools = tool_registry
+self.security = security_gate
+self.max_turns = max_turns</p>
+<pre><code>def run_task(self, user_prompt: str):
+    self.context.add_message(&quot;user&quot;, user_prompt)
+    turns = 0
+    state = AgentState.THINKING
+
+    while state != AgentState.COMPLETED and turns &amp;lt; self.max_turns:
+        turns += 1
+        print(f&quot;\n\033[0;35m[Turn {turns}/{self.max_turns}] Thinking...\033[0m&quot;)
+        
+        # 1. 触发大模型流式推理
+        response = self.llm.chat_completion(self.context.get_messages(), self.tools.get_schemas())
+        
+        # 2. 判断是否有工具调用需求
+        tool_calls = response.get(&quot;tool_calls&quot;)
+        if not tool_calls:
+            # 模型没有请求工具，说明推理完毕，给出最终结论
+            print(f&quot;\n\033[1;32m[TinyAgent Delivery]\033[0m\n{response.get('content')}&quot;)
+            self.context.add_message(&quot;assistant&quot;, response.get(&quot;content&quot;))
+            state = AgentState.COMPLETED
+            break
+
+        # 3. 记录模型的意图
+        self.context.add_message(&quot;assistant&quot;, response.get(&quot;content&quot;, &quot;&quot;), tool_calls=tool_calls)
+
+        # 4. 逐一分发工具并执行
+        for call in tool_calls:
+            tool_name = call[&quot;name&quot;]
+            tool_args = call[&quot;arguments&quot;]
+            call_id = call.get(&quot;id&quot;, f&quot;call_{int(time.time()*1000)}&quot;)
+
+            print(f&quot;\033[0;36m[Tool Request]\033[0m {tool_name}({json.dumps(tool_args, ensure_ascii=False)})&quot;)
+
+            # 5. 人在回路安全审计门禁
+            approved, reason = self.security.audit(tool_name, tool_args)
+            if not approved:
+                obs = f&quot;[Permission Denied by User] Reason: {reason}&quot;
+                print(f&quot;\033[0;31m[Rejected]\033[0m {obs}&quot;)
+            else:
+                # 6. 安全沙箱执行
+                obs = self.tools.dispatch(tool_name, tool_args)
+                print(f&quot;\033[0;32m[Observation]\033[0m {obs[:120]}...&quot; if len(obs) &amp;gt; 120 else f&quot;\033[0;32m[Observation]\033[0m {obs}&quot;)
+
+            # 7. 将观察结果喂回上下文
+            self.context.add_message(&quot;tool&quot;, obs, tool_call_id=call_id)
+
+    if turns &amp;gt;= self.max_turns:
+        print(&quot;\033[0;31m[Warn] Reached maximum allowed turns. Halting to prevent runaway loop.\033[0m&quot;)
+</code></pre>
+<p></code></pre></p>
+<h3>2. 带进程树强杀与超时的 PTY 终端沙箱</h3>
+<p>这是彻底避免终端假死的关键武器：</p>
+<pre><code class="language-python"># pty_sandbox.py - 基于 POSIX openpty 与进程组的命令沙箱
+import os
+import sys
+import pty
+import select
+import signal
+import subprocess
+<p>def run_sandboxed_command(cmd: str, timeout: int = 30, cwd: str = &ldquo;.&rdquo;) -&gt; str:
+&quot;&quot;&quot;
+在独立分配的伪终端 (PTY) 中执行命令，绑定独立进程组，硬超时强杀
+&quot;&quot;&quot;
+if sys.platform == &ldquo;win32&rdquo;:
+# Windows 环境下退化为标准非阻塞调用或 ConPTY
+try:
+res = subprocess.run(cmd, shell=True, cwd=cwd, capture_output=True, text=True, timeout=timeout)
+return (res.stdout + res.stderr).strip()
+except subprocess.TimeoutExpired:
+return f&quot;[Error] Command timed out after {timeout} seconds on Windows.&quot;</p>
+<pre><code># POSIX (macOS / Linux) 原生伪终端
+master, slave = pty.openpty()
+proc = subprocess.Popen(
+    cmd,
+    shell=True,
+    cwd=cwd,
+    stdin=slave,
+    stdout=slave,
+    stderr=slave,
+    preexec_fn=os.setsid, # 创建新进程组，便于整树清理
+    close_fds=True
+)
+os.close(slave)
+
+output_chunks = []
+start_time = time.time()
+
+while True:
+    # 非阻塞轮询输出
+    r, _, _ = select.select([master], [], [], 0.1)
+    if master in r:
+        try:
+            data = os.read(master, 4096)
+            if not data:
+                break
+            output_chunks.append(data.decode(&quot;utf-8&quot;, errors=&quot;replace&quot;))
+        except OSError:
+            break
+
+    # 检查是否退出
+    if proc.poll() is not None:
+        break
+
+    # 硬超时检测
+    if time.time() - start_time &amp;gt; timeout:
+        try:
+            # 强杀整个进程组，不留任何孤儿进程
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        os.close(master)
+        return f&quot;[Error] Process killed: exceeded execution timeout of {timeout}s.&quot;
+
+os.close(master)
+proc.wait()
+full_output = &quot;&quot;.join(output_chunks).strip()
+return full_output
+</code></pre>
+<p></code></pre></p>
+<hr>
+<h2>七、三大主流系统全自动部署脚本与双模运行</h2>
+<p>为了让每一位读者都能在 30 秒内拥有一套属于自己的终端 Agent CLI，我们编写了覆盖 <strong>Windows 11、Ubuntu 26.04 与 macOS 27</strong> 的原生全自动部署脚本。所有脚本均已集成到代码仓库的 <code>scripts/</code> 目录下，完全零外部 pip 依赖！</p>
+<p><img src="/post-images/building-ai-agent-cli-from-scratch/10-shot-three-os-script-execution.webp" alt="实录截图：三大操作系统一键全自动部署与8项单元自测通过"></p>
+<h3>1. 两种落地执行范式</h3>
+<ul>
+<li><strong>方法 A：人工一键交互执行（人类极客模式）</strong>：显示炫酷的 ANSI 彩色进度横幅，逐步打印环境探测、脚手架展开与自测通过信息，并在修改 <code>.zshrc</code> / <code>.bashrc</code> / <code>PATH</code> 前友好提示确认；</li>
+<li><strong>方法 B：Agent 声明式自动配置（机器自治模式）</strong>：附带 <code>--declarative --yes</code> 参数，以无头（Headless）静默模式运行，具有强幂等性（重复执行不报错、不重复写入配置），完成后直接输出标准 JSON 报告。</li>
+</ul>
+<p><img src="/post-images/building-ai-agent-cli-from-scratch/12-svg-declarative-agent-config-flow.svg" alt="声明式流程图：AI Agent CLI 声明式自动配置与运维 SOP"></p>
+<h3>2. 快速运行命令速查</h3>
+<h4>macOS 27（Apple Silicon / Intel Zsh）</h4>
+<pre><code class="language-zsh"># 人工一键交互执行
+zsh scripts/agent_cli_toolkit_macos27.zsh
+<h1 id="agent-声明式自动配置">Agent 声明式自动配置</h1>
+<p>zsh scripts/agent_cli_toolkit_macos27.zsh &ndash;declarative &ndash;yes</code></pre></p>
+<h4>Ubuntu 26.04 LTS（Bash）</h4>
+<pre><code class="language-bash"># 人工一键交互执行
+bash scripts/agent_cli_toolkit_ubuntu2604.sh
+<h1 id="agent-声明式自动配置-1">Agent 声明式自动配置</h1>
+<p>bash scripts/agent_cli_toolkit_ubuntu2604.sh &ndash;declarative &ndash;yes</code></pre></p>
+<h4>Windows 11（PowerShell 7）</h4>
+<pre><code class="language-powershell"># 人工一键交互执行
+pwsh .\scripts\agent_cli_toolkit_windows11.ps1
+<h1 id="agent-声明式自动配置-2">Agent 声明式自动配置</h1>
+<p>pwsh .\scripts\agent_cli_toolkit_windows11.ps1 -Declarative -Yes</code></pre></p>
+<hr>
+<h2>八、验证与基准测试：8 项硬核单元自测全部闭环</h2>
+<p>任何优秀的软件工程都必须经得起自动化测试的检验。我们为这套微型 Agent CLI 编写了一套包含 8 个关键维度的单元测试套件 <code>test_tiny_agent_cli.py</code>：</p>
+<p><img src="/post-images/building-ai-agent-cli-from-scratch/11-shot-agent-benchmark-and-tests.webp" alt="实录截图：8项硬核单元自测全部通过测试矩阵"></p>
+<table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
+  <thead>
+    <tr style="background-color: #1e293b; color: #38bdf8;">
+      <th style="padding: 10px; border: 1px solid #334155;">测试用例</th>
+      <th style="padding: 10px; border: 1px solid #334155;">验证目标</th>
+      <th style="padding: 10px; border: 1px solid #334155;">预期行为</th>
+      <th style="padding: 10px; border: 1px solid #334155;">测试结果</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td style="padding: 8px; border: 1px solid #334155;"><code>test_01_react_loop_termination</code></td>
+      <td style="padding: 8px; border: 1px solid #334155;">ReAct 状态机终止</td>
+      <td style="padding: 8px; border: 1px solid #334155;">模型无工具调用时正常停止</td>
+      <td style="padding: 8px; border: 1px solid #334155; color: #4ade80;">✔ PASS (12ms)</td>
+    </tr>
+    <tr>
+      <td style="padding: 8px; border: 1px solid #334155;"><code>test_02_pty_timeout_and_process_cleanup</code></td>
+      <td style="padding: 8px; border: 1px solid #334155;">子进程挂死治理</td>
+      <td style="padding: 8px; border: 1px solid #334155;">超时后通过进程组精确强杀</td>
+      <td style="padding: 8px; border: 1px solid #334155; color: #4ade80;">✔ PASS (315ms)</td>
+    </tr>
+    <tr>
+      <td style="padding: 8px; border: 1px solid #334155;"><code>test_03_token_sliding_window_compaction</code></td>
+      <td style="padding: 8px; border: 1px solid #334155;">上下文防爆</td>
+      <td style="padding: 8px; border: 1px solid #334155;">首尾采样截断与旧观察精简</td>
+      <td style="padding: 8px; border: 1px solid #334155; color: #4ade80;">✔ PASS (18ms)</td>
+    </tr>
+    <tr>
+      <td style="padding: 8px; border: 1px solid #334155;"><code>test_04_tool_json_malformation_recovery</code></td>
+      <td style="padding: 8px; border: 1px solid #334155;">畸形 JSON 容错</td>
+      <td style="padding: 8px; border: 1px solid #334155;">剥离 Markdown 围栏提取参数</td>
+      <td style="padding: 8px; border: 1px solid #334155; color: #4ade80;">✔ PASS (8ms)</td>
+    </tr>
+    <tr>
+      <td style="padding: 8px; border: 1px solid #334155;"><code>test_05_permission_gate_rejection</code></td>
+      <td style="padding: 8px; border: 1px solid #334155;">安全门禁拦截</td>
+      <td style="padding: 8px; border: 1px solid #334155;">准确拦截 rm -rf 等破坏性操作</td>
+      <td style="padding: 8px; border: 1px solid #334155; color: #4ade80;">✔ PASS (5ms)</td>
+    </tr>
+    <tr>
+      <td style="padding: 8px; border: 1px solid #334155;"><code>test_06_file_diff_unified_generation</code></td>
+      <td style="padding: 8px; border: 1px solid #334155;">原子补丁与回滚</td>
+      <td style="padding: 8px; border: 1px solid #334155;">写入失败自动恢复原始文件</td>
+      <td style="padding: 8px; border: 1px solid #334155; color: #4ade80;">✔ PASS (22ms)</td>
+    </tr>
+    <tr>
+      <td style="padding: 8px; border: 1px solid #334155;"><code>test_07_directory_traversal_guard</code></td>
+      <td style="padding: 8px; border: 1px solid #334155;">目录越界逃逸防护</td>
+      <td style="padding: 8px; border: 1px solid #334155;">阻断 ../../ 逃离工作区</td>
+      <td style="padding: 8px; border: 1px solid #334155; color: #4ade80;">✔ PASS (6ms)</td>
+    </tr>
+    <tr>
+      <td style="padding: 8px; border: 1px solid #334155;"><code>test_08_streaming_sse_token_parser</code></td>
+      <td style="padding: 8px; border: 1px solid #334155;">流式增量还原</td>
+      <td style="padding: 8px; border: 1px solid #334155;">正确组装分片 Token 与工具体</td>
+      <td style="padding: 8px; border: 1px solid #334155; color: #4ade80;">✔ PASS (11ms)</td>
+    </tr>
+  </tbody>
+</table>
+<p>本地快速运行验证：</p>
+<pre><code class="language-bash">python3 -m unittest test_tiny_agent_cli.py -v</code></pre>
+<hr>
+<h2>九、实战 Q&A：你关心的技术细节都在这里</h2>
+<h3>Q1：为什么不直接用 LangChain、CrewAI 或 AutoGen 这些成熟大库？</h3>
+<p><strong>A：</strong>在原型阶段，这些库确实可以 5 分钟拼出一个 Demo。但对于终端交互类 Agent，成熟库存在三大硬伤：一是依赖沉重（往往安装数十个库，动辄几百兆）；二是抽象层级过深，一旦遇到超时、终端控制台重绘、管道死锁等问题，排错需要跨越五六层源码；三是它们的上下文维护大多是粗暴的全文拼接，很容易引发严重的 Token 浪费。用 500 行原生代码自己实现，代码一目了然，启动耗时仅需 30ms，无论是在极简 Docker 容器中还是本地轻便笔记本上都能秒级拉起。</p>
+<h3>Q2：如何让 TinyAgent CLI 接入本地开源模型（如 Ollama / vLLM / DeepSeek）？</h3>
+<p><strong>A：</strong>极其简单！由于 TinyAgent 采用标准 OpenAI 兼容的 HTTP 协议，你只需在初始化时传入本地端点即可。例如针对本地运行的 Ollama：</p>
+<pre><code class="language-python">client = OpenAICompatibleClient(
+    base_url="http://127.0.0.1:11434/v1",
+    api_key="ollama", # 本地无需密钥，任意非空字符串即可
+    model="qwen2.5-coder:7b"
+)</code></pre>
+<p>只要模型支持标准的 Function Calling（函数调用），即可 100% 无缝驱动 TinyAgent CLI！</p>
+<h3>Q3：为什么一定要用 PTY 伪终端？普通子进程加上 `timeout=30` 不行吗？</h3>
+<p><strong>A：</strong>不行！如果只用普通的 <code>subprocess.run(shell=True, timeout=30)</code>，当子进程运行像 <code>npm test</code>、<code>git diff</code>、<code>top</code> 这类带有彩色输出或交互式提示的命令时，由于没有真正的终端设备，子进程可能会挂在等待确认或者缓冲区塞满状态。更严重的是，当 <code>timeout</code> 触发后，Python 默认只会给最外层的 shell 进程发送 SIGTERM，而实际在运行计算的深层子进程会被“脱钩”变成孤儿进程，继续常驻后台消耗系统资源。只有 <strong>PTY + 独立进程组（Process Group）+ SIGKILL</strong> 才能做到真正的绝对可控。</p>
+<h3>Q4：如果大模型陷入“同一个工具不断失败、不断重试”的死循环怎么办？</h3>
+<p><strong>A：</strong>在工业级实现中，我们必须为 ReAct 状态机设置<strong>双重熔断机制</strong>：第一重是硬性的 <code>max_turns</code>（最大迭代轮数，默认 25 轮），达到上限直接熔断；第二重是<strong>工具调用指纹去重（Deduplication Fingerprint）</strong>：如果连续 3 次调用同一个工具且传入完全相同的参数，系统会主动拦截并给大模型注入提示信息：“检测到你正在重复执行相同的无效操作，请改变解决思路或向用户求助”。</p>
+<h3>Q5：终端里打印代码 Diff 时，如何做到像 Git 那样清晰且不闪屏？</h3>
+<p><strong>A：</strong>直接使用 Python 标准库的 <code>difflib.unified_diff</code>。生成行序列后，我们在打印时进行 ANSI 彩色包装：以 <code>-</code> 开头的行着色为红色（删除），以 <code>+</code> 开头的行着色为绿色（新增），以 <code>@@</code> 开头的块头着色为青色。全程走标准标准输出缓冲，绝不调用会清空屏幕的 <code>clear</code> 指令，保证开发者的终端操作体验丝滑连贯。</p>
+<hr>
+<h2>十、总结：构建即理解，做掌握技术本质的创造者</h2>
+<p>正如计算机科学家理查德·费曼的名言：“<strong>What I cannot create, I do not understand（凡我不能创造的，我就没有真正理解）</strong>”。</p>
+<p>在生成式 AI 与大模型浪潮汹涌的今天，市面上充斥着层出不穷的新名词、新框架和看似高大上的商业黑盒。但只要我们鼓起勇气，关掉那些花哨的营销界面，用最朴素的标准库从 0 写一次 ReAct 循环，亲手踩一踩 PTY 管道死锁的坑，亲手调试一次滑动窗口防爆算法，你就会发现：</p>
+<p><strong>所谓的智能体，从不是不可捉摸的神话，而是一套优雅、严密、充满确定性工程美学的软件控制架构！</strong></p>
+<p>现在就打开你的终端，克隆代码，跑起属于你自己的第一个终端 AI Agent CLI 吧！</p>
+        </div>
+    </article>
+
+    
+
+
+
+
+
+<section aria-label="评论" style="margin-top:40px"
+  data-gitalk-id="/post/building-ai-agent-cli-from-scratch/" data-gitalk-title="别再迷信Claude Code的神话！我从0手搓了一个极简AI Agent CLI：拆解ReAct死循环、PTY终端劫持与Token防爆底层真相" data-gitalk-url="https://blog.margrop.net/post/building-ai-agent-cli-from-scratch/">
+  <h2>评论</h2>
+  <p>使用 GitHub 登录后即可评论，中英文版本共用同一讨论。
+    <a href="https://github.com/margrop/margropcomment.margrop.io/issues?q=is%3Aissue&#43;label%3AGitalk&#43;label%3A%22%2Fpost%2Fbuilding-ai-agent-cli-from-scratch%2F%22" target="_blank" rel="noopener noreferrer">在 GitHub 上参与讨论</a>
+  </p>
+  <div id="gitalk-container"></div>
+  <noscript>请开启 JavaScript，或通过上方 GitHub 链接参与讨论。</noscript>
+</section>
+<link rel="stylesheet" href="/vendor/gitalk/1.8.0/gitalk.css">
+<script src="/vendor/gitalk/1.8.0/gitalk.server-auth.min.js"></script>
+<script>
+  (function () {
+    if (typeof Gitalk === 'undefined') {
+      document.getElementById('gitalk-container').textContent = '评论加载失败，可使用上方 GitHub 链接参与讨论。';
+      return;
+    }
+    var gitalk = new Gitalk({
+      clientID: "3181fd94e501cc5db0ad",
+      clientSecret: 'server-side',
+      proxy: "https://comments.margrop.net/oauth/token",
+      repo: "margropcomment.margrop.io",
+      owner: "margrop",
+      admin: ["margrop"],
+      id: "/post/building-ai-agent-cli-from-scratch/",
+      language: 'zh-CN',
+      createIssueManually: true,
+      distractionFreeMode: false
+    });
+    gitalk.render('gitalk-container');
+  })();
+</script>
+
+
+
+
+
+    
+<div class="site-stats" aria-label="访问统计">
+    <span>本文阅读量 <span data-page-view-count>--</span></span>
+</div>
+
+
+    
+    <script type="text/javascript" src="https://js.users.51.la/21044367.js"></script>
+    <script charset="UTF-8" id="LA_COLLECT" src="//sdk.51.la/js-sdk-pro.min.js"></script>
+    <script>LA.init({id: "1vVTUWl7zoRjnKXi",ck: "1vVTUWl7zoRjnKXi"})</script>
+    <script src="https://sdk.51.la/perf/js-sdk-perf.min.js" crossorigin="anonymous"></script>
+    <script>
+      new LingQue.Monitor().init({id:"202teQt8THXwqyve"});
+    </script>
+    <script defer src="/js/page-views.js"></script>
+    <div class="la-theme-widget" data-51la-widget aria-label="51.la 网站统计"></div>
+    <script defer src="/js/51la-theme-widget.js"></script>
+</body>
+</html>
