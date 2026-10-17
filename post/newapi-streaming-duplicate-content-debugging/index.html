@@ -142,6 +142,13 @@
     .favorites th { color: var(--muted); font-size: 13px; font-weight: 600; background: var(--surface-bg); }
     .favorites td:first-child { white-space: nowrap; }
     .favorites tbody tr:hover { background: var(--surface-bg); }
+    .archive-summary { color: var(--muted); font-size: 14px; margin: -4px 0 12px; }
+    .year-nav { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 8px; padding: 0; border: 0; }
+    .year-nav a { margin: 0; padding: 3px 10px; border: 1px solid var(--border-strong); border-radius: 999px; font-size: 14px; color: var(--text); text-decoration: none; }
+    .year-nav a:hover { border-color: var(--link); color: var(--link); }
+    .year-nav span { color: var(--muted); font-size: 12px; }
+    .year-heading { display: flex; align-items: baseline; gap: 10px; margin: 32px 0 0; padding-bottom: 6px; border-bottom: 1px solid var(--border); scroll-margin-top: 16px; }
+    .year-heading span { color: var(--muted); font-size: 14px; font-weight: 400; }
     .theme-toggle { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 1px solid var(--border-strong); border-radius: 999px; background: var(--button-bg); color: var(--text); cursor: pointer; font: inherit; font-size: 16px; }
     .theme-toggle:hover { border-color: var(--link); color: var(--link); }
     .la-theme-widget { margin: 12px 0 20px; min-height: 24px; color: var(--text); }
@@ -235,7 +242,7 @@
 <p>问题现象：AI Agent 在 DingTalk 通道中回复了重复的文本。消息不是发送了两次，而是一条消息里的内容被复制了一遍。排障最终定位到 NewAPI（QuantumNous 维护的 OneAPI 分支）v1.0.0-rc.10 版本的一个流式响应 Bug：当通过 OpenAI Chat Completions 协议转发 MiniMax 模型时，finish chunk 会<strong>同时包含 <code>delta.content</code> 和 <code>message.content</code></strong>，且两者内容完全一致。Agent 框架的流式处理器将两者都当作&quot;可见文本&quot;消费，导致最终文本被拼接两次。修复方案也很朴素：将 OpenClaw provider 协议从 <code>openai-completions</code> 切换到 <code>anthropic-messages</code>，OneAPI 原生支持该协议，且该路径下流式响应正常。</p>
 <p>本文不会出现任何真实内网地址、Token、模型 ID 或私有路径。所有配置片段都已脱敏。</p>
 </blockquote>
-<p><img src="/post-images/newapi-duplicate-content/flow-architecture.svg" alt="流式响应重复问题分析图"></p>
+<p><img src="/post-images/newapi-duplicate-content/flow-architecture.svg" alt="流式响应重复问题分析图" fetchpriority="high" decoding="async"></p>
 <p><em>图 1：本文自制分析图。展示了从用户请求到最终重复回复的完整请求链路，以及流式 chunk 中的重复内容。</em></p>
 <h2 id="1-问题背景当-ai-agent-接入-im每一处异常都无处遁形">1. 问题背景：当 AI Agent 接入 IM，每一处异常都无处遁形</h2>
 <p>将 AI Agent 接入即时通讯工具（钉钉、微信、飞书等）已经成了很常见的使用模式。相比在终端里和 Agent 对话，IM 入口的好处显而易见：你不需要记住某个 Dashboard 地址，也不需要 SSH 到服务器上敲命令。随手发一条消息，Agent 就能执行脚本、查询状态、分析数据或整理摘要。</p>
@@ -259,7 +266,7 @@
 </span></span><span style="display:flex;"><span>  <span style="color:#f92672">&#34;finalText&#34;</span>: <span style="color:#e6db74">&#34;你好！有什么需要帮忙的吗？&#34;</span>
 </span></span><span style="display:flex;"><span>}
 </span></span></code></pre></div><p>对比非常清晰：<strong>同一个模型，在不同 provider 协议路径下，输出了不同质量的结果。</strong> 兼容网关路径产生了重复文本，原生路径完全正常。</p>
-<p><img src="/post-images/newapi-duplicate-content/debug-comparison.svg" alt="Provider 对比调试图"></p>
+<p><img src="/post-images/newapi-duplicate-content/debug-comparison.svg" alt="Provider 对比调试图" loading="lazy" decoding="async"></p>
 <p><em>图 2：同一 prompt 在不同 provider 下的输出对比。红色路径（openai-completions 协议）产生重复，绿色路径（anthropic-messages 协议）正常。</em></p>
 <h2 id="3-排障过程逆向追溯逐层缩小范围">3. 排障过程：逆向追溯，逐层缩小范围</h2>
 <p>我的排障思路是：不先假设问题出在哪一层，而是用最小可复现样本逐层排除。基本上是一个&quot;从外到内&quot;的逆向追溯过程。</p>
@@ -306,8 +313,6 @@ FINISH: stop
 FINAL message.content: &#39;Hello! How can I help you today?&#39;
 FINISH: stop
 </code></pre><p><strong>Bug 确凿无疑。</strong> 同一个 <code>&quot;Hello! How can I help you today?&quot;</code> 被输出了两次：一次通过 <code>delta.content</code>（正常流式事件），一次通过 finish chunk 中的 <code>message.content</code>（不该出现）。</p>
-<p><img src="/post-images/newapi-duplicate-content/curl-verify-output.png" alt="Curl 验证输出"></p>
-<p><em>图 3：Curl 命令直接验证——finish chunk 中同时存在 delta.content 和 message.content，内容完全一致。</em></p>
 <h2 id="4-根因分析oneapi-的-finish-chunk-包含了冗余的-messagecontent">4. 根因分析：OneAPI 的 finish chunk 包含了冗余的 message.content</h2>
 <h3 id="41-openai-chat-completions-协议标准">4.1 OpenAI Chat Completions 协议标准</h3>
 <p>OpenAI Chat Completions 流式协议的标准行为是：在 stream 模式下，除了最后一个 chunk 之外，每个 chunk 的 <code>choices[0]</code> 只包含 <code>delta</code> 字段，不包含 <code>message</code> 字段。最后一个 chunk（finish_reason 不为 null）可以包含 <code>message</code> 字段，但标准实现中<strong>不会同时提供非空的 <code>delta.content</code> 和 <code>message.content</code></strong>。</p>

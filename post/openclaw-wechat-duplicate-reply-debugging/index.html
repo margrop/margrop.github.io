@@ -142,6 +142,13 @@
     .favorites th { color: var(--muted); font-size: 13px; font-weight: 600; background: var(--surface-bg); }
     .favorites td:first-child { white-space: nowrap; }
     .favorites tbody tr:hover { background: var(--surface-bg); }
+    .archive-summary { color: var(--muted); font-size: 14px; margin: -4px 0 12px; }
+    .year-nav { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 8px; padding: 0; border: 0; }
+    .year-nav a { margin: 0; padding: 3px 10px; border: 1px solid var(--border-strong); border-radius: 999px; font-size: 14px; color: var(--text); text-decoration: none; }
+    .year-nav a:hover { border-color: var(--link); color: var(--link); }
+    .year-nav span { color: var(--muted); font-size: 12px; }
+    .year-heading { display: flex; align-items: baseline; gap: 10px; margin: 32px 0 0; padding-bottom: 6px; border-bottom: 1px solid var(--border); scroll-margin-top: 16px; }
+    .year-heading span { color: var(--muted); font-size: 14px; font-weight: 400; }
     .theme-toggle { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 1px solid var(--border-strong); border-radius: 999px; background: var(--button-bg); color: var(--text); cursor: pointer; font: inherit; font-size: 16px; }
     .theme-toggle:hover { border-color: var(--link); color: var(--link); }
     .la-theme-widget { margin: 12px 0 20px; min-height: 24px; color: var(--text); }
@@ -235,7 +242,7 @@
 <p>这次问题看起来像“微信通道把同一条回复发了四遍”，但真正的重复发生在更早的位置：消息还没有进入微信发送层之前，OpenClaw Agent 的最终可见文本就已经被模型执行链路重复拼接了。排障的关键不是一上来改微信插件，而是把链路拆成发送层、会话层、模型路由层三段，用最小 prompt 复现，再比较“兼容网关路径”和“原生 provider 路径”的输出差异。最后的修复也很朴素：让个人 IM 通道显式走原生 provider，移除容易被误选的故障候选模型路径，重启 Gateway 后复测主会话。</p>
 <p>这篇文章不会出现任何真实内网地址、账号、token、会话 ID、个人微信标识或私有路径。所有配置片段都已经脱敏，并用 <code>&lt;PLACEHOLDER&gt;</code> 形式表示。重点是分享一套可复用的排障方法，而不是公开某个具体环境的细节。</p>
 </blockquote>
-<p><img src="/post-images/openclaw-wechat-duplicate-reply-debugging/01-hero-duplicate-reply.webp" alt="AI 回复重复的抽象排障题图"></p>
+<p><img src="/post-images/openclaw-wechat-duplicate-reply-debugging/01-hero-duplicate-reply.webp" alt="AI 回复重复的抽象排障题图" width="1672" height="941" fetchpriority="high" decoding="async"></p>
 <p><em>图 1：本文自制题图。一个看似“微信重复发送”的问题，最后被定位成模型执行链路里的重复输出。</em></p>
 <h2 id="1-问题背景个人-im-入口里的-agent比命令行更容易暴露最终体验问题">1. 问题背景：个人 IM 入口里的 Agent，比命令行更容易暴露“最终体验问题”</h2>
 <p>现在很多人已经不满足于在终端里和 AI Agent 对话。真正方便的形态，是把 Agent 接进日常消息入口：个人微信、企业 IM、Telegram、Slack、飞书、钉钉、iMessage，或者其它自己常用的通知和对话渠道。这样做的好处很明显：不用专门打开一个终端，也不用记住某个 dashboard 地址，随手发一句话，Agent 就能帮你查状态、写摘要、跑脚本、整理资料、提醒事项。</p>
@@ -259,7 +266,7 @@
 <div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>只回复这两个字：测试
 </span></span></code></pre></div><p>这个 prompt 有两个好处。第一，它足够短，避免复杂上下文导致模型自由发挥。第二，它有明确期望，输出只要不是单个“测试”，就可以判定异常。排障时不要一开始就拿真实长问题测试，因为长问题会引入太多噪声：系统提示、历史会话、工具调用、摘要、语言风格、模型思考、markdown 格式，都可能让你误判。</p>
 <p>这里还有一个细节：我不只看用户最终看到什么，还看 Agent 执行结果里的 raw text、provider、model、winner provider 和 attempts。也就是说，我要知道这次回答到底是由哪条模型路径生成的，模型返回给 OpenClaw 的最终可见文本是什么。只有拿到这些证据，才能判断重复发生在哪一层。</p>
-<p><img src="/post-images/openclaw-wechat-duplicate-reply-debugging/02-layered-diagnosis.svg" alt="分层排障路径"></p>
+<p><img src="/post-images/openclaw-wechat-duplicate-reply-debugging/02-layered-diagnosis.svg" alt="分层排障路径" loading="lazy" decoding="async"></p>
 <p><em>图 2：先确认重复发生在哪一层，再决定要改哪个配置。</em></p>
 <h2 id="3-第一轮假设微信发送层是否重复调用">3. 第一轮假设：微信发送层是否重复调用</h2>
 <p>很多 IM 集成问题，第一反应都是看发送层。这是合理的。因为 IM 平台通常有重试、回调、ack、offset、队列、去重等机制。如果接收端没有正确确认，或者发送端在失败后重试，就可能出现重复消息。</p>
@@ -312,7 +319,7 @@
 <p>第三，问题不是“模型名不对”。模型名看起来是同一个，真正差异在 provider 和协议路径。</p>
 <p>第四，问题不是“重启就好”。重启 Gateway 后，如果故障候选仍然可见，执行轨迹仍可能继续命中它。</p>
 <p>第五，修复不能只看 <code>models status</code> 或配置表面值。必须看实际执行轨迹里的 winner provider 和 final raw text。</p>
-<p><img src="/post-images/openclaw-wechat-duplicate-reply-debugging/03-routing-before-after.svg" alt="模型路由修复前后对比"></p>
+<p><img src="/post-images/openclaw-wechat-duplicate-reply-debugging/03-routing-before-after.svg" alt="模型路由修复前后对比" loading="lazy" decoding="async"></p>
 <p><em>图 3：同名模型在不同 provider 下可能是完全不同的运行路径。排障时必须看 provider。</em></p>
 <h2 id="7-修复过程从切默认值到收窄可见候选">7. 修复过程：从“切默认值”到“收窄可见候选”</h2>
 <p>最开始我尝试的是最直观的修复：把默认模型切到原生 provider。</p>
@@ -376,7 +383,7 @@
 <p>当然，发送层可以有一些防御性保护，例如避免同一个 message id 短时间重复发送，或者对明显的网络重试做幂等。但这和“把重复文本压缩掉”不是一回事。前者是消息幂等，后者是内容篡改。</p>
 <h2 id="9-可复用排障清单">9. 可复用排障清单</h2>
 <p>如果你也遇到类似“AI 助手回复重复”的问题，可以按下面顺序排查。</p>
-<p><img src="/post-images/openclaw-wechat-duplicate-reply-debugging/04-checklist.svg" alt="重复回复排障清单"></p>
+<p><img src="/post-images/openclaw-wechat-duplicate-reply-debugging/04-checklist.svg" alt="重复回复排障清单" loading="lazy" decoding="async"></p>
 <p><em>图 4：不要先猜；先确认重复发生在哪一层。</em></p>
 <h3 id="91-先区分重复类型">9.1 先区分重复类型</h3>
 <p>第一问：用户看到的是多条重复消息，还是一条消息内部重复文本？</p>

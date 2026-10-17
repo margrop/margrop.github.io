@@ -142,6 +142,13 @@
     .favorites th { color: var(--muted); font-size: 13px; font-weight: 600; background: var(--surface-bg); }
     .favorites td:first-child { white-space: nowrap; }
     .favorites tbody tr:hover { background: var(--surface-bg); }
+    .archive-summary { color: var(--muted); font-size: 14px; margin: -4px 0 12px; }
+    .year-nav { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 8px; padding: 0; border: 0; }
+    .year-nav a { margin: 0; padding: 3px 10px; border: 1px solid var(--border-strong); border-radius: 999px; font-size: 14px; color: var(--text); text-decoration: none; }
+    .year-nav a:hover { border-color: var(--link); color: var(--link); }
+    .year-nav span { color: var(--muted); font-size: 12px; }
+    .year-heading { display: flex; align-items: baseline; gap: 10px; margin: 32px 0 0; padding-bottom: 6px; border-bottom: 1px solid var(--border); scroll-margin-top: 16px; }
+    .year-heading span { color: var(--muted); font-size: 14px; font-weight: 400; }
     .theme-toggle { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 1px solid var(--border-strong); border-radius: 999px; background: var(--button-bg); color: var(--text); cursor: pointer; font: inherit; font-size: 16px; }
     .theme-toggle:hover { border-color: var(--link); color: var(--link); }
     .la-theme-widget { margin: 12px 0 20px; min-height: 24px; color: var(--text); }
@@ -236,7 +243,7 @@
 <p><strong>一句话总结：</strong></p>
 <p><code>docker ps</code> 看着一切正常，<code>docker inspect</code> 的 <code>HostConfig.PortBindings</code> 也写好了 <code>203.0.113.14:3001:3000</code>——但 host 上<strong>没有 docker-proxy 在监听</strong>、iptables <code>nat/DOCKER</code> 链里<strong>没有 DNAT 规则</strong>、<code>NetworkSettings.Networks</code> 和 <code>Ports</code> <strong>两个字段都是空 <code>{}</code></strong>。这种&quot;容器活着、端口死了&quot;的诡异状态，本质是 libnetwork 在 attach 网络时因为目标接口尚未就绪而<strong>静默回滚了 endpoint 创建</strong>，但容器进程已经起好，docker 也没把&quot;端口没生效&quot;这件事主动告诉我们。<strong>30 秒一行命令就能让端口重新回来</strong>：<code>docker network connect &lt;net&gt; &lt;ctr&gt;</code>。</p>
 </blockquote>
-<p><img src="/post-images/docker-port-bind-half-silent/01-symptom-topology.svg" alt="故障现场：docker ps 显示一切正常，端口就是访问不了"></p>
+<p><img src="/post-images/docker-port-bind-half-silent/01-symptom-topology.svg" alt="故障现场：docker ps 显示一切正常，端口就是访问不了" fetchpriority="high" decoding="async"></p>
 <p><em>图 1：典型的&quot;半残&quot;现场——容器进程在跑、HostConfig 里端口映射写得清清楚楚，但 host 上没有任何进程监听 3001。</em></p>
 <hr>
 <h2 id="一问题背景一个看似不可能的故障">一、问题背景：一个看似不可能的故障</h2>
@@ -307,7 +314,7 @@ headroom   Up 4 hours (healthy)        ─
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># {}</span>
 </span></span></code></pre></div><p><code>newapi_data_default</code> 这个 bridge 上，<strong><code>Containers: {}</code></strong>——它觉得没有任何容器挂上来。 但容器本身在跑、还能 curl 自己、还能 restart。</p>
 <p><strong>这说明容器和它声明要加入的 bridge 网络之间，attach 这个动作根本没生效</strong>，但 docker 也没把这个失败显式地告诉用户。</p>
-<p><img src="/post-images/docker-port-bind-half-silent/02-hostconfig-vs-networksettings.svg" alt="半残映射：HostConfig 与 NetworkSettings 之间的&#34;裂缝&#34;"></p>
+<p><img src="/post-images/docker-port-bind-half-silent/02-hostconfig-vs-networksettings.svg" alt="半残映射：HostConfig 与 NetworkSettings 之间的&quot;裂缝&quot;" loading="lazy" decoding="async"></p>
 <p><em>图 2：左侧的 HostConfig 完整写着端口映射和网络名，右侧的 NetworkSettings 却是空 {}。意图还在，现状丢了。</em></p>
 <h3 id="6-顺手扫一眼其他容器果然不是个例">6. 顺手扫一眼其他容器：果然不是个例</h3>
 <div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#66d9ef">for</span> c in <span style="color:#66d9ef">$(</span>docker ps --format <span style="color:#e6db74">&#39;{{.Names}}&#39;</span><span style="color:#66d9ef">)</span>; <span style="color:#66d9ef">do</span>
@@ -322,7 +329,7 @@ headroom   Up 4 hours (healthy)        ─
 </span></span><span style="display:flex;"><span><span style="color:#75715e"># headroom   | networks=0 | ports=0</span>
 </span></span></code></pre></div><p><strong>三个非 host 网络的容器同时 <code>networks=0, ports=0</code></strong>。共性只有一个：它们的 <code>HostConfig.NetworkMode</code> 各自指向了不同的自定义 bridge 网络。</p>
 <p>到这里，根因的大方向已经基本锁死：<strong>容器&quot;想要&quot;加入的 bridge 网络没成功 attach</strong>。</p>
-<p><img src="/post-images/docker-port-bind-half-silent/04-diagnose-checklist.svg" alt="五分钟诊断清单：从症状到根因的六步走"></p>
+<p><img src="/post-images/docker-port-bind-half-silent/04-diagnose-checklist.svg" alt="五分钟诊断清单：从症状到根因的六步走" loading="lazy" decoding="async"></p>
 <p><em>图 4：把上面六步压缩成「抄作业清单」，下次再遇到「容器活着、端口死了」30 秒就能判断。</em></p>
 <hr>
 <h2 id="三问题根因被静默回滚的-endpoint-创建">三、问题根因：被静默回滚的 endpoint 创建</h2>
@@ -333,7 +340,7 @@ headroom   Up 4 hours (healthy)        ─
 </ol>
 <h3 id="31-完整的发布链路里少了哪一截">3.1 完整的发布链路里，少了哪一截</h3>
 <p>docker 把容器端口&quot;对外暴露&quot;需要走这条链路：</p>
-<p><img src="/post-images/docker-port-bind-half-silent/03-publish-pipeline.svg" alt="完整的发布链路与断裂点"></p>
+<p><img src="/post-images/docker-port-bind-half-silent/03-publish-pipeline.svg" alt="完整的发布链路与断裂点" loading="lazy" decoding="async"></p>
 <p><em>图 3：从 VPN 节点到 new-api 0.0.0.0:3000 的完整路径，标 ✕ 的两处是这次断掉的位置。</em></p>
 <p>它大致是这样的：</p>
 <ol>
@@ -425,10 +432,10 @@ headroom   Up 4 hours (healthy)        ─
 </span></span><span style="display:flex;"><span>  docker network connect <span style="color:#e6db74">&#34;</span>$net<span style="color:#e6db74">&#34;</span> <span style="color:#e6db74">&#34;</span>$c<span style="color:#e6db74">&#34;</span> <span style="color:#f92672">||</span> true
 </span></span><span style="display:flex;"><span><span style="color:#66d9ef">done</span>
 </span></span></code></pre></div><p>挂到 systemd 里、<code>After=docker.service</code> 即可。</p>
-<p><img src="/post-images/docker-port-bind-half-silent/05-fix-strategy.svg" alt="治标 vs 治本：临时重连 vs 启动顺序改造"></p>
+<p><img src="/post-images/docker-port-bind-half-silent/05-fix-strategy.svg" alt="治标 vs 治本：临时重连 vs 启动顺序改造" loading="lazy" decoding="async"></p>
 <p><em>图 4：左侧&quot;治标&quot;那一行 <code>docker network connect</code> 30 秒解决；右侧&quot;治本&quot;是让 docker 在 attach 时接口一定就绪。两者并不互斥，组合使用最稳。</em></p>
 <h3 id="43-修复前-vs-修复后同一个-docker-inspect-命令">4.3 修复前 vs 修复后（同一个 docker inspect 命令）</h3>
-<p><img src="/post-images/docker-port-bind-half-silent/06-before-after-compare.svg" alt="修复前后的 docker inspect 与 ss 对比"></p>
+<p><img src="/post-images/docker-port-bind-half-silent/06-before-after-compare.svg" alt="修复前后的 docker inspect 与 ss 对比" loading="lazy" decoding="async"></p>
 <p><em>图 5：修复前 <code>NetworkSettings</code> 全是空 <code>{}</code>、ss 看不到 docker-proxy；一行 <code>docker network connect</code> 之后，两个字段全部填满、docker-proxy 出现、curl 直接 200。</em></p>
 <hr>
 <h2 id="五qa">五、Q&amp;A</h2>

@@ -142,6 +142,13 @@
     .favorites th { color: var(--muted); font-size: 13px; font-weight: 600; background: var(--surface-bg); }
     .favorites td:first-child { white-space: nowrap; }
     .favorites tbody tr:hover { background: var(--surface-bg); }
+    .archive-summary { color: var(--muted); font-size: 14px; margin: -4px 0 12px; }
+    .year-nav { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 8px; padding: 0; border: 0; }
+    .year-nav a { margin: 0; padding: 3px 10px; border: 1px solid var(--border-strong); border-radius: 999px; font-size: 14px; color: var(--text); text-decoration: none; }
+    .year-nav a:hover { border-color: var(--link); color: var(--link); }
+    .year-nav span { color: var(--muted); font-size: 12px; }
+    .year-heading { display: flex; align-items: baseline; gap: 10px; margin: 32px 0 0; padding-bottom: 6px; border-bottom: 1px solid var(--border); scroll-margin-top: 16px; }
+    .year-heading span { color: var(--muted); font-size: 14px; font-weight: 400; }
     .theme-toggle { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 1px solid var(--border-strong); border-radius: 999px; background: var(--button-bg); color: var(--text); cursor: pointer; font: inherit; font-size: 16px; }
     .theme-toggle:hover { border-color: var(--link); color: var(--link); }
     .la-theme-widget { margin: 12px 0 20px; min-height: 24px; color: var(--text); }
@@ -235,7 +242,7 @@
 <p>My home lab had a <code>registry:2</code> pull-through cache fronting Docker Hub for years, and it was fine. Then one day pulling a 5 MB <code>alpine:3.19</code> took 5 minutes and 14 seconds. This post is the full forensic log of how I traced the slowdown, evaluated 8 candidate mirrors with real measurements (not vibes), and finished with a 5-line bash script on cron that <strong>auto-fails-over</strong> when the primary mirror goes down. Every number in this article was captured on my own hardware, in my own network, at one specific moment in time.</p>
 <p>If you also self-host a Docker Hub mirror, or your team runs an internal registry, the Q&amp;A at the bottom will probably save you 3 hours of pain.</p>
 </blockquote>
-<p><img src="/post-images/docker-registry-mirror-rebuild-2026/01-cover.svg" alt="Cover: 5m14s → 0.6s, real numbers from one 8082 host"></p>
+<p><img src="/post-images/docker-registry-mirror-rebuild-2026/01-cover.svg" alt="Cover: 5m14s → 0.6s, real numbers from one 8082 host" fetchpriority="high" decoding="async"></p>
 <p><em>Figure 1: the <code>5m14s</code> on the left was the real first run; the <code>0.6s</code> on the right is the same image, same network, after the fix. The arrow in the middle is a sentence I keep repeating to myself — &ldquo;measure before you switch upstreams.&rdquo;</em></p>
 <hr>
 <h2 id="1-background-what-this-8082-was-doing">1. Background: What This 8082 Was Doing</h2>
@@ -279,7 +286,7 @@
 </table>
 <p><code>1panel.live</code> was <strong>not erroring</strong>, it was <strong>waiting</strong>. The full <code>5m14s</code> elapsed while the container was silently holding a connection to that upstream, and <code>tcpdump</code> showed almost zero bytes flowing back during the wait. Classic slow-upstream pattern, not a transient outage.</p>
 <p>So the root cause was upstream. But that alone wasn&rsquo;t enough — I needed to figure out <strong>why</strong> it was slow, <strong>what else was available</strong>, and <strong>how to make the host detect and recover when its primary mirror dies</strong>.</p>
-<p><img src="/post-images/docker-registry-mirror-rebuild-2026/02-timeline.svg" alt="The three pitfalls in chronological order: docker.io → dockerproxy → hub1.nat.tf"></p>
+<p><img src="/post-images/docker-registry-mirror-rebuild-2026/02-timeline.svg" alt="The three pitfalls in chronological order: docker.io → dockerproxy → hub1.nat.tf" loading="lazy" decoding="async"></p>
 <p><em>Figure 2: this whole post is really the story of three &ldquo;looks reasonable&rdquo; plans, each backed by real measurements on the same hardware. Solid lines = measured good, dashed lines = looked good but failed in practice.</em></p>
 <hr>
 <h2 id="2-the-real-root-cause-it-wasnt-just-1panellive-my-host-couldnt-even-reach-registry-1dockerio-directly">2. The Real Root Cause: It Wasn&rsquo;t Just <code>1panel.live</code>. My Host Couldn&rsquo;t Even Reach <code>registry-1.docker.io</code> Directly</h2>
@@ -294,7 +301,7 @@
 <li>Any plan involving <code>proxy.remoteurl: https://registry-1.docker.io</code> + a Docker Hub account <strong>is dead on arrival</strong> on this host, even if I have a perfectly good account.</li>
 <li>I <strong>must</strong> use some third-party source. The choice is between <strong>transparent proxies</strong> (just forward to Docker Hub, see <em>my</em> IP) and <strong>independent caches</strong> (they have their own backend, often fronted by Cloudflare Worker or self-hosted, can serve cold traffic from their own copy).</li>
 </ul>
-<p><img src="/post-images/docker-registry-mirror-rebuild-2026/06-rate-limit.svg" alt="Why 100/6h rate limits bite you even through a mirror"></p>
+<p><img src="/post-images/docker-registry-mirror-rebuild-2026/06-rate-limit.svg" alt="Why 100/6h rate limits bite you even through a mirror" loading="lazy" decoding="async"></p>
 <p><em>Figure 3: Docker Hub&rsquo;s rate limit is counted against your <strong>public IPv4</strong>, not the mirror&rsquo;s IP. A transparent proxy is no protection — the source still sees you.</em></p>
 <p>There was also a <strong>second, independent issue</strong>: Docker Hub&rsquo;s anonymous-pull rate limit of <strong>100 pulls / 6 hours per IPv4 address</strong>:</p>
 <div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>$ curl https://dockerproxy.net/v2/library/busybox/manifests/1.36
@@ -422,7 +429,7 @@
   </tbody>
 </table>
 <p>Winner: <strong><code>hub1.nat.tf</code></strong>, at <strong>1.4 seconds</strong> for alpine, on a backend that is <strong>not on Docker Hub&rsquo;s IP rate-limit list</strong>.</p>
-<p><img src="/post-images/docker-registry-mirror-rebuild-2026/03-bench.svg" alt="Real benchmark bars for 8 mirrors on the same host"></p>
+<p><img src="/post-images/docker-registry-mirror-rebuild-2026/03-bench.svg" alt="Real benchmark bars for 8 mirrors on the same host" loading="lazy" decoding="async"></p>
 <p><em>Figure 4: same alpine, same machine, same command — only the source changed. Green = winner, blue = OK, yellow = slow or throttled, red = unusable.</em></p>
 <p>The switch itself was trivial: one config line + container restart:</p>
 <div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-yaml" data-lang="yaml"><span style="display:flex;"><span><span style="color:#f92672">proxy</span>:
@@ -442,7 +449,7 @@
 </ol>
 <p>The natural architectural answer would be a &ldquo;two upstreams&rdquo; config, like <code>upstream { server a; server b; }</code> in nginx. <strong>But <code>registry:2</code>&rsquo;s <code>proxy.remoteurl</code> accepts only one upstream URL</strong> — the spec is explicit about this. To do real multi-source, I would have to run a sidecar that does v2 protocol multiplexing. I tried, and ran into the <strong>v2 auth challenge-response protocol</strong> (more on this in the Q&amp;A) within 20 minutes. That rabbit hole was deep.</p>
 <p>The pragmatic answer turned out to be much simpler: <strong>a daily cron that does <code>sed</code> on the config + <code>docker restart</code></strong>. Five lines of bash.</p>
-<p><img src="/post-images/docker-registry-mirror-rebuild-2026/04-architecture.svg" alt="Final architecture: 1 registry, 1 primary upstream, 1 fallback, 1 cron watchdog"></p>
+<p><img src="/post-images/docker-registry-mirror-rebuild-2026/04-architecture.svg" alt="Final architecture: 1 registry, 1 primary upstream, 1 fallback, 1 cron watchdog" loading="lazy" decoding="async"></p>
 <p><em>Figure 5: the final production topology. One client, one <code>registry:2</code> container, one primary upstream, one fallback upstream (idle 99% of the time), one cron scheduler. Simple enough to keep in your head.</em></p>
 <hr>
 <h2 id="5-the-final-solution-5-line-cron--1-validation-script">5. The Final Solution: 5-Line Cron + 1 Validation Script</h2>
@@ -471,7 +478,7 @@
 </code></pre><p>Every day at 08:00: probe <code>hub1.nat.tf</code> for <code>alpine:3.19</code>; on success keep current state (or switch back if we were on fallback); on failure, sed-flip the config to <code>docker.sparkcr.cn</code> and restart the container.</p>
 <p><strong>Why <code>alpine:3.19</code>?</strong> It&rsquo;s tiny (3 MB), so the probe finishes in &lt; 2s under normal conditions. It&rsquo;s also a universally-cached image — there&rsquo;s no risk of &ldquo;this source doesn&rsquo;t carry that image&rdquo; giving a false negative.</p>
 <p><strong>Why 60s timeout?</strong> <code>sparkcr.cn</code> occasionally takes 15–40s. Anything beyond 60s is, in practice, &ldquo;this source is down.&rdquo; Better to fail the probe and switch than to block the cron queue.</p>
-<p><img src="/post-images/docker-registry-mirror-rebuild-2026/05-cron-script.svg" alt="The 5-line core &#43; crontab line &#43; a real cron log line"></p>
+<p><img src="/post-images/docker-registry-mirror-rebuild-2026/05-cron-script.svg" alt="The 5-line core &#43; crontab line &#43; a real cron log line" loading="lazy" decoding="async"></p>
 <p><em>Figure 6: these 5 lines are the entire business logic. The other 75 lines are logging, state file, error handling. I deliberately keep the log format human-scannable so future-me doesn&rsquo;t have to grep a JSON blob.</em></p>
 <hr>
 <h2 id="6-validation-i-simulated-primary-down-and-watched-the-script-recover">6. Validation: I Simulated &ldquo;Primary Down&rdquo; and Watched the Script Recover</h2>

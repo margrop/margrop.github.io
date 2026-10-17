@@ -142,6 +142,13 @@
     .favorites th { color: var(--muted); font-size: 13px; font-weight: 600; background: var(--surface-bg); }
     .favorites td:first-child { white-space: nowrap; }
     .favorites tbody tr:hover { background: var(--surface-bg); }
+    .archive-summary { color: var(--muted); font-size: 14px; margin: -4px 0 12px; }
+    .year-nav { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 8px; padding: 0; border: 0; }
+    .year-nav a { margin: 0; padding: 3px 10px; border: 1px solid var(--border-strong); border-radius: 999px; font-size: 14px; color: var(--text); text-decoration: none; }
+    .year-nav a:hover { border-color: var(--link); color: var(--link); }
+    .year-nav span { color: var(--muted); font-size: 12px; }
+    .year-heading { display: flex; align-items: baseline; gap: 10px; margin: 32px 0 0; padding-bottom: 6px; border-bottom: 1px solid var(--border); scroll-margin-top: 16px; }
+    .year-heading span { color: var(--muted); font-size: 14px; font-weight: 400; }
     .theme-toggle { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 1px solid var(--border-strong); border-radius: 999px; background: var(--button-bg); color: var(--text); cursor: pointer; font: inherit; font-size: 16px; }
     .theme-toggle:hover { border-color: var(--link); color: var(--link); }
     .la-theme-widget { margin: 12px 0 20px; min-height: 24px; color: var(--text); }
@@ -235,7 +242,7 @@
 <p>An AI Agent was producing duplicated replies in DingTalk — not two separate messages, but a single message whose content appeared twice. The root cause traced back to a streaming bug in NewAPI (the QuantumNous fork of OneAPI) v1.0.0-rc.10: when proxying MiniMax through the OpenAI Chat Completions protocol, the finish chunk contained <strong>both <code>delta.content</code> and <code>message.content</code></strong> with identical values. The Agent&rsquo;s stream handler consumed both as &ldquo;visible text,&rdquo; concatenating the content twice. The fix was straightforward: switch the OpenClaw provider protocol from <code>openai-completions</code> to <code>anthropic-messages</code>, which OneAPI natively supports and where streaming behaves correctly.</p>
 <p>No internal IPs, tokens, model IDs, or private paths appear in this article. All configuration snippets have been sanitized.</p>
 </blockquote>
-<p><img src="/post-images/newapi-duplicate-content/flow-architecture.svg" alt="Streaming duplicate analysis diagram"></p>
+<p><img src="/post-images/newapi-duplicate-content/flow-architecture.svg" alt="Streaming duplicate analysis diagram" fetchpriority="high" decoding="async"></p>
 <p><em>Figure 1: Self-made analysis diagram showing the complete request flow from user to duplicate reply, with the streaming chunk that causes the issue.</em></p>
 <h2 id="1-background-when-ai-agents-meet-im-every-anomaly-becomes-visible">1. Background: When AI Agents Meet IM, Every Anomaly Becomes Visible</h2>
 <p>Connecting AI Agents to instant messaging tools — DingTalk, WeChat, Lark, Slack — has become a common practice. The benefits over terminal-based interaction are obvious: no need to remember dashboard URLs or SSH into a server. Just send a message, and the Agent executes scripts, queries status, analyzes data, or summarizes documents.</p>
@@ -259,7 +266,7 @@
 </span></span><span style="display:flex;"><span>  <span style="color:#f92672">&#34;finalText&#34;</span>: <span style="color:#e6db74">&#34;Hello! How can I help you today?&#34;</span>
 </span></span><span style="display:flex;"><span>}
 </span></span></code></pre></div><p>The comparison was unambiguous: <strong>the same model produced different quality through different provider protocol paths.</strong> The compatible gateway path generated duplicates; the native path worked perfectly.</p>
-<p><img src="/post-images/newapi-duplicate-content/debug-comparison.svg" alt="Provider comparison diagram"></p>
+<p><img src="/post-images/newapi-duplicate-content/debug-comparison.svg" alt="Provider comparison diagram" loading="lazy" decoding="async"></p>
 <p><em>Figure 2: Same prompt, different provider. The red path (openai-completions protocol) produces duplicates; the green path (anthropic-messages) is clean.</em></p>
 <h2 id="3-debugging-backward-tracing-layer-by-layer">3. Debugging: Backward Tracing, Layer by Layer</h2>
 <p>My approach was to avoid assumptions and instead use minimal reproducible samples to eliminate layers one at a time — essentially a backward trace from the visible symptom.</p>
@@ -306,8 +313,6 @@ FINISH: stop
 FINAL message.content: &#39;Hello! How can I help you today?&#39;
 FINISH: stop
 </code></pre><p><strong>Bug confirmed.</strong> The same text appeared twice: once via <code>delta.content</code> (normal streaming event) and once via <code>message.content</code> inside the finish chunk (redundant).</p>
-<p><img src="/post-images/newapi-duplicate-content/curl-verify-output.png" alt="Curl verification output"></p>
-<p><em>Figure 3: Direct curl verification — the finish chunk contains both delta.content and message.content with identical text.</em></p>
 <h2 id="4-root-cause-oneapis-finish-chunk-includes-redundant-messagecontent">4. Root Cause: OneAPI&rsquo;s Finish Chunk Includes Redundant message.content</h2>
 <h3 id="41-openai-chat-completions-protocol-standard">4.1 OpenAI Chat Completions Protocol Standard</h3>
 <p>In the OpenAI Chat Completions streaming protocol, each chunk (except the final one) carries only the <code>delta</code> field — no <code>message</code> field. The final chunk (where <code>finish_reason</code> is not null) <em>may</em> include <code>message</code>, but a correct implementation <strong>never sets both <code>delta.content</code> and <code>message.content</code> to non-empty values simultaneously</strong>.</p>

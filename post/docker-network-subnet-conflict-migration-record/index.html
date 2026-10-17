@@ -142,6 +142,13 @@
     .favorites th { color: var(--muted); font-size: 13px; font-weight: 600; background: var(--surface-bg); }
     .favorites td:first-child { white-space: nowrap; }
     .favorites tbody tr:hover { background: var(--surface-bg); }
+    .archive-summary { color: var(--muted); font-size: 14px; margin: -4px 0 12px; }
+    .year-nav { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 8px; padding: 0; border: 0; }
+    .year-nav a { margin: 0; padding: 3px 10px; border: 1px solid var(--border-strong); border-radius: 999px; font-size: 14px; color: var(--text); text-decoration: none; }
+    .year-nav a:hover { border-color: var(--link); color: var(--link); }
+    .year-nav span { color: var(--muted); font-size: 12px; }
+    .year-heading { display: flex; align-items: baseline; gap: 10px; margin: 32px 0 0; padding-bottom: 6px; border-bottom: 1px solid var(--border); scroll-margin-top: 16px; }
+    .year-heading span { color: var(--muted); font-size: 14px; font-weight: 400; }
     .theme-toggle { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 1px solid var(--border-strong); border-radius: 999px; background: var(--button-bg); color: var(--text); cursor: pointer; font: inherit; font-size: 16px; }
     .theme-toggle:hover { border-color: var(--link); color: var(--link); }
     .la-theme-widget { margin: 12px 0 20px; min-height: 24px; color: var(--text); }
@@ -250,7 +257,7 @@
 <p>家里的现象很像“某个设备开始乱发包”或者“某条链路出现了奇怪的路由回流”：部分设备能上网，部分设备不能互访，甚至在同一个局域网里，两个本该能直连的设备会突然访问失败。因为家里同时跑着 NAS、软路由、交换机、AP、几套 Docker 服务，所以第一反应通常不会是“Docker 网络池坏了”，而是“是不是某个物理设备又出幺蛾子了”。</p>
 <p>这种排查很容易走弯路，因为 Docker 的问题经常不是“挂了”，而是“还能跑，但跑得不对”。它不会像磁盘坏块那样直接报错，也不会像网卡掉线那样一眼能看出异常。它更像是一种慢性污染：新网络越建越多，默认地址池越用越深，直到某一天，宿主机和局域网的地址规划开始打架。</p>
 <p>我在 NAS 上看到的，就是这种慢性污染累积到临界点后的结果。</p>
-<p><img src="/post-images/docker-network-conflict/01-before-after.svg" alt="Docker network conflict before and after"></p>
+<p><img src="/post-images/docker-network-conflict/01-before-after.svg" alt="Docker network conflict before and after" fetchpriority="high" decoding="async"></p>
 <p>图里左边是问题状态：Docker 的自动网络已经挤进了 <code>192.168.x.x</code>，而家里的 LAN 也在 <code>192.168</code> 这一大类里，两边都在同一个大类里，哪怕不是完全相同的子网，也足够让路由和访问关系变得复杂。右边是修正后的状态：Docker 自动网络统一收敛到 <code>172.16.0.0/12</code>，它和家里的 LAN 明确隔离开，宿主机、容器、局域网之间的关系也会干净很多。</p>
 <h1 id="docker-为什么会自己分到-192168">Docker 为什么会自己分到 192.168</h1>
 <p>很多人第一次遇到这个问题时，会下意识以为 Docker 是“随机乱选”了一个网段。其实不是，Docker 的 user-defined network 背后是有地址池策略的。</p>
@@ -268,7 +275,7 @@
 <li>和外部 VPN、公司网络、常见默认网段也拉开距离。</li>
 </ol>
 <p>所以这次我把 Docker 的默认网络池统一收敛到 172 段，本质上是做了一次“网络命名空间的重新划界”。</p>
-<p><img src="/post-images/docker-network-conflict/02-default-pools.svg" alt="Default pool migration"></p>
+<p><img src="/post-images/docker-network-conflict/02-default-pools.svg" alt="Default pool migration" loading="lazy" decoding="async"></p>
 <p>上面这张图的意思很直接：不是让 Docker 自己继续猜，而是给它一个明确的边界。Docker 以后只在 <code>172.16.0.0/12</code> 里工作，容器网段就不会再跑到家里 LAN 旁边去碰瓷。</p>
 <h1 id="先看现状再改规则">先看现状，再改规则</h1>
 <p>真正动手之前，我先做了两件检查。</p>
@@ -353,7 +360,7 @@
 <li><code>gsmonitor_gs_monitor_net</code> -&gt; <code>172.16.80.0/20</code></li>
 </ul>
 <p>对外界看起来，这只是几个 subnet 的迁移；但对我来说，这一步的意义在于：<strong>整个 Docker 生态里，终于没有 <code>192.168.*</code> 这种会和家里 LAN 混淆的地址了。</strong></p>
-<p><img src="/post-images/docker-network-conflict/03-migration-path.svg" alt="Migration path from old networks to private range"></p>
+<p><img src="/post-images/docker-network-conflict/03-migration-path.svg" alt="Migration path from old networks to private range" loading="lazy" decoding="async"></p>
 <p>这张图更像是迁移流程图：先识别旧网段，再停掉相关 stack，然后以新的 172 段重建网络，最后恢复容器。它看起来简单，但实际执行时最怕两类问题：</p>
 <p>第一类是“网络删早了”。如果你在容器还在运行时就把 network 删了，服务会直接中断。</p>
 <p>第二类是“配置还写死着旧 subnet”。你把运行时网络迁过去了，但 Portainer stack、Dockhand 模板、compose 文件里还写着旧的 <code>ipam.config.subnet</code>，下次重新部署时它还会把你拉回老坑里。</p>
