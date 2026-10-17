@@ -305,20 +305,20 @@
 <p><img src="/post-images/building-ai-agent-cli-from-scratch/06-shot-context-token-explosion.webp" alt="Real Telemetry Comparison: Naive Context Explosion vs Smart Sliding Window" width="1200" height="680" loading="lazy" decoding="async"></p>
 <h3>Failure Mode 3: Dirty Markdown JSON Parsing Failures</h3>
 <p>Under long-context pressure, LLMs frequently wrap function call arguments in markdown fences or conversational preambles:</p>
-<pre><code class="language-markdown">Sure! Here is the tool invocation:
-```json
-{
-  "tool": "apply_diff",
-  "path": "calc.py",
-  "diff": "..."
-}
-```
-Let me know if you need anything else!</code></pre>
-<p>A naive <code>json.loads()</code> immediately crashes with <code>JSONDecodeError</code>, aborting the agent loop prematurely.</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-markdown" data-lang="markdown"><span style="display:flex;"><span>Sure! Here is the tool invocation:
+</span></span><span style="display:flex;"><span><span style="color:#e6db74">```json
+</span></span></span><span style="display:flex;"><span>{
+</span></span><span style="display:flex;"><span>  <span style="color:#f92672">&#34;tool&#34;</span>: <span style="color:#e6db74">&#34;apply_diff&#34;</span>,
+</span></span><span style="display:flex;"><span>  <span style="color:#f92672">&#34;path&#34;</span>: <span style="color:#e6db74">&#34;calc.py&#34;</span>,
+</span></span><span style="display:flex;"><span>  <span style="color:#f92672">&#34;diff&#34;</span>: <span style="color:#e6db74">&#34;...&#34;</span>
+</span></span><span style="display:flex;"><span>}
+</span></span><span style="display:flex;"><span><span style="color:#e6db74">```</span>
+</span></span><span style="display:flex;"><span>Let me know if you need anything else!
+</span></span></code></pre></div><p>A naive <code>json.loads()</code> immediately crashes with <code>JSONDecodeError</code>, aborting the agent loop prematurely.</p>
 <h3>Failure Mode 4: Destructive Workspace Operations & Path Traversal</h3>
 <p>Without guardrails, an LLM attempting to resolve a build conflict might spontaneously generate:</p>
-<pre><code class="language-bash">run_command("rm -rf node_modules package-lock.json && git clean -fdx")</code></pre>
-<p>Or attempt to read <code>../../.ssh/id_rsa</code>. Blindly executing these commands can wipe hours of uncommitted work or leak private keys.</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>run_command<span style="color:#f92672">(</span><span style="color:#e6db74">&#34;rm -rf node_modules package-lock.json &amp;&amp; git clean -fdx&#34;</span><span style="color:#f92672">)</span>
+</span></span></code></pre></div><p>Or attempt to read <code>../../.ssh/id_rsa</code>. Blindly executing these commands can wipe hours of uncommitted work or leak private keys.</p>
 <hr>
 <h2>4. Root Cause Analysis: Systems Engineering Insights</h2>
 <p>These failure modes stem from fundamental systems programming realities:</p>
@@ -343,120 +343,121 @@ Let me know if you need anything else!</code></pre>
 <h2>6. Source Code Walkthrough: Building the Agent in Under 500 Lines</h2>
 <p>Below are the foundational modules of TinyAgent CLI implemented in pure Python:</p>
 <h3>1. Deterministic ReAct State Machine (`agent_core.py`)</h3>
-<pre><code class="language-python"># agent_core.py - Deterministic ReAct State Machine
-import json
-import time
-<p>class AgentState:
-INIT = &ldquo;INIT&rdquo;
-THINKING = &ldquo;THINKING&rdquo;
-TOOL_DISPATCH = &ldquo;TOOL_DISPATCH&rdquo;
-OBSERVING = &ldquo;OBSERVING&rdquo;
-COMPLETED = &ldquo;COMPLETED&rdquo;</p>
-<p>class ReActAgent:
-def <strong>init</strong>(self, llm_client, context_mgr, tool_registry, security_gate, max_turns=25):
-self.llm = llm_client
-self.context = context_mgr
-self.tools = tool_registry
-self.security = security_gate
-self.max_turns = max_turns</p>
-<pre><code>def run_task(self, prompt: str):
-    self.context.add_message(&quot;user&quot;, prompt)
-    turns = 0
-
-    while turns &amp;lt; self.max_turns:
-        turns += 1
-        print(f&quot;\n\033[0;35m[Turn {turns}/{self.max_turns}] Thinking...\033[0m&quot;)
-        
-        response = self.llm.chat_completion(self.context.get_messages(), self.tools.get_schemas())
-        tool_calls = response.get(&quot;tool_calls&quot;)
-        
-        if not tool_calls:
-            print(f&quot;\n\033[1;32m[TinyAgent Delivery]\033[0m\n{response.get('content')}&quot;)
-            self.context.add_message(&quot;assistant&quot;, response.get(&quot;content&quot;))
-            return True
-
-        self.context.add_message(&quot;assistant&quot;, response.get(&quot;content&quot;, &quot;&quot;), tool_calls=tool_calls)
-
-        for call in tool_calls:
-            name, args = call[&quot;name&quot;], call[&quot;arguments&quot;]
-            call_id = call.get(&quot;id&quot;, f&quot;call_{int(time.time()*1000)}&quot;)
-
-            print(f&quot;\033[0;36m[Tool Request]\033[0m {name}({json.dumps(args)})&quot;)
-            approved, reason = self.security.audit(name, args)
-            
-            if not approved:
-                obs = f&quot;[Permission Denied by User] Reason: {reason}&quot;
-                print(f&quot;\033[0;31m[Rejected]\033[0m {obs}&quot;)
-            else:
-                obs = self.tools.dispatch(name, args)
-                print(f&quot;\033[0;32m[Observation]\033[0m {obs[:120]}...&quot; if len(obs) &amp;gt; 120 else f&quot;\033[0;32m[Observation]\033[0m {obs}&quot;)
-
-            self.context.add_message(&quot;tool&quot;, obs, tool_call_id=call_id)
-
-    print(&quot;\033[0;31m[Warning] Reached maximum iteration cap.\033[0m&quot;)
-    return False
-</code></pre>
-<p></code></pre></p>
-<h3>2. PTY Subprocess Sandbox (`pty_sandbox.py`)</h3>
-<pre><code class="language-python"># pty_sandbox.py - POSIX OpenPTY & Process Group Isolation
-import os
-import sys
-import pty
-import select
-import signal
-import subprocess
-import time
-<p>def run_sandboxed_command(cmd: str, timeout: int = 30, cwd: str = &ldquo;.&rdquo;) -&gt; str:
-if sys.platform == &ldquo;win32&rdquo;:
-try:
-res = subprocess.run(cmd, shell=True, cwd=cwd, capture_output=True, text=True, timeout=timeout)
-return (res.stdout + res.stderr).strip()
-except subprocess.TimeoutExpired:
-return f&quot;[Error] Command timed out after {timeout}s on Windows.&quot;</p>
-<pre><code>master, slave = pty.openpty()
-proc = subprocess.Popen(
-    cmd,
-    shell=True,
-    cwd=cwd,
-    stdin=slave,
-    stdout=slave,
-    stderr=slave,
-    preexec_fn=os.setsid, # Allocate separate process group
-    close_fds=True
-)
-os.close(slave)
-
-chunks = []
-start = time.time()
-
-while True:
-    r, _, _ = select.select([master], [], [], 0.1)
-    if master in r:
-        try:
-            data = os.read(master, 4096)
-            if not data:
-                break
-            chunks.append(data.decode(&quot;utf-8&quot;, errors=&quot;replace&quot;))
-        except OSError:
-            break
-
-    if proc.poll() is not None:
-        break
-
-    if time.time() - start &amp;gt; timeout:
-        try:
-            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        os.close(master)
-        return f&quot;[Error] Subprocess terminated: exceeded timeout of {timeout}s.&quot;
-
-os.close(master)
-proc.wait()
-return &quot;&quot;.join(chunks).strip()
-</code></pre>
-<p></code></pre></p>
-<hr>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-python" data-lang="python"><span style="display:flex;"><span><span style="color:#75715e"># agent_core.py - Deterministic ReAct State Machine</span>
+</span></span><span style="display:flex;"><span><span style="color:#f92672">import</span> json
+</span></span><span style="display:flex;"><span><span style="color:#f92672">import</span> time
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">class</span> <span style="color:#a6e22e">AgentState</span>:
+</span></span><span style="display:flex;"><span>    INIT <span style="color:#f92672">=</span> <span style="color:#e6db74">&#34;INIT&#34;</span>
+</span></span><span style="display:flex;"><span>    THINKING <span style="color:#f92672">=</span> <span style="color:#e6db74">&#34;THINKING&#34;</span>
+</span></span><span style="display:flex;"><span>    TOOL_DISPATCH <span style="color:#f92672">=</span> <span style="color:#e6db74">&#34;TOOL_DISPATCH&#34;</span>
+</span></span><span style="display:flex;"><span>    OBSERVING <span style="color:#f92672">=</span> <span style="color:#e6db74">&#34;OBSERVING&#34;</span>
+</span></span><span style="display:flex;"><span>    COMPLETED <span style="color:#f92672">=</span> <span style="color:#e6db74">&#34;COMPLETED&#34;</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">class</span> <span style="color:#a6e22e">ReActAgent</span>:
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">def</span> <span style="color:#a6e22e">__init__</span>(self, llm_client, context_mgr, tool_registry, security_gate, max_turns<span style="color:#f92672">=</span><span style="color:#ae81ff">25</span>):
+</span></span><span style="display:flex;"><span>        self<span style="color:#f92672">.</span>llm <span style="color:#f92672">=</span> llm_client
+</span></span><span style="display:flex;"><span>        self<span style="color:#f92672">.</span>context <span style="color:#f92672">=</span> context_mgr
+</span></span><span style="display:flex;"><span>        self<span style="color:#f92672">.</span>tools <span style="color:#f92672">=</span> tool_registry
+</span></span><span style="display:flex;"><span>        self<span style="color:#f92672">.</span>security <span style="color:#f92672">=</span> security_gate
+</span></span><span style="display:flex;"><span>        self<span style="color:#f92672">.</span>max_turns <span style="color:#f92672">=</span> max_turns
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">def</span> <span style="color:#a6e22e">run_task</span>(self, prompt: str):
+</span></span><span style="display:flex;"><span>        self<span style="color:#f92672">.</span>context<span style="color:#f92672">.</span>add_message(<span style="color:#e6db74">&#34;user&#34;</span>, prompt)
+</span></span><span style="display:flex;"><span>        turns <span style="color:#f92672">=</span> <span style="color:#ae81ff">0</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>        <span style="color:#66d9ef">while</span> turns <span style="color:#f92672">&lt;</span> self<span style="color:#f92672">.</span>max_turns:
+</span></span><span style="display:flex;"><span>            turns <span style="color:#f92672">+=</span> <span style="color:#ae81ff">1</span>
+</span></span><span style="display:flex;"><span>            print(<span style="color:#e6db74">f</span><span style="color:#e6db74">&#34;</span><span style="color:#ae81ff">\n\033</span><span style="color:#e6db74">[0;35m[Turn </span><span style="color:#e6db74">{</span>turns<span style="color:#e6db74">}</span><span style="color:#e6db74">/</span><span style="color:#e6db74">{</span>self<span style="color:#f92672">.</span>max_turns<span style="color:#e6db74">}</span><span style="color:#e6db74">] Thinking...</span><span style="color:#ae81ff">\033</span><span style="color:#e6db74">[0m&#34;</span>)
+</span></span><span style="display:flex;"><span>            
+</span></span><span style="display:flex;"><span>            response <span style="color:#f92672">=</span> self<span style="color:#f92672">.</span>llm<span style="color:#f92672">.</span>chat_completion(self<span style="color:#f92672">.</span>context<span style="color:#f92672">.</span>get_messages(), self<span style="color:#f92672">.</span>tools<span style="color:#f92672">.</span>get_schemas())
+</span></span><span style="display:flex;"><span>            tool_calls <span style="color:#f92672">=</span> response<span style="color:#f92672">.</span>get(<span style="color:#e6db74">&#34;tool_calls&#34;</span>)
+</span></span><span style="display:flex;"><span>            
+</span></span><span style="display:flex;"><span>            <span style="color:#66d9ef">if</span> <span style="color:#f92672">not</span> tool_calls:
+</span></span><span style="display:flex;"><span>                print(<span style="color:#e6db74">f</span><span style="color:#e6db74">&#34;</span><span style="color:#ae81ff">\n\033</span><span style="color:#e6db74">[1;32m[TinyAgent Delivery]</span><span style="color:#ae81ff">\033</span><span style="color:#e6db74">[0m</span><span style="color:#ae81ff">\n</span><span style="color:#e6db74">{</span>response<span style="color:#f92672">.</span>get(<span style="color:#e6db74">&#39;content&#39;</span>)<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>)
+</span></span><span style="display:flex;"><span>                self<span style="color:#f92672">.</span>context<span style="color:#f92672">.</span>add_message(<span style="color:#e6db74">&#34;assistant&#34;</span>, response<span style="color:#f92672">.</span>get(<span style="color:#e6db74">&#34;content&#34;</span>))
+</span></span><span style="display:flex;"><span>                <span style="color:#66d9ef">return</span> <span style="color:#66d9ef">True</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>            self<span style="color:#f92672">.</span>context<span style="color:#f92672">.</span>add_message(<span style="color:#e6db74">&#34;assistant&#34;</span>, response<span style="color:#f92672">.</span>get(<span style="color:#e6db74">&#34;content&#34;</span>, <span style="color:#e6db74">&#34;&#34;</span>), tool_calls<span style="color:#f92672">=</span>tool_calls)
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>            <span style="color:#66d9ef">for</span> call <span style="color:#f92672">in</span> tool_calls:
+</span></span><span style="display:flex;"><span>                name, args <span style="color:#f92672">=</span> call[<span style="color:#e6db74">&#34;name&#34;</span>], call[<span style="color:#e6db74">&#34;arguments&#34;</span>]
+</span></span><span style="display:flex;"><span>                call_id <span style="color:#f92672">=</span> call<span style="color:#f92672">.</span>get(<span style="color:#e6db74">&#34;id&#34;</span>, <span style="color:#e6db74">f</span><span style="color:#e6db74">&#34;call_</span><span style="color:#e6db74">{</span>int(time<span style="color:#f92672">.</span>time()<span style="color:#f92672">*</span><span style="color:#ae81ff">1000</span>)<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>)
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>                print(<span style="color:#e6db74">f</span><span style="color:#e6db74">&#34;</span><span style="color:#ae81ff">\033</span><span style="color:#e6db74">[0;36m[Tool Request]</span><span style="color:#ae81ff">\033</span><span style="color:#e6db74">[0m </span><span style="color:#e6db74">{</span>name<span style="color:#e6db74">}</span><span style="color:#e6db74">(</span><span style="color:#e6db74">{</span>json<span style="color:#f92672">.</span>dumps(args)<span style="color:#e6db74">}</span><span style="color:#e6db74">)&#34;</span>)
+</span></span><span style="display:flex;"><span>                approved, reason <span style="color:#f92672">=</span> self<span style="color:#f92672">.</span>security<span style="color:#f92672">.</span>audit(name, args)
+</span></span><span style="display:flex;"><span>                
+</span></span><span style="display:flex;"><span>                <span style="color:#66d9ef">if</span> <span style="color:#f92672">not</span> approved:
+</span></span><span style="display:flex;"><span>                    obs <span style="color:#f92672">=</span> <span style="color:#e6db74">f</span><span style="color:#e6db74">&#34;[Permission Denied by User] Reason: </span><span style="color:#e6db74">{</span>reason<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>                    print(<span style="color:#e6db74">f</span><span style="color:#e6db74">&#34;</span><span style="color:#ae81ff">\033</span><span style="color:#e6db74">[0;31m[Rejected]</span><span style="color:#ae81ff">\033</span><span style="color:#e6db74">[0m </span><span style="color:#e6db74">{</span>obs<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>)
+</span></span><span style="display:flex;"><span>                <span style="color:#66d9ef">else</span>:
+</span></span><span style="display:flex;"><span>                    obs <span style="color:#f92672">=</span> self<span style="color:#f92672">.</span>tools<span style="color:#f92672">.</span>dispatch(name, args)
+</span></span><span style="display:flex;"><span>                    print(<span style="color:#e6db74">f</span><span style="color:#e6db74">&#34;</span><span style="color:#ae81ff">\033</span><span style="color:#e6db74">[0;32m[Observation]</span><span style="color:#ae81ff">\033</span><span style="color:#e6db74">[0m </span><span style="color:#e6db74">{</span>obs[:<span style="color:#ae81ff">120</span>]<span style="color:#e6db74">}</span><span style="color:#e6db74">...&#34;</span> <span style="color:#66d9ef">if</span> len(obs) <span style="color:#f92672">&gt;</span> <span style="color:#ae81ff">120</span> <span style="color:#66d9ef">else</span> <span style="color:#e6db74">f</span><span style="color:#e6db74">&#34;</span><span style="color:#ae81ff">\033</span><span style="color:#e6db74">[0;32m[Observation]</span><span style="color:#ae81ff">\033</span><span style="color:#e6db74">[0m </span><span style="color:#e6db74">{</span>obs<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>)
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>                self<span style="color:#f92672">.</span>context<span style="color:#f92672">.</span>add_message(<span style="color:#e6db74">&#34;tool&#34;</span>, obs, tool_call_id<span style="color:#f92672">=</span>call_id)
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>        print(<span style="color:#e6db74">&#34;</span><span style="color:#ae81ff">\033</span><span style="color:#e6db74">[0;31m[Warning] Reached maximum iteration cap.</span><span style="color:#ae81ff">\033</span><span style="color:#e6db74">[0m&#34;</span>)
+</span></span><span style="display:flex;"><span>        <span style="color:#66d9ef">return</span> <span style="color:#66d9ef">False</span>
+</span></span></code></pre></div><h3>2. PTY Subprocess Sandbox (`pty_sandbox.py`)</h3>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-python" data-lang="python"><span style="display:flex;"><span><span style="color:#75715e"># pty_sandbox.py - POSIX OpenPTY &amp; Process Group Isolation</span>
+</span></span><span style="display:flex;"><span><span style="color:#f92672">import</span> os
+</span></span><span style="display:flex;"><span><span style="color:#f92672">import</span> sys
+</span></span><span style="display:flex;"><span><span style="color:#f92672">import</span> pty
+</span></span><span style="display:flex;"><span><span style="color:#f92672">import</span> select
+</span></span><span style="display:flex;"><span><span style="color:#f92672">import</span> signal
+</span></span><span style="display:flex;"><span><span style="color:#f92672">import</span> subprocess
+</span></span><span style="display:flex;"><span><span style="color:#f92672">import</span> time
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">def</span> <span style="color:#a6e22e">run_sandboxed_command</span>(cmd: str, timeout: int <span style="color:#f92672">=</span> <span style="color:#ae81ff">30</span>, cwd: str <span style="color:#f92672">=</span> <span style="color:#e6db74">&#34;.&#34;</span>) <span style="color:#f92672">-&gt;</span> str:
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">if</span> sys<span style="color:#f92672">.</span>platform <span style="color:#f92672">==</span> <span style="color:#e6db74">&#34;win32&#34;</span>:
+</span></span><span style="display:flex;"><span>        <span style="color:#66d9ef">try</span>:
+</span></span><span style="display:flex;"><span>            res <span style="color:#f92672">=</span> subprocess<span style="color:#f92672">.</span>run(cmd, shell<span style="color:#f92672">=</span><span style="color:#66d9ef">True</span>, cwd<span style="color:#f92672">=</span>cwd, capture_output<span style="color:#f92672">=</span><span style="color:#66d9ef">True</span>, text<span style="color:#f92672">=</span><span style="color:#66d9ef">True</span>, timeout<span style="color:#f92672">=</span>timeout)
+</span></span><span style="display:flex;"><span>            <span style="color:#66d9ef">return</span> (res<span style="color:#f92672">.</span>stdout <span style="color:#f92672">+</span> res<span style="color:#f92672">.</span>stderr)<span style="color:#f92672">.</span>strip()
+</span></span><span style="display:flex;"><span>        <span style="color:#66d9ef">except</span> subprocess<span style="color:#f92672">.</span>TimeoutExpired:
+</span></span><span style="display:flex;"><span>            <span style="color:#66d9ef">return</span> <span style="color:#e6db74">f</span><span style="color:#e6db74">&#34;[Error] Command timed out after </span><span style="color:#e6db74">{</span>timeout<span style="color:#e6db74">}</span><span style="color:#e6db74">s on Windows.&#34;</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>    master, slave <span style="color:#f92672">=</span> pty<span style="color:#f92672">.</span>openpty()
+</span></span><span style="display:flex;"><span>    proc <span style="color:#f92672">=</span> subprocess<span style="color:#f92672">.</span>Popen(
+</span></span><span style="display:flex;"><span>        cmd,
+</span></span><span style="display:flex;"><span>        shell<span style="color:#f92672">=</span><span style="color:#66d9ef">True</span>,
+</span></span><span style="display:flex;"><span>        cwd<span style="color:#f92672">=</span>cwd,
+</span></span><span style="display:flex;"><span>        stdin<span style="color:#f92672">=</span>slave,
+</span></span><span style="display:flex;"><span>        stdout<span style="color:#f92672">=</span>slave,
+</span></span><span style="display:flex;"><span>        stderr<span style="color:#f92672">=</span>slave,
+</span></span><span style="display:flex;"><span>        preexec_fn<span style="color:#f92672">=</span>os<span style="color:#f92672">.</span>setsid, <span style="color:#75715e"># Allocate separate process group</span>
+</span></span><span style="display:flex;"><span>        close_fds<span style="color:#f92672">=</span><span style="color:#66d9ef">True</span>
+</span></span><span style="display:flex;"><span>    )
+</span></span><span style="display:flex;"><span>    os<span style="color:#f92672">.</span>close(slave)
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>    chunks <span style="color:#f92672">=</span> []
+</span></span><span style="display:flex;"><span>    start <span style="color:#f92672">=</span> time<span style="color:#f92672">.</span>time()
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">while</span> <span style="color:#66d9ef">True</span>:
+</span></span><span style="display:flex;"><span>        r, _, _ <span style="color:#f92672">=</span> select<span style="color:#f92672">.</span>select([master], [], [], <span style="color:#ae81ff">0.1</span>)
+</span></span><span style="display:flex;"><span>        <span style="color:#66d9ef">if</span> master <span style="color:#f92672">in</span> r:
+</span></span><span style="display:flex;"><span>            <span style="color:#66d9ef">try</span>:
+</span></span><span style="display:flex;"><span>                data <span style="color:#f92672">=</span> os<span style="color:#f92672">.</span>read(master, <span style="color:#ae81ff">4096</span>)
+</span></span><span style="display:flex;"><span>                <span style="color:#66d9ef">if</span> <span style="color:#f92672">not</span> data:
+</span></span><span style="display:flex;"><span>                    <span style="color:#66d9ef">break</span>
+</span></span><span style="display:flex;"><span>                chunks<span style="color:#f92672">.</span>append(data<span style="color:#f92672">.</span>decode(<span style="color:#e6db74">&#34;utf-8&#34;</span>, errors<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;replace&#34;</span>))
+</span></span><span style="display:flex;"><span>            <span style="color:#66d9ef">except</span> <span style="color:#a6e22e">OSError</span>:
+</span></span><span style="display:flex;"><span>                <span style="color:#66d9ef">break</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>        <span style="color:#66d9ef">if</span> proc<span style="color:#f92672">.</span>poll() <span style="color:#f92672">is</span> <span style="color:#f92672">not</span> <span style="color:#66d9ef">None</span>:
+</span></span><span style="display:flex;"><span>            <span style="color:#66d9ef">break</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>        <span style="color:#66d9ef">if</span> time<span style="color:#f92672">.</span>time() <span style="color:#f92672">-</span> start <span style="color:#f92672">&gt;</span> timeout:
+</span></span><span style="display:flex;"><span>            <span style="color:#66d9ef">try</span>:
+</span></span><span style="display:flex;"><span>                os<span style="color:#f92672">.</span>killpg(os<span style="color:#f92672">.</span>getpgid(proc<span style="color:#f92672">.</span>pid), signal<span style="color:#f92672">.</span>SIGKILL)
+</span></span><span style="display:flex;"><span>            <span style="color:#66d9ef">except</span> <span style="color:#a6e22e">ProcessLookupError</span>:
+</span></span><span style="display:flex;"><span>                <span style="color:#66d9ef">pass</span>
+</span></span><span style="display:flex;"><span>            os<span style="color:#f92672">.</span>close(master)
+</span></span><span style="display:flex;"><span>            <span style="color:#66d9ef">return</span> <span style="color:#e6db74">f</span><span style="color:#e6db74">&#34;[Error] Subprocess terminated: exceeded timeout of </span><span style="color:#e6db74">{</span>timeout<span style="color:#e6db74">}</span><span style="color:#e6db74">s.&#34;</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>    os<span style="color:#f92672">.</span>close(master)
+</span></span><span style="display:flex;"><span>    proc<span style="color:#f92672">.</span>wait()
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">return</span> <span style="color:#e6db74">&#34;&#34;</span><span style="color:#f92672">.</span>join(chunks)<span style="color:#f92672">.</span>strip()
+</span></span></code></pre></div><hr>
 <h2>7. Automated Cross-Platform Deployment (Windows 11 / Ubuntu 26.04 / macOS 27)</h2>
 <p>To enable immediate testing, we provide cross-platform bootstrap scripts that set up the environment, run unit tests, and register the CLI alias in under 30 seconds.</p>
 <p><img src="/post-images/building-ai-agent-cli-from-scratch/10-shot-three-os-script-execution.webp" alt="Real Screenshot: Cross-Platform Bootstrap Matrix Across Win11, Ubuntu 26.04, and macOS 27" width="1200" height="720" loading="lazy" decoding="async"></p>
@@ -468,21 +469,24 @@ return &quot;&quot;.join(chunks).strip()
 <p><img src="/post-images/building-ai-agent-cli-from-scratch/12-svg-declarative-agent-config-flow.svg" alt="Declarative Pipeline: AI Agent CLI Declarative Provisioning SOP" loading="lazy" decoding="async"></p>
 <h3>Quick Launch Commands</h3>
 <h4>macOS 27 (Apple Silicon / Intel Zsh)</h4>
-<pre><code class="language-zsh"># Interactive
-zsh scripts/agent_cli_toolkit_macos27.zsh
-<h1 id="declarative">Declarative</h1>
-<p>zsh scripts/agent_cli_toolkit_macos27.zsh &ndash;declarative &ndash;yes</code></pre></p>
-<h4>Ubuntu 26.04 LTS (Bash)</h4>
-<pre><code class="language-bash"># Interactive
-bash scripts/agent_cli_toolkit_ubuntu2604.sh
-<h1 id="declarative-1">Declarative</h1>
-<p>bash scripts/agent_cli_toolkit_ubuntu2604.sh &ndash;declarative &ndash;yes</code></pre></p>
-<h4>Windows 11 (PowerShell 7)</h4>
-<pre><code class="language-powershell"># Interactive
-pwsh .\scripts\agent_cli_toolkit_windows11.ps1
-<h1 id="declarative-2">Declarative</h1>
-<p>pwsh .\scripts\agent_cli_toolkit_windows11.ps1 -Declarative -Yes</code></pre></p>
-<hr>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-zsh" data-lang="zsh"><span style="display:flex;"><span><span style="color:#75715e"># Interactive</span>
+</span></span><span style="display:flex;"><span>zsh scripts/agent_cli_toolkit_macos27.zsh
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># Declarative</span>
+</span></span><span style="display:flex;"><span>zsh scripts/agent_cli_toolkit_macos27.zsh --declarative --yes
+</span></span></code></pre></div><h4>Ubuntu 26.04 LTS (Bash)</h4>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># Interactive</span>
+</span></span><span style="display:flex;"><span>bash scripts/agent_cli_toolkit_ubuntu2604.sh
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># Declarative</span>
+</span></span><span style="display:flex;"><span>bash scripts/agent_cli_toolkit_ubuntu2604.sh --declarative --yes
+</span></span></code></pre></div><h4>Windows 11 (PowerShell 7)</h4>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-powershell" data-lang="powershell"><span style="display:flex;"><span><span style="color:#75715e"># Interactive</span>
+</span></span><span style="display:flex;"><span>pwsh .\scripts\agent_cli_toolkit_windows11.ps1
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># Declarative</span>
+</span></span><span style="display:flex;"><span>pwsh .\scripts\agent_cli_toolkit_windows11.ps1 -Declarative -Yes
+</span></span></code></pre></div><hr>
 <h2>8. Verification & Test Matrix: 8/8 Test Suite Passing</h2>
 <p>We validate the entire runtime using an 8-case test suite covering all critical operational dimensions:</p>
 <p><img src="/post-images/building-ai-agent-cli-from-scratch/11-shot-agent-benchmark-and-tests.webp" alt="Real Screenshot: Automated Test Suite Passing 8/8 Test Cases" width="1200" height="680" loading="lazy" decoding="async"></p>
@@ -546,8 +550,8 @@ pwsh .\scripts\agent_cli_toolkit_windows11.ps1
     </tr>
   </tbody>
 </table>
-<pre><code class="language-bash">python3 -m unittest test_tiny_agent_cli.py -v</code></pre>
-<hr>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>python3 -m unittest test_tiny_agent_cli.py -v
+</span></span></code></pre></div><hr>
 <h2>9. Engineering Q&A: Key Architectural Decisions</h2>
 <h3>Q1: Why not rely on established agent frameworks like LangChain or AutoGen?</h3>
 <p><strong>A:</strong> Heavy frameworks are suitable for rapid prototyping but introduce excessive operational friction in terminal CLIs. They bundle hundreds of transitive dependencies, obscure low-level pipe signals, and lack fine-grained control over PTY allocation and context truncation. A 500-line native implementation starts in under 30ms and has zero external dependencies.</p>

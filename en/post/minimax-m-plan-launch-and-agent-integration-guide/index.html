@@ -386,202 +386,199 @@
 <li><strong>Dual-Mode Execution</strong>: Supports both guided interactive prompts and headless declarative execution (<code>--headless</code> / <code>-NonInteractive</code>) for autonomous agents.</li>
 </ul>
 <h3>Windows 11 PowerShell 7+ Automation Script</h3>
-<pre><code class="language-powershell">&lt;#
-  Windows 11 Native M Plan Configuration &amp; Health Probe
-  Run: pwsh -ExecutionPolicy Bypass .\minimax_mplan_toolkit_windows11.ps1
-#&gt;
-param (
-    [switch]$NonInteractive,
-    [string]$ApiKey = $env:MINIMAX_API_KEY,
-    [ValidateSet("intl", "cn")]
-    [string]$Region = $(if ($env:MINIMAX_REGION) { $env:MINIMAX_REGION } else { "intl" }),
-    [string]$Model = "MiniMax-M3.1-Flash"
-)
-
-$ErrorActionPreference = "Stop"
-Write-Host "=== MiniMax M Plan Toolkit (Windows 11) ===" -ForegroundColor Cyan
-
-if (-not $NonInteractive -and [string]::IsNullOrWhiteSpace($ApiKey)) {
-    $r = Read-Host "Select Region: 1) International (api.minimax.io) 2) China (api.minimax.cn) [Default: 1]"
-    $Region = if ($r -eq "2") { "cn" } else { "intl" }
-    $ApiKey = Read-Host "Enter your MiniMax M Plan Subscription Key (sk-mplan-...)"
-}
-
-$BaseHost = if ($Region -eq "cn") { "https://api.minimax.cn" } else { "https://api.minimax.io" }
-$AnthropicBaseUrl = "$BaseHost/anthropic"
-
-# Unset conflicting variable
-Remove-Item Env:\ANTHROPIC_API_KEY -ErrorAction SilentlyContinue
-[Environment]::SetEnvironmentVariable("ANTHROPIC_API_KEY", $null, "User")
-
-# Set clean persistent environment
-[Environment]::SetEnvironmentVariable("ANTHROPIC_BASE_URL", $AnthropicBaseUrl, "User")
-[Environment]::SetEnvironmentVariable("ANTHROPIC_AUTH_TOKEN", $ApiKey, "User")
-[Environment]::SetEnvironmentVariable("ANTHROPIC_MODEL", $Model, "User")
-
-# Inject into Claude settings
-$ClaudeDir = Join-Path $HOME ".claude"
-if (-not (Test-Path $ClaudeDir)) { New-Item -ItemType Directory -Path $ClaudeDir -Force | Out-Null }
-$SettingsFile = Join-Path $ClaudeDir "settings.json"
-$cfg = @{ env = @{ ANTHROPIC_BASE_URL = $AnthropicBaseUrl; ANTHROPIC_AUTH_TOKEN = $ApiKey; ANTHROPIC_MODEL = $Model } }
-$cfg | ConvertTo-Json -Depth 5 | Set-Content -Path $SettingsFile -Encoding UTF8
-
-# Diagnostic Probe
-$sw = [System.Diagnostics.Stopwatch]::StartNew()
-$payload = @{ model = $Model; max_tokens = 30; messages = @(@{ role = "user"; content = "Ping" }) } | ConvertTo-Json
-$headers = @{ "Authorization" = "Bearer $ApiKey"; "x-api-key" = $ApiKey; "anthropic-version" = "2023-06-01"; "Content-Type" = "application/json" }
-$res = Invoke-RestMethod -Uri "$AnthropicBaseUrl/v1/messages" -Method Post -Headers $headers -Body $payload
-$sw.Stop()
-
-Write-Host "[PASS] Handshake OK! TTFT latency: $($sw.ElapsedMilliseconds) ms" -ForegroundColor Green
-Write-Host "Setup complete. Launch your terminal and run 'claude' directly!" -ForegroundColor Yellow
-</code></pre>
-<h3>Ubuntu 26.04 LTS Bash Automation Script</h3>
-<pre><code class="language-bash">#!/usr/bin/env bash
-# Ubuntu 26.04 LTS Zero-Dependency M Plan Setup and Probe
-set -euo pipefail
-
-INTERACTIVE=true
-API_KEY="${MINIMAX_API_KEY:-}"
-REGION="${MINIMAX_REGION:-intl}"
-MODEL="MiniMax-M3.1-Flash"
-
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --headless|--non-interactive) INTERACTIVE=false; shift ;;
-    --api-key) API_KEY="$2"; shift 2 ;;
-    --region) REGION="$2"; shift 2 ;;
-    *) shift ;;
-  esac
-done
-
-if [[ "$INTERACTIVE" == true &amp;&amp; -z "$API_KEY" ]]; then
-  read -r -p "Select Region [1: International / 2: Domestic CN] (Default: 1): " reg_ch
-  [[ "$reg_ch" == "2" ]] &amp;&amp; REGION="cn" || REGION="intl"
-  read -r -p "Enter MiniMax M Plan Subscription Key: " API_KEY
-fi
-
-BASE_HOST="https://api.minimax.io"
-[[ "$REGION" == "cn" ]] &amp;&amp; BASE_HOST="https://api.minimax.cn"
-ANTHROPIC_BASE_URL="${BASE_HOST}/anthropic"
-
-# Clean existing profile
-unset ANTHROPIC_API_KEY || true
-BASHRC="$HOME/.bashrc"
-if [[ -f "$BASHRC" ]]; then
-  grep -v "export ANTHROPIC_BASE_URL=" "$BASHRC" | \
-  grep -v "export ANTHROPIC_AUTH_TOKEN=" | \
-  grep -v "export ANTHROPIC_MODEL=" | \
-  grep -v "export ANTHROPIC_API_KEY=" &gt; "${BASHRC}.tmp" || true
-  mv "${BASHRC}.tmp" "$BASHRC"
-fi
-
-cat &lt;&lt;EOF &gt;&gt; "$BASHRC"
-export ANTHROPIC_BASE_URL="${ANTHROPIC_BASE_URL}"
-export ANTHROPIC_AUTH_TOKEN="${API_KEY}"
-export ANTHROPIC_MODEL="${MODEL}"
-EOF
-
-# Update ~/.claude/settings.json
-mkdir -p "$HOME/.claude"
-python3 - &lt;&lt;PY
-import json, os
-p = os.path.expanduser("~/.claude/settings.json")
-d = json.load(open(p)) if os.path.exists(p) else {}
-d.setdefault("env", {})
-d["env"]["ANTHROPIC_BASE_URL"] = "${ANTHROPIC_BASE_URL}"
-d["env"]["ANTHROPIC_AUTH_TOKEN"] = "${API_KEY}"
-d["env"]["ANTHROPIC_MODEL"] = "${MODEL}"
-with open(p, "w") as f: json.dump(d, f, indent=2)
-PY
-chmod 600 "$HOME/.claude/settings.json"
-
-# End-to-end verification
-STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST "${ANTHROPIC_BASE_URL}/v1/messages" \
-  -H "Authorization: Bearer ${API_KEY}" \
-  -H "x-api-key: ${API_KEY}" \
-  -H "anthropic-version: 2023-06-01" \
-  -H "Content-Type: application/json" \
-  -d "{\"model\":\"${MODEL}\",\"max_tokens\":20,\"messages\":[{\"role\":\"user\",\"content\":\"Ping\"}]}")
-
-if [[ "$STATUS" == "200" ]]; then
-  echo -e "\033[1;32m[PASS] Ubuntu 26.04 environment initialized (HTTP 200). Run 'claude' directly!\033[0m"
-else
-  echo -e "\033[1;31m[FAIL] Gateway probe returned HTTP ${STATUS}\033[0m" &gt;&amp;2; exit 1
-fi
-</code></pre>
-<h3>macOS 26 Zsh Automation Script</h3>
-<pre><code class="language-zsh">#!/usr/bin/env zsh
-# macOS 26 Native Zero-Dependency M Plan Setup and Probe
-set -euo pipefail
-
-INTERACTIVE=true
-API_KEY="${MINIMAX_API_KEY:-}"
-REGION="${MINIMAX_REGION:-intl}"
-MODEL="MiniMax-M3.1-Flash"
-
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --headless|--non-interactive) INTERACTIVE=false; shift ;;
-    --api-key) API_KEY="$2"; shift 2 ;;
-    --region) REGION="$2"; shift 2 ;;
-    *) shift ;;
-  esac
-done
-
-if [[ "$INTERACTIVE" == true &amp;&amp; -z "$API_KEY" ]]; then
-  read -r "reg_ch?Select Region [1: International / 2: Domestic CN] (Default: 1): "
-  [[ "$reg_ch" == "2" ]] &amp;&amp; REGION="cn" || REGION="intl"
-  read -r "API_KEY?Enter MiniMax M Plan Subscription Key: "
-fi
-
-BASE_HOST="https://api.minimax.io"
-[[ "$REGION" == "cn" ]] &amp;&amp; BASE_HOST="https://api.minimax.cn"
-ANTHROPIC_BASE_URL="${BASE_HOST}/anthropic"
-
-unset ANTHROPIC_API_KEY || true
-ZSHRC="$HOME/.zshrc"
-if [[ -f "$ZSHRC" ]]; then
-  grep -v "export ANTHROPIC_BASE_URL=" "$ZSHRC" | \
-  grep -v "export ANTHROPIC_AUTH_TOKEN=" | \
-  grep -v "export ANTHROPIC_MODEL=" | \
-  grep -v "export ANTHROPIC_API_KEY=" &gt; "${ZSHRC}.tmp" || true
-  mv "${ZSHRC}.tmp" "$ZSHRC"
-fi
-
-cat &lt;&lt;EOF &gt;&gt; "$ZSHRC"
-export ANTHROPIC_BASE_URL="${ANTHROPIC_BASE_URL}"
-export ANTHROPIC_AUTH_TOKEN="${API_KEY}"
-export ANTHROPIC_MODEL="${MODEL}"
-EOF
-
-mkdir -p "$HOME/.claude"
-python3 - &lt;&lt;PY
-import json, os
-p = os.path.expanduser("~/.claude/settings.json")
-d = json.load(open(p)) if os.path.exists(p) else {}
-d.setdefault("env", {})
-d["env"]["ANTHROPIC_BASE_URL"] = "${ANTHROPIC_BASE_URL}"
-d["env"]["ANTHROPIC_AUTH_TOKEN"] = "${API_KEY}"
-d["env"]["ANTHROPIC_MODEL"] = "${MODEL}"
-with open(p, "w") as f: json.dump(d, f, indent=2)
-PY
-chmod 600 "$HOME/.claude/settings.json"
-
-STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST "${ANTHROPIC_BASE_URL}/v1/messages" \
-  -H "Authorization: Bearer ${API_KEY}" \
-  -H "x-api-key: ${API_KEY}" \
-  -H "anthropic-version: 2023-06-01" \
-  -H "Content-Type: application/json" \
-  -d "{\"model\":\"${MODEL}\",\"max_tokens\":20,\"messages\":[{\"role\":\"user\",\"content\":\"Ping\"}]}")
-
-if [[ "$STATUS" == "200" ]]; then
-  echo -e "\033[1;32m[PASS] macOS 26 verified (HTTP 200). Run 'claude' in terminal to begin coding!\033[0m"
-else
-  echo -e "\033[1;31m[FAIL] Gateway probe returned HTTP ${STATUS}\033[0m" &gt;&amp;2; exit 1
-fi
-</code></pre>
-<h3>Downloads &amp; Verification Manifest</h3>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-powershell" data-lang="powershell"><span style="display:flex;"><span><span style="color:#75715e">&lt;#
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e">  Windows 11 Native M Plan Configuration &amp; Health Probe
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e">  Run: pwsh -ExecutionPolicy Bypass .\minimax_mplan_toolkit_windows11.ps1
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e">#&gt;</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">param</span> (
+</span></span><span style="display:flex;"><span>    [<span style="color:#66d9ef">switch</span>]$NonInteractive,
+</span></span><span style="display:flex;"><span>    [<span style="color:#66d9ef">string</span>]$ApiKey = $env:MINIMAX_API_KEY,
+</span></span><span style="display:flex;"><span>    [ValidateSet(<span style="color:#e6db74">&#34;intl&#34;</span>, <span style="color:#e6db74">&#34;cn&#34;</span>)]
+</span></span><span style="display:flex;"><span>    [<span style="color:#66d9ef">string</span>]$Region = $(<span style="color:#66d9ef">if</span> ($env:MINIMAX_REGION) { $env:MINIMAX_REGION } <span style="color:#66d9ef">else</span> { <span style="color:#e6db74">&#34;intl&#34;</span> }),
+</span></span><span style="display:flex;"><span>    [<span style="color:#66d9ef">string</span>]$Model = <span style="color:#e6db74">&#34;MiniMax-M3.1-Flash&#34;</span>
+</span></span><span style="display:flex;"><span>)
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>$ErrorActionPreference = <span style="color:#e6db74">&#34;Stop&#34;</span>
+</span></span><span style="display:flex;"><span>Write-Host <span style="color:#e6db74">&#34;=== MiniMax M Plan Toolkit (Windows 11) ===&#34;</span> -ForegroundColor Cyan
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> (<span style="color:#f92672">-not</span> $NonInteractive <span style="color:#f92672">-and</span> [<span style="color:#66d9ef">string</span>]::IsNullOrWhiteSpace($ApiKey)) {
+</span></span><span style="display:flex;"><span>    $r = Read-Host <span style="color:#e6db74">&#34;Select Region: 1) International (api.minimax.io) 2) China (api.minimax.cn) [Default: 1]&#34;</span>
+</span></span><span style="display:flex;"><span>    $Region = <span style="color:#66d9ef">if</span> ($r <span style="color:#f92672">-eq</span> <span style="color:#e6db74">&#34;2&#34;</span>) { <span style="color:#e6db74">&#34;cn&#34;</span> } <span style="color:#66d9ef">else</span> { <span style="color:#e6db74">&#34;intl&#34;</span> }
+</span></span><span style="display:flex;"><span>    $ApiKey = Read-Host <span style="color:#e6db74">&#34;Enter your MiniMax M Plan Subscription Key (sk-mplan-...)&#34;</span>
+</span></span><span style="display:flex;"><span>}
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>$BaseHost = <span style="color:#66d9ef">if</span> ($Region <span style="color:#f92672">-eq</span> <span style="color:#e6db74">&#34;cn&#34;</span>) { <span style="color:#e6db74">&#34;https://api.minimax.cn&#34;</span> } <span style="color:#66d9ef">else</span> { <span style="color:#e6db74">&#34;https://api.minimax.io&#34;</span> }
+</span></span><span style="display:flex;"><span>$AnthropicBaseUrl = <span style="color:#e6db74">&#34;</span>$BaseHost<span style="color:#e6db74">/anthropic&#34;</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># Unset conflicting variable</span>
+</span></span><span style="display:flex;"><span>Remove-Item Env<span style="color:#960050;background-color:#1e0010">:</span>\ANTHROPIC_API_KEY -ErrorAction SilentlyContinue
+</span></span><span style="display:flex;"><span>[<span style="color:#66d9ef">Environment</span>]::SetEnvironmentVariable(<span style="color:#e6db74">&#34;ANTHROPIC_API_KEY&#34;</span>, $null, <span style="color:#e6db74">&#34;User&#34;</span>)
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># Set clean persistent environment</span>
+</span></span><span style="display:flex;"><span>[<span style="color:#66d9ef">Environment</span>]::SetEnvironmentVariable(<span style="color:#e6db74">&#34;ANTHROPIC_BASE_URL&#34;</span>, $AnthropicBaseUrl, <span style="color:#e6db74">&#34;User&#34;</span>)
+</span></span><span style="display:flex;"><span>[<span style="color:#66d9ef">Environment</span>]::SetEnvironmentVariable(<span style="color:#e6db74">&#34;ANTHROPIC_AUTH_TOKEN&#34;</span>, $ApiKey, <span style="color:#e6db74">&#34;User&#34;</span>)
+</span></span><span style="display:flex;"><span>[<span style="color:#66d9ef">Environment</span>]::SetEnvironmentVariable(<span style="color:#e6db74">&#34;ANTHROPIC_MODEL&#34;</span>, $Model, <span style="color:#e6db74">&#34;User&#34;</span>)
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># Inject into Claude settings</span>
+</span></span><span style="display:flex;"><span>$ClaudeDir = Join-Path $HOME <span style="color:#e6db74">&#34;.claude&#34;</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> (<span style="color:#f92672">-not</span> (Test-Path $ClaudeDir)) { New-Item -ItemType Directory -Path $ClaudeDir -Force | Out-Null }
+</span></span><span style="display:flex;"><span>$SettingsFile = Join-Path $ClaudeDir <span style="color:#e6db74">&#34;settings.json&#34;</span>
+</span></span><span style="display:flex;"><span>$cfg = @{ env = @{ ANTHROPIC_BASE_URL = $AnthropicBaseUrl; ANTHROPIC_AUTH_TOKEN = $ApiKey; ANTHROPIC_MODEL = $Model } }
+</span></span><span style="display:flex;"><span>$cfg | ConvertTo-Json -Depth <span style="color:#ae81ff">5</span> | Set-Content -Path $SettingsFile -Encoding UTF8
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># Diagnostic Probe</span>
+</span></span><span style="display:flex;"><span>$sw = [<span style="color:#66d9ef">System.Diagnostics.Stopwatch</span>]::StartNew()
+</span></span><span style="display:flex;"><span>$payload = @{ model = $Model; max_tokens = <span style="color:#ae81ff">30</span>; messages = @(@{ role = <span style="color:#e6db74">&#34;user&#34;</span>; content = <span style="color:#e6db74">&#34;Ping&#34;</span> }) } | ConvertTo-Json
+</span></span><span style="display:flex;"><span>$headers = @{ <span style="color:#e6db74">&#34;Authorization&#34;</span> = <span style="color:#e6db74">&#34;Bearer </span>$ApiKey<span style="color:#e6db74">&#34;</span>; <span style="color:#e6db74">&#34;x-api-key&#34;</span> = $ApiKey; <span style="color:#e6db74">&#34;anthropic-version&#34;</span> = <span style="color:#e6db74">&#34;2023-06-01&#34;</span>; <span style="color:#e6db74">&#34;Content-Type&#34;</span> = <span style="color:#e6db74">&#34;application/json&#34;</span> }
+</span></span><span style="display:flex;"><span>$res = Invoke-RestMethod -Uri <span style="color:#e6db74">&#34;</span>$AnthropicBaseUrl<span style="color:#e6db74">/v1/messages&#34;</span> -Method Post -Headers $headers -Body $payload
+</span></span><span style="display:flex;"><span>$sw.Stop()
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>Write-Host <span style="color:#e6db74">&#34;[PASS] Handshake OK! TTFT latency: </span>$($sw.ElapsedMilliseconds)<span style="color:#e6db74"> ms&#34;</span> -ForegroundColor Green
+</span></span><span style="display:flex;"><span>Write-Host <span style="color:#e6db74">&#34;Setup complete. Launch your terminal and run &#39;claude&#39; directly!&#34;</span> -ForegroundColor Yellow
+</span></span></code></pre></div><h3>Ubuntu 26.04 LTS Bash Automation Script</h3>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e">#!/usr/bin/env bash
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"># Ubuntu 26.04 LTS Zero-Dependency M Plan Setup and Probe</span>
+</span></span><span style="display:flex;"><span>set -euo pipefail
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>INTERACTIVE<span style="color:#f92672">=</span>true
+</span></span><span style="display:flex;"><span>API_KEY<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>MINIMAX_API_KEY<span style="color:#66d9ef">:-</span><span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>REGION<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>MINIMAX_REGION<span style="color:#66d9ef">:-</span>intl<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>MODEL<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;MiniMax-M3.1-Flash&#34;</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">while</span> <span style="color:#f92672">[[</span> $# -gt <span style="color:#ae81ff">0</span> <span style="color:#f92672">]]</span>; <span style="color:#66d9ef">do</span>
+</span></span><span style="display:flex;"><span>  <span style="color:#66d9ef">case</span> <span style="color:#e6db74">&#34;</span>$1<span style="color:#e6db74">&#34;</span> in
+</span></span><span style="display:flex;"><span>    --headless|--non-interactive<span style="color:#f92672">)</span> INTERACTIVE<span style="color:#f92672">=</span>false; shift ;;
+</span></span><span style="display:flex;"><span>    --api-key<span style="color:#f92672">)</span> API_KEY<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span>$2<span style="color:#e6db74">&#34;</span>; shift <span style="color:#ae81ff">2</span> ;;
+</span></span><span style="display:flex;"><span>    --region<span style="color:#f92672">)</span> REGION<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span>$2<span style="color:#e6db74">&#34;</span>; shift <span style="color:#ae81ff">2</span> ;;
+</span></span><span style="display:flex;"><span>    *<span style="color:#f92672">)</span> shift ;;
+</span></span><span style="display:flex;"><span>  <span style="color:#66d9ef">esac</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">done</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> <span style="color:#f92672">[[</span> <span style="color:#e6db74">&#34;</span>$INTERACTIVE<span style="color:#e6db74">&#34;</span> <span style="color:#f92672">==</span> true <span style="color:#f92672">&amp;&amp;</span> -z <span style="color:#e6db74">&#34;</span>$API_KEY<span style="color:#e6db74">&#34;</span> <span style="color:#f92672">]]</span>; <span style="color:#66d9ef">then</span>
+</span></span><span style="display:flex;"><span>  read -r -p <span style="color:#e6db74">&#34;Select Region [1: International / 2: Domestic CN] (Default: 1): &#34;</span> reg_ch
+</span></span><span style="display:flex;"><span>  <span style="color:#f92672">[[</span> <span style="color:#e6db74">&#34;</span>$reg_ch<span style="color:#e6db74">&#34;</span> <span style="color:#f92672">==</span> <span style="color:#e6db74">&#34;2&#34;</span> <span style="color:#f92672">]]</span> <span style="color:#f92672">&amp;&amp;</span> REGION<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;cn&#34;</span> <span style="color:#f92672">||</span> REGION<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;intl&#34;</span>
+</span></span><span style="display:flex;"><span>  read -r -p <span style="color:#e6db74">&#34;Enter MiniMax M Plan Subscription Key: &#34;</span> API_KEY
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">fi</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>BASE_HOST<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;https://api.minimax.io&#34;</span>
+</span></span><span style="display:flex;"><span><span style="color:#f92672">[[</span> <span style="color:#e6db74">&#34;</span>$REGION<span style="color:#e6db74">&#34;</span> <span style="color:#f92672">==</span> <span style="color:#e6db74">&#34;cn&#34;</span> <span style="color:#f92672">]]</span> <span style="color:#f92672">&amp;&amp;</span> BASE_HOST<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;https://api.minimax.cn&#34;</span>
+</span></span><span style="display:flex;"><span>ANTHROPIC_BASE_URL<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>BASE_HOST<span style="color:#e6db74">}</span><span style="color:#e6db74">/anthropic&#34;</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># Clean existing profile</span>
+</span></span><span style="display:flex;"><span>unset ANTHROPIC_API_KEY <span style="color:#f92672">||</span> true
+</span></span><span style="display:flex;"><span>BASHRC<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span>$HOME<span style="color:#e6db74">/.bashrc&#34;</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> <span style="color:#f92672">[[</span> -f <span style="color:#e6db74">&#34;</span>$BASHRC<span style="color:#e6db74">&#34;</span> <span style="color:#f92672">]]</span>; <span style="color:#66d9ef">then</span>
+</span></span><span style="display:flex;"><span>  grep -v <span style="color:#e6db74">&#34;export ANTHROPIC_BASE_URL=&#34;</span> <span style="color:#e6db74">&#34;</span>$BASHRC<span style="color:#e6db74">&#34;</span> | <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span>  grep -v <span style="color:#e6db74">&#34;export ANTHROPIC_AUTH_TOKEN=&#34;</span> | <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span>  grep -v <span style="color:#e6db74">&#34;export ANTHROPIC_MODEL=&#34;</span> | <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span>  grep -v <span style="color:#e6db74">&#34;export ANTHROPIC_API_KEY=&#34;</span> &gt; <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>BASHRC<span style="color:#e6db74">}</span><span style="color:#e6db74">.tmp&#34;</span> <span style="color:#f92672">||</span> true
+</span></span><span style="display:flex;"><span>  mv <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>BASHRC<span style="color:#e6db74">}</span><span style="color:#e6db74">.tmp&#34;</span> <span style="color:#e6db74">&#34;</span>$BASHRC<span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">fi</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>cat <span style="color:#e6db74">&lt;&lt;EOF &gt;&gt; &#34;$BASHRC&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">export ANTHROPIC_BASE_URL=&#34;${ANTHROPIC_BASE_URL}&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">export ANTHROPIC_AUTH_TOKEN=&#34;${API_KEY}&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">export ANTHROPIC_MODEL=&#34;${MODEL}&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">EOF</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># Update ~/.claude/settings.json</span>
+</span></span><span style="display:flex;"><span>mkdir -p <span style="color:#e6db74">&#34;</span>$HOME<span style="color:#e6db74">/.claude&#34;</span>
+</span></span><span style="display:flex;"><span>python3 - <span style="color:#e6db74">&lt;&lt;PY
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">import json, os
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">p = os.path.expanduser(&#34;~/.claude/settings.json&#34;)
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">d = json.load(open(p)) if os.path.exists(p) else {}
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">d.setdefault(&#34;env&#34;, {})
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">d[&#34;env&#34;][&#34;ANTHROPIC_BASE_URL&#34;] = &#34;${ANTHROPIC_BASE_URL}&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">d[&#34;env&#34;][&#34;ANTHROPIC_AUTH_TOKEN&#34;] = &#34;${API_KEY}&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">d[&#34;env&#34;][&#34;ANTHROPIC_MODEL&#34;] = &#34;${MODEL}&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">with open(p, &#34;w&#34;) as f: json.dump(d, f, indent=2)
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">PY</span>
+</span></span><span style="display:flex;"><span>chmod <span style="color:#ae81ff">600</span> <span style="color:#e6db74">&#34;</span>$HOME<span style="color:#e6db74">/.claude/settings.json&#34;</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># End-to-end verification</span>
+</span></span><span style="display:flex;"><span>STATUS<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>curl -s -o /dev/null -w <span style="color:#e6db74">&#34;%{http_code}&#34;</span> -X POST <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>ANTHROPIC_BASE_URL<span style="color:#e6db74">}</span><span style="color:#e6db74">/v1/messages&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span>  -H <span style="color:#e6db74">&#34;Authorization: Bearer </span><span style="color:#e6db74">${</span>API_KEY<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span>  -H <span style="color:#e6db74">&#34;x-api-key: </span><span style="color:#e6db74">${</span>API_KEY<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span>  -H <span style="color:#e6db74">&#34;anthropic-version: 2023-06-01&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span>  -H <span style="color:#e6db74">&#34;Content-Type: application/json&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span>  -d <span style="color:#e6db74">&#34;{\&#34;model\&#34;:\&#34;</span><span style="color:#e6db74">${</span>MODEL<span style="color:#e6db74">}</span><span style="color:#e6db74">\&#34;,\&#34;max_tokens\&#34;:20,\&#34;messages\&#34;:[{\&#34;role\&#34;:\&#34;user\&#34;,\&#34;content\&#34;:\&#34;Ping\&#34;}]}&#34;</span><span style="color:#66d9ef">)</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> <span style="color:#f92672">[[</span> <span style="color:#e6db74">&#34;</span>$STATUS<span style="color:#e6db74">&#34;</span> <span style="color:#f92672">==</span> <span style="color:#e6db74">&#34;200&#34;</span> <span style="color:#f92672">]]</span>; <span style="color:#66d9ef">then</span>
+</span></span><span style="display:flex;"><span>  echo -e <span style="color:#e6db74">&#34;\033[1;32m[PASS] Ubuntu 26.04 environment initialized (HTTP 200). Run &#39;claude&#39; directly!\033[0m&#34;</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">else</span>
+</span></span><span style="display:flex;"><span>  echo -e <span style="color:#e6db74">&#34;\033[1;31m[FAIL] Gateway probe returned HTTP </span><span style="color:#e6db74">${</span>STATUS<span style="color:#e6db74">}</span><span style="color:#e6db74">\033[0m&#34;</span> &gt;&amp;2; exit <span style="color:#ae81ff">1</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">fi</span>
+</span></span></code></pre></div><h3>macOS 26 Zsh Automation Script</h3>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-zsh" data-lang="zsh"><span style="display:flex;"><span><span style="color:#75715e">#!/usr/bin/env zsh
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"># macOS 26 Native Zero-Dependency M Plan Setup and Probe</span>
+</span></span><span style="display:flex;"><span>set -euo pipefail
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>INTERACTIVE<span style="color:#f92672">=</span>true
+</span></span><span style="display:flex;"><span>API_KEY<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>MINIMAX_API_KEY<span style="color:#66d9ef">:-</span><span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>REGION<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>MINIMAX_REGION<span style="color:#66d9ef">:-</span>intl<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>MODEL<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;MiniMax-M3.1-Flash&#34;</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">while</span> <span style="color:#f92672">[[</span> $# -gt <span style="color:#ae81ff">0</span> <span style="color:#f92672">]]</span>; <span style="color:#66d9ef">do</span>
+</span></span><span style="display:flex;"><span>  <span style="color:#66d9ef">case</span> <span style="color:#e6db74">&#34;</span>$1<span style="color:#e6db74">&#34;</span> in
+</span></span><span style="display:flex;"><span>    --headless|--non-interactive<span style="color:#f92672">)</span> INTERACTIVE<span style="color:#f92672">=</span>false; shift ;;
+</span></span><span style="display:flex;"><span>    --api-key<span style="color:#f92672">)</span> API_KEY<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span>$2<span style="color:#e6db74">&#34;</span>; shift <span style="color:#ae81ff">2</span> ;;
+</span></span><span style="display:flex;"><span>    --region<span style="color:#f92672">)</span> REGION<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span>$2<span style="color:#e6db74">&#34;</span>; shift <span style="color:#ae81ff">2</span> ;;
+</span></span><span style="display:flex;"><span>    *<span style="color:#f92672">)</span> shift ;;
+</span></span><span style="display:flex;"><span>  <span style="color:#66d9ef">esac</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">done</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> <span style="color:#f92672">[[</span> <span style="color:#e6db74">&#34;</span>$INTERACTIVE<span style="color:#e6db74">&#34;</span> <span style="color:#f92672">==</span> true <span style="color:#f92672">&amp;&amp;</span> -z <span style="color:#e6db74">&#34;</span>$API_KEY<span style="color:#e6db74">&#34;</span> <span style="color:#f92672">]]</span>; <span style="color:#66d9ef">then</span>
+</span></span><span style="display:flex;"><span>  read -r <span style="color:#e6db74">&#34;reg_ch?Select Region [1: International / 2: Domestic CN] (Default: 1): &#34;</span>
+</span></span><span style="display:flex;"><span>  <span style="color:#f92672">[[</span> <span style="color:#e6db74">&#34;</span>$reg_ch<span style="color:#e6db74">&#34;</span> <span style="color:#f92672">==</span> <span style="color:#e6db74">&#34;2&#34;</span> <span style="color:#f92672">]]</span> <span style="color:#f92672">&amp;&amp;</span> REGION<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;cn&#34;</span> <span style="color:#f92672">||</span> REGION<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;intl&#34;</span>
+</span></span><span style="display:flex;"><span>  read -r <span style="color:#e6db74">&#34;API_KEY?Enter MiniMax M Plan Subscription Key: &#34;</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">fi</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>BASE_HOST<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;https://api.minimax.io&#34;</span>
+</span></span><span style="display:flex;"><span><span style="color:#f92672">[[</span> <span style="color:#e6db74">&#34;</span>$REGION<span style="color:#e6db74">&#34;</span> <span style="color:#f92672">==</span> <span style="color:#e6db74">&#34;cn&#34;</span> <span style="color:#f92672">]]</span> <span style="color:#f92672">&amp;&amp;</span> BASE_HOST<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;https://api.minimax.cn&#34;</span>
+</span></span><span style="display:flex;"><span>ANTHROPIC_BASE_URL<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>BASE_HOST<span style="color:#e6db74">}</span><span style="color:#e6db74">/anthropic&#34;</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>unset ANTHROPIC_API_KEY <span style="color:#f92672">||</span> true
+</span></span><span style="display:flex;"><span>ZSHRC<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span>$HOME<span style="color:#e6db74">/.zshrc&#34;</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> <span style="color:#f92672">[[</span> -f <span style="color:#e6db74">&#34;</span>$ZSHRC<span style="color:#e6db74">&#34;</span> <span style="color:#f92672">]]</span>; <span style="color:#66d9ef">then</span>
+</span></span><span style="display:flex;"><span>  grep -v <span style="color:#e6db74">&#34;export ANTHROPIC_BASE_URL=&#34;</span> <span style="color:#e6db74">&#34;</span>$ZSHRC<span style="color:#e6db74">&#34;</span> | <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span>  grep -v <span style="color:#e6db74">&#34;export ANTHROPIC_AUTH_TOKEN=&#34;</span> | <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span>  grep -v <span style="color:#e6db74">&#34;export ANTHROPIC_MODEL=&#34;</span> | <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span>  grep -v <span style="color:#e6db74">&#34;export ANTHROPIC_API_KEY=&#34;</span> &gt; <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>ZSHRC<span style="color:#e6db74">}</span><span style="color:#e6db74">.tmp&#34;</span> <span style="color:#f92672">||</span> true
+</span></span><span style="display:flex;"><span>  mv <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>ZSHRC<span style="color:#e6db74">}</span><span style="color:#e6db74">.tmp&#34;</span> <span style="color:#e6db74">&#34;</span>$ZSHRC<span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">fi</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>cat <span style="color:#e6db74">&lt;&lt;EOF &gt;&gt; &#34;$ZSHRC&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">export ANTHROPIC_BASE_URL=&#34;${ANTHROPIC_BASE_URL}&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">export ANTHROPIC_AUTH_TOKEN=&#34;${API_KEY}&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">export ANTHROPIC_MODEL=&#34;${MODEL}&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">EOF</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>mkdir -p <span style="color:#e6db74">&#34;</span>$HOME<span style="color:#e6db74">/.claude&#34;</span>
+</span></span><span style="display:flex;"><span>python3 - <span style="color:#e6db74">&lt;&lt;PY
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">import json, os
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">p = os.path.expanduser(&#34;~/.claude/settings.json&#34;)
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">d = json.load(open(p)) if os.path.exists(p) else {}
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">d.setdefault(&#34;env&#34;, {})
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">d[&#34;env&#34;][&#34;ANTHROPIC_BASE_URL&#34;] = &#34;${ANTHROPIC_BASE_URL}&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">d[&#34;env&#34;][&#34;ANTHROPIC_AUTH_TOKEN&#34;] = &#34;${API_KEY}&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">d[&#34;env&#34;][&#34;ANTHROPIC_MODEL&#34;] = &#34;${MODEL}&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">with open(p, &#34;w&#34;) as f: json.dump(d, f, indent=2)
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">PY</span>
+</span></span><span style="display:flex;"><span>chmod <span style="color:#ae81ff">600</span> <span style="color:#e6db74">&#34;</span>$HOME<span style="color:#e6db74">/.claude/settings.json&#34;</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>STATUS<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>curl -s -o /dev/null -w <span style="color:#e6db74">&#34;%{http_code}&#34;</span> -X POST <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>ANTHROPIC_BASE_URL<span style="color:#e6db74">}</span><span style="color:#e6db74">/v1/messages&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span>  -H <span style="color:#e6db74">&#34;Authorization: Bearer </span><span style="color:#e6db74">${</span>API_KEY<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span>  -H <span style="color:#e6db74">&#34;x-api-key: </span><span style="color:#e6db74">${</span>API_KEY<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span>  -H <span style="color:#e6db74">&#34;anthropic-version: 2023-06-01&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span>  -H <span style="color:#e6db74">&#34;Content-Type: application/json&#34;</span> <span style="color:#ae81ff">\
+</span></span></span><span style="display:flex;"><span>  -d <span style="color:#e6db74">&#34;{\&#34;model\&#34;:\&#34;</span><span style="color:#e6db74">${</span>MODEL<span style="color:#e6db74">}</span><span style="color:#e6db74">\&#34;,\&#34;max_tokens\&#34;:20,\&#34;messages\&#34;:[{\&#34;role\&#34;:\&#34;user\&#34;,\&#34;content\&#34;:\&#34;Ping\&#34;}]}&#34;</span><span style="color:#66d9ef">)</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> <span style="color:#f92672">[[</span> <span style="color:#e6db74">&#34;</span>$STATUS<span style="color:#e6db74">&#34;</span> <span style="color:#f92672">==</span> <span style="color:#e6db74">&#34;200&#34;</span> <span style="color:#f92672">]]</span>; <span style="color:#66d9ef">then</span>
+</span></span><span style="display:flex;"><span>  echo -e <span style="color:#e6db74">&#34;\033[1;32m[PASS] macOS 26 verified (HTTP 200). Run &#39;claude&#39; in terminal to begin coding!\033[0m&#34;</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">else</span>
+</span></span><span style="display:flex;"><span>  echo -e <span style="color:#e6db74">&#34;\033[1;31m[FAIL] Gateway probe returned HTTP </span><span style="color:#e6db74">${</span>STATUS<span style="color:#e6db74">}</span><span style="color:#e6db74">\033[0m&#34;</span> &gt;&amp;2; exit <span style="color:#ae81ff">1</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">fi</span>
+</span></span></code></pre></div><h3>Downloads &amp; Verification Manifest</h3>
 <ul>
 <li><strong>All-in-One Toolkit Archive</strong>: <a href="/post-images/minimax-m-plan-launch-and-agent-integration-guide/minimax-mplan-toolkit.zip">minimax-mplan-toolkit.zip</a></li>
 <li><strong>Windows 11 Script</strong>: <a href="/post-images/minimax-m-plan-launch-and-agent-integration-guide/minimax_mplan_toolkit_windows11.ps1">minimax_mplan_toolkit_windows11.ps1</a></li>

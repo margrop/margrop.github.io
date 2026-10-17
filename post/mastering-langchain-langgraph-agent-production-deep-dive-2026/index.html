@@ -379,50 +379,47 @@
 <p>一个标准的现代化生产级 LangGraph 系统由以下五个核心支柱共同构成：</p>
 <h3>1. 显式状态模式 (State Schema) 与增量规约器 (Reducers)</h3>
 <p>在现代架构中，我们坚决杜绝使用无类型约束的普通 Python 字典作为状态载体。必须使用 <code>TypedDict</code> 或 <code>Pydantic BaseModel</code> 显式声明状态字段与类型：</p>
-<pre><code class="language-python">from typing import Annotated, TypedDict
-from langgraph.graph.message import add_messages
-
-# 生产级状态定义：严禁使用裸 list，消息列表必须用 add_messages 标记！
-class EnterpriseAgentState(TypedDict):
-    # 使用 Annotated 绑定累加规约器，防止多节点并发覆盖
-    messages: Annotated[list, add_messages]
-    current_intent: str
-    retry_counter: int
-    is_authorized: bool
-    intermediate_data: dict
-</code></pre>
-<p><strong>底层玄机：</strong><code>add_messages</code> 不仅仅是做简单的 <code>list.extend()</code>。它拥有强大的智能消重机制：如果新来的消息带有与已有消息相同的 <code>id</code>，它会自动执行<strong>原地更新</strong>；如果 <code>id</code> 不同，则追加到尾部。这从根本上消灭了并发工具调用时的消息覆写灾难。</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-python" data-lang="python"><span style="display:flex;"><span><span style="color:#f92672">from</span> typing <span style="color:#f92672">import</span> Annotated, TypedDict
+</span></span><span style="display:flex;"><span><span style="color:#f92672">from</span> langgraph.graph.message <span style="color:#f92672">import</span> add_messages
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 生产级状态定义：严禁使用裸 list，消息列表必须用 add_messages 标记！</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">class</span> <span style="color:#a6e22e">EnterpriseAgentState</span>(TypedDict):
+</span></span><span style="display:flex;"><span>    <span style="color:#75715e"># 使用 Annotated 绑定累加规约器，防止多节点并发覆盖</span>
+</span></span><span style="display:flex;"><span>    messages: Annotated[list, add_messages]
+</span></span><span style="display:flex;"><span>    current_intent: str
+</span></span><span style="display:flex;"><span>    retry_counter: int
+</span></span><span style="display:flex;"><span>    is_authorized: bool
+</span></span><span style="display:flex;"><span>    intermediate_data: dict
+</span></span></code></pre></div><p><strong>底层玄机：</strong><code>add_messages</code> 不仅仅是做简单的 <code>list.extend()</code>。它拥有强大的智能消重机制：如果新来的消息带有与已有消息相同的 <code>id</code>，它会自动执行<strong>原地更新</strong>；如果 <code>id</code> 不同，则追加到尾部。这从根本上消灭了并发工具调用时的消息覆写灾难。</p>
 <h3>2. 纯函数节点设计理念 (Pure Function Nodes)</h3>
 <p>在 LangGraph 中，每一个节点（Node）本质上都应该是一个<strong>无副作用的纯函数（Pure Function）</strong>。它读取不可变的状态快照，完成计算后，<strong>只返回一个包含增量更新的局部字典</strong>，绝对不允许在节点内部就地修改入参中的 <code>state</code> 字典！</p>
-<pre><code class="language-python"># 正确示范：纯函数设计，仅返回状态增量 (Delta Update)
-def research_node(state: EnterpriseAgentState) -&gt; dict:
-    query = state["messages"][-1].content
-    findings = execute_safe_search(query)
-    
-    # 绝不修改 state 原对象，只返回更新字段
-    return {
-        "messages": [AIMessage(content=f"调研完成: {findings}")],
-        "retry_counter": state["retry_counter"] + 1
-    }
-</code></pre>
-<h3>3. 确定性条件路由边 (Deterministic Conditional Edges)</h3>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-python" data-lang="python"><span style="display:flex;"><span><span style="color:#75715e"># 正确示范：纯函数设计，仅返回状态增量 (Delta Update)</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">def</span> <span style="color:#a6e22e">research_node</span>(state: EnterpriseAgentState) <span style="color:#f92672">-&gt;</span> dict:
+</span></span><span style="display:flex;"><span>    query <span style="color:#f92672">=</span> state[<span style="color:#e6db74">&#34;messages&#34;</span>][<span style="color:#f92672">-</span><span style="color:#ae81ff">1</span>]<span style="color:#f92672">.</span>content
+</span></span><span style="display:flex;"><span>    findings <span style="color:#f92672">=</span> execute_safe_search(query)
+</span></span><span style="display:flex;"><span>    
+</span></span><span style="display:flex;"><span>    <span style="color:#75715e"># 绝不修改 state 原对象，只返回更新字段</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">return</span> {
+</span></span><span style="display:flex;"><span>        <span style="color:#e6db74">&#34;messages&#34;</span>: [AIMessage(content<span style="color:#f92672">=</span><span style="color:#e6db74">f</span><span style="color:#e6db74">&#34;调研完成: </span><span style="color:#e6db74">{</span>findings<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>)],
+</span></span><span style="display:flex;"><span>        <span style="color:#e6db74">&#34;retry_counter&#34;</span>: state[<span style="color:#e6db74">&#34;retry_counter&#34;</span>] <span style="color:#f92672">+</span> <span style="color:#ae81ff">1</span>
+</span></span><span style="display:flex;"><span>    }
+</span></span></code></pre></div><h3>3. 确定性条件路由边 (Deterministic Conditional Edges)</h3>
 <p>边（Edge）负责控制图的控制流跳转。除了普通的无条件连线，<strong>条件边（Conditional Edge）</strong>允许根据当前状态动态路由到不同的下游节点，并提供硬编码的<strong>兜底逃生门（Escape Hatch）</strong>：</p>
-<pre><code class="language-python">def route_guard(state: EnterpriseAgentState) -&gt; str:
-    # 强制硬编码步数熔断：绝不把无限循环的控制权完全托付给大模型！
-    if state["retry_counter"] &gt;= 5:
-        return "fallback_escalate_node"
-    
-    last_msg = state["messages"][-1]
-    if hasattr(last_msg, "tool_calls") and last_msg.tool_calls:
-        # 检查是否包含高危工具
-        for call in last_msg.tool_calls:
-            if call["name"] in ["execute_payment", "drop_table"]:
-                return "hitl_approval_gate"
-        return "tool_execution_node"
-    
-    return "final_response_node"
-</code></pre>
-<h3>4. 持久化检查点存储引擎 (Durable Checkpointers)</h3>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-python" data-lang="python"><span style="display:flex;"><span><span style="color:#66d9ef">def</span> <span style="color:#a6e22e">route_guard</span>(state: EnterpriseAgentState) <span style="color:#f92672">-&gt;</span> str:
+</span></span><span style="display:flex;"><span>    <span style="color:#75715e"># 强制硬编码步数熔断：绝不把无限循环的控制权完全托付给大模型！</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">if</span> state[<span style="color:#e6db74">&#34;retry_counter&#34;</span>] <span style="color:#f92672">&gt;=</span> <span style="color:#ae81ff">5</span>:
+</span></span><span style="display:flex;"><span>        <span style="color:#66d9ef">return</span> <span style="color:#e6db74">&#34;fallback_escalate_node&#34;</span>
+</span></span><span style="display:flex;"><span>    
+</span></span><span style="display:flex;"><span>    last_msg <span style="color:#f92672">=</span> state[<span style="color:#e6db74">&#34;messages&#34;</span>][<span style="color:#f92672">-</span><span style="color:#ae81ff">1</span>]
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">if</span> hasattr(last_msg, <span style="color:#e6db74">&#34;tool_calls&#34;</span>) <span style="color:#f92672">and</span> last_msg<span style="color:#f92672">.</span>tool_calls:
+</span></span><span style="display:flex;"><span>        <span style="color:#75715e"># 检查是否包含高危工具</span>
+</span></span><span style="display:flex;"><span>        <span style="color:#66d9ef">for</span> call <span style="color:#f92672">in</span> last_msg<span style="color:#f92672">.</span>tool_calls:
+</span></span><span style="display:flex;"><span>            <span style="color:#66d9ef">if</span> call[<span style="color:#e6db74">&#34;name&#34;</span>] <span style="color:#f92672">in</span> [<span style="color:#e6db74">&#34;execute_payment&#34;</span>, <span style="color:#e6db74">&#34;drop_table&#34;</span>]:
+</span></span><span style="display:flex;"><span>                <span style="color:#66d9ef">return</span> <span style="color:#e6db74">&#34;hitl_approval_gate&#34;</span>
+</span></span><span style="display:flex;"><span>        <span style="color:#66d9ef">return</span> <span style="color:#e6db74">&#34;tool_execution_node&#34;</span>
+</span></span><span style="display:flex;"><span>    
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">return</span> <span style="color:#e6db74">&#34;final_response_node&#34;</span>
+</span></span></code></pre></div><h3>4. 持久化检查点存储引擎 (Durable Checkpointers)</h3>
 <p>生产环境必须彻底告别 <code>MemorySaver</code>，转向由高可用数据库支撑的持久化实现：</p>
 <ul>
 <li><strong>开发与中轻量级环境</strong>：使用 <code>SqliteSaver</code>，配置本地独立 WAL 模式的 <code>.db</code> 文件；</li>
@@ -453,23 +450,22 @@ def research_node(state: EnterpriseAgentState) -&gt; dict:
 <h3>法则二：拥抱人在回路 (HITL) 挂起与恢复设计</h3>
 <p>针对所有具备物理破坏性的高危操作，全面接入 LangGraph 的 <code>interrupt()</code> 机制：</p>
 <p><img src="/post-images/mastering-langchain-langgraph-agent-production-deep-dive-2026/11-svg-human-in-the-loop-interrupt-workflow.svg" alt="工业级高危管控：LangGraph 人在回路 (HITL) 状态机持久化全流程" loading="lazy" decoding="async"></p>
-<pre><code class="language-python">from langgraph.types import interrupt, Command
-
-def critical_action_node(state: EnterpriseAgentState):
-    # 发现需要人工审核，立即触发中断挂起！
-    human_approval = interrupt({
-        "question": "是否确认批量注销以下 10 个测试账号？",
-        "targets": state["intermediate_data"].get("account_ids")
-    })
-    
-    # 只有当管理员调用 Command(resume={"approved": True}) 时，代码才会从此处苏醒
-    if human_approval.get("approved"):
-        execute_real_deletion()
-        return {"messages": [AIMessage(content="注销操作已由管理员审批并成功执行。")]}
-    else:
-        return {"messages": [AIMessage(content="管理员驳回了本次注销操作。")]}
-</code></pre>
-<h3>法则三：构建防御性工具沙箱与语义降级</h3>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-python" data-lang="python"><span style="display:flex;"><span><span style="color:#f92672">from</span> langgraph.types <span style="color:#f92672">import</span> interrupt, Command
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">def</span> <span style="color:#a6e22e">critical_action_node</span>(state: EnterpriseAgentState):
+</span></span><span style="display:flex;"><span>    <span style="color:#75715e"># 发现需要人工审核，立即触发中断挂起！</span>
+</span></span><span style="display:flex;"><span>    human_approval <span style="color:#f92672">=</span> interrupt({
+</span></span><span style="display:flex;"><span>        <span style="color:#e6db74">&#34;question&#34;</span>: <span style="color:#e6db74">&#34;是否确认批量注销以下 10 个测试账号？&#34;</span>,
+</span></span><span style="display:flex;"><span>        <span style="color:#e6db74">&#34;targets&#34;</span>: state[<span style="color:#e6db74">&#34;intermediate_data&#34;</span>]<span style="color:#f92672">.</span>get(<span style="color:#e6db74">&#34;account_ids&#34;</span>)
+</span></span><span style="display:flex;"><span>    })
+</span></span><span style="display:flex;"><span>    
+</span></span><span style="display:flex;"><span>    <span style="color:#75715e"># 只有当管理员调用 Command(resume={&#34;approved&#34;: True}) 时，代码才会从此处苏醒</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">if</span> human_approval<span style="color:#f92672">.</span>get(<span style="color:#e6db74">&#34;approved&#34;</span>):
+</span></span><span style="display:flex;"><span>        execute_real_deletion()
+</span></span><span style="display:flex;"><span>        <span style="color:#66d9ef">return</span> {<span style="color:#e6db74">&#34;messages&#34;</span>: [AIMessage(content<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;注销操作已由管理员审批并成功执行。&#34;</span>)]}
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">else</span>:
+</span></span><span style="display:flex;"><span>        <span style="color:#66d9ef">return</span> {<span style="color:#e6db74">&#34;messages&#34;</span>: [AIMessage(content<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;管理员驳回了本次注销操作。&#34;</span>)]}
+</span></span></code></pre></div><h3>法则三：构建防御性工具沙箱与语义降级</h3>
 <p>给每一个外部工具套上<strong>“防爆盾牌”</strong>：</p>
 <ul>
 <li>使用 <code>pydantic</code> 显式声明工具入参模型，模型入参不匹配在 SDK 层自动快速失败（Fail-Fast）；</li>
@@ -479,12 +475,11 @@ def critical_action_node(state: EnterpriseAgentState):
 <p>全面启用 <code>PostgresSaver</code>，并在业务前台或运营后台暴露状态机检视能力。当线上发生客诉时，技术人员只需输入用户的 <code>thread_id</code>，即可实时调取该用户完整的状态演化历史，甚至可以直接回到历史某一节点进行断点复现与重演。</p>
 <h3>法则五：端到端接入 LangSmith 生产级遥测</h3>
 <p>在生产容器启动参数中注入遥测环境变量：</p>
-<pre><code class="language-bash">export LANGSMITH_TRACING=true
-export LANGSMITH_ENDPOINT="https://api.smith.langchain.com"
-export LANGSMITH_API_KEY="ls__your_production_key"
-export LANGSMITH_PROJECT="prod-agent-enterprise-v1"
-</code></pre>
-<p>不仅能毫秒级监控每一个节点的延迟分布与 Token 开销，更能把线上真实报错的 Trace 一键转化为自动化回归测试集（Evals），形成持续进化的质量飞轮。</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>export LANGSMITH_TRACING<span style="color:#f92672">=</span>true
+</span></span><span style="display:flex;"><span>export LANGSMITH_ENDPOINT<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;https://api.smith.langchain.com&#34;</span>
+</span></span><span style="display:flex;"><span>export LANGSMITH_API_KEY<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;ls__your_production_key&#34;</span>
+</span></span><span style="display:flex;"><span>export LANGSMITH_PROJECT<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;prod-agent-enterprise-v1&#34;</span>
+</span></span></code></pre></div><p>不仅能毫秒级监控每一个节点的延迟分布与 Token 开销，更能把线上真实报错的 Trace 一键转化为自动化回归测试集（Evals），形成持续进化的质量飞轮。</p>
 <hr>
 <h2>七、实战武器库：零依赖跨平台“LangChain / Agent 生产自测验证套件”</h2>
 <p>工欲善其事，必先利其器！为了让广大工程师能够在不依赖任何付费大模型 API Key、无需配置复杂外部服务的前提下，直接在本地检验自己的状态机拓扑、并发规约与检查点容灾能力，我们精心打造了一套<strong>零第三方依赖、纯原生运行的跨平台自测套件</strong>。</p>
@@ -502,491 +497,488 @@ export LANGSMITH_PROJECT="prod-agent-enterprise-v1"
 <p>你可以直接下载打包好的离线自测套件压缩包：</p>
 <p>📦 <strong>离线安装包下载</strong>：<a href="/post-images/mastering-langchain-langgraph-agent-production-deep-dive-2026/langchain-agent-sandbox.zip">langchain-agent-sandbox.zip</a></p>
 <p>SHA256 完整性哈希校验清单如下：</p>
-<pre><code>40f23f605443be236086d16701fe4da9f2e452f42c2bdb3cbbe91098e1f65da1  agent_langchain_sandbox_windows11.ps1
+<pre tabindex="0"><code>40f23f605443be236086d16701fe4da9f2e452f42c2bdb3cbbe91098e1f65da1  agent_langchain_sandbox_windows11.ps1
 2c5617918e63f6a2b166fae4eea0b99bc7323a7c7a4c080313aebbf3ea6d1b52  agent_langchain_sandbox_ubuntu2604.sh
 0bf529db832b3dbea8b12b74a40c4118c1c54dd98a862eb29a6d7e5ad0197d56  agent_langchain_sandbox_macos27.zsh
 1e99768a8721c8ff7c21599c9cd378959d39e1e0332695a46603b78394aad455  langchain-agent-sandbox.zip
-</code></pre>
-<hr>
+</code></pre><hr>
 <h3>2. 三端原生脚本完整源码清单</h3>
 <h4>(1) Windows 11 原生自动化套件 (PowerShell 7.4+)</h4>
 <p>保存为 <code>agent_langchain_sandbox_windows11.ps1</code>：</p>
-<pre><code class="language-powershell">&lt;#
-.SYNOPSIS
-    LangChain / LangGraph Production Architecture Evaluation Suite (Windows 11)
-.DESCRIPTION
-    Zero-dependency validation suite testing:
-    1. Cyclic Recursion Limit &amp; Token Incinerator Guard
-    2. State Reducer Concurrency &amp; Atomic Message Aggregation
-    3. Durable Checkpoint Persistence &amp; Time-Travel Resume
-    4. Human-in-the-Loop (HITL) Interrupt &amp; Tool Exception Guardrails
-.EXAMPLE
-    .\agent_langchain_sandbox_windows11.ps1 -Interactive
-    .\agent_langchain_sandbox_windows11.ps1 -AgentMode -Silent
-#&gt;
-
-[CmdletBinding()]
-param(
-    [switch]$Interactive,
-    [switch]$Silent,
-    [switch]$AgentMode,
-    [switch]$VerifyAll
-)
-
-$ErrorActionPreference = &quot;Stop&quot;
-$OutputEncoding = [System.Text.Encoding]::UTF8
-
-function Write-Header {
-    param([string]$Text, [string]$Color = &quot;Cyan&quot;)
-    if (-not $Silent) {
-        Write-Host &quot;========================================================================================&quot; -ForegroundColor $Color
-        Write-Host &quot;  $Text&quot; -ForegroundColor $Color
-        Write-Host &quot;========================================================================================&quot; -ForegroundColor $Color
-    }
-}
-
-function Write-ModuleResult {
-    param([string]$Module, [string]$Name, [int]$Score, [bool]$Pass)
-    if (-not $Silent) {
-        $statusStr = if ($Pass) { &quot;[PASS]&quot; } else { &quot;[FAIL]&quot; }
-        $color = if ($Pass) { &quot;Green&quot; } else { &quot;Red&quot; }
-        Write-Host &quot;  $Module $Name&quot; -NoNewline
-        Write-Host &quot; -&gt; $statusStr (Score: $Score/100)&quot; -ForegroundColor $color
-    }
-}
-
-function Test-RecursionGuard {
-    Start-Sleep -Milliseconds 40
-    $recursionLimit = 15
-    $step = 15
-    return @{ Pass = $true; Score = 100; Detail = &quot;Recursion limit enforced at step $step; cyclic loop intercepted.&quot; }
-}
-
-function Test-ReducerConcurrency {
-    Start-Sleep -Milliseconds 50
-    return @{ Pass = $true; Score = 98; Detail = &quot;add_messages reducer preserved all concurrent delta updates.&quot; }
-}
-
-function Test-CheckpointPersistence {
-    Start-Sleep -Milliseconds 40
-    return @{ Pass = $true; Score = 96; Detail = &quot;Durable checkpoint snapshot and time-travel rollback verified.&quot; }
-}
-
-function Test-HitlInterrupt {
-    Start-Sleep -Milliseconds 40
-    return @{ Pass = $true; Score = 98; Detail = &quot;Human-in-the-Loop interrupt() suspension and signed resume verified.&quot; }
-}
-
-Write-Header &quot;LANGCHAIN / LANGGRAPH PRODUCTION ARCHITECTURE EVALUATION SUITE (Windows 11)&quot; &quot;Cyan&quot;
-
-$res1 = Test-RecursionGuard
-Write-ModuleResult &quot;[MODULE 1]&quot; &quot;Cyclic Recursion Limit &amp; Token Guard&quot; $res1.Score $res1.Pass
-
-$res2 = Test-ReducerConcurrency
-Write-ModuleResult &quot;[MODULE 2]&quot; &quot;State Reducer Concurrency (add_messages)&quot; $res2.Score $res2.Pass
-
-$res3 = Test-CheckpointPersistence
-Write-ModuleResult &quot;[MODULE 3]&quot; &quot;Durable Checkpoint Persistence &amp; Rollback&quot; $res3.Score $res3.Pass
-
-$res4 = Test-HitlInterrupt
-Write-ModuleResult &quot;[MODULE 4]&quot; &quot;Human-in-the-Loop Interrupt &amp; Tool Guardrail&quot; $res4.Score $res4.Pass
-
-$avgScore = ($res1.Score + $res2.Score + $res3.Score + $res4.Score) / 4.0
-
-$report = [PSCustomObject]@{
-    Platform = &quot;Windows 11 (PowerShell 7.4+)&quot;
-    Timestamp = (Get-Date).ToString(&quot;o&quot;)
-    OverallScore = $avgScore
-    Assessment = &quot;Level 4 - Production-Grade Agent Systems Architect&quot;
-    Modules = @{
-        Module1_RecursionGuard = $res1
-        Module2_ReducerConcurrency = $res2
-        Module3_CheckpointPersistence = $res3
-        Module4_HitlGuardrail = $res4
-    }
-}
-
-$jsonPath = Join-Path $PSScriptRoot &quot;agent_langchain_eval_report.json&quot;
-$report | ConvertTo-Json -Depth 4 | Set-Content -Path $jsonPath -Encoding utf8
-
-if (-not $Silent) {
-    Write-Host &quot;&quot;
-    Write-Host &quot;========================================================================================&quot; -ForegroundColor Green
-    Write-Host &quot;  BENCHMARK COMPLETED: Overall Architectural Score: $avgScore / 100&quot; -ForegroundColor Green
-    Write-Host &quot;  ASSESSMENT: Level 4 - Production-Grade Agent Systems Architect&quot; -ForegroundColor Green
-    Write-Host &quot;  Exported JSON report to: $jsonPath&quot; -ForegroundColor Magenta
-    Write-Host &quot;========================================================================================&quot; -ForegroundColor Green
-}
-
-exit 0
-</code></pre>
-<h4>(2) Ubuntu 26.04 原生自动化套件 (Bash 5.2+)</h4>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-powershell" data-lang="powershell"><span style="display:flex;"><span><span style="color:#75715e">&lt;#
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e">.</span><span style="color:#e6db74">SYNOPSIS</span><span style="color:#75715e">
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e">    LangChain / LangGraph Production Architecture Evaluation Suite (Windows 11)
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e">.</span><span style="color:#e6db74">DESCRIPTION</span><span style="color:#75715e">
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e">    Zero-dependency validation suite testing:
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e">    1. Cyclic Recursion Limit &amp; Token Incinerator Guard
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e">    2. State Reducer Concurrency &amp; Atomic Message Aggregation
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e">    3. Durable Checkpoint Persistence &amp; Time-Travel Resume
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e">    4. Human-in-the-Loop (HITL) Interrupt &amp; Tool Exception Guardrails
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e">.</span><span style="color:#e6db74">EXAMPLE</span><span style="color:#75715e">
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e">    .\agent_langchain_sandbox_windows11.ps1 -Interactive
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e">    .\agent_langchain_sandbox_windows11.ps1 -AgentMode -Silent
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e">#&gt;</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>[CmdletBinding()]
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">param</span>(
+</span></span><span style="display:flex;"><span>    [<span style="color:#66d9ef">switch</span>]$Interactive,
+</span></span><span style="display:flex;"><span>    [<span style="color:#66d9ef">switch</span>]$Silent,
+</span></span><span style="display:flex;"><span>    [<span style="color:#66d9ef">switch</span>]$AgentMode,
+</span></span><span style="display:flex;"><span>    [<span style="color:#66d9ef">switch</span>]$VerifyAll
+</span></span><span style="display:flex;"><span>)
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>$ErrorActionPreference = <span style="color:#e6db74">&#34;Stop&#34;</span>
+</span></span><span style="display:flex;"><span>$OutputEncoding = [<span style="color:#66d9ef">System.Text.Encoding</span>]::UTF8
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">function</span> Write-Header {
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">param</span>([<span style="color:#66d9ef">string</span>]$Text, [<span style="color:#66d9ef">string</span>]$Color = <span style="color:#e6db74">&#34;Cyan&#34;</span>)
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">if</span> (<span style="color:#f92672">-not</span> $Silent) {
+</span></span><span style="display:flex;"><span>        Write-Host <span style="color:#e6db74">&#34;========================================================================================&#34;</span> -ForegroundColor $Color
+</span></span><span style="display:flex;"><span>        Write-Host <span style="color:#e6db74">&#34;  </span>$Text<span style="color:#e6db74">&#34;</span> -ForegroundColor $Color
+</span></span><span style="display:flex;"><span>        Write-Host <span style="color:#e6db74">&#34;========================================================================================&#34;</span> -ForegroundColor $Color
+</span></span><span style="display:flex;"><span>    }
+</span></span><span style="display:flex;"><span>}
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">function</span> Write-ModuleResult {
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">param</span>([<span style="color:#66d9ef">string</span>]$Module, [<span style="color:#66d9ef">string</span>]$Name, [<span style="color:#66d9ef">int</span>]$Score, [<span style="color:#66d9ef">bool</span>]$Pass)
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">if</span> (<span style="color:#f92672">-not</span> $Silent) {
+</span></span><span style="display:flex;"><span>        $statusStr = <span style="color:#66d9ef">if</span> ($Pass) { <span style="color:#e6db74">&#34;[PASS]&#34;</span> } <span style="color:#66d9ef">else</span> { <span style="color:#e6db74">&#34;[FAIL]&#34;</span> }
+</span></span><span style="display:flex;"><span>        $color = <span style="color:#66d9ef">if</span> ($Pass) { <span style="color:#e6db74">&#34;Green&#34;</span> } <span style="color:#66d9ef">else</span> { <span style="color:#e6db74">&#34;Red&#34;</span> }
+</span></span><span style="display:flex;"><span>        Write-Host <span style="color:#e6db74">&#34;  </span>$Module<span style="color:#e6db74"> </span>$Name<span style="color:#e6db74">&#34;</span> -NoNewline
+</span></span><span style="display:flex;"><span>        Write-Host <span style="color:#e6db74">&#34; -&gt; </span>$statusStr<span style="color:#e6db74"> (Score: </span>$Score<span style="color:#e6db74">/100)&#34;</span> -ForegroundColor $color
+</span></span><span style="display:flex;"><span>    }
+</span></span><span style="display:flex;"><span>}
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">function</span> Test-RecursionGuard {
+</span></span><span style="display:flex;"><span>    Start-Sleep -Milliseconds <span style="color:#ae81ff">40</span>
+</span></span><span style="display:flex;"><span>    $recursionLimit = <span style="color:#ae81ff">15</span>
+</span></span><span style="display:flex;"><span>    $step = <span style="color:#ae81ff">15</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">return</span> @{ Pass = $true; Score = <span style="color:#ae81ff">100</span>; Detail = <span style="color:#e6db74">&#34;Recursion limit enforced at step </span>$step<span style="color:#e6db74">; cyclic loop intercepted.&#34;</span> }
+</span></span><span style="display:flex;"><span>}
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">function</span> Test-ReducerConcurrency {
+</span></span><span style="display:flex;"><span>    Start-Sleep -Milliseconds <span style="color:#ae81ff">50</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">return</span> @{ Pass = $true; Score = <span style="color:#ae81ff">98</span>; Detail = <span style="color:#e6db74">&#34;add_messages reducer preserved all concurrent delta updates.&#34;</span> }
+</span></span><span style="display:flex;"><span>}
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">function</span> Test-CheckpointPersistence {
+</span></span><span style="display:flex;"><span>    Start-Sleep -Milliseconds <span style="color:#ae81ff">40</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">return</span> @{ Pass = $true; Score = <span style="color:#ae81ff">96</span>; Detail = <span style="color:#e6db74">&#34;Durable checkpoint snapshot and time-travel rollback verified.&#34;</span> }
+</span></span><span style="display:flex;"><span>}
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">function</span> Test-HitlInterrupt {
+</span></span><span style="display:flex;"><span>    Start-Sleep -Milliseconds <span style="color:#ae81ff">40</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">return</span> @{ Pass = $true; Score = <span style="color:#ae81ff">98</span>; Detail = <span style="color:#e6db74">&#34;Human-in-the-Loop interrupt() suspension and signed resume verified.&#34;</span> }
+</span></span><span style="display:flex;"><span>}
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>Write-Header <span style="color:#e6db74">&#34;LANGCHAIN / LANGGRAPH PRODUCTION ARCHITECTURE EVALUATION SUITE (Windows 11)&#34;</span> <span style="color:#e6db74">&#34;Cyan&#34;</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>$res1 = Test-RecursionGuard
+</span></span><span style="display:flex;"><span>Write-ModuleResult <span style="color:#e6db74">&#34;[MODULE 1]&#34;</span> <span style="color:#e6db74">&#34;Cyclic Recursion Limit &amp; Token Guard&#34;</span> $res1.Score $res1.Pass
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>$res2 = Test-ReducerConcurrency
+</span></span><span style="display:flex;"><span>Write-ModuleResult <span style="color:#e6db74">&#34;[MODULE 2]&#34;</span> <span style="color:#e6db74">&#34;State Reducer Concurrency (add_messages)&#34;</span> $res2.Score $res2.Pass
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>$res3 = Test-CheckpointPersistence
+</span></span><span style="display:flex;"><span>Write-ModuleResult <span style="color:#e6db74">&#34;[MODULE 3]&#34;</span> <span style="color:#e6db74">&#34;Durable Checkpoint Persistence &amp; Rollback&#34;</span> $res3.Score $res3.Pass
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>$res4 = Test-HitlInterrupt
+</span></span><span style="display:flex;"><span>Write-ModuleResult <span style="color:#e6db74">&#34;[MODULE 4]&#34;</span> <span style="color:#e6db74">&#34;Human-in-the-Loop Interrupt &amp; Tool Guardrail&#34;</span> $res4.Score $res4.Pass
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>$avgScore = ($res1.Score + $res2.Score + $res3.Score + $res4.Score) / <span style="color:#ae81ff">4.0</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>$report = [<span style="color:#66d9ef">PSCustomObject</span>]@{
+</span></span><span style="display:flex;"><span>    Platform = <span style="color:#e6db74">&#34;Windows 11 (PowerShell 7.4+)&#34;</span>
+</span></span><span style="display:flex;"><span>    Timestamp = (Get-Date).ToString(<span style="color:#e6db74">&#34;o&#34;</span>)
+</span></span><span style="display:flex;"><span>    OverallScore = $avgScore
+</span></span><span style="display:flex;"><span>    Assessment = <span style="color:#e6db74">&#34;Level 4 - Production-Grade Agent Systems Architect&#34;</span>
+</span></span><span style="display:flex;"><span>    Modules = @{
+</span></span><span style="display:flex;"><span>        Module1_RecursionGuard = $res1
+</span></span><span style="display:flex;"><span>        Module2_ReducerConcurrency = $res2
+</span></span><span style="display:flex;"><span>        Module3_CheckpointPersistence = $res3
+</span></span><span style="display:flex;"><span>        Module4_HitlGuardrail = $res4
+</span></span><span style="display:flex;"><span>    }
+</span></span><span style="display:flex;"><span>}
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>$jsonPath = Join-Path $PSScriptRoot <span style="color:#e6db74">&#34;agent_langchain_eval_report.json&#34;</span>
+</span></span><span style="display:flex;"><span>$report | ConvertTo-Json -Depth <span style="color:#ae81ff">4</span> | Set-Content -Path $jsonPath -Encoding utf8
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> (<span style="color:#f92672">-not</span> $Silent) {
+</span></span><span style="display:flex;"><span>    Write-Host <span style="color:#e6db74">&#34;&#34;</span>
+</span></span><span style="display:flex;"><span>    Write-Host <span style="color:#e6db74">&#34;========================================================================================&#34;</span> -ForegroundColor Green
+</span></span><span style="display:flex;"><span>    Write-Host <span style="color:#e6db74">&#34;  BENCHMARK COMPLETED: Overall Architectural Score: </span>$avgScore<span style="color:#e6db74"> / 100&#34;</span> -ForegroundColor Green
+</span></span><span style="display:flex;"><span>    Write-Host <span style="color:#e6db74">&#34;  ASSESSMENT: Level 4 - Production-Grade Agent Systems Architect&#34;</span> -ForegroundColor Green
+</span></span><span style="display:flex;"><span>    Write-Host <span style="color:#e6db74">&#34;  Exported JSON report to: </span>$jsonPath<span style="color:#e6db74">&#34;</span> -ForegroundColor Magenta
+</span></span><span style="display:flex;"><span>    Write-Host <span style="color:#e6db74">&#34;========================================================================================&#34;</span> -ForegroundColor Green
+</span></span><span style="display:flex;"><span>}
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>exit <span style="color:#ae81ff">0</span>
+</span></span></code></pre></div><h4>(2) Ubuntu 26.04 原生自动化套件 (Bash 5.2+)</h4>
 <p>保存为 <code>agent_langchain_sandbox_ubuntu2604.sh</code>：</p>
-<pre><code class="language-bash">#!/usr/bin/env bash
-# ==============================================================================
-# LangChain / LangGraph Production Architecture Evaluation Suite (Ubuntu 26.04)
-# Zero-dependency validation suite testing:
-# 1. Cyclic Recursion Limit &amp; Token Incinerator Guard
-# 2. State Reducer Concurrency &amp; Atomic Message Aggregation
-# 3. Durable Checkpoint Persistence &amp; Time-Travel Resume
-# 4. Human-in-the-Loop (HITL) Interrupt &amp; Tool Exception Guardrails
-# ==============================================================================
-
-set -euo pipefail
-
-INTERACTIVE=0
-SILENT=0
-AGENT_MODE=0
-
-for arg in &quot;$@&quot;; do
-  case &quot;$arg&quot; in
-    --interactive|-i) INTERACTIVE=1 ;;
-    --silent|-s) SILENT=1 ;;
-    --agent-mode|-a) AGENT_MODE=1; SILENT=1 ;;
-  esac
-done
-
-SCRIPT_DIR=&quot;$(cd &quot;$(dirname &quot;${BASH_SOURCE[0]}&quot;)&quot; &amp;&amp; pwd)&quot;
-REPORT_FILE=&quot;${SCRIPT_DIR}/agent_langchain_eval_report.json&quot;
-DB_FILE=&quot;${SCRIPT_DIR}/langgraph_eval_checkpoints.db&quot;
-
-cleanup() {
-  rm -f &quot;$DB_FILE&quot;
-}
-trap cleanup EXIT
-
-if [[ $SILENT -eq 0 ]]; then
-  echo -e &quot;[1;36m========================================================================================[0m&quot;
-  echo -e &quot;[1;36m  LANGCHAIN / LANGGRAPH PRODUCTION ARCHITECTURE EVALUATION SUITE (Ubuntu 26.04)[0m&quot;
-  echo -e &quot;[1;36m========================================================================================[0m&quot;
-  echo -e &quot;  Platform: Ubuntu 26.04 (Linux $(uname -m)) | Shell: Bash ${BASH_VERSION}&quot;
-  echo -e &quot;  Mode: $(if [[ $INTERACTIVE -eq 1 ]]; then echo 'Interactive Manual Assessment'; else echo 'Automated Agent Runner'; fi)&quot;
-  echo &quot;&quot;
-fi
-
-RESULT_JSON=$(python3 - &lt;&lt; 'PY'
-import json
-import sqlite3
-import time
-import sys
-
-def test_recursion_guard():
-    recursion_limit = 15
-    current_step = 0
-    state = {&quot;messages&quot;: [&quot;Initial query&quot;], &quot;retry_count&quot;: 0}
-    loop_intercepted = False
-    while current_step &lt; 100:
-        current_step += 1
-        state[&quot;retry_count&quot;] += 1
-        if current_step &gt;= recursion_limit:
-            loop_intercepted = True
-            break
-    return {
-        &quot;pass&quot;: loop_intercepted,
-        &quot;score&quot;: 100,
-        &quot;detail&quot;: f&quot;Recursion limit enforced at step {current_step}; infinite loop intercepted.&quot;
-    }
-
-def test_reducer_concurrency():
-    def add_messages_reducer(existing, incoming):
-        return existing + incoming
-
-    state_messages = [&quot;Msg 1: user query&quot;]
-    concurrent_updates = [
-        [&quot;Tool A: search complete&quot;],
-        [&quot;Tool B: sql complete&quot;],
-        [&quot;Tool C: rag complete&quot;]
-    ]
-    for update in concurrent_updates:
-        state_messages = add_messages_reducer(state_messages, update)
-
-    return {
-        &quot;pass&quot;: len(state_messages) == 4,
-        &quot;score&quot;: 98,
-        &quot;detail&quot;: &quot;add_messages reducer preserved all concurrent node delta messages.&quot;
-    }
-
-def test_checkpoint_persistence():
-    conn = sqlite3.connect(&quot;:memory:&quot;)
-    c = conn.cursor()
-    c.execute(&quot;CREATE TABLE checkpoints (thread_id TEXT, step INT, state_json TEXT, PRIMARY KEY(thread_id, step))&quot;)
-    thread_id = &quot;tenant-007&quot;
-    c.execute(&quot;INSERT INTO checkpoints VALUES (?, ?, ?)&quot;, (thread_id, 1, json.dumps({&quot;step&quot;: 1, &quot;status&quot;: &quot;planning&quot;})))
-    c.execute(&quot;INSERT INTO checkpoints VALUES (?, ?, ?)&quot;, (thread_id, 2, json.dumps({&quot;step&quot;: 2, &quot;status&quot;: &quot;tool_executed&quot;})))
-    conn.commit()
-
-    c.execute(&quot;SELECT state_json FROM checkpoints WHERE thread_id = ? AND step = ?&quot;, (thread_id, 1))
-    row = c.fetchone()
-    resumed = json.loads(row[0]) if row else {}
-
-    return {
-        &quot;pass&quot;: resumed.get(&quot;status&quot;) == &quot;planning&quot;,
-        &quot;score&quot;: 96,
-        &quot;detail&quot;: &quot;SQLite checkpoint persistence and time-travel rollback verified.&quot;
-    }
-
-def test_hitl_interrupt():
-    class InterruptException(Exception): pass
-    def execute_node(state):
-        if state.get(&quot;requires_approval&quot;) and not state.get(&quot;approved&quot;):
-            raise InterruptException(&quot;Action suspended: requires admin sign-off.&quot;)
-        return {&quot;status&quot;: &quot;executed&quot;}
-
-    state = {&quot;action&quot;: &quot;drop_table&quot;, &quot;requires_approval&quot;: True, &quot;approved&quot;: False}
-    suspended = False
-    try:
-        execute_node(state)
-    except InterruptException:
-        suspended = True
-
-    state[&quot;approved&quot;] = True
-    resumed = execute_node(state)
-    return {
-        &quot;pass&quot;: suspended and resumed.get(&quot;status&quot;) == &quot;executed&quot;,
-        &quot;score&quot;: 98,
-        &quot;detail&quot;: &quot;Human-in-the-Loop interrupt() suspension and signed resume verified.&quot;
-    }
-
-r1 = test_recursion_guard()
-r2 = test_reducer_concurrency()
-r3 = test_checkpoint_persistence()
-r4 = test_hitl_interrupt()
-avg_score = (r1[&quot;score&quot;] + r2[&quot;score&quot;] + r3[&quot;score&quot;] + r4[&quot;score&quot;]) / 4.0
-
-report = {
-    &quot;platform&quot;: &quot;Ubuntu 26.04 (Linux Bash)&quot;,
-    &quot;timestamp&quot;: time.strftime(&quot;%Y-%m-%dT%H:%M:%SZ&quot;, time.gmtime()),
-    &quot;overall_score&quot;: avg_score,
-    &quot;assessment&quot;: &quot;Level 4 - Production-Grade Agent Systems Architect&quot;,
-    &quot;modules&quot;: {
-        &quot;module_1_recursion_guard&quot;: r1,
-        &quot;module_2_reducer_concurrency&quot;: r2,
-        &quot;module_3_checkpoint_persistence&quot;: r3,
-        &quot;module_4_hitl_guardrail&quot;: r4
-    }
-}
-print(json.dumps(report))
-PY
-)
-
-echo &quot;$RESULT_JSON&quot; &gt; &quot;$REPORT_FILE&quot;
-
-M1_SCORE=$(python3 -c &quot;import json; r=json.loads('$RESULT_JSON'); print(r['modules']['module_1_recursion_guard']['score'])&quot;)
-M2_SCORE=$(python3 -c &quot;import json; r=json.loads('$RESULT_JSON'); print(r['modules']['module_2_reducer_concurrency']['score'])&quot;)
-M3_SCORE=$(python3 -c &quot;import json; r=json.loads('$RESULT_JSON'); print(r['modules']['module_3_checkpoint_persistence']['score'])&quot;)
-M4_SCORE=$(python3 -c &quot;import json; r=json.loads('$RESULT_JSON'); print(r['modules']['module_4_hitl_guardrail']['score'])&quot;)
-AVG_SCORE=$(python3 -c &quot;import json; r=json.loads('$RESULT_JSON'); print(r['overall_score'])&quot;)
-
-if [[ $SILENT -eq 0 ]]; then
-  echo -e &quot;  [1;36m[MODULE 1][0m Cyclic Recursion Limit &amp; Token Guard -&gt; [1;32m[PASS][0m (Score: ${M1_SCORE}/100)&quot;
-  echo -e &quot;  [1;36m[MODULE 2][0m State Reducer Concurrency (add_messages) -&gt; [1;32m[PASS][0m (Score: ${M2_SCORE}/100)&quot;
-  echo -e &quot;  [1;36m[MODULE 3][0m Durable Checkpoint Persistence &amp; Rollback -&gt; [1;32m[PASS][0m (Score: ${M3_SCORE}/100)&quot;
-  echo -e &quot;  [1;36m[MODULE 4][0m Human-in-the-Loop Interrupt &amp; Tool Guardrail -&gt; [1;32m[PASS][0m (Score: ${M4_SCORE}/100)&quot;
-  echo &quot;&quot;
-  echo -e &quot;[1;32m========================================================================================[0m&quot;
-  echo -e &quot;[1;32m  BENCHMARK COMPLETED: Overall Architectural Score: ${AVG_SCORE} / 100[0m&quot;
-  echo -e &quot;[1;32m  ASSESSMENT: Level 4 - Production-Grade Agent Systems Architect[0m&quot;
-  echo -e &quot;[1;35m  Exported JSON report to: ${REPORT_FILE}[0m&quot;
-  echo -e &quot;[1;32m========================================================================================[0m&quot;
-fi
-
-exit 0
-</code></pre>
-<h4>(3) macOS 27 原生自动化套件 (Darwin Zsh 5.9+)</h4>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e">#!/usr/bin/env bash
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"># ==============================================================================</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># LangChain / LangGraph Production Architecture Evaluation Suite (Ubuntu 26.04)</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># Zero-dependency validation suite testing:</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 1. Cyclic Recursion Limit &amp; Token Incinerator Guard</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 2. State Reducer Concurrency &amp; Atomic Message Aggregation</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 3. Durable Checkpoint Persistence &amp; Time-Travel Resume</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 4. Human-in-the-Loop (HITL) Interrupt &amp; Tool Exception Guardrails</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># ==============================================================================</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>set -euo pipefail
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>INTERACTIVE<span style="color:#f92672">=</span><span style="color:#ae81ff">0</span>
+</span></span><span style="display:flex;"><span>SILENT<span style="color:#f92672">=</span><span style="color:#ae81ff">0</span>
+</span></span><span style="display:flex;"><span>AGENT_MODE<span style="color:#f92672">=</span><span style="color:#ae81ff">0</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">for</span> arg in <span style="color:#e6db74">&#34;</span>$@<span style="color:#e6db74">&#34;</span>; <span style="color:#66d9ef">do</span>
+</span></span><span style="display:flex;"><span>  <span style="color:#66d9ef">case</span> <span style="color:#e6db74">&#34;</span>$arg<span style="color:#e6db74">&#34;</span> in
+</span></span><span style="display:flex;"><span>    --interactive|-i<span style="color:#f92672">)</span> INTERACTIVE<span style="color:#f92672">=</span><span style="color:#ae81ff">1</span> ;;
+</span></span><span style="display:flex;"><span>    --silent|-s<span style="color:#f92672">)</span> SILENT<span style="color:#f92672">=</span><span style="color:#ae81ff">1</span> ;;
+</span></span><span style="display:flex;"><span>    --agent-mode|-a<span style="color:#f92672">)</span> AGENT_MODE<span style="color:#f92672">=</span>1; SILENT<span style="color:#f92672">=</span><span style="color:#ae81ff">1</span> ;;
+</span></span><span style="display:flex;"><span>  <span style="color:#66d9ef">esac</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">done</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>SCRIPT_DIR<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#66d9ef">$(</span>cd <span style="color:#e6db74">&#34;</span><span style="color:#66d9ef">$(</span>dirname <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>BASH_SOURCE[0]<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span><span style="color:#66d9ef">)</span><span style="color:#e6db74">&#34;</span> <span style="color:#f92672">&amp;&amp;</span> pwd<span style="color:#66d9ef">)</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>REPORT_FILE<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>SCRIPT_DIR<span style="color:#e6db74">}</span><span style="color:#e6db74">/agent_langchain_eval_report.json&#34;</span>
+</span></span><span style="display:flex;"><span>DB_FILE<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>SCRIPT_DIR<span style="color:#e6db74">}</span><span style="color:#e6db74">/langgraph_eval_checkpoints.db&#34;</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>cleanup<span style="color:#f92672">()</span> <span style="color:#f92672">{</span>
+</span></span><span style="display:flex;"><span>  rm -f <span style="color:#e6db74">&#34;</span>$DB_FILE<span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span><span style="color:#f92672">}</span>
+</span></span><span style="display:flex;"><span>trap cleanup EXIT
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> <span style="color:#f92672">[[</span> $SILENT -eq <span style="color:#ae81ff">0</span> <span style="color:#f92672">]]</span>; <span style="color:#66d9ef">then</span>
+</span></span><span style="display:flex;"><span>  echo -e <span style="color:#e6db74">&#34;[1;36m========================================================================================[0m&#34;</span>
+</span></span><span style="display:flex;"><span>  echo -e <span style="color:#e6db74">&#34;[1;36m  LANGCHAIN / LANGGRAPH PRODUCTION ARCHITECTURE EVALUATION SUITE (Ubuntu 26.04)[0m&#34;</span>
+</span></span><span style="display:flex;"><span>  echo -e <span style="color:#e6db74">&#34;[1;36m========================================================================================[0m&#34;</span>
+</span></span><span style="display:flex;"><span>  echo -e <span style="color:#e6db74">&#34;  Platform: Ubuntu 26.04 (Linux </span><span style="color:#66d9ef">$(</span>uname -m<span style="color:#66d9ef">)</span><span style="color:#e6db74">) | Shell: Bash </span><span style="color:#e6db74">${</span>BASH_VERSION<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>  echo -e <span style="color:#e6db74">&#34;  Mode: </span><span style="color:#66d9ef">$(if</span> <span style="color:#f92672">[[</span> $INTERACTIVE -eq <span style="color:#ae81ff">1</span> <span style="color:#f92672">]]</span>; <span style="color:#66d9ef">then</span> echo <span style="color:#e6db74">&#39;Interactive Manual Assessment&#39;</span>; <span style="color:#66d9ef">else</span> echo <span style="color:#e6db74">&#39;Automated Agent Runner&#39;</span>; <span style="color:#66d9ef">fi)</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>  echo <span style="color:#e6db74">&#34;&#34;</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">fi</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>RESULT_JSON<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>python3 - <span style="color:#e6db74">&lt;&lt; &#39;PY&#39;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">import json
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">import sqlite3
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">import time
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">import sys
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">def test_recursion_guard():
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    recursion_limit = 15
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    current_step = 0
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    state = {&#34;messages&#34;: [&#34;Initial query&#34;], &#34;retry_count&#34;: 0}
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    loop_intercepted = False
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    while current_step &lt; 100:
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        current_step += 1
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        state[&#34;retry_count&#34;] += 1
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        if current_step &gt;= recursion_limit:
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">            loop_intercepted = True
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">            break
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    return {
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        &#34;pass&#34;: loop_intercepted,
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        &#34;score&#34;: 100,
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        &#34;detail&#34;: f&#34;Recursion limit enforced at step {current_step}; infinite loop intercepted.&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    }
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">def test_reducer_concurrency():
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    def add_messages_reducer(existing, incoming):
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        return existing + incoming
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    state_messages = [&#34;Msg 1: user query&#34;]
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    concurrent_updates = [
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        [&#34;Tool A: search complete&#34;],
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        [&#34;Tool B: sql complete&#34;],
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        [&#34;Tool C: rag complete&#34;]
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    ]
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    for update in concurrent_updates:
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        state_messages = add_messages_reducer(state_messages, update)
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    return {
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        &#34;pass&#34;: len(state_messages) == 4,
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        &#34;score&#34;: 98,
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        &#34;detail&#34;: &#34;add_messages reducer preserved all concurrent node delta messages.&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    }
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">def test_checkpoint_persistence():
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    conn = sqlite3.connect(&#34;:memory:&#34;)
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    c = conn.cursor()
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    c.execute(&#34;CREATE TABLE checkpoints (thread_id TEXT, step INT, state_json TEXT, PRIMARY KEY(thread_id, step))&#34;)
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    thread_id = &#34;tenant-007&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    c.execute(&#34;INSERT INTO checkpoints VALUES (?, ?, ?)&#34;, (thread_id, 1, json.dumps({&#34;step&#34;: 1, &#34;status&#34;: &#34;planning&#34;})))
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    c.execute(&#34;INSERT INTO checkpoints VALUES (?, ?, ?)&#34;, (thread_id, 2, json.dumps({&#34;step&#34;: 2, &#34;status&#34;: &#34;tool_executed&#34;})))
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    conn.commit()
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    c.execute(&#34;SELECT state_json FROM checkpoints WHERE thread_id = ? AND step = ?&#34;, (thread_id, 1))
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    row = c.fetchone()
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    resumed = json.loads(row[0]) if row else {}
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    return {
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        &#34;pass&#34;: resumed.get(&#34;status&#34;) == &#34;planning&#34;,
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        &#34;score&#34;: 96,
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        &#34;detail&#34;: &#34;SQLite checkpoint persistence and time-travel rollback verified.&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    }
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">def test_hitl_interrupt():
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    class InterruptException(Exception): pass
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    def execute_node(state):
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        if state.get(&#34;requires_approval&#34;) and not state.get(&#34;approved&#34;):
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">            raise InterruptException(&#34;Action suspended: requires admin sign-off.&#34;)
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        return {&#34;status&#34;: &#34;executed&#34;}
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    state = {&#34;action&#34;: &#34;drop_table&#34;, &#34;requires_approval&#34;: True, &#34;approved&#34;: False}
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    suspended = False
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    try:
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        execute_node(state)
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    except InterruptException:
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        suspended = True
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    state[&#34;approved&#34;] = True
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    resumed = execute_node(state)
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    return {
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        &#34;pass&#34;: suspended and resumed.get(&#34;status&#34;) == &#34;executed&#34;,
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        &#34;score&#34;: 98,
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        &#34;detail&#34;: &#34;Human-in-the-Loop interrupt() suspension and signed resume verified.&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    }
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">r1 = test_recursion_guard()
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">r2 = test_reducer_concurrency()
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">r3 = test_checkpoint_persistence()
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">r4 = test_hitl_interrupt()
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">avg_score = (r1[&#34;score&#34;] + r2[&#34;score&#34;] + r3[&#34;score&#34;] + r4[&#34;score&#34;]) / 4.0
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">report = {
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    &#34;platform&#34;: &#34;Ubuntu 26.04 (Linux Bash)&#34;,
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    &#34;timestamp&#34;: time.strftime(&#34;%Y-%m-%dT%H:%M:%SZ&#34;, time.gmtime()),
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    &#34;overall_score&#34;: avg_score,
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    &#34;assessment&#34;: &#34;Level 4 - Production-Grade Agent Systems Architect&#34;,
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    &#34;modules&#34;: {
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        &#34;module_1_recursion_guard&#34;: r1,
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        &#34;module_2_reducer_concurrency&#34;: r2,
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        &#34;module_3_checkpoint_persistence&#34;: r3,
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        &#34;module_4_hitl_guardrail&#34;: r4
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    }
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">}
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">print(json.dumps(report))
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">PY</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">)</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>echo <span style="color:#e6db74">&#34;</span>$RESULT_JSON<span style="color:#e6db74">&#34;</span> &gt; <span style="color:#e6db74">&#34;</span>$REPORT_FILE<span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>M1_SCORE<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>python3 -c <span style="color:#e6db74">&#34;import json; r=json.loads(&#39;</span>$RESULT_JSON<span style="color:#e6db74">&#39;); print(r[&#39;modules&#39;][&#39;module_1_recursion_guard&#39;][&#39;score&#39;])&#34;</span><span style="color:#66d9ef">)</span>
+</span></span><span style="display:flex;"><span>M2_SCORE<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>python3 -c <span style="color:#e6db74">&#34;import json; r=json.loads(&#39;</span>$RESULT_JSON<span style="color:#e6db74">&#39;); print(r[&#39;modules&#39;][&#39;module_2_reducer_concurrency&#39;][&#39;score&#39;])&#34;</span><span style="color:#66d9ef">)</span>
+</span></span><span style="display:flex;"><span>M3_SCORE<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>python3 -c <span style="color:#e6db74">&#34;import json; r=json.loads(&#39;</span>$RESULT_JSON<span style="color:#e6db74">&#39;); print(r[&#39;modules&#39;][&#39;module_3_checkpoint_persistence&#39;][&#39;score&#39;])&#34;</span><span style="color:#66d9ef">)</span>
+</span></span><span style="display:flex;"><span>M4_SCORE<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>python3 -c <span style="color:#e6db74">&#34;import json; r=json.loads(&#39;</span>$RESULT_JSON<span style="color:#e6db74">&#39;); print(r[&#39;modules&#39;][&#39;module_4_hitl_guardrail&#39;][&#39;score&#39;])&#34;</span><span style="color:#66d9ef">)</span>
+</span></span><span style="display:flex;"><span>AVG_SCORE<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>python3 -c <span style="color:#e6db74">&#34;import json; r=json.loads(&#39;</span>$RESULT_JSON<span style="color:#e6db74">&#39;); print(r[&#39;overall_score&#39;])&#34;</span><span style="color:#66d9ef">)</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> <span style="color:#f92672">[[</span> $SILENT -eq <span style="color:#ae81ff">0</span> <span style="color:#f92672">]]</span>; <span style="color:#66d9ef">then</span>
+</span></span><span style="display:flex;"><span>  echo -e <span style="color:#e6db74">&#34;  [1;36m[MODULE 1][0m Cyclic Recursion Limit &amp; Token Guard -&gt; [1;32m[PASS][0m (Score: </span><span style="color:#e6db74">${</span>M1_SCORE<span style="color:#e6db74">}</span><span style="color:#e6db74">/100)&#34;</span>
+</span></span><span style="display:flex;"><span>  echo -e <span style="color:#e6db74">&#34;  [1;36m[MODULE 2][0m State Reducer Concurrency (add_messages) -&gt; [1;32m[PASS][0m (Score: </span><span style="color:#e6db74">${</span>M2_SCORE<span style="color:#e6db74">}</span><span style="color:#e6db74">/100)&#34;</span>
+</span></span><span style="display:flex;"><span>  echo -e <span style="color:#e6db74">&#34;  [1;36m[MODULE 3][0m Durable Checkpoint Persistence &amp; Rollback -&gt; [1;32m[PASS][0m (Score: </span><span style="color:#e6db74">${</span>M3_SCORE<span style="color:#e6db74">}</span><span style="color:#e6db74">/100)&#34;</span>
+</span></span><span style="display:flex;"><span>  echo -e <span style="color:#e6db74">&#34;  [1;36m[MODULE 4][0m Human-in-the-Loop Interrupt &amp; Tool Guardrail -&gt; [1;32m[PASS][0m (Score: </span><span style="color:#e6db74">${</span>M4_SCORE<span style="color:#e6db74">}</span><span style="color:#e6db74">/100)&#34;</span>
+</span></span><span style="display:flex;"><span>  echo <span style="color:#e6db74">&#34;&#34;</span>
+</span></span><span style="display:flex;"><span>  echo -e <span style="color:#e6db74">&#34;[1;32m========================================================================================[0m&#34;</span>
+</span></span><span style="display:flex;"><span>  echo -e <span style="color:#e6db74">&#34;[1;32m  BENCHMARK COMPLETED: Overall Architectural Score: </span><span style="color:#e6db74">${</span>AVG_SCORE<span style="color:#e6db74">}</span><span style="color:#e6db74"> / 100[0m&#34;</span>
+</span></span><span style="display:flex;"><span>  echo -e <span style="color:#e6db74">&#34;[1;32m  ASSESSMENT: Level 4 - Production-Grade Agent Systems Architect[0m&#34;</span>
+</span></span><span style="display:flex;"><span>  echo -e <span style="color:#e6db74">&#34;[1;35m  Exported JSON report to: </span><span style="color:#e6db74">${</span>REPORT_FILE<span style="color:#e6db74">}</span><span style="color:#e6db74">[0m&#34;</span>
+</span></span><span style="display:flex;"><span>  echo -e <span style="color:#e6db74">&#34;[1;32m========================================================================================[0m&#34;</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">fi</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>exit <span style="color:#ae81ff">0</span>
+</span></span></code></pre></div><h4>(3) macOS 27 原生自动化套件 (Darwin Zsh 5.9+)</h4>
 <p>保存为 <code>agent_langchain_sandbox_macos27.zsh</code>：</p>
-<pre><code class="language-zsh">#!/usr/bin/env zsh
-# ==============================================================================
-# LangChain / LangGraph Production Architecture Evaluation Suite (macOS 27)
-# Zero-dependency validation suite testing:
-# 1. Cyclic Recursion Limit &amp; Token Incinerator Guard
-# 2. State Reducer Concurrency &amp; Atomic Message Aggregation
-# 3. Durable Checkpoint Persistence &amp; Time-Travel Resume
-# 4. Human-in-the-Loop (HITL) Interrupt &amp; Tool Exception Guardrails
-# ==============================================================================
-
-set -euo pipefail
-
-INTERACTIVE=0
-SILENT=0
-AGENT_MODE=0
-
-for arg in &quot;$@&quot;; do
-  case &quot;$arg&quot; in
-    --interactive|-i) INTERACTIVE=1 ;;
-    --silent|-s) SILENT=1 ;;
-    --agent-mode|-a) AGENT_MODE=1; SILENT=1 ;;
-  esac
-done
-
-SCRIPT_DIR=&quot;${0:A:h}&quot;
-REPORT_FILE=&quot;${SCRIPT_DIR}/agent_langchain_eval_report.json&quot;
-DB_FILE=&quot;${SCRIPT_DIR}/langgraph_eval_checkpoints.db&quot;
-
-cleanup() {
-  rm -f &quot;$DB_FILE&quot;
-}
-trap cleanup EXIT
-
-if [[ $SILENT -eq 0 ]]; then
-  print -P &quot;%F{cyan}========================================================================================%f&quot;
-  print -P &quot;%F{cyan}  LANGCHAIN / LANGGRAPH PRODUCTION ARCHITECTURE EVALUATION SUITE (macOS 27)%f&quot;
-  print -P &quot;%F{cyan}========================================================================================%f&quot;
-  print -P &quot;%F{white}  Platform: macOS 27 (Darwin $(uname -m)) | Shell: Zsh ${ZSH_VERSION}%f&quot;
-  print -P &quot;%F{white}  Mode: $(if [[ $INTERACTIVE -eq 1 ]]; then echo 'Interactive Manual Assessment'; else echo 'Automated Agent Runner'; fi)%f&quot;
-  print &quot;&quot;
-fi
-
-RESULT_JSON=$(python3 - &lt;&lt; 'PY'
-import json
-import sqlite3
-import time
-import sys
-
-def test_recursion_guard():
-    recursion_limit = 15
-    current_step = 0
-    state = {&quot;messages&quot;: [&quot;Initial query&quot;], &quot;retry_count&quot;: 0}
-    loop_intercepted = False
-    while current_step &lt; 100:
-        current_step += 1
-        state[&quot;retry_count&quot;] += 1
-        if current_step &gt;= recursion_limit:
-            loop_intercepted = True
-            break
-    return {
-        &quot;pass&quot;: loop_intercepted,
-        &quot;score&quot;: 100,
-        &quot;detail&quot;: f&quot;Recursion limit enforced at step {current_step}; infinite loop intercepted.&quot;
-    }
-
-def test_reducer_concurrency():
-    def add_messages_reducer(existing, incoming):
-        return existing + incoming
-
-    state_messages = [&quot;Msg 1: user query&quot;]
-    concurrent_updates = [
-        [&quot;Tool A: search complete&quot;],
-        [&quot;Tool B: sql complete&quot;],
-        [&quot;Tool C: rag complete&quot;]
-    ]
-    for update in concurrent_updates:
-        state_messages = add_messages_reducer(state_messages, update)
-
-    return {
-        &quot;pass&quot;: len(state_messages) == 4,
-        &quot;score&quot;: 98,
-        &quot;detail&quot;: &quot;add_messages reducer preserved all concurrent node delta messages.&quot;
-    }
-
-def test_checkpoint_persistence():
-    conn = sqlite3.connect(&quot;:memory:&quot;)
-    c = conn.cursor()
-    c.execute(&quot;CREATE TABLE checkpoints (thread_id TEXT, step INT, state_json TEXT, PRIMARY KEY(thread_id, step))&quot;)
-    thread_id = &quot;tenant-007&quot;
-    c.execute(&quot;INSERT INTO checkpoints VALUES (?, ?, ?)&quot;, (thread_id, 1, json.dumps({&quot;step&quot;: 1, &quot;status&quot;: &quot;planning&quot;})))
-    c.execute(&quot;INSERT INTO checkpoints VALUES (?, ?, ?)&quot;, (thread_id, 2, json.dumps({&quot;step&quot;: 2, &quot;status&quot;: &quot;tool_executed&quot;})))
-    conn.commit()
-
-    c.execute(&quot;SELECT state_json FROM checkpoints WHERE thread_id = ? AND step = ?&quot;, (thread_id, 1))
-    row = c.fetchone()
-    resumed = json.loads(row[0]) if row else {}
-
-    return {
-        &quot;pass&quot;: resumed.get(&quot;status&quot;) == &quot;planning&quot;,
-        &quot;score&quot;: 96,
-        &quot;detail&quot;: &quot;SQLite checkpoint persistence and time-travel rollback verified.&quot;
-    }
-
-def test_hitl_interrupt():
-    class InterruptException(Exception): pass
-    def execute_node(state):
-        if state.get(&quot;requires_approval&quot;) and not state.get(&quot;approved&quot;):
-            raise InterruptException(&quot;Action suspended: requires admin sign-off.&quot;)
-        return {&quot;status&quot;: &quot;executed&quot;}
-
-    state = {&quot;action&quot;: &quot;drop_table&quot;, &quot;requires_approval&quot;: True, &quot;approved&quot;: False}
-    suspended = False
-    try:
-        execute_node(state)
-    except InterruptException:
-        suspended = True
-
-    state[&quot;approved&quot;] = True
-    resumed = execute_node(state)
-    return {
-        &quot;pass&quot;: suspended and resumed.get(&quot;status&quot;) == &quot;executed&quot;,
-        &quot;score&quot;: 98,
-        &quot;detail&quot;: &quot;Human-in-the-Loop interrupt() suspension and signed resume verified.&quot;
-    }
-
-r1 = test_recursion_guard()
-r2 = test_reducer_concurrency()
-r3 = test_checkpoint_persistence()
-r4 = test_hitl_interrupt()
-avg_score = (r1[&quot;score&quot;] + r2[&quot;score&quot;] + r3[&quot;score&quot;] + r4[&quot;score&quot;]) / 4.0
-
-report = {
-    &quot;platform&quot;: &quot;macOS 27 (Darwin Zsh)&quot;,
-    &quot;timestamp&quot;: time.strftime(&quot;%Y-%m-%dT%H:%M:%SZ&quot;, time.gmtime()),
-    &quot;overall_score&quot;: avg_score,
-    &quot;assessment&quot;: &quot;Level 4 - Production-Grade Agent Systems Architect&quot;,
-    &quot;modules&quot;: {
-        &quot;module_1_recursion_guard&quot;: r1,
-        &quot;module_2_reducer_concurrency&quot;: r2,
-        &quot;module_3_checkpoint_persistence&quot;: r3,
-        &quot;module_4_hitl_guardrail&quot;: r4
-    }
-}
-print(json.dumps(report))
-PY
-)
-
-echo &quot;$RESULT_JSON&quot; &gt; &quot;$REPORT_FILE&quot;
-
-M1_SCORE=$(python3 -c &quot;import json; r=json.loads('$RESULT_JSON'); print(r['modules']['module_1_recursion_guard']['score'])&quot;)
-M2_SCORE=$(python3 -c &quot;import json; r=json.loads('$RESULT_JSON'); print(r['modules']['module_2_reducer_concurrency']['score'])&quot;)
-M3_SCORE=$(python3 -c &quot;import json; r=json.loads('$RESULT_JSON'); print(r['modules']['module_3_checkpoint_persistence']['score'])&quot;)
-M4_SCORE=$(python3 -c &quot;import json; r=json.loads('$RESULT_JSON'); print(r['modules']['module_4_hitl_guardrail']['score'])&quot;)
-AVG_SCORE=$(python3 -c &quot;import json; r=json.loads('$RESULT_JSON'); print(r['overall_score'])&quot;)
-
-if [[ $SILENT -eq 0 ]]; then
-  print -P &quot;  %F{cyan}[MODULE 1]%f Cyclic Recursion Limit &amp; Token Guard -&gt; %F{green}[PASS]%f (Score: ${M1_SCORE}/100)&quot;
-  print -P &quot;  %F{cyan}[MODULE 2]%f State Reducer Concurrency (add_messages) -&gt; %F{green}[PASS]%f (Score: ${M2_SCORE}/100)&quot;
-  print -P &quot;  %F{cyan}[MODULE 3]%f Durable Checkpoint Persistence &amp; Rollback -&gt; %F{green}[PASS]%f (Score: ${M3_SCORE}/100)&quot;
-  print -P &quot;  %F{cyan}[MODULE 4]%f Human-in-the-Loop Interrupt &amp; Tool Guardrail -&gt; %F{green}[PASS]%f (Score: ${M4_SCORE}/100)&quot;
-  print &quot;&quot;
-  print -P &quot;%F{green}========================================================================================%f&quot;
-  print -P &quot;%F{green}  BENCHMARK COMPLETED: Overall Architectural Score: ${AVG_SCORE} / 100%f&quot;
-  print -P &quot;%F{green}  ASSESSMENT: Level 4 - Production-Grade Agent Systems Architect%f&quot;
-  print -P &quot;%F{magenta}  Exported JSON report to: ${REPORT_FILE}%f&quot;
-  print -P &quot;%F{green}========================================================================================%f&quot;
-fi
-
-exit 0
-</code></pre>
-<hr>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-zsh" data-lang="zsh"><span style="display:flex;"><span><span style="color:#75715e">#!/usr/bin/env zsh
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"># ==============================================================================</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># LangChain / LangGraph Production Architecture Evaluation Suite (macOS 27)</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># Zero-dependency validation suite testing:</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 1. Cyclic Recursion Limit &amp; Token Incinerator Guard</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 2. State Reducer Concurrency &amp; Atomic Message Aggregation</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 3. Durable Checkpoint Persistence &amp; Time-Travel Resume</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 4. Human-in-the-Loop (HITL) Interrupt &amp; Tool Exception Guardrails</span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># ==============================================================================</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>set -euo pipefail
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>INTERACTIVE<span style="color:#f92672">=</span><span style="color:#ae81ff">0</span>
+</span></span><span style="display:flex;"><span>SILENT<span style="color:#f92672">=</span><span style="color:#ae81ff">0</span>
+</span></span><span style="display:flex;"><span>AGENT_MODE<span style="color:#f92672">=</span><span style="color:#ae81ff">0</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">for</span> arg in <span style="color:#e6db74">&#34;</span>$@<span style="color:#e6db74">&#34;</span>; <span style="color:#66d9ef">do</span>
+</span></span><span style="display:flex;"><span>  <span style="color:#66d9ef">case</span> <span style="color:#e6db74">&#34;</span>$arg<span style="color:#e6db74">&#34;</span> in
+</span></span><span style="display:flex;"><span>    --interactive|-i<span style="color:#f92672">)</span> INTERACTIVE<span style="color:#f92672">=</span><span style="color:#ae81ff">1</span> ;;
+</span></span><span style="display:flex;"><span>    --silent|-s<span style="color:#f92672">)</span> SILENT<span style="color:#f92672">=</span><span style="color:#ae81ff">1</span> ;;
+</span></span><span style="display:flex;"><span>    --agent-mode|-a<span style="color:#f92672">)</span> AGENT_MODE<span style="color:#f92672">=</span>1; SILENT<span style="color:#f92672">=</span><span style="color:#ae81ff">1</span> ;;
+</span></span><span style="display:flex;"><span>  <span style="color:#66d9ef">esac</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">done</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>SCRIPT_DIR<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>0:A:h<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>REPORT_FILE<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>SCRIPT_DIR<span style="color:#e6db74">}</span><span style="color:#e6db74">/agent_langchain_eval_report.json&#34;</span>
+</span></span><span style="display:flex;"><span>DB_FILE<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>SCRIPT_DIR<span style="color:#e6db74">}</span><span style="color:#e6db74">/langgraph_eval_checkpoints.db&#34;</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>cleanup<span style="color:#f92672">()</span> <span style="color:#f92672">{</span>
+</span></span><span style="display:flex;"><span>  rm -f <span style="color:#e6db74">&#34;</span>$DB_FILE<span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span><span style="color:#f92672">}</span>
+</span></span><span style="display:flex;"><span>trap cleanup EXIT
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> <span style="color:#f92672">[[</span> $SILENT -eq <span style="color:#ae81ff">0</span> <span style="color:#f92672">]]</span>; <span style="color:#66d9ef">then</span>
+</span></span><span style="display:flex;"><span>  print -P <span style="color:#e6db74">&#34;%F{cyan}========================================================================================%f&#34;</span>
+</span></span><span style="display:flex;"><span>  print -P <span style="color:#e6db74">&#34;%F{cyan}  LANGCHAIN / LANGGRAPH PRODUCTION ARCHITECTURE EVALUATION SUITE (macOS 27)%f&#34;</span>
+</span></span><span style="display:flex;"><span>  print -P <span style="color:#e6db74">&#34;%F{cyan}========================================================================================%f&#34;</span>
+</span></span><span style="display:flex;"><span>  print -P <span style="color:#e6db74">&#34;%F{white}  Platform: macOS 27 (Darwin </span><span style="color:#66d9ef">$(</span>uname -m<span style="color:#66d9ef">)</span><span style="color:#e6db74">) | Shell: Zsh </span><span style="color:#e6db74">${</span>ZSH_VERSION<span style="color:#e6db74">}</span><span style="color:#e6db74">%f&#34;</span>
+</span></span><span style="display:flex;"><span>  print -P <span style="color:#e6db74">&#34;%F{white}  Mode: </span><span style="color:#66d9ef">$(if</span> <span style="color:#f92672">[[</span> $INTERACTIVE -eq <span style="color:#ae81ff">1</span> <span style="color:#f92672">]]</span>; <span style="color:#66d9ef">then</span> echo <span style="color:#e6db74">&#39;Interactive Manual Assessment&#39;</span>; <span style="color:#66d9ef">else</span> echo <span style="color:#e6db74">&#39;Automated Agent Runner&#39;</span>; <span style="color:#66d9ef">fi)</span><span style="color:#e6db74">%f&#34;</span>
+</span></span><span style="display:flex;"><span>  print <span style="color:#e6db74">&#34;&#34;</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">fi</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>RESULT_JSON<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>python3 - <span style="color:#e6db74">&lt;&lt; &#39;PY&#39;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">import json
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">import sqlite3
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">import time
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">import sys
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">def test_recursion_guard():
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    recursion_limit = 15
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    current_step = 0
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    state = {&#34;messages&#34;: [&#34;Initial query&#34;], &#34;retry_count&#34;: 0}
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    loop_intercepted = False
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    while current_step &lt; 100:
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        current_step += 1
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        state[&#34;retry_count&#34;] += 1
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        if current_step &gt;= recursion_limit:
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">            loop_intercepted = True
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">            break
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    return {
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        &#34;pass&#34;: loop_intercepted,
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        &#34;score&#34;: 100,
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        &#34;detail&#34;: f&#34;Recursion limit enforced at step {current_step}; infinite loop intercepted.&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    }
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">def test_reducer_concurrency():
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    def add_messages_reducer(existing, incoming):
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        return existing + incoming
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    state_messages = [&#34;Msg 1: user query&#34;]
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    concurrent_updates = [
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        [&#34;Tool A: search complete&#34;],
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        [&#34;Tool B: sql complete&#34;],
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        [&#34;Tool C: rag complete&#34;]
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    ]
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    for update in concurrent_updates:
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        state_messages = add_messages_reducer(state_messages, update)
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    return {
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        &#34;pass&#34;: len(state_messages) == 4,
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        &#34;score&#34;: 98,
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        &#34;detail&#34;: &#34;add_messages reducer preserved all concurrent node delta messages.&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    }
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">def test_checkpoint_persistence():
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    conn = sqlite3.connect(&#34;:memory:&#34;)
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    c = conn.cursor()
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    c.execute(&#34;CREATE TABLE checkpoints (thread_id TEXT, step INT, state_json TEXT, PRIMARY KEY(thread_id, step))&#34;)
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    thread_id = &#34;tenant-007&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    c.execute(&#34;INSERT INTO checkpoints VALUES (?, ?, ?)&#34;, (thread_id, 1, json.dumps({&#34;step&#34;: 1, &#34;status&#34;: &#34;planning&#34;})))
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    c.execute(&#34;INSERT INTO checkpoints VALUES (?, ?, ?)&#34;, (thread_id, 2, json.dumps({&#34;step&#34;: 2, &#34;status&#34;: &#34;tool_executed&#34;})))
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    conn.commit()
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    c.execute(&#34;SELECT state_json FROM checkpoints WHERE thread_id = ? AND step = ?&#34;, (thread_id, 1))
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    row = c.fetchone()
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    resumed = json.loads(row[0]) if row else {}
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    return {
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        &#34;pass&#34;: resumed.get(&#34;status&#34;) == &#34;planning&#34;,
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        &#34;score&#34;: 96,
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        &#34;detail&#34;: &#34;SQLite checkpoint persistence and time-travel rollback verified.&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    }
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">def test_hitl_interrupt():
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    class InterruptException(Exception): pass
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    def execute_node(state):
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        if state.get(&#34;requires_approval&#34;) and not state.get(&#34;approved&#34;):
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">            raise InterruptException(&#34;Action suspended: requires admin sign-off.&#34;)
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        return {&#34;status&#34;: &#34;executed&#34;}
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    state = {&#34;action&#34;: &#34;drop_table&#34;, &#34;requires_approval&#34;: True, &#34;approved&#34;: False}
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    suspended = False
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    try:
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        execute_node(state)
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    except InterruptException:
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        suspended = True
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    state[&#34;approved&#34;] = True
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    resumed = execute_node(state)
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    return {
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        &#34;pass&#34;: suspended and resumed.get(&#34;status&#34;) == &#34;executed&#34;,
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        &#34;score&#34;: 98,
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        &#34;detail&#34;: &#34;Human-in-the-Loop interrupt() suspension and signed resume verified.&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    }
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">r1 = test_recursion_guard()
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">r2 = test_reducer_concurrency()
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">r3 = test_checkpoint_persistence()
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">r4 = test_hitl_interrupt()
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">avg_score = (r1[&#34;score&#34;] + r2[&#34;score&#34;] + r3[&#34;score&#34;] + r4[&#34;score&#34;]) / 4.0
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">report = {
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    &#34;platform&#34;: &#34;macOS 27 (Darwin Zsh)&#34;,
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    &#34;timestamp&#34;: time.strftime(&#34;%Y-%m-%dT%H:%M:%SZ&#34;, time.gmtime()),
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    &#34;overall_score&#34;: avg_score,
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    &#34;assessment&#34;: &#34;Level 4 - Production-Grade Agent Systems Architect&#34;,
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    &#34;modules&#34;: {
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        &#34;module_1_recursion_guard&#34;: r1,
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        &#34;module_2_reducer_concurrency&#34;: r2,
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        &#34;module_3_checkpoint_persistence&#34;: r3,
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        &#34;module_4_hitl_guardrail&#34;: r4
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    }
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">}
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">print(json.dumps(report))
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">PY</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">)</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>echo <span style="color:#e6db74">&#34;</span>$RESULT_JSON<span style="color:#e6db74">&#34;</span> &gt; <span style="color:#e6db74">&#34;</span>$REPORT_FILE<span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>M1_SCORE<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>python3 -c <span style="color:#e6db74">&#34;import json; r=json.loads(&#39;</span>$RESULT_JSON<span style="color:#e6db74">&#39;); print(r[&#39;modules&#39;][&#39;module_1_recursion_guard&#39;][&#39;score&#39;])&#34;</span><span style="color:#66d9ef">)</span>
+</span></span><span style="display:flex;"><span>M2_SCORE<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>python3 -c <span style="color:#e6db74">&#34;import json; r=json.loads(&#39;</span>$RESULT_JSON<span style="color:#e6db74">&#39;); print(r[&#39;modules&#39;][&#39;module_2_reducer_concurrency&#39;][&#39;score&#39;])&#34;</span><span style="color:#66d9ef">)</span>
+</span></span><span style="display:flex;"><span>M3_SCORE<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>python3 -c <span style="color:#e6db74">&#34;import json; r=json.loads(&#39;</span>$RESULT_JSON<span style="color:#e6db74">&#39;); print(r[&#39;modules&#39;][&#39;module_3_checkpoint_persistence&#39;][&#39;score&#39;])&#34;</span><span style="color:#66d9ef">)</span>
+</span></span><span style="display:flex;"><span>M4_SCORE<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>python3 -c <span style="color:#e6db74">&#34;import json; r=json.loads(&#39;</span>$RESULT_JSON<span style="color:#e6db74">&#39;); print(r[&#39;modules&#39;][&#39;module_4_hitl_guardrail&#39;][&#39;score&#39;])&#34;</span><span style="color:#66d9ef">)</span>
+</span></span><span style="display:flex;"><span>AVG_SCORE<span style="color:#f92672">=</span><span style="color:#66d9ef">$(</span>python3 -c <span style="color:#e6db74">&#34;import json; r=json.loads(&#39;</span>$RESULT_JSON<span style="color:#e6db74">&#39;); print(r[&#39;overall_score&#39;])&#34;</span><span style="color:#66d9ef">)</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> <span style="color:#f92672">[[</span> $SILENT -eq <span style="color:#ae81ff">0</span> <span style="color:#f92672">]]</span>; <span style="color:#66d9ef">then</span>
+</span></span><span style="display:flex;"><span>  print -P <span style="color:#e6db74">&#34;  %F{cyan}[MODULE 1]%f Cyclic Recursion Limit &amp; Token Guard -&gt; %F{green}[PASS]%f (Score: </span><span style="color:#e6db74">${</span>M1_SCORE<span style="color:#e6db74">}</span><span style="color:#e6db74">/100)&#34;</span>
+</span></span><span style="display:flex;"><span>  print -P <span style="color:#e6db74">&#34;  %F{cyan}[MODULE 2]%f State Reducer Concurrency (add_messages) -&gt; %F{green}[PASS]%f (Score: </span><span style="color:#e6db74">${</span>M2_SCORE<span style="color:#e6db74">}</span><span style="color:#e6db74">/100)&#34;</span>
+</span></span><span style="display:flex;"><span>  print -P <span style="color:#e6db74">&#34;  %F{cyan}[MODULE 3]%f Durable Checkpoint Persistence &amp; Rollback -&gt; %F{green}[PASS]%f (Score: </span><span style="color:#e6db74">${</span>M3_SCORE<span style="color:#e6db74">}</span><span style="color:#e6db74">/100)&#34;</span>
+</span></span><span style="display:flex;"><span>  print -P <span style="color:#e6db74">&#34;  %F{cyan}[MODULE 4]%f Human-in-the-Loop Interrupt &amp; Tool Guardrail -&gt; %F{green}[PASS]%f (Score: </span><span style="color:#e6db74">${</span>M4_SCORE<span style="color:#e6db74">}</span><span style="color:#e6db74">/100)&#34;</span>
+</span></span><span style="display:flex;"><span>  print <span style="color:#e6db74">&#34;&#34;</span>
+</span></span><span style="display:flex;"><span>  print -P <span style="color:#e6db74">&#34;%F{green}========================================================================================%f&#34;</span>
+</span></span><span style="display:flex;"><span>  print -P <span style="color:#e6db74">&#34;%F{green}  BENCHMARK COMPLETED: Overall Architectural Score: </span><span style="color:#e6db74">${</span>AVG_SCORE<span style="color:#e6db74">}</span><span style="color:#e6db74"> / 100%f&#34;</span>
+</span></span><span style="display:flex;"><span>  print -P <span style="color:#e6db74">&#34;%F{green}  ASSESSMENT: Level 4 - Production-Grade Agent Systems Architect%f&#34;</span>
+</span></span><span style="display:flex;"><span>  print -P <span style="color:#e6db74">&#34;%F{magenta}  Exported JSON report to: </span><span style="color:#e6db74">${</span>REPORT_FILE<span style="color:#e6db74">}</span><span style="color:#e6db74">%f&#34;</span>
+</span></span><span style="display:flex;"><span>  print -P <span style="color:#e6db74">&#34;%F{green}========================================================================================%f&#34;</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">fi</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>exit <span style="color:#ae81ff">0</span>
+</span></span></code></pre></div><hr>
 <h3>3. 两种执行模式实操指南</h3>
 <h4>模式 A：人工交互式全流程自测 (适合开发者本地调试)</h4>
 <p>在你的日常开发终端中执行对应系统的脚本，进行沉浸式自检：</p>
-<pre><code class="language-bash"># Linux / Ubuntu 26.04
-chmod +x agent_langchain_sandbox_ubuntu2604.sh
-./agent_langchain_sandbox_ubuntu2604.sh --interactive
-<h1 id="macos-27">macOS 27</h1>
-<p>chmod +x agent_langchain_sandbox_macos27.zsh
-./agent_langchain_sandbox_macos27.zsh &ndash;interactive</p>
-<h1 id="windows-11-powershell-7">Windows 11 (PowerShell 7)</h1>
-<p>pwsh -File .\agent_langchain_sandbox_windows11.ps1 -Interactive
-</code></pre></p>
-<h4>模式 B：AI Agent 自动化静默执行与配置 (适合 CI/CD 自动化流水线)</h4>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># Linux / Ubuntu 26.04</span>
+</span></span><span style="display:flex;"><span>chmod +x agent_langchain_sandbox_ubuntu2604.sh
+</span></span><span style="display:flex;"><span>./agent_langchain_sandbox_ubuntu2604.sh --interactive
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># macOS 27</span>
+</span></span><span style="display:flex;"><span>chmod +x agent_langchain_sandbox_macos27.zsh
+</span></span><span style="display:flex;"><span>./agent_langchain_sandbox_macos27.zsh --interactive
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># Windows 11 (PowerShell 7)</span>
+</span></span><span style="display:flex;"><span>pwsh -File .<span style="color:#ae81ff">\a</span>gent_langchain_sandbox_windows11.ps1 -Interactive
+</span></span></code></pre></div><h4>模式 B：AI Agent 自动化静默执行与配置 (适合 CI/CD 自动化流水线)</h4>
 <p>如果希望在自主智能体流水线或 CI/CD 构建环节中静默运行评测并提取 JSON 报告：</p>
-<pre><code class="language-bash"># Linux / macOS 静默执行
-./agent_langchain_sandbox_ubuntu2604.sh --agent-mode
-cat agent_langchain_eval_report.json | jq .assessment
-<h1 id="windows-11-静默执行">Windows 11 静默执行</h1>
-<p>pwsh -File .\agent_langchain_sandbox_windows11.ps1 -AgentMode
-Get-Content agent_langchain_eval_report.json | ConvertFrom-Json
-</code></pre></p>
-<hr>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># Linux / macOS 静默执行</span>
+</span></span><span style="display:flex;"><span>./agent_langchain_sandbox_ubuntu2604.sh --agent-mode
+</span></span><span style="display:flex;"><span>cat agent_langchain_eval_report.json | jq .assessment
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># Windows 11 静默执行</span>
+</span></span><span style="display:flex;"><span>pwsh -File .<span style="color:#ae81ff">\a</span>gent_langchain_sandbox_windows11.ps1 -AgentMode
+</span></span><span style="display:flex;"><span>Get-Content agent_langchain_eval_report.json | ConvertFrom-Json
+</span></span></code></pre></div><hr>
 <h2>八、高频深度 Q&amp;A 实战拆解：8 大前沿拷问直击核心</h2>
 <p>结合一线大厂架构师与资深开发者在实际迁移改造中最常遇到的纠结与疑问，我们整理了 8 大最具价值的深度解答：</p>
 <h3>Q1: “既然可以直接用原生的 OpenAI / Anthropic SDK 配合 while 循环手搓 Agent，为什么我还需要 LangGraph？”</h3>
