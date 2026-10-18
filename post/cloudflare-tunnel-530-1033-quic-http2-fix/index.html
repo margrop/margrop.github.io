@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>容器显示 Up 4 周，网站却 530 了：Cloudflare Tunnel 被 QUIC 悄悄拖垮的一次排障 - 魔都水滴</title>
+<meta name="description" content="源站一直 200，cloudflared 容器也显示 Up 4 周，公网却返回 530 / 1033。复盘一次 Cloudflare Tunnel 掉线：QUIC 走的 UDP 7844 间歇失败，旧版连接器回退 http2 时直接退出。附固定 http2、升级与回滚的三平台脚本。">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://blog.margrop.net/post/cloudflare-tunnel-530-1033-quic-http2-fix/"><meta property="og:site_name" content="魔都水滴">
+<meta property="og:title" content="容器显示 Up 4 周，网站却 530 了：Cloudflare Tunnel 被 QUIC 悄悄拖垮的一次排障 - 魔都水滴">
+<meta property="og:description" content="源站一直 200，cloudflared 容器也显示 Up 4 周，公网却返回 530 / 1033。复盘一次 Cloudflare Tunnel 掉线：QUIC 走的 UDP 7844 间歇失败，旧版连接器回退 http2 时直接退出。附固定 http2、升级与回滚的三平台脚本。">
+<meta property="og:url" content="https://blog.margrop.net/post/cloudflare-tunnel-530-1033-quic-http2-fix/">
+<meta property="og:locale" content="zh_CN"><meta property="og:type" content="article"><meta property="og:locale:alternate" content="en_US"><meta property="og:image" content="https://blog.margrop.net/post-images/cloudflare-tunnel-530-1033-quic-http2-fix/01-cover-zh.webp"><meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="容器显示 Up 4 周，网站却 530 了：Cloudflare Tunnel 被 QUIC 悄悄拖垮的一次排障 - 魔都水滴">
+<meta name="twitter:description" content="源站一直 200，cloudflared 容器也显示 Up 4 周，公网却返回 530 / 1033。复盘一次 Cloudflare Tunnel 掉线：QUIC 走的 UDP 7844 间歇失败，旧版连接器回退 http2 时直接退出。附固定 http2、升级与回滚的三平台脚本。"><meta name="twitter:image" content="https://blog.margrop.net/post-images/cloudflare-tunnel-530-1033-quic-http2-fix/01-cover-zh.webp"><link rel="alternate" hreflang="zh-CN" href="https://blog.margrop.net/post/cloudflare-tunnel-530-1033-quic-http2-fix/"><link rel="alternate" hreflang="en-US" href="https://blog.margrop.net/en/post/cloudflare-tunnel-530-1033-quic-http2-fix/"><link rel="alternate" hreflang="x-default" href="https://blog.margrop.net/"><meta property="article:published_time" content="2026-10-18T12:30:00&#43;08:00">
+<meta property="article:modified_time" content="2026-10-18T12:30:00&#43;08:00"><meta property="article:tag" content="Cloudflare"><meta property="article:tag" content="Tunnel"><meta property="article:tag" content="内网穿透"><meta property="article:tag" content="家庭实验室"><meta property="article:tag" content="Docker"><meta property="article:tag" content="网络"><meta property="article:tag" content="Network"><meta property="article:tag" content="故障排查"><meta property="article:tag" content="Troubleshooting"><meta property="article:tag" content="自动化"><meta property="article:tag" content="Automation"><script type="application/ld+json">{"@context":"https://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"魔都水滴"},"dateModified":"2026-10-18T12:30:00+08:00","datePublished":"2026-10-18T12:30:00+08:00","description":"源站一直 200，cloudflared 容器也显示 Up 4 周，公网却返回 530 / 1033。复盘一次 Cloudflare Tunnel 掉线：QUIC 走的 UDP 7844 间歇失败，旧版连接器回退 http2 时直接退出。附固定 http2、升级与回滚的三平台脚本。","headline":"容器显示 Up 4 周，网站却 530 了：Cloudflare Tunnel 被 QUIC 悄悄拖垮的一次排障","image":"https://blog.margrop.net/post-images/cloudflare-tunnel-530-1033-quic-http2-fix/01-cover-zh.webp","inLanguage":"zh-CN","mainEntityOfPage":"https://blog.margrop.net/post/cloudflare-tunnel-530-1033-quic-http2-fix/","url":"https://blog.margrop.net/post/cloudflare-tunnel-530-1033-quic-http2-fix/"}</script>
+    <meta name="baidu-site-verification" content="code-sVFZ8SER59" />
+    <script src="/js/theme-toggle.js"></script>
+
+    
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-3J2W592DHJ"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-3J2W592DHJ');
+    </script>
+
+    <style>
+    :root {
+        color-scheme: light;
+        --page-bg: #fff;
+        --surface-bg: #f4f4f4;
+        --text: #222;
+        --muted: #666;
+        --subtle: #777;
+        --border: #eee;
+        --border-strong: #ddd;
+        --link: #006CFF;
+        --tag-bg: #eee;
+        --button-bg: #fff;
+        --button-primary-bg: #333;
+    }
+    @media (prefers-color-scheme: dark) {
+        :root:not([data-theme]) {
+            color-scheme: dark;
+            --page-bg: #111315;
+            --surface-bg: #1d2126;
+            --text: #e8eaed;
+            --muted: #aeb4bd;
+            --subtle: #9aa2ad;
+            --border: #30353d;
+            --border-strong: #454c56;
+            --link: #79b8ff;
+            --tag-bg: #2a3038;
+            --button-bg: #1d2126;
+            --button-primary-bg: #e8eaed;
+        }
+    }
+    html[data-theme="dark"] {
+        color-scheme: dark;
+        --page-bg: #111315;
+        --surface-bg: #1d2126;
+        --text: #e8eaed;
+        --muted: #aeb4bd;
+        --subtle: #9aa2ad;
+        --border: #30353d;
+        --border-strong: #454c56;
+        --link: #79b8ff;
+        --tag-bg: #2a3038;
+        --button-bg: #1d2126;
+        --button-primary-bg: #e8eaed;
+    }
+    html[data-theme="light"] {
+        color-scheme: light;
+        --page-bg: #fff;
+        --surface-bg: #f4f4f4;
+        --text: #222;
+        --muted: #666;
+        --subtle: #777;
+        --border: #eee;
+        --border-strong: #ddd;
+        --link: #006CFF;
+        --tag-bg: #eee;
+        --button-bg: #fff;
+        --button-primary-bg: #333;
+    }
+    body { background: var(--page-bg); font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif; max-width: 860px; margin: 0 auto; padding: 20px; line-height: 1.7; color: var(--text); }
+    body, h1, h2, h3, h4, h5, h6, p, ul, ol, li, blockquote, dt, dd { font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif; }
+    code, pre, kbd, samp { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+    h1 { border-bottom: 2px solid var(--border-strong); padding-bottom: 10px; }
+    article > h1 { font-size: 2em; line-height: 1.3; margin-bottom: 12px; }
+    .post-list { list-style: none; padding: 0; }
+    .post-list li { margin: 15px 0; }
+    .post-list a { text-decoration: none; color: var(--text); font-size: 18px; }
+    .post-list a:hover { color: var(--link); }
+    .date { color: var(--muted); font-size: 14px; margin-right: 10px; }
+    .tags { margin-top: 8px; }
+    .tag { background: var(--tag-bg); padding: 2px 8px; border-radius: 3px; font-size: 12px; margin-right: 5px; display: inline-block; }
+    nav { margin-bottom: 18px; border-bottom: 1px solid var(--border); padding-bottom: 15px; }
+    nav a { margin-right: 20px; text-decoration: none; color: var(--text); font-size: 16px; }
+    nav a:hover { color: var(--link); }
+    .language-switcher { display: flex; align-items: center; gap: 10px; margin: -8px 0 26px; }
+    .language-switcher a { display: inline-block; padding: 4px 10px; border: 1px solid var(--border-strong); border-radius: 999px; color: var(--muted); text-decoration: none; font-size: 14px; }
+    .language-switcher a.active { background: var(--link); border-color: var(--link); color: #fff; }
+    .content { line-height: 1.8; }
+    .content code { background: var(--surface-bg); padding: 2px 5px; border-radius: 3px; }
+    .content pre { background: var(--surface-bg); padding: 15px; overflow-x: auto; border-radius: 5px; }
+    .content pre code { background: none; padding: 0; border-radius: 0; }
+    .content img { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+    .content td img { min-width: 72px; margin: 6px auto; }
+    .content .code-snippet__fix {
+        margin: 0 0 1.5em;
+    }
+    .content .code-snippet__fix .code-snippet__line-index {
+        display: none !important;
+    }
+    .meta { color: var(--muted); font-size: 14px; margin-bottom: 14px; }
+    .meta-separator { margin: 0 6px; color: var(--subtle); }
+    .site-stats { display: flex; flex-wrap: wrap; gap: 10px 18px; margin: 28px 0 8px; padding-top: 12px; border-top: 1px solid var(--border); color: var(--subtle); font-size: 12px; }
+    a { color: var(--link); }
+    .hero { padding: 12px 0 24px; }
+    .hero h1 { border-bottom: 2px solid #333; }
+    .eyebrow { color: var(--muted); font-size: 12px; letter-spacing: .12em; margin: 0 0 8px; }
+    .hero-tagline { font-size: 18px; margin: 12px 0 8px; }
+    .hero-copy { color: var(--muted); margin: 0 0 14px; }
+    .hero-actions { margin: 14px 0 4px; }
+    .button { display: inline-block; margin-right: 12px; border: 1px solid var(--border-strong); border-radius: 3px; padding: 4px 10px; text-decoration: none; color: var(--text); background: var(--button-bg); font-size: 14px; }
+    .button-primary { background: var(--button-primary-bg); border-color: var(--button-primary-bg); color: var(--page-bg); }
+    .hero-banner { position: relative; display: flex; flex-direction: column; gap: 2px; margin: 18px 0 0; padding: 14px 44px 14px 16px; border: 1px solid var(--border-strong); border-left: 4px solid var(--link); border-radius: 4px; background: var(--surface-bg); color: var(--text); text-decoration: none; }
+    .hero-banner:hover { border-color: var(--link); }
+    .hero-banner-label { color: var(--muted); font-size: 12px; letter-spacing: .12em; }
+    .hero-banner strong { font-size: 17px; line-height: 1.5; }
+    .hero-banner small { color: var(--muted); font-size: 13px; }
+    .hero-banner-arrow { position: absolute; right: 16px; top: 50%; transform: translateY(-50%); color: var(--link); font-size: 20px; }
+    .favorites > blockquote { margin: 0 0 18px; padding: 10px 16px; border-left: 4px solid var(--link); background: var(--surface-bg); color: var(--muted); }
+    .favorites > blockquote p { margin: 0; }
+    .favorites-nav { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 8px; padding: 0; border: 0; }
+    .favorites-nav a { margin: 0; padding: 3px 10px; border: 1px solid var(--border-strong); border-radius: 999px; font-size: 14px; color: var(--text); text-decoration: none; }
+    .favorites-nav a:hover { border-color: var(--link); color: var(--link); }
+    .favorites h2 { margin-top: 36px; padding-bottom: 6px; border-bottom: 1px solid var(--border); scroll-margin-top: 16px; }
+    .favorites table { width: 100%; border-collapse: collapse; margin: 12px 0 18px; font-size: 15px; }
+    .favorites th, .favorites td { padding: 8px 10px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
+    .favorites th { color: var(--muted); font-size: 13px; font-weight: 600; background: var(--surface-bg); }
+    .favorites td:first-child { white-space: nowrap; }
+    .favorites tbody tr:hover { background: var(--surface-bg); }
+    .archive-summary { color: var(--muted); font-size: 14px; margin: -4px 0 12px; }
+    .year-nav { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 8px; padding: 0; border: 0; }
+    .year-nav a { margin: 0; padding: 3px 10px; border: 1px solid var(--border-strong); border-radius: 999px; font-size: 14px; color: var(--text); text-decoration: none; }
+    .year-nav a:hover { border-color: var(--link); color: var(--link); }
+    .year-nav span { color: var(--muted); font-size: 12px; }
+    .year-heading { display: flex; align-items: baseline; gap: 10px; margin: 32px 0 0; padding-bottom: 6px; border-bottom: 1px solid var(--border); scroll-margin-top: 16px; }
+    .year-heading span { color: var(--muted); font-size: 14px; font-weight: 400; }
+    .not-found { padding: 12px 0 24px; }
+    .not-found-en { color: var(--muted); }
+    .not-found .button { margin-bottom: 10px; }
+    .theme-toggle { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 1px solid var(--border-strong); border-radius: 999px; background: var(--button-bg); color: var(--text); cursor: pointer; font: inherit; font-size: 16px; }
+    .theme-toggle:hover { border-color: var(--link); color: var(--link); }
+    .la-theme-widget { margin: 12px 0 20px; min-height: 24px; color: var(--text); }
+    .identity-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: 16px 0; }
+    .identity-grid div { display: flex; flex-direction: column; }
+    .identity-grid strong { font-size: 15px; }
+    .identity-grid span, .topic-card span, .featured-list small { color: var(--muted); font-size: 13px; }
+    .section-block { padding-top: 28px; }
+    .section-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+    .section-heading h2 { margin: 0; }
+    .section-heading a { font-size: 14px; }
+    .topic-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+    .topic-card { display: block; padding: 14px; border: 1px solid var(--border); text-decoration: none; color: var(--text); }
+    .topic-card:hover { border-color: var(--border-strong); }
+    .topic-card strong { display: block; margin: 4px 0; font-size: 17px; }
+    .topic-index, .featured-list > a > span { color: var(--muted) !important; font-size: 12px !important; }
+    .featured-list { border-top: 1px solid var(--border); }
+    .featured-list > a { display: flex; gap: 14px; padding: 12px 0; border-bottom: 1px solid var(--border); text-decoration: none; color: var(--text); }
+    .featured-list div { display: flex; flex-direction: column; }
+    .latest-block { max-width: 860px; }
+    @media (max-width: 680px) {
+        .content td img { width: 72px; }
+        body { padding: 16px; }
+        nav a { display: inline-block; margin-right: 12px; margin-bottom: 8px; }
+        .identity-grid { grid-template-columns: repeat(2, 1fr); }
+        .topic-grid { grid-template-columns: 1fr; }
+        .favorites table { display: block; overflow-x: auto; }
+        .favorites td:first-child { white-space: normal; }
+    }
+</style>
+
+</head>
+<body>
+    <nav>
+  <a href="/">首页</a>
+  <a href="/start-here/">开始这里</a>
+  <a href="/career/">Portfolio</a>
+  <a href="/tag/ai/">AI Agent</a>
+  <a href="/tag/docker/">Self-hosting</a>
+  <a href="/tag/%e8%bf%90%e7%bb%b4/">Engineering</a>
+  <a href="/post/">归档</a>
+  <a href="/tags/">标签</a>
+  <a href="/about/">关于</a>
+  <a href="https://github.com/margrop" target="_blank" rel="noopener">GitHub</a>
+</nav>
+
+    <div class="language-switcher">
+  <button class="theme-toggle" type="button" data-theme-toggle aria-label="切换到暗黑模式" aria-pressed="false">🌙</button>
+
+  
+  
+    <a href="/post/cloudflare-tunnel-530-1033-quic-http2-fix/" class="active">中文</a>
+  
+    <a href="/en/post/cloudflare-tunnel-530-1033-quic-http2-fix/" class="">English</a>
+  
+  
+</div>
+
+    
+    <article>
+        <h1>容器显示 Up 4 周，网站却 530 了：Cloudflare Tunnel 被 QUIC 悄悄拖垮的一次排障</h1>
+        <div class="meta">
+            发布时间: 2026-10-18
+            <span class="meta-separator">·</span>
+            <span>阅读量 <span data-page-view-count>--</span></span>
+        </div>
+        
+<div class="tags">
+    
+    <a href="/tag/cloudflare/"><span class="tag">Cloudflare</span></a>
+    
+    <a href="/tag/tunnel/"><span class="tag">Tunnel</span></a>
+    
+    <a href="/tag/%E5%86%85%E7%BD%91%E7%A9%BF%E9%80%8F/"><span class="tag">内网穿透</span></a>
+    
+    <a href="/tag/%E5%AE%B6%E5%BA%AD%E5%AE%9E%E9%AA%8C%E5%AE%A4/"><span class="tag">家庭实验室</span></a>
+    
+    <a href="/tag/docker/"><span class="tag">Docker</span></a>
+    
+    <a href="/tag/%E7%BD%91%E7%BB%9C/"><span class="tag">网络</span></a>
+    
+    <a href="/tag/network/"><span class="tag">Network</span></a>
+    
+    <a href="/tag/%E6%95%85%E9%9A%9C%E6%8E%92%E6%9F%A5/"><span class="tag">故障排查</span></a>
+    
+    <a href="/tag/troubleshooting/"><span class="tag">Troubleshooting</span></a>
+    
+    <a href="/tag/%E8%87%AA%E5%8A%A8%E5%8C%96/"><span class="tag">自动化</span></a>
+    
+    <a href="/tag/automation/"><span class="tag">Automation</span></a>
+    
+</div>
+
+
+        <div class="content">
+            <blockquote>
+<p>这次故障最迷惑人的地方，是所有能看到的东西都显示正常。</p>
+<p>下载站的源站在内网里打开，0.008 秒就返回 200。负责公网映射的 cloudflared 容器，docker ps 里写着 Up 4 weeks。可从外面访问，浏览器只给出一句冷冰冰的 error code: 1033，HTTP 状态码是 530。</p>
+<p>最后查明：容器还活着，但容器里面那几条通往 Cloudflare 的隧道连接已经全部断开。罪魁祸首是 QUIC 所依赖的 UDP 7844 出口出现间歇性超时，而一个两年没升级的旧版连接器，在“改走 http2”这一步没站稳，自己退出了。</p>
+</blockquote>
+<p><img src="/post-images/cloudflare-tunnel-530-1033-quic-http2-fix/01-cover-zh.webp" alt="原创题图：容器状态 Up，隧道连接 0 条，源站一直正常" width="1600" height="900" fetchpriority="high" decoding="async"></p>
+<p>图 1：本文原创示意图。四个角色里只有一个真正出了问题，而它恰好是表面上看起来最健康的那个。</p>
+<h2 id="一先说背景一个用-tunnel-发布出去的下载站">一、先说背景：一个用 Tunnel 发布出去的下载站</h2>
+<p>我在 <a href="/post/cloudflare-tunnel-public-https-no-public-ip/">用 Cloudflare Tunnel 把内网服务变成公网 HTTPS</a> 那篇文章里讲过这套玩法：家里不用公网 IP，也不用在路由器上开 80/443 端口，只要在内网跑一个 cloudflared 连接器，它会主动连到 Cloudflare，公网用户的请求再顺着这条连接送回内网。</p>
+<p>这次出问题的是一个文件下载站，跑在一台 Docker 主机上。cloudflared 则跑在另一台由 Portainer 管理的虚拟机里，以 Docker Compose 栈的方式部署，一条隧道同时挂着好几个公网域名。</p>
+<p>为了方便阅读，文中只使用角色名：“源站主机”运行下载站，“连接器主机”运行 cloudflared。所有内网地址、计算机名称、内网域名、隧道 ID 和 Token 都已省略；日志里的边缘节点地址也只保留到网段。时间、版本号、日志原文和命令行为都来自现场记录。</p>
+<h2 id="二问题表现三个正常一个打不开">二、问题表现：三个“正常”，一个“打不开”</h2>
+<p>先把现场能看到的信号摆出来：</p>
+<ul>
+<li>公网访问下载站：HTTP 530，正文只有一行 error code: 1033，大约 5 秒后返回。</li>
+<li>内网直接访问源站端口：HTTP 200，耗时 8 毫秒。</li>
+<li>源站容器、连接器容器：都在运行，没有重启记录。</li>
+<li>同一条隧道上的另一个代码托管站：同样是 530。</li>
+</ul>
+<p>最后一条很关键。两个完全不同的服务一起挂，说明问题不在某个服务本身，而在它们共用的那一段：隧道。</p>
+<p>先用一个生活里的场景打个比方。cloudflared 像小区门口的快递驿站，Cloudflare 边缘像城市快递总站。驿站每天一早主动给总站拉好 4 条专线，总站收到寄往小区的包裹，就顺着专线送过来，驿站再转交到你家门口。你家门一直开着（源站 200），驿站的灯也一直亮着（容器 Up），可如果 4 条专线全断了，总站手里的包裹就送不出去，只能退回给寄件人，退件单上写的就是 1033。</p>
+<p><img src="/post-images/cloudflare-tunnel-530-1033-quic-http2-fix/02-request-path-zh.webp" alt="原创链路图：访客、Cloudflare 边缘、cloudflared、源站，以及对应的快递比喻" width="1600" height="1000" loading="lazy" decoding="async"></p>
+<p>图 2：本文原创示意图。连接方向是从内网往外拨的，这也是 Tunnel 不需要开入站端口的原因。</p>
+<h2 id="三530-和-1033-分别在说什么">三、530 和 1033 分别在说什么</h2>
+<p>很多人看到 5xx 第一反应是“服务器挂了”，于是去重启源站。这次如果这么做，只会白忙一场。</p>
+<p>Cloudflare 官方文档对 530 的解释是：Cloudflare 在解析源站主机名时遇到问题，这种情况下响应正文会带一个 1XXX 错误码，要按这个具体错误码去排查。换句话说，530 只是一个“信封”，真正的信息在信封里的那张纸条上。</p>
+<p><img src="/post-images/cloudflare-tunnel-530-1033-quic-http2-fix/03-shot-error-530.webp" alt="真实截图：Cloudflare 官方文档对 Error 530 的说明" width="1040" height="860" loading="lazy" decoding="async"></p>
+<p>图 3：真实截图，来源 Cloudflare 官方文档 Error 530 页面。530 本身不说明原因，原因写在正文的 1XXX 错误码里。</p>
+<p>纸条上写的是 1033。官方文档说得非常直白：1033 表示你的隧道没有连到 Cloudflare 网络，因为 Cloudflare 找不到一个健康的 cloudflared 实例来接收流量。下面的状态表也值得记住：Healthy 表示隧道通过 4 条连接接入 Cloudflare 全球网络；Down 表示曾经连上、现在断了，要检查服务是否在运行、机器是否断电、程序是否崩溃，或者网络最近有没有变化。</p>
+<p><img src="/post-images/cloudflare-tunnel-530-1033-quic-http2-fix/04-shot-error-1033.webp" alt="真实截图：Cloudflare 官方文档对 Error 1033 的说明和隧道状态表" width="1065" height="1350" loading="lazy" decoding="async"></p>
+<p>图 4：真实截图，来源 Cloudflare 官方文档 Error 1033 页面。注意 Healthy 一栏写的是“四条连接”，这正是后面判断修复是否成功的标准。</p>
+<p>所以排查方向一下子就清楚了：不用碰源站，直接去找 cloudflared。</p>
+<h2 id="四第一个坑cloudflared-根本不在你以为的那台机器上">四、第一个坑：cloudflared 根本不在你以为的那台机器上</h2>
+<p>我先登录源站主机，docker ps、systemctl、ps 都翻了一遍，没有任何 cloudflared 进程。这在家庭实验室里很常见：服务越攒越多，当初是哪台机器负责“连隧道”，时间一长就记不清了。</p>
+<p>找它的办法也很朴素：对内网几个网段里能 SSH 登录的机器，批量查一遍有没有 cloudflared 进程或容器。很快在一台运行 Portainer 的虚拟机上找到了它，一个以 Compose 栈部署的容器，状态 Up 4 weeks，restart 策略是 always。</p>
+<p>这里顺手记一个经验：在 Cloudflare 后台的隧道详情页里，通常能看到每个连接器的来源 IP 和主机名。下次遇到类似情况，先看后台，比满网段找要快。</p>
+<h2 id="五日志里的真相容器活着隧道已经死了">五、日志里的真相：容器活着，隧道已经死了</h2>
+<p>docker logs 往回翻，时间线非常清楚（以下时间均为 UTC）：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>02:01:38 WRN Failed to serve quic connection error=&#34;timeout: no recent network activity&#34; connIndex=0
+</span></span><span style="display:flex;"><span>02:01:38 WRN Connection terminated error=&#34;there are no free edge addresses left to resolve to&#34; connIndex=0
+</span></span><span style="display:flex;"><span>02:01:42 ERR Failed to serve quic connection error=&#34;failed to accept QUIC stream: timeout: no recent network activity&#34; connIndex=1
+</span></span><span style="display:flex;"><span>02:01:44 ERR Connection terminated error=&#34;failed to accept QUIC stream: timeout: no recent network activity&#34; connIndex=1
+</span></span></code></pre></div><p>翻译成人话：4 条 QUIC 连接因为“一段时间没有任何网络活动”先后超时；其中一条在重连时把可用的边缘地址都试完了，报出 no free edge addresses left，然后就不再尝试。进程本身没有退出，所以 Docker 认为一切正常，也就不会触发 restart: always。</p>
+<p>这就是“容器 Up，隧道 0 条”的由来。容器的健康只代表进程还在，不代表它还在干活。好比驿站的灯亮着、店员也在，但电话线全断了，外面的人怎么打都打不进来。</p>
+<p>接着我做了最直觉的操作：重启容器。结果更有意思：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>02:05:01 INF Starting tunnel ... Initial protocol quic
+</span></span><span style="display:flex;"><span>02:05:11 ERR Failed to serve quic connection error=&#34;failed to accept QUIC stream: timeout: no recent network activity&#34;
+</span></span><span style="display:flex;"><span>02:05:12 WRN If this log occurs persistently, and cloudflared is unable to connect to Cloudflare Network with `quic` protocol,
+</span></span><span style="display:flex;"><span>         then most likely your machine/network is getting its egress UDP to port 7844 (or others) blocked or dropped.
+</span></span><span style="display:flex;"><span>02:05:12 INF Switching to fallback protocol http2
+</span></span><span style="display:flex;"><span>02:05:12 INF Tunnel server stopped
+</span></span><span style="display:flex;"><span>02:05:12 ERR Initiating shutdown error=&#34;failed to accept QUIC stream: timeout: no recent network activity&#34;
+</span></span><span style="display:flex;"><span>02:05:13 INF Starting tunnel ... Initial protocol quic
+</span></span></code></pre></div><p>新进程一开始还是用 QUIC，10 秒后又超时。cloudflared 自己也给出了提示：如果这条日志持续出现，多半是出口的 UDP 7844 被拦截或丢弃。然后它说“切换到备用协议 http2”，可紧接着打印的却是 Tunnel server stopped 和 Initiating shutdown。进程退出，Docker 把它拉起来，新进程又从 QUIC 开始，再超时，再退出，形成一个循环。</p>
+<p><img src="/post-images/cloudflare-tunnel-530-1033-quic-http2-fix/05-timeline-zh.webp" alt="原创时间线：02:01 QUIC 超时到 02:26 升级完成的完整过程" width="1600" height="1080" loading="lazy" decoding="async"></p>
+<p>图 5：本文原创示意图，时间来自现场日志。前两步是“静默掉线”，中间两步是“重启也救不回来”。</p>
+<h2 id="六quic-和-http2同一个端口两条完全不同的路">六、QUIC 和 http2：同一个端口，两条完全不同的路</h2>
+<p>要理解为什么会这样，需要先知道 cloudflared 和 Cloudflare 之间有两种“交通方式”。</p>
+<p>官方防火墙文档写得很明确：cloudflared 通过 7844 端口连接 Cloudflare 全球网络。使用 quic 协议时走 UDP，使用 http2 协议时走 TCP。</p>
+<p><img src="/post-images/cloudflare-tunnel-530-1033-quic-http2-fix/06-shot-firewall-7844.webp" alt="真实截图：Cloudflare 官方文档要求放行 7844 端口，quic 走 UDP，http2 走 TCP" width="1065" height="375" loading="lazy" decoding="async"></p>
+<p>图 6：真实截图，来源 Cloudflare 官方文档 Tunnel with firewall 页面。原页面下方列有边缘节点地址表，截图时已裁掉。</p>
+<p>再打个比方。QUIC 像高速公路上的 ETC 车道：快，切换网络时不容易断，但它依赖 UDP 这条“高速公路”本身畅通。http2 像国道：慢一点点，可它走的是 TCP，几乎所有网络环境都放行，很少被临时封闭。</p>
+<p>UDP 天生“不打招呼”。路由器、防火墙、运营商设备对 UDP 会话往往更苛刻：空闲超时更短、高峰时更容易被丢包、某些策略还会随时间变化。一段时间收不到对方的数据包，QUIC 就会判定连接已死，这正是日志里 no recent network activity 的意思。</p>
+<p>这里必须把证据说清楚：现场 UDP 并不是被彻底封死。升级到新版以后，cloudflared 启动时的连接预检显示 UDP Connectivity 是 pass，QUIC 连接成功。也就是说，这条 UDP 出口是“时好时坏”。持续超时的那几分钟，QUIC 就是连不上；过一阵又恢复。对于一个需要长期在线的连接器来说，“时好时坏”比“彻底不通”更危险，因为它让程序反复在两条路之间犹豫。</p>
+<h2 id="七根因网络抖了一下旧版连接器自己摔倒了">七、根因：网络抖了一下，旧版连接器自己摔倒了</h2>
+<p>把证据串起来，根因分两层：</p>
+<p>第一层是触发条件。连接器主机出口的 UDP 7844 在这段时间内间歇性超时，4 条 QUIC 连接全部断开。</p>
+<p>第二层是放大器。现场运行的是 cloudflared 2024.6.1，一个两年没更新的版本。它在 QUIC 失败后确实想回退到 http2，可在这次日志里，回退那一刻进程直接退出了；同时，在最早那次断线里，它把可用边缘地址试完以后就停止重连，进程却没退出，Docker 也就不会帮它重启。前者导致“重启也救不回来”，后者导致“没人发现它已经掉线”。</p>
+<p>为什么镜像会旧到这个程度？Compose 文件里写的是 latest，但镜像是从一个内网私有仓库拉的。那个仓库后来迁移了，旧地址已经不存在，主机本地缓存的 latest 永远停在了 2024 年。latest 这个标签看着省心，其实只是“上次拉取时的最新”。</p>
+<p><img src="/post-images/cloudflare-tunnel-530-1033-quic-http2-fix/08-old-vs-new-zh.webp" alt="原创对比图：旧版回退时退出并循环，新版先做连接预检" width="1600" height="1040" loading="lazy" decoding="async"></p>
+<p>图 7：本文原创示意图。左侧步骤来自本次现场日志，右侧来自新版启动日志中的连接预检输出。</p>
+<h2 id="八修复先止血再根治">八、修复：先止血，再根治</h2>
+<h3 id="第一步把连接器固定到-http2">第一步：把连接器固定到 http2</h3>
+<p>Cloudflare 的 run 参数文档里有一个 protocol 参数：可选值为 auto、http2、quic，默认 auto；auto 会先配置 quic，如果建立不了 UDP 连接，再回退到 http2。对应的环境变量是 TUNNEL_TRANSPORT_PROTOCOL。</p>
+<p><img src="/post-images/cloudflare-tunnel-530-1033-quic-http2-fix/07-shot-protocol-param.webp" alt="真实截图：Cloudflare 官方文档中 protocol 参数的说明" width="1040" height="569" loading="lazy" decoding="async"></p>
+<p>图 8：真实截图，来源 Cloudflare 官方文档 Tunnel run parameters 页面。auto 的含义就是“先试 QUIC，不行再说”。</p>
+<p>既然 UDP 不可靠，那就别让它先试了。我在 Compose 文件的 command 里加了 &ndash;protocol http2：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-yaml" data-lang="yaml"><span style="display:flex;"><span><span style="color:#f92672">services</span>:
+</span></span><span style="display:flex;"><span>  <span style="color:#f92672">cloudflared</span>:
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">image</span>: <span style="color:#ae81ff">cloudflare/cloudflared:2026.10.1</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">container_name</span>: <span style="color:#ae81ff">cloudflared</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">command</span>: <span style="color:#ae81ff">tunnel --no-autoupdate --protocol http2 run --token &lt;TUNNEL_TOKEN&gt;</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">restart</span>: <span style="color:#ae81ff">always</span>
+</span></span></code></pre></div><p>这里有个 Portainer 用户容易踩的细节。容器标签里记录的 compose 路径是 /data/compose/编号/docker-compose.yml，那是 Portainer 容器内部的路径。宿主机上对应的是 Portainer 数据卷目录下的同名文件。要改就改这一份，否则下次在 Portainer 里重新部署这个栈，你的修改会被它自己存的版本覆盖。改之前先备份，再用同一个 project 名重建：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>cp -p docker-compose.yml /root/cloudflared-compose.bak
+</span></span><span style="display:flex;"><span>docker compose -p cloudflared -f docker-compose.yml up -d
+</span></span><span style="display:flex;"><span>docker logs cloudflared 2&gt;&amp;<span style="color:#ae81ff">1</span> | grep -E <span style="color:#e6db74">&#34;Registered|protocol&#34;</span>
+</span></span></code></pre></div><p>10 秒之内，4 条连接全部注册成功，日志里清一色的 protocol=http2，公网访问恢复 200，文件下载也正常。</p>
+<p>官方排障文档的“隧道随机断开”一节，也把“用 protocol: http2 测试”列为对付 UDP 空闲超时的办法之一：</p>
+<p><img src="/post-images/cloudflare-tunnel-530-1033-quic-http2-fix/09-shot-random-disconnects.webp" alt="真实截图：Cloudflare 官方排障文档建议在 UDP 空闲超时环境下测试 http2" width="1065" height="975" loading="lazy" decoding="async"></p>
+<p>图 9：真实截图，来源 Cloudflare 官方文档 Common errors 页面。使用 QUIC 时，空闲会话对那些“积极掐断 UDP”的网络设备更敏感。</p>
+<h3 id="第二步升级连接器并且固定版本号">第二步：升级连接器，并且固定版本号</h3>
+<p>止血之后是根治。旧私有仓库已经不可达，新仓库在拉取某一层时返回 500，最后改用主机 Docker 已配置的镜像加速源，直接拉取 Docker Hub 上的 cloudflare/cloudflared:2026.10.1。</p>
+<p>GitHub 上的发布页显示，2026.10.1 是写作时的最新版本：</p>
+<p><img src="/post-images/cloudflare-tunnel-530-1033-quic-http2-fix/11-shot-releases.webp" alt="真实截图：cloudflared 在 GitHub 上的发布页面，2026.10.1 为最新版本" width="1370" height="580" loading="lazy" decoding="async"></p>
+<p>图 10：真实截图，来源 cloudflared 的 GitHub Releases 页面。页面上的 SHA256 是包内二进制文件的校验值，不是压缩包本身的，核对时别对错对象。</p>
+<p>升级时我把 image 从 latest 改成了明确的版本号。下次想升级，改一个数字、拉取、重建，一目了然，也不会再被“永远停在某一天的 latest”坑到。</p>
+<p>新版启动后多了一组连接预检，会分别测试 DNS 解析、UDP 连接、TCP 连接和 Cloudflare API，最后给出建议协议。因为已经固定了 http2，它的建议也是 http2。即使哪天有人把 &ndash;protocol 去掉，新版也会先测一遍再决定，不会再盲目从 QUIC 开始。</p>
+<h3 id="一条可以放心忽略的警告">一条可以放心忽略的警告</h3>
+<p>日志里还有一行 failed to sufficiently increase receive buffer size，看起来很吓人。Cloudflare 的排障文档明确说它通常没有影响，排障时可以忽略。它来自 cloudflared 使用的 quic-go 库：库会尝试调大 UDP 缓冲区，但 Linux 默认允许的上限比较小。在高带宽场景下可以按 quic-go 文档调大 net.core.rmem_max，对这次故障没有帮助。</p>
+<p><img src="/post-images/cloudflare-tunnel-530-1033-quic-http2-fix/10-shot-udp-buffer.webp" alt="真实截图：quic-go 文档对 UDP 缓冲区大小警告的说明" width="1370" height="940" loading="lazy" decoding="async"></p>
+<p>图 11：真实截图，来源 quic-go 项目 Wiki 的 UDP Buffer Sizes 页面。这行警告是性能提示，不是这次断线的原因。</p>
+<h2 id="九一键脚本先诊断再固定-http2失败自动回滚">九、一键脚本：先诊断，再固定 http2，失败自动回滚</h2>
+<p>为了下次不用再翻一遍日志，我把这次的排查和修复整理成了 <a href="/downloads/cloudflare-tunnel-530-1033-quic-http2-fix/tunnel-doctor-kit.zip">Tunnel Doctor 下载包</a>，包含 Windows 11、Ubuntu 26.04、macOS 27 三个入口，也可以单独查看 <a href="/downloads/cloudflare-tunnel-530-1033-quic-http2-fix/README.txt">使用说明</a>。三个脚本也可以分别下载：<a href="/downloads/cloudflare-tunnel-530-1033-quic-http2-fix/windows-11.ps1">windows-11.ps1</a>、<a href="/downloads/cloudflare-tunnel-530-1033-quic-http2-fix/ubuntu-26.04.sh">ubuntu-26.04.sh</a>、<a href="/downloads/cloudflare-tunnel-530-1033-quic-http2-fix/macos-27.command">macos-27.command</a>。</p>
+<p>脚本只用系统自带工具和你已经装好的 Docker 或 cloudflared，不调用任何云端 API，不下载远程脚本，也不会读取或打印隧道 Token（日志里出现的 Token 会被替换成 &lt;TOKEN&gt;）。它能识别三类部署：</p>
+<ul>
+<li>Docker 和 Docker Compose 容器，包括 Portainer 栈。脚本会把 Portainer 内部的 compose 路径自动换算成宿主机路径。</li>
+<li>Ubuntu 上的 systemd 服务。通过 drop-in 文件设置 TUNNEL_TRANSPORT_PROTOCOL=http2，不改原始 unit。</li>
+<li>macOS 的 launchd 服务和 Windows 11 的系统服务。分别写入 plist 的 EnvironmentVariables 和服务注册表的 Environment 值。</li>
+</ul>
+<h3 id="方法一人工启动脚本自动执行">方法一：人工启动，脚本自动执行</h3>
+<p>四种模式：audit 只读诊断；apply 固定 http2；upgrade 升级 compose 管理的镜像；rollback 按运行编号回滚。apply 和 upgrade 都会先备份，改完后等待日志出现 Registered tunnel connection，等不到就自动回滚。</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-powershell" data-lang="powershell"><span style="display:flex;"><span><span style="color:#75715e"># Windows 11：用管理员身份打开 PowerShell</span>
+</span></span><span style="display:flex;"><span>powershell -NoProfile -ExecutionPolicy Bypass <span style="color:#f92672">-File</span> .\windows-<span style="color:#ae81ff">11</span>.ps1 -Mode Audit
+</span></span><span style="display:flex;"><span>powershell -NoProfile -ExecutionPolicy Bypass <span style="color:#f92672">-File</span> .\windows-<span style="color:#ae81ff">11</span>.ps1 -Mode Apply
+</span></span><span style="display:flex;"><span>powershell -NoProfile -ExecutionPolicy Bypass <span style="color:#f92672">-File</span> .\windows-<span style="color:#ae81ff">11</span>.ps1 -Mode Upgrade -Version <span style="color:#ae81ff">2026.10</span>.1
+</span></span><span style="display:flex;"><span>powershell -NoProfile -ExecutionPolicy Bypass <span style="color:#f92672">-File</span> .\windows-<span style="color:#ae81ff">11</span>.ps1 -Mode Rollback -RunId RUN_ID
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># Ubuntu 26.04</span>
+</span></span><span style="display:flex;"><span>sudo bash ./ubuntu-26.04.sh audit
+</span></span><span style="display:flex;"><span>sudo bash ./ubuntu-26.04.sh apply
+</span></span><span style="display:flex;"><span>sudo bash ./ubuntu-26.04.sh upgrade 2026.10.1
+</span></span><span style="display:flex;"><span>sudo bash ./ubuntu-26.04.sh rollback RUN_ID
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># macOS 27（系统级 LaunchDaemon 需要 sudo，Docker Desktop 不需要）</span>
+</span></span><span style="display:flex;"><span>bash ./macos-27.command audit
+</span></span><span style="display:flex;"><span>bash ./macos-27.command apply
+</span></span><span style="display:flex;"><span>bash ./macos-27.command upgrade 2026.10.1
+</span></span><span style="display:flex;"><span>bash ./macos-27.command rollback RUN_ID
+</span></span></code></pre></div><p>只想处理某一个容器或服务时，加上 &ndash;target 名称（Windows 用 -Target）。audit 的输出大致是这样：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>Edge reachability (TCP 7844 is used by http2, UDP 7844 by quic):
+</span></span><span style="display:flex;"><span>  [OK]   TCP region1.v2.argotunnel.com:7844 reachable
+</span></span><span style="display:flex;"><span>Docker container: cloudflared (running restart=0)
+</span></span><span style="display:flex;"><span>  image: cloudflare/cloudflared:2026.10.1  version: 2026.10.1
+</span></span><span style="display:flex;"><span>  [OK]   transport already pinned to http2
+</span></span><span style="display:flex;"><span>  [WARN] token is a command-line argument, visible in ps; prefer TUNNEL_TOKEN or --token-file
+</span></span><span style="display:flex;"><span>  [OK]   compose file: &lt;portainer-data&gt;/compose/3/docker-compose.yml
+</span></span><span style="display:flex;"><span>  log window: registered=4 quic_failures=0 origin_errors=172
+</span></span></code></pre></div><p>测试范围也说清楚：Ubuntu 脚本在 Ubuntu 24.04 加 Docker Compose v2 上实机跑通了诊断、两种 command 写法的固定、重复执行不改动、升级、拉取失败不改动、注册失败自动回滚和手动回滚，测试用的是独立的临时隧道，没有动生产连接器；systemd 分支没有在真实的 systemd 版 cloudflared 上执行。macOS 脚本用用户级 LaunchAgent 实机跑通了诊断、固定、幂等、自动回滚和手动回滚。Windows 脚本通过了 PowerShell 7.6 的语法解析和核心函数测试，但没有在真实 Windows 11 服务上执行，请先跑 Audit、读一遍源码再用。</p>
+<h3 id="方法二交给本地-agent-自动配置">方法二：交给本地 Agent 自动配置</h3>
+<p>如果你在用本地运维 Agent，把解压后的目录交给它即可，包里的 agent-prompt.txt 就是任务说明。不绑定任何一家 Agent 产品：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>你已被授权检查并修复这台机器上的 Cloudflare Tunnel 连接器（cloudflared）。
+</span></span><span style="display:flex;"><span>1. 先阅读 README.txt 和当前系统对应的脚本源码，确认它做什么、不做什么。
+</span></span><span style="display:flex;"><span>2. 识别当前系统，只运行对应脚本的 audit 模式，整理结论：源站是否正常、TCP 7844 是否可达、
+</span></span><span style="display:flex;"><span>   连接器版本、是否已固定协议、日志里有没有 QUIC 超时。
+</span></span><span style="display:flex;"><span>3. 只有日志出现 QUIC/UDP 失败，或没有任何 Registered tunnel connection 时，才运行 apply。
+</span></span><span style="display:flex;"><span>4. apply 后确认出现 4 条 Registered tunnel connection（protocol=http2），并从公网访问一次确认不再是 530。
+</span></span><span style="display:flex;"><span>5. 连接器版本超过一年时，先问我要升级到哪个版本，得到回复后再运行 upgrade。
+</span></span><span style="display:flex;"><span>6. 失败时用脚本打印的运行编号执行 rollback，并再次 audit 核对。
+</span></span><span style="display:flex;"><span>约束：不要读取、打印或改写隧道 Token；不要改 Cloudflare 后台路由；不要关闭证书校验；
+</span></span><span style="display:flex;"><span>不要处理与 cloudflared 无关的容器或服务；报告中不要出现内网 IP、计算机名和内网域名。
+</span></span></code></pre></div><h2 id="十下次遇到-530按这个顺序查">十、下次遇到 530，按这个顺序查</h2>
+<p><img src="/post-images/cloudflare-tunnel-530-1033-quic-http2-fix/12-checklist-zh.webp" alt="原创排查清单：从源站到连接器、协议、端口、版本的六步检查" width="1600" height="1100" loading="lazy" decoding="async"></p>
+<p>图 12：本文原创示意图。前两步只花一分钟，却能决定接下来该查源站还是查连接器。</p>
+<p>这张清单的核心只有一句：530 加 1033，先查连接器，不查源站。连接器在跑，就看日志里有没有 Registered tunnel connection；没有、而且满屏 QUIC 超时，就固定 http2；TCP 7844 也不通，就该去放行防火墙出站了。</p>
+<p>最后，这次排障顺带暴露了几个值得收拾的小问题：</p>
+<ul>
+<li>隧道 Token 写在命令行参数里，在主机上用 ps 就能看到明文。新版支持 &ndash;token-file，或者用 TUNNEL_TOKEN 环境变量传入。</li>
+<li>同一条隧道上还挂着一个早已下线的旧域名，源站拒绝连接，日志里不停出现扫描 .php 文件的请求。不用的路由应该在后台删掉。</li>
+<li>最该补的是监控。容器 Up 不等于隧道在线，应该监控的是“公网能不能访问”，或者 cloudflared 指标里的已注册连接数。</li>
+</ul>
+<h2 id="qa几个容易想歪的问题">Q&amp;A：几个容易想歪的问题</h2>
+<h3 id="固定-http2-会不会变慢">固定 http2 会不会变慢？</h3>
+<p>对个人下载站、网页这类场景，基本感觉不到。QUIC 的优势主要在弱网和网络切换时更稳、握手更快。在 UDP 本身不稳定的网络里，能稳定连上的 http2 反而更快，毕竟连不上的 QUIC 速度是零。需要注意的是，官方文档提到 http2 不支持后量子密钥协商，对安全要求特别高的场景要自己权衡。</p>
+<h3 id="为什么不直接把-udp-7844-修好非要固定协议">为什么不直接把 UDP 7844 修好，非要固定协议？</h3>
+<p>能修当然更好，但家庭网络的 UDP 抖动往往不在你的控制范围内，可能是运营商设备，也可能是上游某台网关的会话超时策略。固定 http2 是把“依赖一个不可控的条件”换成“依赖一个几乎处处成立的条件”。等你确认 UDP 稳定了，删掉这个参数就能回到 auto。</p>
+<h3 id="容器-restart-always为什么没自动恢复">容器 restart: always，为什么没自动恢复？</h3>
+<p>因为最早那次掉线时进程没有退出。Docker 的重启策略只管进程死没死，不管它还在不在干活。后来手动重启那次倒是一直在重启，可每次都从 QUIC 开始，又在同一个地方退出。</p>
+<h3 id="多跑几个-cloudflared-副本能避免这种事吗">多跑几个 cloudflared 副本能避免这种事吗？</h3>
+<p>能降低风险。Cloudflare 支持同一条隧道挂多个连接器副本，放在不同机器上，一台掉了另一台还能接住。但如果几台机器共用同一个出口，UDP 一抖，所有副本会一起受影响。副本解决单机故障，固定协议解决出口不稳，两件事最好都做。</p>
+<h3 id="latest-标签到底能不能用">latest 标签到底能不能用？</h3>
+<p>能用，但要明白它的含义：本地的 latest 是“你上次拉取时的最新”，不会自己更新。尤其是从私有仓库或镜像加速源拉取时，源一旦失效，latest 就永远停在那一天。生产环境建议写死版本号，升级时主动改。</p>
+<h3 id="1033-一定是连接器的问题吗">1033 一定是连接器的问题吗？</h3>
+<p>绝大多数情况是。官方文档也提到一个例外：如果隧道显示 Active，还要检查 DNS 记录是否指向正确的隧道地址。FedRAMP High 账户如果用了普通的 cfargotunnel.com 子域，即使隧道健康也会返回 1033。普通个人账户一般不会遇到。</p>
+<h2 id="参考资料与配图来源">参考资料与配图来源</h2>
+<p>本文 7 张真实截图均由浏览器打开官方原文后截取、裁切，含有完整 IP 地址的表格已经裁掉；其余 5 张为本文原创示意图，提供中英文两个版本。日志内容来自现场，隧道 ID、Token 和内网地址已经脱敏。</p>
+<ol>
+<li><a href="https://developers.cloudflare.com/support/troubleshooting/http-status-codes/cloudflare-5xx-errors/error-530/">Cloudflare Docs：Error 530</a></li>
+<li><a href="https://developers.cloudflare.com/support/troubleshooting/http-status-codes/cloudflare-1xxx-errors/error-1033/">Cloudflare Docs：Error 1033</a></li>
+<li><a href="https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/configure-tunnels/tunnel-with-firewall/">Cloudflare Docs：Tunnel with firewall</a></li>
+<li><a href="https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/configure-tunnels/run-parameters/">Cloudflare Docs：Tunnel run parameters</a></li>
+<li><a href="https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/troubleshoot-tunnels/common-errors/">Cloudflare Docs：Common errors</a></li>
+<li><a href="https://github.com/quic-go/quic-go/wiki/UDP-Buffer-Sizes">quic-go Wiki：UDP Buffer Sizes</a></li>
+<li><a href="https://github.com/cloudflare/cloudflared/releases">cloudflared GitHub Releases</a></li>
+</ol>
+<p>相关旧文：<a href="/post/cloudflare-tunnel-public-https-no-public-ip/">用 Cloudflare Tunnel 把内网服务变成公网 HTTPS</a>、<a href="/post/smartdns-adguard-dns-correctness-postmortem/">SmartDNS 与 AdGuard Home 的三层陷阱</a>。这两次排障都在提醒同一件事：看到一个绿色的“正常”之后，再沿着真实请求走一遍。</p>
+        </div>
+    </article>
+
+    
+
+
+
+
+
+<section aria-label="评论" style="margin-top:40px"
+  data-gitalk-id="/post/cloudflare-tunnel-530-1033-quic-http2-fix/" data-gitalk-title="容器显示 Up 4 周，网站却 530 了：Cloudflare Tunnel 被 QUIC 悄悄拖垮的一次排障" data-gitalk-url="https://blog.margrop.net/post/cloudflare-tunnel-530-1033-quic-http2-fix/">
+  <h2>评论</h2>
+  <p>使用 GitHub 登录后即可评论，中英文版本共用同一讨论。
+    <a href="https://github.com/margrop/margropcomment.margrop.io/issues?q=is%3Aissue&#43;label%3AGitalk&#43;label%3A%22%2Fpost%2Fcloudflare-tunnel-530-1033-quic-http2-fix%2F%22" target="_blank" rel="noopener noreferrer">在 GitHub 上参与讨论</a>
+  </p>
+  <div id="gitalk-container"></div>
+  <noscript>请开启 JavaScript，或通过上方 GitHub 链接参与讨论。</noscript>
+</section>
+<link rel="stylesheet" href="/vendor/gitalk/1.8.0/gitalk.css">
+<script src="/vendor/gitalk/1.8.0/gitalk.server-auth.min.js"></script>
+<script>
+  (function () {
+    if (typeof Gitalk === 'undefined') {
+      document.getElementById('gitalk-container').textContent = '评论加载失败，可使用上方 GitHub 链接参与讨论。';
+      return;
+    }
+    var gitalk = new Gitalk({
+      clientID: "3181fd94e501cc5db0ad",
+      clientSecret: 'server-side',
+      proxy: "https://comments.margrop.net/oauth/token",
+      repo: "margropcomment.margrop.io",
+      owner: "margrop",
+      admin: ["margrop"],
+      id: "/post/cloudflare-tunnel-530-1033-quic-http2-fix/",
+      language: 'zh-CN',
+      createIssueManually: true,
+      distractionFreeMode: false
+    });
+    gitalk.render('gitalk-container');
+  })();
+</script>
+
+
+
+
+
+    
+<div class="site-stats" aria-label="访问统计">
+    <span>本文阅读量 <span data-page-view-count>--</span></span>
+</div>
+
+
+    
+    
+    <script async src="https://js.users.51.la/21044367.js"></script>
+    <script async charset="UTF-8" id="LA_COLLECT" src="https://sdk.51.la/js-sdk-pro.min.js" onload="LA.init({id: '1vVTUWl7zoRjnKXi', ck: '1vVTUWl7zoRjnKXi'})"></script>
+    <script async src="https://sdk.51.la/perf/js-sdk-perf.min.js" crossorigin="anonymous" onload="new LingQue.Monitor().init({id: '202teQt8THXwqyve'})"></script>
+    <script defer src="/js/page-views.js"></script>
+    <div class="la-theme-widget" data-51la-widget aria-label="51.la 网站统计"></div>
+    <script defer src="/js/51la-theme-widget.js"></script>
+</body>
+</html>

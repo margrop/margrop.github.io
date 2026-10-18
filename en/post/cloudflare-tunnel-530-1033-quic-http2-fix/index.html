@@ -1,0 +1,499 @@
+<!DOCTYPE html>
+<html lang="en-US">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>The Container Said Up 4 Weeks, the Site Said 530: How QUIC Quietly Knocked My Cloudflare Tunnel Offline - Margrop Blog</title>
+<meta name="description" content="Origin said 200 and cloudflared said Up for 4 weeks, yet the site returned 530 / 1033. Flaky UDP 7844 broke QUIC and an old connector quit while falling back to http2. Fix and scripts included.">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://blog.margrop.net/en/post/cloudflare-tunnel-530-1033-quic-http2-fix/"><meta property="og:site_name" content="Margrop Blog">
+<meta property="og:title" content="The Container Said Up 4 Weeks, the Site Said 530: How QUIC Quietly Knocked My Cloudflare Tunnel Offline - Margrop Blog">
+<meta property="og:description" content="Origin said 200 and cloudflared said Up for 4 weeks, yet the site returned 530 / 1033. Flaky UDP 7844 broke QUIC and an old connector quit while falling back to http2. Fix and scripts included.">
+<meta property="og:url" content="https://blog.margrop.net/en/post/cloudflare-tunnel-530-1033-quic-http2-fix/">
+<meta property="og:locale" content="en_US"><meta property="og:type" content="article"><meta property="og:locale:alternate" content="zh_CN"><meta property="og:image" content="https://blog.margrop.net/post-images/cloudflare-tunnel-530-1033-quic-http2-fix/01-cover-en.webp"><meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="The Container Said Up 4 Weeks, the Site Said 530: How QUIC Quietly Knocked My Cloudflare Tunnel Offline - Margrop Blog">
+<meta name="twitter:description" content="Origin said 200 and cloudflared said Up for 4 weeks, yet the site returned 530 / 1033. Flaky UDP 7844 broke QUIC and an old connector quit while falling back to http2. Fix and scripts included."><meta name="twitter:image" content="https://blog.margrop.net/post-images/cloudflare-tunnel-530-1033-quic-http2-fix/01-cover-en.webp"><link rel="alternate" hreflang="zh-CN" href="https://blog.margrop.net/post/cloudflare-tunnel-530-1033-quic-http2-fix/"><link rel="alternate" hreflang="en-US" href="https://blog.margrop.net/en/post/cloudflare-tunnel-530-1033-quic-http2-fix/"><link rel="alternate" hreflang="x-default" href="https://blog.margrop.net/"><meta property="article:published_time" content="2026-10-18T12:30:00&#43;08:00">
+<meta property="article:modified_time" content="2026-10-18T12:30:00&#43;08:00"><meta property="article:tag" content="Cloudflare"><meta property="article:tag" content="Tunnel"><meta property="article:tag" content="内网穿透"><meta property="article:tag" content="家庭实验室"><meta property="article:tag" content="Docker"><meta property="article:tag" content="网络"><meta property="article:tag" content="Network"><meta property="article:tag" content="故障排查"><meta property="article:tag" content="Troubleshooting"><meta property="article:tag" content="自动化"><meta property="article:tag" content="Automation"><script type="application/ld+json">{"@context":"https://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"Margrop"},"dateModified":"2026-10-18T12:30:00+08:00","datePublished":"2026-10-18T12:30:00+08:00","description":"Origin said 200 and cloudflared said Up for 4 weeks, yet the site returned 530 / 1033. Flaky UDP 7844 broke QUIC and an old connector quit while falling back to http2. Fix and scripts included.","headline":"The Container Said Up 4 Weeks, the Site Said 530: How QUIC Quietly Knocked My Cloudflare Tunnel Offline","image":"https://blog.margrop.net/post-images/cloudflare-tunnel-530-1033-quic-http2-fix/01-cover-en.webp","inLanguage":"en-US","mainEntityOfPage":"https://blog.margrop.net/en/post/cloudflare-tunnel-530-1033-quic-http2-fix/","url":"https://blog.margrop.net/en/post/cloudflare-tunnel-530-1033-quic-http2-fix/"}</script>
+    <meta name="baidu-site-verification" content="code-sVFZ8SER59" />
+    <script src="/js/theme-toggle.js"></script>
+
+    
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-3J2W592DHJ"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-3J2W592DHJ');
+    </script>
+
+    <style>
+    :root {
+        color-scheme: light;
+        --page-bg: #fff;
+        --surface-bg: #f4f4f4;
+        --text: #222;
+        --muted: #666;
+        --subtle: #777;
+        --border: #eee;
+        --border-strong: #ddd;
+        --link: #006CFF;
+        --tag-bg: #eee;
+        --button-bg: #fff;
+        --button-primary-bg: #333;
+    }
+    @media (prefers-color-scheme: dark) {
+        :root:not([data-theme]) {
+            color-scheme: dark;
+            --page-bg: #111315;
+            --surface-bg: #1d2126;
+            --text: #e8eaed;
+            --muted: #aeb4bd;
+            --subtle: #9aa2ad;
+            --border: #30353d;
+            --border-strong: #454c56;
+            --link: #79b8ff;
+            --tag-bg: #2a3038;
+            --button-bg: #1d2126;
+            --button-primary-bg: #e8eaed;
+        }
+    }
+    html[data-theme="dark"] {
+        color-scheme: dark;
+        --page-bg: #111315;
+        --surface-bg: #1d2126;
+        --text: #e8eaed;
+        --muted: #aeb4bd;
+        --subtle: #9aa2ad;
+        --border: #30353d;
+        --border-strong: #454c56;
+        --link: #79b8ff;
+        --tag-bg: #2a3038;
+        --button-bg: #1d2126;
+        --button-primary-bg: #e8eaed;
+    }
+    html[data-theme="light"] {
+        color-scheme: light;
+        --page-bg: #fff;
+        --surface-bg: #f4f4f4;
+        --text: #222;
+        --muted: #666;
+        --subtle: #777;
+        --border: #eee;
+        --border-strong: #ddd;
+        --link: #006CFF;
+        --tag-bg: #eee;
+        --button-bg: #fff;
+        --button-primary-bg: #333;
+    }
+    body { background: var(--page-bg); font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif; max-width: 860px; margin: 0 auto; padding: 20px; line-height: 1.7; color: var(--text); }
+    body, h1, h2, h3, h4, h5, h6, p, ul, ol, li, blockquote, dt, dd { font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif; }
+    code, pre, kbd, samp { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+    h1 { border-bottom: 2px solid var(--border-strong); padding-bottom: 10px; }
+    article > h1 { font-size: 2em; line-height: 1.3; margin-bottom: 12px; }
+    .post-list { list-style: none; padding: 0; }
+    .post-list li { margin: 15px 0; }
+    .post-list a { text-decoration: none; color: var(--text); font-size: 18px; }
+    .post-list a:hover { color: var(--link); }
+    .date { color: var(--muted); font-size: 14px; margin-right: 10px; }
+    .tags { margin-top: 8px; }
+    .tag { background: var(--tag-bg); padding: 2px 8px; border-radius: 3px; font-size: 12px; margin-right: 5px; display: inline-block; }
+    nav { margin-bottom: 18px; border-bottom: 1px solid var(--border); padding-bottom: 15px; }
+    nav a { margin-right: 20px; text-decoration: none; color: var(--text); font-size: 16px; }
+    nav a:hover { color: var(--link); }
+    .language-switcher { display: flex; align-items: center; gap: 10px; margin: -8px 0 26px; }
+    .language-switcher a { display: inline-block; padding: 4px 10px; border: 1px solid var(--border-strong); border-radius: 999px; color: var(--muted); text-decoration: none; font-size: 14px; }
+    .language-switcher a.active { background: var(--link); border-color: var(--link); color: #fff; }
+    .content { line-height: 1.8; }
+    .content code { background: var(--surface-bg); padding: 2px 5px; border-radius: 3px; }
+    .content pre { background: var(--surface-bg); padding: 15px; overflow-x: auto; border-radius: 5px; }
+    .content pre code { background: none; padding: 0; border-radius: 0; }
+    .content img { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+    .content td img { min-width: 72px; margin: 6px auto; }
+    .content .code-snippet__fix {
+        margin: 0 0 1.5em;
+    }
+    .content .code-snippet__fix .code-snippet__line-index {
+        display: none !important;
+    }
+    .meta { color: var(--muted); font-size: 14px; margin-bottom: 14px; }
+    .meta-separator { margin: 0 6px; color: var(--subtle); }
+    .site-stats { display: flex; flex-wrap: wrap; gap: 10px 18px; margin: 28px 0 8px; padding-top: 12px; border-top: 1px solid var(--border); color: var(--subtle); font-size: 12px; }
+    a { color: var(--link); }
+    .hero { padding: 12px 0 24px; }
+    .hero h1 { border-bottom: 2px solid #333; }
+    .eyebrow { color: var(--muted); font-size: 12px; letter-spacing: .12em; margin: 0 0 8px; }
+    .hero-tagline { font-size: 18px; margin: 12px 0 8px; }
+    .hero-copy { color: var(--muted); margin: 0 0 14px; }
+    .hero-actions { margin: 14px 0 4px; }
+    .button { display: inline-block; margin-right: 12px; border: 1px solid var(--border-strong); border-radius: 3px; padding: 4px 10px; text-decoration: none; color: var(--text); background: var(--button-bg); font-size: 14px; }
+    .button-primary { background: var(--button-primary-bg); border-color: var(--button-primary-bg); color: var(--page-bg); }
+    .hero-banner { position: relative; display: flex; flex-direction: column; gap: 2px; margin: 18px 0 0; padding: 14px 44px 14px 16px; border: 1px solid var(--border-strong); border-left: 4px solid var(--link); border-radius: 4px; background: var(--surface-bg); color: var(--text); text-decoration: none; }
+    .hero-banner:hover { border-color: var(--link); }
+    .hero-banner-label { color: var(--muted); font-size: 12px; letter-spacing: .12em; }
+    .hero-banner strong { font-size: 17px; line-height: 1.5; }
+    .hero-banner small { color: var(--muted); font-size: 13px; }
+    .hero-banner-arrow { position: absolute; right: 16px; top: 50%; transform: translateY(-50%); color: var(--link); font-size: 20px; }
+    .favorites > blockquote { margin: 0 0 18px; padding: 10px 16px; border-left: 4px solid var(--link); background: var(--surface-bg); color: var(--muted); }
+    .favorites > blockquote p { margin: 0; }
+    .favorites-nav { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 8px; padding: 0; border: 0; }
+    .favorites-nav a { margin: 0; padding: 3px 10px; border: 1px solid var(--border-strong); border-radius: 999px; font-size: 14px; color: var(--text); text-decoration: none; }
+    .favorites-nav a:hover { border-color: var(--link); color: var(--link); }
+    .favorites h2 { margin-top: 36px; padding-bottom: 6px; border-bottom: 1px solid var(--border); scroll-margin-top: 16px; }
+    .favorites table { width: 100%; border-collapse: collapse; margin: 12px 0 18px; font-size: 15px; }
+    .favorites th, .favorites td { padding: 8px 10px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
+    .favorites th { color: var(--muted); font-size: 13px; font-weight: 600; background: var(--surface-bg); }
+    .favorites td:first-child { white-space: nowrap; }
+    .favorites tbody tr:hover { background: var(--surface-bg); }
+    .archive-summary { color: var(--muted); font-size: 14px; margin: -4px 0 12px; }
+    .year-nav { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 8px; padding: 0; border: 0; }
+    .year-nav a { margin: 0; padding: 3px 10px; border: 1px solid var(--border-strong); border-radius: 999px; font-size: 14px; color: var(--text); text-decoration: none; }
+    .year-nav a:hover { border-color: var(--link); color: var(--link); }
+    .year-nav span { color: var(--muted); font-size: 12px; }
+    .year-heading { display: flex; align-items: baseline; gap: 10px; margin: 32px 0 0; padding-bottom: 6px; border-bottom: 1px solid var(--border); scroll-margin-top: 16px; }
+    .year-heading span { color: var(--muted); font-size: 14px; font-weight: 400; }
+    .not-found { padding: 12px 0 24px; }
+    .not-found-en { color: var(--muted); }
+    .not-found .button { margin-bottom: 10px; }
+    .theme-toggle { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 1px solid var(--border-strong); border-radius: 999px; background: var(--button-bg); color: var(--text); cursor: pointer; font: inherit; font-size: 16px; }
+    .theme-toggle:hover { border-color: var(--link); color: var(--link); }
+    .la-theme-widget { margin: 12px 0 20px; min-height: 24px; color: var(--text); }
+    .identity-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: 16px 0; }
+    .identity-grid div { display: flex; flex-direction: column; }
+    .identity-grid strong { font-size: 15px; }
+    .identity-grid span, .topic-card span, .featured-list small { color: var(--muted); font-size: 13px; }
+    .section-block { padding-top: 28px; }
+    .section-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+    .section-heading h2 { margin: 0; }
+    .section-heading a { font-size: 14px; }
+    .topic-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+    .topic-card { display: block; padding: 14px; border: 1px solid var(--border); text-decoration: none; color: var(--text); }
+    .topic-card:hover { border-color: var(--border-strong); }
+    .topic-card strong { display: block; margin: 4px 0; font-size: 17px; }
+    .topic-index, .featured-list > a > span { color: var(--muted) !important; font-size: 12px !important; }
+    .featured-list { border-top: 1px solid var(--border); }
+    .featured-list > a { display: flex; gap: 14px; padding: 12px 0; border-bottom: 1px solid var(--border); text-decoration: none; color: var(--text); }
+    .featured-list div { display: flex; flex-direction: column; }
+    .latest-block { max-width: 860px; }
+    @media (max-width: 680px) {
+        .content td img { width: 72px; }
+        body { padding: 16px; }
+        nav a { display: inline-block; margin-right: 12px; margin-bottom: 8px; }
+        .identity-grid { grid-template-columns: repeat(2, 1fr); }
+        .topic-grid { grid-template-columns: 1fr; }
+        .favorites table { display: block; overflow-x: auto; }
+        .favorites td:first-child { white-space: normal; }
+    }
+</style>
+
+</head>
+<body>
+    <nav>
+  <a href="/en/">Home</a>
+  <a href="/en/start-here/">Start Here</a>
+  <a href="/en/career/">Portfolio</a>
+  <a href="/en/tag/ai/">AI Agent</a>
+  <a href="/en/tag/docker/">Self-hosting</a>
+  <a href="/en/tag/%e8%bf%90%e7%bb%b4/">Engineering</a>
+  <a href="/en/post/">Archive</a>
+  <a href="/en/tags/">Tags</a>
+  <a href="/en/about/">About</a>
+  <a href="https://github.com/margrop" target="_blank" rel="noopener">GitHub</a>
+</nav>
+
+    <div class="language-switcher">
+  <button class="theme-toggle" type="button" data-theme-toggle aria-label="Toggle dark mode" aria-pressed="false">🌙</button>
+
+  
+  
+    <a href="/post/cloudflare-tunnel-530-1033-quic-http2-fix/" class="">中文</a>
+  
+    <a href="/en/post/cloudflare-tunnel-530-1033-quic-http2-fix/" class="active">English</a>
+  
+  
+</div>
+
+    
+    <article>
+        <h1>The Container Said Up 4 Weeks, the Site Said 530: How QUIC Quietly Knocked My Cloudflare Tunnel Offline</h1>
+        <div class="meta">
+            Published: 2026-10-18
+            <span class="meta-separator">·</span>
+            <span>Views <span data-page-view-count>--</span></span>
+        </div>
+        
+<div class="tags">
+    
+    <a href="/en/tag/cloudflare/"><span class="tag">Cloudflare</span></a>
+    
+    <a href="/en/tag/tunnel/"><span class="tag">Tunnel</span></a>
+    
+    <a href="/en/tag/%E5%86%85%E7%BD%91%E7%A9%BF%E9%80%8F/"><span class="tag">Intranet Penetration</span></a>
+    
+    <a href="/en/tag/%E5%AE%B6%E5%BA%AD%E5%AE%9E%E9%AA%8C%E5%AE%A4/"><span class="tag">Homelab</span></a>
+    
+    <a href="/en/tag/docker/"><span class="tag">Docker</span></a>
+    
+    <a href="/en/tag/%E7%BD%91%E7%BB%9C/"><span class="tag">Networking</span></a>
+    
+    <a href="/en/tag/network/"><span class="tag">Network</span></a>
+    
+    <a href="/en/tag/%E6%95%85%E9%9A%9C%E6%8E%92%E6%9F%A5/"><span class="tag">Troubleshooting</span></a>
+    
+    <a href="/en/tag/troubleshooting/"><span class="tag">Troubleshooting</span></a>
+    
+    <a href="/en/tag/%E8%87%AA%E5%8A%A8%E5%8C%96/"><span class="tag">Automation</span></a>
+    
+    <a href="/en/tag/automation/"><span class="tag">Automation</span></a>
+    
+</div>
+
+
+        <div class="content">
+            <blockquote>
+<p>The confusing part of this outage was that everything I could see looked healthy.</p>
+<p>The download site answered 200 in 8 ms from inside the LAN. The cloudflared container that publishes it said Up 4 weeks in docker ps. From the internet, though, the browser showed a single line, error code: 1033, with HTTP status 530.</p>
+<p>The container was alive, but every tunnel connection inside it had dropped. The trigger was intermittent timeouts on the UDP 7844 egress that QUIC depends on. The amplifier was a two-year-old connector that tried to fall back to http2 and shut itself down instead.</p>
+</blockquote>
+<p><img src="/post-images/cloudflare-tunnel-530-1033-quic-http2-fix/01-cover-en.webp" alt="Original cover: container Up, zero tunnel connections, origin healthy" width="1600" height="900" fetchpriority="high" decoding="async"></p>
+<p>Figure 1: Original illustration. Only one of the four parts was broken, and it was the one that looked the healthiest.</p>
+<h2 id="1-background-a-download-site-published-through-a-tunnel">1. Background: a download site published through a Tunnel</h2>
+<p>In <a href="/en/post/cloudflare-tunnel-public-https-no-public-ip/">Turn Home Services into Public HTTPS with Cloudflare Tunnel</a> I described this setup: no public IP and no ports 80/443 on the router. A cloudflared connector inside the network dials out to Cloudflare, and public requests come back down that connection.</p>
+<p>The broken service was a file download site running on one Docker host. cloudflared ran on a different VM managed by Portainer, deployed as a Docker Compose stack, with one tunnel serving several public hostnames.</p>
+<p>I only use role names here: the &ldquo;origin host&rdquo; runs the download site and the &ldquo;connector host&rdquo; runs cloudflared. Private addresses, computer names, internal domains, the tunnel ID and the token are all omitted, and edge addresses in the logs are reduced to their network range. Timestamps, versions, log lines, and command behaviour come from the actual incident.</p>
+<h2 id="2-symptoms-three-healthy-one-broken">2. Symptoms: three &ldquo;healthy&rdquo;, one &ldquo;broken&rdquo;</h2>
+<p>What the incident looked like:</p>
+<ul>
+<li>Public request to the download site: HTTP 530 with a one-line body, error code: 1033, after about 5 seconds.</li>
+<li>Direct request to the origin port from the LAN: HTTP 200 in 8 ms.</li>
+<li>Origin container and connector container: both running, no restarts.</li>
+<li>A code hosting site on the same tunnel: also 530.</li>
+</ul>
+<p>The last point matters most. Two unrelated services failing together means the shared piece is the problem, which is the tunnel.</p>
+<p>Here is an everyday picture. cloudflared is the parcel depot at the gate of your neighbourhood, and the Cloudflare edge is the city hub. Every morning the depot dials four private lines to the hub. Parcels for the neighbourhood travel down those lines, and the depot hands them to your door. Your door stays open (origin 200) and the depot lights stay on (container Up). If all four lines are cut, the hub cannot deliver and returns the parcel to the sender with a note that says 1033.</p>
+<p><img src="/post-images/cloudflare-tunnel-530-1033-quic-http2-fix/02-request-path-en.webp" alt="Original diagram: visitor, Cloudflare edge, cloudflared, origin, with the parcel analogy" width="1600" height="1000" loading="lazy" decoding="async"></p>
+<p>Figure 2: Original illustration. Connections are dialed outward from the LAN, which is why a Tunnel needs no inbound port.</p>
+<h2 id="3-what-530-and-1033-actually-say">3. What 530 and 1033 actually say</h2>
+<p>A 5xx code tempts people to restart the origin. This time that would have been wasted effort.</p>
+<p>Cloudflare documents 530 as Cloudflare having trouble resolving the origin hostname, with a 1XXX error code in the response body that tells you where to look. In other words, 530 is the envelope and the real message is the note inside it.</p>
+<p><img src="/post-images/cloudflare-tunnel-530-1033-quic-http2-fix/03-shot-error-530.webp" alt="Real screenshot: Cloudflare documentation for Error 530" width="1040" height="860" loading="lazy" decoding="async"></p>
+<p>Figure 3: Real screenshot of the Cloudflare Error 530 documentation page. The 530 itself names no cause; the 1XXX code in the body does.</p>
+<p>The note said 1033. The documentation is direct: a 1033 means your tunnel is not connected to Cloudflare&rsquo;s network because Cloudflare cannot find a healthy cloudflared instance to receive the traffic. The status table is worth remembering too. Healthy means the tunnel serves traffic through four connections. Down means it was connected and no longer is, so check that the service is running and look for a powered-off machine, a crashed application, or recent network changes.</p>
+<p><img src="/post-images/cloudflare-tunnel-530-1033-quic-http2-fix/04-shot-error-1033.webp" alt="Real screenshot: Cloudflare documentation for Error 1033 and the tunnel status table" width="1065" height="1350" loading="lazy" decoding="async"></p>
+<p>Figure 4: Real screenshot of the Cloudflare Error 1033 documentation page. Note that Healthy means four connections, which became my definition of fixed.</p>
+<p>That settled the direction: leave the origin alone and go find cloudflared.</p>
+<h2 id="4-first-trap-cloudflared-was-not-where-i-thought-it-was">4. First trap: cloudflared was not where I thought it was</h2>
+<p>I logged in to the origin host and checked docker ps, systemctl, and ps. There was no cloudflared at all. That is common in a home lab: services pile up, and after a while nobody remembers which machine holds the tunnel.</p>
+<p>The fix was plain: check every SSH-reachable machine in the internal ranges for a cloudflared process or container. It turned up on a Portainer VM as a Compose stack, status Up 4 weeks, restart policy always.</p>
+<p>A lesson for next time: the tunnel details page in the Cloudflare dashboard usually shows the origin IP and hostname of each connector. Look there before sweeping the network.</p>
+<h2 id="5-the-logs-the-container-lived-the-tunnel-died">5. The logs: the container lived, the tunnel died</h2>
+<p>docker logs told a clear story (all times UTC):</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>02:01:38 WRN Failed to serve quic connection error=&#34;timeout: no recent network activity&#34; connIndex=0
+</span></span><span style="display:flex;"><span>02:01:38 WRN Connection terminated error=&#34;there are no free edge addresses left to resolve to&#34; connIndex=0
+</span></span><span style="display:flex;"><span>02:01:42 ERR Failed to serve quic connection error=&#34;failed to accept QUIC stream: timeout: no recent network activity&#34; connIndex=1
+</span></span><span style="display:flex;"><span>02:01:44 ERR Connection terminated error=&#34;failed to accept QUIC stream: timeout: no recent network activity&#34; connIndex=1
+</span></span></code></pre></div><p>In plain words: the QUIC connections timed out after a stretch with no network activity. One of them ran out of edge addresses while reconnecting, logged no free edge addresses left, and stopped trying. The process did not exit, so Docker saw nothing wrong and restart: always never fired.</p>
+<p>That is how you get &ldquo;container Up, zero tunnels&rdquo;. A healthy container only proves the process exists, not that it is doing its job. The depot lights are on and the clerk is at the desk, but every phone line is dead.</p>
+<p>Then I did the obvious thing and restarted the container. It got more interesting:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>02:05:01 INF Starting tunnel ... Initial protocol quic
+</span></span><span style="display:flex;"><span>02:05:11 ERR Failed to serve quic connection error=&#34;failed to accept QUIC stream: timeout: no recent network activity&#34;
+</span></span><span style="display:flex;"><span>02:05:12 WRN If this log occurs persistently, and cloudflared is unable to connect to Cloudflare Network with `quic` protocol,
+</span></span><span style="display:flex;"><span>         then most likely your machine/network is getting its egress UDP to port 7844 (or others) blocked or dropped.
+</span></span><span style="display:flex;"><span>02:05:12 INF Switching to fallback protocol http2
+</span></span><span style="display:flex;"><span>02:05:12 INF Tunnel server stopped
+</span></span><span style="display:flex;"><span>02:05:12 ERR Initiating shutdown error=&#34;failed to accept QUIC stream: timeout: no recent network activity&#34;
+</span></span><span style="display:flex;"><span>02:05:13 INF Starting tunnel ... Initial protocol quic
+</span></span></code></pre></div><p>The new process started with QUIC again and timed out after 10 seconds. cloudflared even printed the hint: if this persists, egress UDP to port 7844 is probably being blocked or dropped. It then announced the switch to http2, and the very next lines were Tunnel server stopped and Initiating shutdown. The process exited, Docker restarted it, and the new process began with QUIC again. Round and round.</p>
+<p><img src="/post-images/cloudflare-tunnel-530-1033-quic-http2-fix/05-timeline-en.webp" alt="Original timeline: from QUIC timeouts at 02:01 to the upgrade at 02:26" width="1600" height="1080" loading="lazy" decoding="async"></p>
+<p>Figure 5: Original illustration with times from the incident logs. The first two steps are the silent drop; the middle two show that restarting did not help.</p>
+<h2 id="6-quic-and-http2-same-port-two-very-different-roads">6. QUIC and http2: same port, two very different roads</h2>
+<p>To see why, you need to know that cloudflared has two ways of travelling to Cloudflare.</p>
+<p>The firewall documentation is explicit: cloudflared connects to Cloudflare&rsquo;s global network on port 7844, over UDP with the quic protocol and over TCP with the http2 protocol.</p>
+<p><img src="/post-images/cloudflare-tunnel-530-1033-quic-http2-fix/06-shot-firewall-7844.webp" alt="Real screenshot: Cloudflare documentation requires port 7844, UDP for quic and TCP for http2" width="1065" height="375" loading="lazy" decoding="async"></p>
+<p>Figure 6: Real screenshot of the Cloudflare &ldquo;Tunnel with firewall&rdquo; documentation page. The edge address table below this paragraph was cropped out.</p>
+<p>Another analogy. QUIC is the express toll lane on the highway: fast, and it survives network changes well, but only if the UDP highway is open. http2 is the local road: a little slower, but it runs over TCP, which almost every network allows and rarely closes without warning.</p>
+<p>UDP has no built-in &ldquo;hello, are you still there&rdquo;. Routers, firewalls, and carrier equipment are often stricter with UDP sessions: shorter idle timeouts, more drops at peak hours, and policies that change over time. When QUIC hears nothing from its peer for a while, it declares the connection dead. That is exactly what no recent network activity means.</p>
+<p>To be precise about the evidence: UDP was not permanently blocked. After the upgrade, the new connector&rsquo;s startup prechecks reported UDP Connectivity as pass with a successful QUIC connection. The UDP egress was flaky, not closed. During the bad minutes QUIC could not connect; later it worked again. For a connector that must stay online, flaky is worse than closed, because the software keeps hesitating between the two roads.</p>
+<h2 id="7-root-cause-the-network-hiccupped-and-the-old-connector-tripped-over-itself">7. Root cause: the network hiccupped and the old connector tripped over itself</h2>
+<p>Putting the evidence together, there are two layers.</p>
+<p>The trigger: UDP 7844 egress from the connector host timed out intermittently, and all four QUIC connections dropped.</p>
+<p>The amplifier: the connector was cloudflared 2024.6.1, two years old. It did try to fall back to http2 after QUIC failed, but in these logs the process exited right at that moment. In the first drop, it gave up reconnecting after exhausting edge addresses while the process stayed alive, so Docker never restarted it. The first behaviour meant restarting did not help; the second meant nobody noticed the tunnel was gone.</p>
+<p>Why was the image so old? The Compose file said latest, but it pulled from a private registry that had since moved. The old address no longer existed, so the local latest stayed frozen in 2024. A latest tag only means &ldquo;newest as of my last successful pull&rdquo;.</p>
+<p><img src="/post-images/cloudflare-tunnel-530-1033-quic-http2-fix/08-old-vs-new-en.webp" alt="Original comparison: the old build exits during fallback and loops, the new build runs prechecks first" width="1600" height="1040" loading="lazy" decoding="async"></p>
+<p>Figure 7: Original illustration. The left side follows this incident&rsquo;s logs; the right side follows the precheck output in the new build&rsquo;s startup logs.</p>
+<h2 id="8-the-fix-stop-the-bleeding-then-cure-it">8. The fix: stop the bleeding, then cure it</h2>
+<h3 id="step-1-pin-the-connector-to-http2">Step 1: pin the connector to http2</h3>
+<p>Cloudflare&rsquo;s run parameters include protocol, with values auto, http2, and quic. The default is auto, which configures quic first and falls back to http2 if UDP connections cannot be established. The environment variable is TUNNEL_TRANSPORT_PROTOCOL.</p>
+<p><img src="/post-images/cloudflare-tunnel-530-1033-quic-http2-fix/07-shot-protocol-param.webp" alt="Real screenshot: Cloudflare documentation for the protocol parameter" width="1040" height="569" loading="lazy" decoding="async"></p>
+<p>Figure 8: Real screenshot of the Cloudflare &ldquo;Tunnel run parameters&rdquo; page. auto means try QUIC first and see what happens.</p>
+<p>Since UDP was unreliable, I stopped letting it go first and added &ndash;protocol http2 to the Compose command:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-yaml" data-lang="yaml"><span style="display:flex;"><span><span style="color:#f92672">services</span>:
+</span></span><span style="display:flex;"><span>  <span style="color:#f92672">cloudflared</span>:
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">image</span>: <span style="color:#ae81ff">cloudflare/cloudflared:2026.10.1</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">container_name</span>: <span style="color:#ae81ff">cloudflared</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">command</span>: <span style="color:#ae81ff">tunnel --no-autoupdate --protocol http2 run --token &lt;TUNNEL_TOKEN&gt;</span>
+</span></span><span style="display:flex;"><span>    <span style="color:#f92672">restart</span>: <span style="color:#ae81ff">always</span>
+</span></span></code></pre></div><p>One detail trips up Portainer users. The compose path in the container labels, /data/compose/N/docker-compose.yml, is a path inside the Portainer container. On the host, the same file lives under Portainer&rsquo;s data volume. Edit that copy, or the next redeploy from Portainer will overwrite your change with its stored version. Back it up first, then recreate with the same project name:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>cp -p docker-compose.yml /root/cloudflared-compose.bak
+</span></span><span style="display:flex;"><span>docker compose -p cloudflared -f docker-compose.yml up -d
+</span></span><span style="display:flex;"><span>docker logs cloudflared 2&gt;&amp;<span style="color:#ae81ff">1</span> | grep -E <span style="color:#e6db74">&#34;Registered|protocol&#34;</span>
+</span></span></code></pre></div><p>Within 10 seconds all four connections registered, every one with protocol=http2. The public site returned 200 and downloads worked again.</p>
+<p>Cloudflare&rsquo;s troubleshooting page also lists &ldquo;test with protocol: http2&rdquo; as a remedy for UDP idle timeouts in its &ldquo;My tunnel randomly disconnects&rdquo; section:</p>
+<p><img src="/post-images/cloudflare-tunnel-530-1033-quic-http2-fix/09-shot-random-disconnects.webp" alt="Real screenshot: Cloudflare troubleshooting suggests testing http2 where UDP idle timers are short" width="1065" height="975" loading="lazy" decoding="async"></p>
+<p>Figure 9: Real screenshot of the Cloudflare &ldquo;Common errors&rdquo; page. With QUIC, idle sessions are more sensitive to devices that aggressively time out UDP traffic.</p>
+<h3 id="step-2-upgrade-the-connector-and-pin-the-version">Step 2: upgrade the connector and pin the version</h3>
+<p>With the bleeding stopped, the cure. The old private registry was unreachable and the new one returned 500 while pulling a layer, so I pulled cloudflare/cloudflared:2026.10.1 from Docker Hub through the registry mirrors already configured on the host.</p>
+<p>The GitHub releases page shows 2026.10.1 as the latest at the time of writing:</p>
+<p><img src="/post-images/cloudflare-tunnel-530-1033-quic-http2-fix/11-shot-releases.webp" alt="Real screenshot: cloudflared GitHub releases page with 2026.10.1 marked Latest" width="1370" height="580" loading="lazy" decoding="async"></p>
+<p>Figure 10: Real screenshot of the cloudflared GitHub Releases page. The listed SHA256 values are for the binaries inside the archives, not the archives themselves, so compare the right file.</p>
+<p>I replaced latest with an explicit version. Next time an upgrade is one number, one pull, and one recreate, and there is no frozen latest to get stuck on.</p>
+<p>The new build adds connectivity prechecks at startup. It tests DNS resolution, UDP, TCP, and the Cloudflare API, then reports a suggested protocol. With http2 pinned, it suggested http2. Even if someone removes &ndash;protocol later, the new build measures first instead of starting blindly with QUIC.</p>
+<h3 id="a-warning-you-can-safely-ignore">A warning you can safely ignore</h3>
+<p>The logs also contain failed to sufficiently increase receive buffer size, which looks alarming. Cloudflare&rsquo;s troubleshooting docs say it is generally not impactful and can be ignored while troubleshooting. It comes from the quic-go library that cloudflared uses: the library tries to enlarge UDP buffers, but Linux allows only a small maximum by default. On high-bandwidth links you can raise net.core.rmem_max as the quic-go docs describe. It had nothing to do with this outage.</p>
+<p><img src="/post-images/cloudflare-tunnel-530-1033-quic-http2-fix/10-shot-udp-buffer.webp" alt="Real screenshot: quic-go documentation for the UDP buffer size warning" width="1370" height="940" loading="lazy" decoding="async"></p>
+<p>Figure 11: Real screenshot of the quic-go Wiki &ldquo;UDP Buffer Sizes&rdquo; page. The warning is a performance hint, not the cause of the drop.</p>
+<h2 id="9-one-command-scripts-diagnose-pin-http2-roll-back-on-failure">9. One-command scripts: diagnose, pin http2, roll back on failure</h2>
+<p>So I never have to dig through logs like this again, I packaged the diagnosis and fix as the <a href="/downloads/cloudflare-tunnel-530-1033-quic-http2-fix/tunnel-doctor-kit.zip">Tunnel Doctor kit</a>, with entry points for Windows 11, Ubuntu 26.04, and macOS 27, plus a <a href="/downloads/cloudflare-tunnel-530-1033-quic-http2-fix/README.txt">README</a>. The scripts are also available individually: <a href="/downloads/cloudflare-tunnel-530-1033-quic-http2-fix/windows-11.ps1">windows-11.ps1</a>, <a href="/downloads/cloudflare-tunnel-530-1033-quic-http2-fix/ubuntu-26.04.sh">ubuntu-26.04.sh</a>, <a href="/downloads/cloudflare-tunnel-530-1033-quic-http2-fix/macos-27.command">macos-27.command</a>.</p>
+<p>They use only built-in tools plus the Docker or cloudflared you already have. They call no cloud API, download no remote scripts, and never read or print the tunnel token (tokens in logs are replaced with &lt;TOKEN&gt;). Three kinds of deployment are recognised:</p>
+<ul>
+<li>Docker and Docker Compose containers, including Portainer stacks. The script translates Portainer&rsquo;s internal compose path to the host path.</li>
+<li>systemd services on Ubuntu. A drop-in sets TUNNEL_TRANSPORT_PROTOCOL=http2 without touching the original unit.</li>
+<li>launchd services on macOS and system services on Windows 11. The script writes EnvironmentVariables in the plist or the Environment value in the service registry key.</li>
+</ul>
+<h3 id="method-1-you-start-it-the-script-does-the-rest">Method 1: you start it, the script does the rest</h3>
+<p>Four modes: audit is read-only; apply pins http2; upgrade updates a compose-managed image; rollback restores a run. apply and upgrade back up first, wait for Registered tunnel connection after the change, and roll back automatically if it never appears.</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-powershell" data-lang="powershell"><span style="display:flex;"><span><span style="color:#75715e"># Windows 11: open PowerShell as administrator</span>
+</span></span><span style="display:flex;"><span>powershell -NoProfile -ExecutionPolicy Bypass <span style="color:#f92672">-File</span> .\windows-<span style="color:#ae81ff">11</span>.ps1 -Mode Audit
+</span></span><span style="display:flex;"><span>powershell -NoProfile -ExecutionPolicy Bypass <span style="color:#f92672">-File</span> .\windows-<span style="color:#ae81ff">11</span>.ps1 -Mode Apply
+</span></span><span style="display:flex;"><span>powershell -NoProfile -ExecutionPolicy Bypass <span style="color:#f92672">-File</span> .\windows-<span style="color:#ae81ff">11</span>.ps1 -Mode Upgrade -Version <span style="color:#ae81ff">2026.10</span>.1
+</span></span><span style="display:flex;"><span>powershell -NoProfile -ExecutionPolicy Bypass <span style="color:#f92672">-File</span> .\windows-<span style="color:#ae81ff">11</span>.ps1 -Mode Rollback -RunId RUN_ID
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># Ubuntu 26.04</span>
+</span></span><span style="display:flex;"><span>sudo bash ./ubuntu-26.04.sh audit
+</span></span><span style="display:flex;"><span>sudo bash ./ubuntu-26.04.sh apply
+</span></span><span style="display:flex;"><span>sudo bash ./ubuntu-26.04.sh upgrade 2026.10.1
+</span></span><span style="display:flex;"><span>sudo bash ./ubuntu-26.04.sh rollback RUN_ID
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># macOS 27 (system LaunchDaemons need sudo, Docker Desktop does not)</span>
+</span></span><span style="display:flex;"><span>bash ./macos-27.command audit
+</span></span><span style="display:flex;"><span>bash ./macos-27.command apply
+</span></span><span style="display:flex;"><span>bash ./macos-27.command upgrade 2026.10.1
+</span></span><span style="display:flex;"><span>bash ./macos-27.command rollback RUN_ID
+</span></span></code></pre></div><p>Add &ndash;target NAME (-Target on Windows) to handle a single container or service. Audit output looks like this:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>Edge reachability (TCP 7844 is used by http2, UDP 7844 by quic):
+</span></span><span style="display:flex;"><span>  [OK]   TCP region1.v2.argotunnel.com:7844 reachable
+</span></span><span style="display:flex;"><span>Docker container: cloudflared (running restart=0)
+</span></span><span style="display:flex;"><span>  image: cloudflare/cloudflared:2026.10.1  version: 2026.10.1
+</span></span><span style="display:flex;"><span>  [OK]   transport already pinned to http2
+</span></span><span style="display:flex;"><span>  [WARN] token is a command-line argument, visible in ps; prefer TUNNEL_TOKEN or --token-file
+</span></span><span style="display:flex;"><span>  [OK]   compose file: &lt;portainer-data&gt;/compose/3/docker-compose.yml
+</span></span><span style="display:flex;"><span>  log window: registered=4 quic_failures=0 origin_errors=172
+</span></span></code></pre></div><p>Test coverage, stated plainly. The Ubuntu script ran end to end on Ubuntu 24.04 with Docker Compose v2: audit, apply for both command styles, a no-op second run, upgrade, a failed pull leaving files untouched, automatic rollback when registration fails, and manual rollback. Those tests used a separate throwaway tunnel, not the production connector. The systemd branch was not run against a real systemd cloudflared. The macOS script ran end to end against a user LaunchAgent: audit, apply, a no-op second run, automatic rollback, and manual rollback. The Windows script passed PowerShell 7.6 parsing and core function tests but was not run against a real Windows 11 service, so run Audit and read the source first.</p>
+<h3 id="method-2-let-a-local-agent-configure-it">Method 2: let a local agent configure it</h3>
+<p>If you use a local operations agent, hand it the extracted folder; agent-prompt.txt in the kit is the task brief. It is not tied to any agent product. In English:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>You are authorized to inspect and repair the Cloudflare Tunnel connector (cloudflared) on this machine.
+</span></span><span style="display:flex;"><span>1. Read README.txt and the script for the current OS first; confirm what it does and does not do.
+</span></span><span style="display:flex;"><span>2. Identify the OS and run only the audit mode. Summarise: origin health, TCP 7844 reachability,
+</span></span><span style="display:flex;"><span>   connector version, whether the protocol is pinned, and whether the logs show QUIC timeouts.
+</span></span><span style="display:flex;"><span>3. Run apply only if the logs show QUIC/UDP failures or no Registered tunnel connection at all.
+</span></span><span style="display:flex;"><span>4. After apply, confirm 4 Registered tunnel connection lines (protocol=http2) and one public request that is not 530.
+</span></span><span style="display:flex;"><span>5. If the connector is over a year old, ask me which version to use, then run upgrade.
+</span></span><span style="display:flex;"><span>6. On failure, run rollback with the printed run id and audit again.
+</span></span><span style="display:flex;"><span>Constraints: never read, print, or rewrite the tunnel token; do not change Cloudflare routes; do not disable
+</span></span><span style="display:flex;"><span>certificate checks; do not touch unrelated containers or services; keep private IPs, computer names, and
+</span></span><span style="display:flex;"><span>internal domains out of the report.
+</span></span></code></pre></div><h2 id="10-next-time-you-see-530-check-in-this-order">10. Next time you see 530, check in this order</h2>
+<p><img src="/post-images/cloudflare-tunnel-530-1033-quic-http2-fix/12-checklist-en.webp" alt="Original checklist: six checks from origin to connector, protocol, port, and version" width="1600" height="1100" loading="lazy" decoding="async"></p>
+<p>Figure 12: Original illustration. The first two checks take a minute and decide whether to look at the origin or the connector.</p>
+<p>The heart of it is one sentence: 530 plus 1033 means check the connector, not the origin. If the connector is running, look for Registered tunnel connection in its logs. If there is none and QUIC timeouts fill the screen, pin http2. If TCP 7844 is blocked too, it is time to open outbound traffic on the firewall.</p>
+<p>This incident also exposed a few loose ends:</p>
+<ul>
+<li>The tunnel token was a command-line argument, readable in plain text with ps on the host. Newer builds support &ndash;token-file, or you can pass TUNNEL_TOKEN as an environment variable.</li>
+<li>The same tunnel still routed an old hostname whose origin had been retired. The origin refused connections, and the logs filled with scanners probing for .php files. Delete routes you no longer use.</li>
+<li>Most of all, monitoring. Container Up is not tunnel online. Monitor whether the public URL works, or the registered connection count in cloudflared metrics.</li>
+</ul>
+<h2 id="qa-a-few-easy-wrong-turns">Q&amp;A: a few easy wrong turns</h2>
+<h3 id="is-http2-slower">Is http2 slower?</h3>
+<p>For a personal download site or web pages, you will hardly notice. QUIC shines on weak or changing networks and handshakes faster. On a network where UDP is unstable, an http2 connection that stays up is faster than a QUIC connection that does not exist. One caveat from the docs: post-quantum key agreement is not supported with http2, so weigh that if your security requirements are strict.</p>
+<h3 id="why-not-fix-udp-7844-instead-of-pinning-the-protocol">Why not fix UDP 7844 instead of pinning the protocol?</h3>
+<p>If you can, great. But UDP flakiness on home networks is often out of your hands: carrier gear, or an upstream gateway&rsquo;s session timeout policy. Pinning http2 swaps a dependency on something you cannot control for one that holds almost everywhere. Once UDP is proven stable, remove the flag and you are back on auto.</p>
+<h3 id="the-container-has-restart-always-so-why-no-recovery">The container has restart: always, so why no recovery?</h3>
+<p>During the first drop the process did not exit. Docker&rsquo;s restart policy watches whether the process is alive, not whether it works. After my manual restart it did restart repeatedly, but each run started with QUIC and exited at the same spot.</p>
+<h3 id="would-more-cloudflared-replicas-prevent-this">Would more cloudflared replicas prevent this?</h3>
+<p>They lower the risk. A tunnel can have several connector replicas on different machines, so one can carry on when another fails. If all replicas share the same egress, though, a UDP hiccup hits them all at once. Replicas handle a single machine failing; pinning the protocol handles a flaky exit. Do both.</p>
+<h3 id="is-the-latest-tag-safe">Is the latest tag safe?</h3>
+<p>It works, as long as you know what it means: your local latest is &ldquo;newest as of my last pull&rdquo; and never updates itself. When you pull through a private registry or mirror, latest freezes the day that source disappears. Pin versions in production and change them on purpose.</p>
+<h3 id="is-1033-always-a-connector-problem">Is 1033 always a connector problem?</h3>
+<p>Almost always. The docs mention one exception: if the tunnel shows Active, check that DNS points to the right tunnel address. On FedRAMP High accounts, a CNAME to the regular cfargotunnel.com domain returns 1033 even when the tunnel is healthy. Most personal accounts never see this.</p>
+<h2 id="references-and-image-sources">References and image sources</h2>
+<p>The 7 real screenshots were captured from the original pages in a browser and cropped; tables containing full IP addresses were cut out. The other 5 images are original illustrations, provided in Chinese and English. Log excerpts come from the incident, with the tunnel ID, token, and private addresses removed.</p>
+<ol>
+<li><a href="https://developers.cloudflare.com/support/troubleshooting/http-status-codes/cloudflare-5xx-errors/error-530/">Cloudflare Docs: Error 530</a></li>
+<li><a href="https://developers.cloudflare.com/support/troubleshooting/http-status-codes/cloudflare-1xxx-errors/error-1033/">Cloudflare Docs: Error 1033</a></li>
+<li><a href="https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/configure-tunnels/tunnel-with-firewall/">Cloudflare Docs: Tunnel with firewall</a></li>
+<li><a href="https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/configure-tunnels/run-parameters/">Cloudflare Docs: Tunnel run parameters</a></li>
+<li><a href="https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/troubleshoot-tunnels/common-errors/">Cloudflare Docs: Common errors</a></li>
+<li><a href="https://github.com/quic-go/quic-go/wiki/UDP-Buffer-Sizes">quic-go Wiki: UDP Buffer Sizes</a></li>
+<li><a href="https://github.com/cloudflare/cloudflared/releases">cloudflared GitHub Releases</a></li>
+</ol>
+<p>Related posts: <a href="/en/post/cloudflare-tunnel-public-https-no-public-ip/">Turn Home Services into Public HTTPS with Cloudflare Tunnel</a> and <a href="/en/post/smartdns-adguard-dns-correctness-postmortem/">Three SmartDNS and AdGuard Home Traps</a>. Both incidents taught the same thing: when you see a green &ldquo;healthy&rdquo;, follow one real request end to end anyway.</p>
+        </div>
+    </article>
+
+    
+
+
+
+
+
+<section aria-label="Comments" style="margin-top:40px"
+  data-gitalk-id="/post/cloudflare-tunnel-530-1033-quic-http2-fix/" data-gitalk-title="The Container Said Up 4 Weeks, the Site Said 530: How QUIC Quietly Knocked My Cloudflare Tunnel Offline" data-gitalk-url="https://blog.margrop.net/en/post/cloudflare-tunnel-530-1033-quic-http2-fix/">
+  <h2>Comments</h2>
+  <p>Sign in with GitHub to comment. Chinese and English versions share the same discussion.
+    <a href="https://github.com/margrop/margropcomment.margrop.io/issues?q=is%3Aissue&#43;label%3AGitalk&#43;label%3A%22%2Fpost%2Fcloudflare-tunnel-530-1033-quic-http2-fix%2F%22" target="_blank" rel="noopener noreferrer">Discuss on GitHub</a>
+  </p>
+  <div id="gitalk-container"></div>
+  <noscript>Enable JavaScript or use the GitHub discussion link above.</noscript>
+</section>
+<link rel="stylesheet" href="/vendor/gitalk/1.8.0/gitalk.css">
+<script src="/vendor/gitalk/1.8.0/gitalk.server-auth.min.js"></script>
+<script>
+  (function () {
+    if (typeof Gitalk === 'undefined') {
+      document.getElementById('gitalk-container').textContent = 'Comments could not load. Use the GitHub discussion link above.';
+      return;
+    }
+    var gitalk = new Gitalk({
+      clientID: "3181fd94e501cc5db0ad",
+      clientSecret: 'server-side',
+      proxy: "https://comments.margrop.net/oauth/token",
+      repo: "margropcomment.margrop.io",
+      owner: "margrop",
+      admin: ["margrop"],
+      id: "/post/cloudflare-tunnel-530-1033-quic-http2-fix/",
+      language: 'en',
+      createIssueManually: true,
+      distractionFreeMode: false
+    });
+    gitalk.render('gitalk-container');
+  })();
+</script>
+
+
+
+
+
+    
+<div class="site-stats" aria-label="Page Views">
+    <span>Views <span data-page-view-count>--</span></span>
+</div>
+
+
+    
+    
+    <script async src="https://js.users.51.la/21044367.js"></script>
+    <script async charset="UTF-8" id="LA_COLLECT" src="https://sdk.51.la/js-sdk-pro.min.js" onload="LA.init({id: '1vVTUWl7zoRjnKXi', ck: '1vVTUWl7zoRjnKXi'})"></script>
+    <script async src="https://sdk.51.la/perf/js-sdk-perf.min.js" crossorigin="anonymous" onload="new LingQue.Monitor().init({id: '202teQt8THXwqyve'})"></script>
+    <script defer src="/js/page-views.js"></script>
+    <div class="la-theme-widget" data-51la-widget aria-label="51.la Analytics"></div>
+    <script defer src="/js/51la-theme-widget.js"></script>
+</body>
+</html>
