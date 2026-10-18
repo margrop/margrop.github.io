@@ -1,0 +1,530 @@
+<!DOCTYPE html>
+<html lang="en-US">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>DNS Answered in 1 ms and Sent Me to the Wrong Place: Three SmartDNS and AdGuard Home Traps - Margrop Blog</title>
+<meta name="description" content="Fast replies hid wrong DNS answers. A SmartDNS and AdGuard Home postmortem covering routing, DoH trust, CONNECT compatibility, cache cleanup, and Windows, Ubuntu, and macOS automation.">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://blog.margrop.net/en/post/smartdns-adguard-dns-correctness-postmortem/"><meta property="og:site_name" content="Margrop Blog">
+<meta property="og:title" content="DNS Answered in 1 ms and Sent Me to the Wrong Place: Three SmartDNS and AdGuard Home Traps - Margrop Blog">
+<meta property="og:description" content="Fast replies hid wrong DNS answers. A SmartDNS and AdGuard Home postmortem covering routing, DoH trust, CONNECT compatibility, cache cleanup, and Windows, Ubuntu, and macOS automation.">
+<meta property="og:url" content="https://blog.margrop.net/en/post/smartdns-adguard-dns-correctness-postmortem/">
+<meta property="og:locale" content="en_US"><meta property="og:type" content="article"><meta property="og:locale:alternate" content="zh_CN"><meta property="og:image" content="https://blog.margrop.net/post-images/smartdns-adguard-dns-correctness-postmortem/01-cover-en.webp"><meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="DNS Answered in 1 ms and Sent Me to the Wrong Place: Three SmartDNS and AdGuard Home Traps - Margrop Blog">
+<meta name="twitter:description" content="Fast replies hid wrong DNS answers. A SmartDNS and AdGuard Home postmortem covering routing, DoH trust, CONNECT compatibility, cache cleanup, and Windows, Ubuntu, and macOS automation."><meta name="twitter:image" content="https://blog.margrop.net/post-images/smartdns-adguard-dns-correctness-postmortem/01-cover-en.webp"><link rel="alternate" hreflang="zh-CN" href="https://blog.margrop.net/post/smartdns-adguard-dns-correctness-postmortem/"><link rel="alternate" hreflang="en-US" href="https://blog.margrop.net/en/post/smartdns-adguard-dns-correctness-postmortem/"><link rel="alternate" hreflang="x-default" href="https://blog.margrop.net/"><meta property="article:published_time" content="2026-10-18T07:00:00&#43;08:00">
+<meta property="article:modified_time" content="2026-10-18T07:00:00&#43;08:00"><meta property="article:tag" content="DNS"><meta property="article:tag" content="域名解析"><meta property="article:tag" content="网络"><meta property="article:tag" content="Network"><meta property="article:tag" content="故障排查"><meta property="article:tag" content="Troubleshooting"><meta property="article:tag" content="自动化"><meta property="article:tag" content="Automation"><meta property="article:tag" content="SmartDNS"><meta property="article:tag" content="AdGuard Home"><script type="application/ld+json">{"@context":"https://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"Margrop"},"dateModified":"2026-10-18T07:00:00+08:00","datePublished":"2026-10-18T07:00:00+08:00","description":"Fast replies hid wrong DNS answers. A SmartDNS and AdGuard Home postmortem covering routing, DoH trust, CONNECT compatibility, cache cleanup, and Windows, Ubuntu, and macOS automation.","headline":"DNS Answered in 1 ms and Sent Me to the Wrong Place: Three SmartDNS and AdGuard Home Traps","image":"https://blog.margrop.net/post-images/smartdns-adguard-dns-correctness-postmortem/01-cover-en.webp","inLanguage":"en-US","mainEntityOfPage":"https://blog.margrop.net/en/post/smartdns-adguard-dns-correctness-postmortem/","url":"https://blog.margrop.net/en/post/smartdns-adguard-dns-correctness-postmortem/"}</script>
+    <meta name="baidu-site-verification" content="code-sVFZ8SER59" />
+    <script src="/js/theme-toggle.js"></script>
+
+    
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-3J2W592DHJ"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-3J2W592DHJ');
+    </script>
+
+    <style>
+    :root {
+        color-scheme: light;
+        --page-bg: #fff;
+        --surface-bg: #f4f4f4;
+        --text: #222;
+        --muted: #666;
+        --subtle: #777;
+        --border: #eee;
+        --border-strong: #ddd;
+        --link: #006CFF;
+        --tag-bg: #eee;
+        --button-bg: #fff;
+        --button-primary-bg: #333;
+    }
+    @media (prefers-color-scheme: dark) {
+        :root:not([data-theme]) {
+            color-scheme: dark;
+            --page-bg: #111315;
+            --surface-bg: #1d2126;
+            --text: #e8eaed;
+            --muted: #aeb4bd;
+            --subtle: #9aa2ad;
+            --border: #30353d;
+            --border-strong: #454c56;
+            --link: #79b8ff;
+            --tag-bg: #2a3038;
+            --button-bg: #1d2126;
+            --button-primary-bg: #e8eaed;
+        }
+    }
+    html[data-theme="dark"] {
+        color-scheme: dark;
+        --page-bg: #111315;
+        --surface-bg: #1d2126;
+        --text: #e8eaed;
+        --muted: #aeb4bd;
+        --subtle: #9aa2ad;
+        --border: #30353d;
+        --border-strong: #454c56;
+        --link: #79b8ff;
+        --tag-bg: #2a3038;
+        --button-bg: #1d2126;
+        --button-primary-bg: #e8eaed;
+    }
+    html[data-theme="light"] {
+        color-scheme: light;
+        --page-bg: #fff;
+        --surface-bg: #f4f4f4;
+        --text: #222;
+        --muted: #666;
+        --subtle: #777;
+        --border: #eee;
+        --border-strong: #ddd;
+        --link: #006CFF;
+        --tag-bg: #eee;
+        --button-bg: #fff;
+        --button-primary-bg: #333;
+    }
+    body { background: var(--page-bg); font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif; max-width: 860px; margin: 0 auto; padding: 20px; line-height: 1.7; color: var(--text); }
+    body, h1, h2, h3, h4, h5, h6, p, ul, ol, li, blockquote, dt, dd { font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif; }
+    code, pre, kbd, samp { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+    h1 { border-bottom: 2px solid var(--border-strong); padding-bottom: 10px; }
+    article > h1 { font-size: 2em; line-height: 1.3; margin-bottom: 12px; }
+    .post-list { list-style: none; padding: 0; }
+    .post-list li { margin: 15px 0; }
+    .post-list a { text-decoration: none; color: var(--text); font-size: 18px; }
+    .post-list a:hover { color: var(--link); }
+    .date { color: var(--muted); font-size: 14px; margin-right: 10px; }
+    .tags { margin-top: 8px; }
+    .tag { background: var(--tag-bg); padding: 2px 8px; border-radius: 3px; font-size: 12px; margin-right: 5px; display: inline-block; }
+    nav { margin-bottom: 18px; border-bottom: 1px solid var(--border); padding-bottom: 15px; }
+    nav a { margin-right: 20px; text-decoration: none; color: var(--text); font-size: 16px; }
+    nav a:hover { color: var(--link); }
+    .language-switcher { display: flex; align-items: center; gap: 10px; margin: -8px 0 26px; }
+    .language-switcher a { display: inline-block; padding: 4px 10px; border: 1px solid var(--border-strong); border-radius: 999px; color: var(--muted); text-decoration: none; font-size: 14px; }
+    .language-switcher a.active { background: var(--link); border-color: var(--link); color: #fff; }
+    .content { line-height: 1.8; }
+    .content code { background: var(--surface-bg); padding: 2px 5px; border-radius: 3px; }
+    .content pre { background: var(--surface-bg); padding: 15px; overflow-x: auto; border-radius: 5px; }
+    .content pre code { background: none; padding: 0; border-radius: 0; }
+    .content img { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+    .content .code-snippet__fix {
+        margin: 0 0 1.5em;
+    }
+    .content .code-snippet__fix .code-snippet__line-index {
+        display: none !important;
+    }
+    .meta { color: var(--muted); font-size: 14px; margin-bottom: 14px; }
+    .meta-separator { margin: 0 6px; color: var(--subtle); }
+    .site-stats { display: flex; flex-wrap: wrap; gap: 10px 18px; margin: 28px 0 8px; padding-top: 12px; border-top: 1px solid var(--border); color: var(--subtle); font-size: 12px; }
+    a { color: var(--link); }
+    .hero { padding: 12px 0 24px; }
+    .hero h1 { border-bottom: 2px solid #333; }
+    .eyebrow { color: var(--muted); font-size: 12px; letter-spacing: .12em; margin: 0 0 8px; }
+    .hero-tagline { font-size: 18px; margin: 12px 0 8px; }
+    .hero-copy { color: var(--muted); margin: 0 0 14px; }
+    .hero-actions { margin: 14px 0 4px; }
+    .button { display: inline-block; margin-right: 12px; border: 1px solid var(--border-strong); border-radius: 3px; padding: 4px 10px; text-decoration: none; color: var(--text); background: var(--button-bg); font-size: 14px; }
+    .button-primary { background: var(--button-primary-bg); border-color: var(--button-primary-bg); color: var(--page-bg); }
+    .hero-banner { position: relative; display: flex; flex-direction: column; gap: 2px; margin: 18px 0 0; padding: 14px 44px 14px 16px; border: 1px solid var(--border-strong); border-left: 4px solid var(--link); border-radius: 4px; background: var(--surface-bg); color: var(--text); text-decoration: none; }
+    .hero-banner:hover { border-color: var(--link); }
+    .hero-banner-label { color: var(--muted); font-size: 12px; letter-spacing: .12em; }
+    .hero-banner strong { font-size: 17px; line-height: 1.5; }
+    .hero-banner small { color: var(--muted); font-size: 13px; }
+    .hero-banner-arrow { position: absolute; right: 16px; top: 50%; transform: translateY(-50%); color: var(--link); font-size: 20px; }
+    .favorites > blockquote { margin: 0 0 18px; padding: 10px 16px; border-left: 4px solid var(--link); background: var(--surface-bg); color: var(--muted); }
+    .favorites > blockquote p { margin: 0; }
+    .favorites-nav { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 8px; padding: 0; border: 0; }
+    .favorites-nav a { margin: 0; padding: 3px 10px; border: 1px solid var(--border-strong); border-radius: 999px; font-size: 14px; color: var(--text); text-decoration: none; }
+    .favorites-nav a:hover { border-color: var(--link); color: var(--link); }
+    .favorites h2 { margin-top: 36px; padding-bottom: 6px; border-bottom: 1px solid var(--border); scroll-margin-top: 16px; }
+    .favorites table { width: 100%; border-collapse: collapse; margin: 12px 0 18px; font-size: 15px; }
+    .favorites th, .favorites td { padding: 8px 10px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
+    .favorites th { color: var(--muted); font-size: 13px; font-weight: 600; background: var(--surface-bg); }
+    .favorites td:first-child { white-space: nowrap; }
+    .favorites tbody tr:hover { background: var(--surface-bg); }
+    .archive-summary { color: var(--muted); font-size: 14px; margin: -4px 0 12px; }
+    .year-nav { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 8px; padding: 0; border: 0; }
+    .year-nav a { margin: 0; padding: 3px 10px; border: 1px solid var(--border-strong); border-radius: 999px; font-size: 14px; color: var(--text); text-decoration: none; }
+    .year-nav a:hover { border-color: var(--link); color: var(--link); }
+    .year-nav span { color: var(--muted); font-size: 12px; }
+    .year-heading { display: flex; align-items: baseline; gap: 10px; margin: 32px 0 0; padding-bottom: 6px; border-bottom: 1px solid var(--border); scroll-margin-top: 16px; }
+    .year-heading span { color: var(--muted); font-size: 14px; font-weight: 400; }
+    .not-found { padding: 12px 0 24px; }
+    .not-found-en { color: var(--muted); }
+    .not-found .button { margin-bottom: 10px; }
+    .theme-toggle { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 1px solid var(--border-strong); border-radius: 999px; background: var(--button-bg); color: var(--text); cursor: pointer; font: inherit; font-size: 16px; }
+    .theme-toggle:hover { border-color: var(--link); color: var(--link); }
+    .la-theme-widget { margin: 12px 0 20px; min-height: 24px; color: var(--text); }
+    .identity-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: 16px 0; }
+    .identity-grid div { display: flex; flex-direction: column; }
+    .identity-grid strong { font-size: 15px; }
+    .identity-grid span, .topic-card span, .featured-list small { color: var(--muted); font-size: 13px; }
+    .section-block { padding-top: 28px; }
+    .section-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+    .section-heading h2 { margin: 0; }
+    .section-heading a { font-size: 14px; }
+    .topic-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+    .topic-card { display: block; padding: 14px; border: 1px solid var(--border); text-decoration: none; color: var(--text); }
+    .topic-card:hover { border-color: var(--border-strong); }
+    .topic-card strong { display: block; margin: 4px 0; font-size: 17px; }
+    .topic-index, .featured-list > a > span { color: var(--muted) !important; font-size: 12px !important; }
+    .featured-list { border-top: 1px solid var(--border); }
+    .featured-list > a { display: flex; gap: 14px; padding: 12px 0; border-bottom: 1px solid var(--border); text-decoration: none; color: var(--text); }
+    .featured-list div { display: flex; flex-direction: column; }
+    .latest-block { max-width: 860px; }
+    @media (max-width: 680px) {
+        body { padding: 16px; }
+        nav a { display: inline-block; margin-right: 12px; margin-bottom: 8px; }
+        .identity-grid { grid-template-columns: repeat(2, 1fr); }
+        .topic-grid { grid-template-columns: 1fr; }
+        .favorites table { display: block; overflow-x: auto; }
+        .favorites td:first-child { white-space: normal; }
+    }
+</style>
+
+</head>
+<body>
+    <nav>
+  <a href="/en/">Home</a>
+  <a href="/en/start-here/">Start Here</a>
+  <a href="/en/career/">Portfolio</a>
+  <a href="/en/tag/ai/">AI Agent</a>
+  <a href="/en/tag/docker/">Self-hosting</a>
+  <a href="/en/tag/%e8%bf%90%e7%bb%b4/">Engineering</a>
+  <a href="/en/post/">Archive</a>
+  <a href="/en/tags/">Tags</a>
+  <a href="/en/about/">About</a>
+  <a href="https://github.com/margrop" target="_blank" rel="noopener">GitHub</a>
+</nav>
+
+    <div class="language-switcher">
+  <button class="theme-toggle" type="button" data-theme-toggle aria-label="Toggle dark mode" aria-pressed="false">🌙</button>
+
+  
+  
+    <a href="/post/smartdns-adguard-dns-correctness-postmortem/" class="">中文</a>
+  
+    <a href="/en/post/smartdns-adguard-dns-correctness-postmortem/" class="active">English</a>
+  
+  
+</div>
+
+    
+    <article>
+        <h1>DNS Answered in 1 ms and Sent Me to the Wrong Place: Three SmartDNS and AdGuard Home Traps</h1>
+        <div class="meta">
+            Published: 2026-10-18
+            <span class="meta-separator">·</span>
+            <span>Views <span data-page-view-count>--</span></span>
+        </div>
+        
+<div class="tags">
+    
+    <a href="/en/tag/dns/"><span class="tag">DNS</span></a>
+    
+    <a href="/en/tag/%E5%9F%9F%E5%90%8D%E8%A7%A3%E6%9E%90/"><span class="tag">DNS Resolution</span></a>
+    
+    <a href="/en/tag/%E7%BD%91%E7%BB%9C/"><span class="tag">Networking</span></a>
+    
+    <a href="/en/tag/network/"><span class="tag">Network</span></a>
+    
+    <a href="/en/tag/%E6%95%85%E9%9A%9C%E6%8E%92%E6%9F%A5/"><span class="tag">Troubleshooting</span></a>
+    
+    <a href="/en/tag/troubleshooting/"><span class="tag">Troubleshooting</span></a>
+    
+    <a href="/en/tag/%E8%87%AA%E5%8A%A8%E5%8C%96/"><span class="tag">Automation</span></a>
+    
+    <a href="/en/tag/automation/"><span class="tag">Automation</span></a>
+    
+    <a href="/en/tag/smartdns/"><span class="tag">SmartDNS</span></a>
+    
+    <a href="/en/tag/adguard-home/"><span class="tag">AdGuard Home</span></a>
+    
+</div>
+
+
+        <div class="content">
+            <blockquote>
+<p>The misleading part of this incident was that DNS kept answering.</p>
+<p>The service was running, its ports were reachable, domestic sites resolved, and some queries took zero or one millisecond. The returned addresses told a different story: several overseas names pointed to unrelated destinations. Switching to a second DNS entry did not fix them.</p>
+<p>The eventual repair crossed three layers: explicit domain routing, a verified overseas DoH path, and a CONNECT target compatibility issue between SmartDNS 47.1 and the existing proxy. Cache cleanup and client checks came afterward.</p>
+</blockquote>
+<p><img src="/post-images/smartdns-adguard-dns-correctness-postmortem/01-cover-en.webp" alt="Original illustration showing why a fast DNS response still needs answer validation" width="1600" height="900" fetchpriority="high" decoding="async"></p>
+<p>Figure 1. Original illustration. Latency measures performance; answer correctness needs its own evidence.</p>
+<h2 id="1-find-out-who-is-answering-before-replacing-resolvers">1. Find out who is answering before replacing resolvers</h2>
+<p>I previously wrote about <a href="/en/post/adguard-home-doh-dns-redirect/">troubleshooting AdGuard Home and DoH</a>. This incident adds an important qualification: changing an upstream connection to HTTPS does not guarantee that the selected resolver will return a suitable, reliable answer for every name.</p>
+<p>The environment was familiar home-lab territory. A router ran dnsmasq and SmartDNS. A separate Linux host ran AdGuard Home. Clients received both DNS entries, while an existing proxy ran elsewhere.</p>
+<p>This article calls the router A and the filtering host B. Real device addresses, computer names, local DNS names, accounts, and private paths are omitted throughout. Ports, versions, configuration behavior, and acceptance counts come from the actual repair record. The diagrams describe the architecture after removing private identifiers.</p>
+<p>Imagine a school with two information desks. One checks visitor rules; the other looks up classroom locations. Putting both phone numbers into a phone does not guarantee that every caller always tries the first desk and contacts the second only after a failure. Operating systems and applications can cache results, race requests, or select an entry themselves.</p>
+<p>That is why the first step was to draw the actual resolution chain, rather than immediately edit the client&rsquo;s DNS list.</p>
+<p><img src="/post-images/smartdns-adguard-dns-correctness-postmortem/02-topology-en.webp" alt="Original topology of the client, AdGuard Home, dnsmasq, and SmartDNS" width="1600" height="1120" loading="lazy" decoding="async"></p>
+<p>Figure 2. The main path and alternate entry. Roles describe responsibilities, without identifying real machines.</p>
+<p>On the router, dnsmasq listened on port 53 and forwarded external resolution to local SmartDNS on port 6053. SmartDNS also exposed port 5335, assigned to the overseas group. AdGuard Home was another client-facing entry, responsible for filtering and static rewrites.</p>
+<p>Processes, listeners, and forwarding configuration were working. That ruled out a simple startup failure. The next questions were more useful: which upstream received a particular name, and what answer came back?</p>
+<h2 id="2-trap-one-named-groups-without-domain-routing">2. Trap one: named groups without domain routing</h2>
+<p>The upstream configuration already contained <code>china</code> and <code>oversea</code> groups. Those labels suggested that domestic names would use the domestic group and overseas names would use the overseas group.</p>
+<p>The generated configuration did not establish that behavior.</p>
+<p>In SmartDNS, an upstream&rsquo;s group labels, membership in the default group, and domain-based routing rules are separate controls. Adding <code>-group china</code> does not automatically remove that upstream from the default group. Nor can the main listener infer a routing policy from the English words used as group names.</p>
+<p><img src="/post-images/smartdns-adguard-dns-correctness-postmortem/03-shot-group-options.webp" alt="Genuine screenshot of SmartDNS upstream group and default-group exclusion documentation" width="1300" height="295" loading="lazy" decoding="async"></p>
+<p>Figure 3. A cropped browser screenshot of the official configuration at the pinned source revision. Group membership and default-group exclusion have separate options.</p>
+<p>Think of two cafeteria windows labeled “regular meals” and “allergy meals.” If the queue system still distributes everyone to either window, the signs alone do not establish the required policy.</p>
+<p>That was the situation here. The main entry still mixed domestic and overseas upstreams. The second listener did select the overseas group, but its upstream connections were still plain UDP. Direct queries to those upstreams also produced abnormal results, so changing ports did not create a trustworthy alternative path.</p>
+<p>The chosen policy was explicit: domestic-list matches use <code>china</code>; other queries use verified <code>oversea</code> upstreams. Domestic resolvers are excluded from the default group. Existing local resolution stays local instead of sending internal names outside.</p>
+<p><img src="/post-images/smartdns-adguard-dns-correctness-postmortem/04-group-routing-en.webp" alt="Original diagram separating default membership from domain routing" width="1600" height="1000" loading="lazy" decoding="async"></p>
+<p>Figure 4. This deployment uses domestic-list matching with overseas resolution for remaining names. An unlisted domestic domain can consequently receive overseas CDN placement; the policy has a tradeoff.</p>
+<p>A simplified configuration looks like this. The address placeholders must be supplied from private configuration; this is a structural example, rather than a complete configuration to overwrite a router with:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>server-https https://dns.alidns.com/dns-query -group china -exclude-default-group -host-ip &lt;DOMESTIC_DOH_ADDRESS&gt;
+</span></span><span style="display:flex;"><span>server-https https://dns.google/dns-query -group oversea -proxy doh-proxy -host-ip &lt;OVERSEAS_DOH_ADDRESS&gt;
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>domain-set -name china-domains -file /etc/smartdns/domain-set/china-domains.list
+</span></span><span style="display:flex;"><span>domain-rules /domain-set:china-domains/ -nameserver china
+</span></span></code></pre></div><p>The deployed profile also includes another domestic and another overseas DoH provider. Previous UDP records were disabled and retained for audit and rollback. Two old upstreams timed out in both rounds of direct testing and were removed from the active set.</p>
+<p>The domestic list comes from the maintained <code>dnsmasq-china-list</code> project, converted to SmartDNS format. The installed list contained 109,797 entries. Its weekly update validates the download and entry count, preserves the previous version, and replaces the active file atomically. A failed update must not erase the last usable list.</p>
+<h2 id="3-trap-two-encrypted-transport-still-needs-a-trustworthy-respondent">3. Trap two: encrypted transport still needs a trustworthy respondent</h2>
+<p>Once plain overseas queries looked wrong, DoH was an obvious candidate. Successfully establishing HTTPS was only the beginning of its evaluation.</p>
+<p>In this environment, domestic DoH services still returned abnormal results for some overseas domains. The evidence establishes that those answers were unsuitable for this use case. It does not identify the particular intermediary, provider, policy engine, or recursive-resolution step responsible for producing them.</p>
+<p><img src="/post-images/smartdns-adguard-dns-correctness-postmortem/05-shot-doh-standard.webp" alt="Genuine screenshot of the DNS over HTTPS definition in RFC 8484" width="650" height="235" loading="lazy" decoding="async"></p>
+<p>Figure 5. A genuine RFC 8484 screenshot. The standard maps DNS queries and responses into HTTPS exchanges.</p>
+<p>A sealed envelope is a useful analogy. Encryption makes it harder for people along the route to open or alter your letter, and authentication helps establish who receives it. However, the recipient can still supply outdated information, apply a policy you did not expect, or obtain a problematic answer farther upstream. The envelope cannot correct the contents by itself.</p>
+<p>Three checks therefore belong together:</p>
+<ol>
+<li>Confirm the intended connection path and successful certificate-chain and hostname verification.</li>
+<li>Examine DNS business status, record types, and answers in addition to the HTTP status.</li>
+<li>Compare against independent trusted evidence and the relevant application behavior.</li>
+</ol>
+<p><code>NOERROR</code> has a similarly limited meaning. It is a DNS response code, rather than a certificate of answer correctness. It also does not guarantee that the answer section contains the requested record type. Empty answers, SOA records, NXDOMAIN, and SERVFAIL require different interpretations.</p>
+<p>Through the existing proxy, Google and Cloudflare DoH returned normal answers. A Google HTTPS control request returned 204 with certificate verification enabled. That established a usable overseas path for the next configuration step.</p>
+<p>Domestic services continued to use directly reachable domestic DoH, retaining appropriate local CDN placement and independence from the overseas proxy. Overseas services used the separately verified path. This was an environment-specific result, rather than a universal provider ranking.</p>
+<h2 id="4-trap-three-curl-succeeded-while-smartdns-returned-servfail">4. Trap three: curl succeeded while SmartDNS returned SERVFAIL</h2>
+<p>This was the most instructive part of the repair.</p>
+<p>The proxy-backed DoH request worked in curl. An isolated SmartDNS instance using the same provider still failed for overseas queries, while domestic routing worked. Production DNS remained on its earlier configuration during these experiments, so the investigation did not depend on repeatedly disrupting the household network.</p>
+<p>The decisive comparison concerned the CONNECT target presented to the proxy:</p>
+<table>
+  <thead>
+      <tr>
+          <th>Controlled condition</th>
+          <th>Result in this environment</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>DoH hostname supplied to the proxy</td>
+          <td>Successful query</td>
+      </tr>
+      <tr>
+          <td>Corresponding numeric target supplied to the proxy</td>
+          <td>Connection timeout</td>
+      </tr>
+      <tr>
+          <td>Native SmartDNS proxy path</td>
+          <td>Overseas SERVFAIL</td>
+      </tr>
+  </tbody>
+</table>
+<p>HTTP CONNECT can absolutely use numeric destinations. The specific observation was that this proxy path behaved differently for numeric and hostname targets. Proxy policy, routing, or implementation could explain that difference; the investigation did not establish which internal mechanism was responsible.</p>
+<p>To identify what SmartDNS actually supplied, I inspected the Release47 implementation matching the observed behavior and pinned its source revision for reproducibility.</p>
+<p><img src="/post-images/smartdns-adguard-dns-correctness-postmortem/06-shot-tls-call.webp" alt="Genuine SmartDNS source screenshot showing server_info-&gt;ip passed into the proxy connection" width="1100" height="440" loading="lazy" decoding="async"></p>
+<p>Figure 6. In the inspected <code>client_tls.c</code> implementation, proxy connection creation receives <code>server_info-&gt;ip</code>.</p>
+<p>The relevant call can be shortened to:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-c" data-lang="c"><span style="display:flex;"><span>proxy <span style="color:#f92672">=</span> <span style="color:#a6e22e">proxy_conn_new</span>(
+</span></span><span style="display:flex;"><span>    server_info<span style="color:#f92672">-&gt;</span>proxy_name,
+</span></span><span style="display:flex;"><span>    server_info<span style="color:#f92672">-&gt;</span>ip,
+</span></span><span style="display:flex;"><span>    server_info<span style="color:#f92672">-&gt;</span>port, <span style="color:#ae81ff">0</span>, <span style="color:#ae81ff">1</span>
+</span></span><span style="display:flex;"><span>);
+</span></span></code></pre></div><p>Farther down the path, the HTTP proxy handshake constructs CONNECT from the target it receives.</p>
+<p><img src="/post-images/smartdns-adguard-dns-correctness-postmortem/07-shot-http-connect.webp" alt="Genuine SmartDNS source screenshot showing HTTP CONNECT target construction" width="1100" height="403" loading="lazy" decoding="async"></p>
+<p>Figure 7. The same pinned revision&rsquo;s <code>proxy.c</code>. A downstream encoding option cannot recover a hostname that the earlier call did not pass through.</p>
+<p>This is why simply adding <code>-use-domain</code> did not resolve the incident. If a delivery form contains only a building number, selecting an envelope format intended for recipient names cannot reconstruct the missing name.</p>
+<p>The scope matters. This conclusion concerns the observed SmartDNS 47.1 behavior, the inspected source path, and this proxy environment. Other proxies already accept numeric targets, and other SmartDNS releases deserve fresh verification. It would be misleading to present this adapter as a universal requirement.</p>
+<h2 id="5-a-narrow-adapter-that-preserves-end-to-end-tls">5. A narrow adapter that preserves end-to-end TLS</h2>
+<p>I kept the router&rsquo;s SmartDNS installation and added a small CONNECT adapter on the filtering host. It maps the configured numeric DoH endpoint targets back to their public service hostnames before connecting through the existing HTTP proxy.</p>
+<p><img src="/post-images/smartdns-adguard-dns-correctness-postmortem/08-connect-adapter-en.webp" alt="Original diagram of the restricted CONNECT adapter and preserved TLS session" width="1600" height="1120" loading="lazy" decoding="async"></p>
+<p>Figure 8. The adapter changes proxy connection targets. DNS content remains inside TLS between SmartDNS and the DoH provider.</p>
+<p>The service accepts only designated source clients, configured DoH destinations, and the required destination port. It does not forward arbitrary websites. It runs under a systemd dynamic user and is enabled at startup. A request for an unauthorized destination returned 403.</p>
+<p>Certificate and hostname verification remain enabled. The adapter neither creates certificates nor decrypts DNS, and clients do not install an additional root certificate.</p>
+<p>A separate failure test used an isolated instance based on the final generated configuration. With its proxy unavailable, domestic names still resolved through the domestic group. New overseas queries failed instead of being silently sent to an unverified replacement upstream. Bounded serving of previously valid stale cache entries is a separate availability mechanism; it does not create a new untrusted resolver path.</p>
+<p>There is a real operational cost: fresh overseas resolution now depends on the adapter and existing proxy being online. Startup configuration, restricted access, and rollback make that dependency manageable, but do not remove it. Where a proxy already supports the native numeric CONNECT path, keeping the simpler architecture is generally preferable.</p>
+<h2 id="6-adguard-listeners-upstreams-and-bootstrap-dns-are-different-settings">6. AdGuard listeners, upstreams, and bootstrap DNS are different settings</h2>
+<p>AdGuard Home had been sending queries directly to domestic DoH providers and could therefore return the same problematic overseas answers. The filtering host also had a broken system resolver link pointing to an inactive resolver service.</p>
+<p>After repair, AdGuard forwards external queries to the router&rsquo;s unified resolution entry while retaining filtering and rewrites. The host resolver file was repaired without enabling another service that would compete with AdGuard for the DNS port.</p>
+<p><img src="/post-images/smartdns-adguard-dns-correctness-postmortem/09-adguard-preservation-en.webp" alt="Original illustration of the AdGuard configuration preserved during repair" width="1600" height="900" loading="lazy" decoding="async"></p>
+<p>Figure 9. The actual preserved counts were seven filter lists, 50 custom rules, and eight rewrites. This is an incident summary, not a product-default screen.</p>
+<p>Several settings are easy to confuse:</p>
+<table>
+  <thead>
+      <tr>
+          <th>Setting</th>
+          <th>Responsibility</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>Encrypted client-facing listeners</td>
+          <td>How clients connect to AdGuard</td>
+      </tr>
+      <tr>
+          <td><code>upstream_dns</code></td>
+          <td>Where AdGuard sends external questions</td>
+      </tr>
+      <tr>
+          <td><code>bootstrap_dns</code></td>
+          <td>How an upstream hostname is initially resolved</td>
+      </tr>
+      <tr>
+          <td><code>fallback_dns</code></td>
+          <td>Whether and where replacement resolution is attempted after upstream failure</td>
+      </tr>
+  </tbody>
+</table>
+<p>Enabling encrypted inbound DNS does not establish encrypted outbound upstream connections. Editing bootstrap DNS alone also does not redirect ordinary business queries to it.</p>
+<p>AdGuard was stopped before editing and restarted before comparing configuration again. Apart from the relevant DNS upstream fields, its existing settings were preserved. Repairing a resolver should not discard filter subscriptions, user rules, or static rewrites.</p>
+<p>Because clients still had two DNS entries, four local static records were also synchronized to the alternate entry. AdGuard retains its additional filtering role: querying the router directly bypasses that layer. Two DNS entries provide alternative access, but do not automatically provide identical filtering policies.</p>
+<h2 id="7-a-repaired-upstream-does-not-erase-old-cache">7. A repaired upstream does not erase old cache</h2>
+<p>The old configuration included both a fixed one-hour SmartDNS TTL and a one-hour minimum dnsmasq cache TTL, together with stale-cache serving. That combination can prolong the use of old results. If the cached answer is wrong, cache hits make repeated wrong answers look impressively fast.</p>
+<p><img src="/post-images/smartdns-adguard-dns-correctness-postmortem/10-shot-cache-options.webp" alt="Genuine screenshot of SmartDNS stale-cache duration and reply TTL options" width="1100" height="410" loading="lazy" decoding="async"></p>
+<p>Figure 10. The maximum stale-serving period and the TTL returned with a stale reply are different controls.</p>
+<p>Think of a classroom noticeboard displaying an old timetable. The school office may already have corrected its master schedule, while students keep reading the unchanged photocopy at the door.</p>
+<p>The repair removed the forced one-hour TTL overrides and primarily honors upstream TTLs. Stale serving was bounded to one hour, with a 30-second stale reply TTL. Those values are a local availability-versus-freshness choice, rather than defaults everyone should copy.</p>
+<p><img src="/post-images/smartdns-adguard-dns-correctness-postmortem/11-cache-timeline-en.webp" alt="Original cache timeline showing the order of upstream, routing, cache, and client repair" width="1600" height="1000" loading="lazy" decoding="async"></p>
+<p>Figure 11. Cache cannot infer which old answer belongs to this incident. Cleanup and verification are operational responsibilities.</p>
+<p>Persistent cache cleanup also has an ordering detail. Stop SmartDNS before moving or replacing the cache file. A running process can write its in-memory cache at shutdown; moving the file first may allow the process to recreate the old data afterward.</p>
+<p>Finally, return to the client. Test both an explicitly selected DNS server and the operating system&rsquo;s actual resolution path. Browser secure DNS, application caches, and proxy-side resolution introduce additional variables. A successful query to one chosen port establishes only that particular path.</p>
+<h2 id="8-three-platform-automation-audit-apply-verify-and-roll-back">8. Three-platform automation: audit, apply, verify, and roll back</h2>
+<p>The <a href="/downloads/smartdns-adguard-dns-correctness-postmortem/dns-care-kit.zip">DNS Care Kit download</a> contains Windows 11, Ubuntu 26.04, and macOS 27 entry points, complete source, a bundled domestic list, role-based settings, and rollback logic. The <a href="/downloads/smartdns-adguard-dns-correctness-postmortem/README.txt">usage notes</a> can be read before downloading the archive.</p>
+<p>“One command” means one command after filling in your own private role configuration. The scripts do not call an LLM API, require a cloud automation service, download remote executable scripts, or pull new container images. They use native SSH to operate existing equipment and an existing proxy. DNS verification still contacts the selected DNS providers, because that network interaction is the function being tested.</p>
+<p>The supported profile is deliberately specific: dnsmasq on port 53, SmartDNS on port 6053, and an Ubuntu filtering host with Python 3, Docker, a bind-mounted AdGuard configuration, and a working HTTP CONNECT proxy. The macOS launcher uses the system Bash, plutil, and OpenSSH, without requiring Python on the Mac. Ubuntu uses its Python 3 installation. Windows uses PowerShell and the Windows OpenSSH client component.</p>
+<h3 id="method-a-a-person-launches-the-automated-workflow">Method A: a person launches the automated workflow</h3>
+<p>After extraction, copy <code>settings.example.json</code> to <code>settings.private.json</code> and fill in local SSH aliases, device and proxy addresses, four DoH upstreams, and a trusted reference endpoint. Self-hosted DoH is supported. Reference queries use standard DoH wire messages instead of a provider-specific API. Keep that file private. SSH login and host-fingerprint verification should already work before running the kit.</p>
+<p>The default mode audits without applying a configuration:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-powershell" data-lang="powershell"><span style="display:flex;"><span><span style="color:#75715e"># Windows 11: process-scoped execution policy; no global policy change</span>
+</span></span><span style="display:flex;"><span>powershell.exe -NoProfile -ExecutionPolicy Bypass <span style="color:#f92672">-File</span> .\windows-<span style="color:#ae81ff">11</span>.ps1 -Mode Audit
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># Ubuntu 26.04</span>
+</span></span><span style="display:flex;"><span>bash ./ubuntu-26.04.sh audit
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># macOS 27</span>
+</span></span><span style="display:flex;"><span>bash ./macos-27.command audit
+</span></span></code></pre></div><p>For a matching topology, Apply verifies the reference DoH path, prepares endpoint pins, installs the restricted adapter, backs up and repairs SmartDNS, verifies the router, and only then changes AdGuard:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-powershell" data-lang="powershell"><span style="display:flex;"><span>powershell.exe -NoProfile -ExecutionPolicy Bypass <span style="color:#f92672">-File</span> .\windows-<span style="color:#ae81ff">11</span>.ps1 -Mode Apply
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>bash ./ubuntu-26.04.sh apply
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># Or:</span>
+</span></span><span style="display:flex;"><span>bash ./macos-27.command apply
+</span></span></code></pre></div><p>On failure, the launcher attempts to restore both original configurations and prints a run identifier. A lost SSH connection can prevent remote rollback, so the archive also exposes explicit recovery commands:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-powershell" data-lang="powershell"><span style="display:flex;"><span>powershell.exe -NoProfile -ExecutionPolicy Bypass <span style="color:#f92672">-File</span> .\windows-<span style="color:#ae81ff">11</span>.ps1 -Mode Rollback -RunId RUN_ID
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>bash ./ubuntu-26.04.sh rollback RUN_ID
+</span></span><span style="display:flex;"><span>bash ./macos-27.command rollback RUN_ID
+</span></span></code></pre></div><p>The kit&rsquo;s compact check set contains 28 protocol and record checks, including a comparison of Google answers with address prefixes obtained through trusted DoH. Prefix consistency is a diagnostic clue and can be affected by CDN placement. It is not DNSSEC validation or a final proof of authenticity. The original incident&rsquo;s broader 56-check acceptance run is a separate result.</p>
+<p>The test record also states its limits. The macOS 27 and Ubuntu 26.04 audit paths were run on real machines, each passing 28 checks. The Windows entry underwent PowerShell parsing and four simulated workflow scenarios; Linux-hosted PowerShell testing is not presented as complete Windows 11 hardware certification. Apply is a parameterized implementation of this documented topology, not a universal profile for arbitrary routers and proxies.</p>
+<h3 id="method-b-let-an-existing-agent-operate-the-local-kit">Method B: let an existing agent operate the local kit</h3>
+<p>An existing local operations agent can read and execute the same files. No particular agent product or paid service is required. A practical task instruction is:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>You are authorized to repair DNS on the two devices in settings.private.json.
+</span></span><span style="display:flex;"><span>Read the local README and source, identify the current OS, and run its Audit entry.
+</span></span><span style="display:flex;"><span>If the actual topology, reference DoH path and proxy behavior match this profile,
+</span></span><span style="display:flex;"><span>run Apply and verify both client-facing entries afterward.
+</span></span><span style="display:flex;"><span>Preserve backups, filters, custom rules and static rewrites.
+</span></span><span style="display:flex;"><span>Do not change DHCP, gateways, SSH authentication or proxy subscriptions.
+</span></span><span style="display:flex;"><span>Keep TLS certificate validation enabled and avoid unverified overseas fallback.
+</span></span><span style="display:flex;"><span>If the topology differs, retain the diagnosis and explain the mismatch without
+</span></span><span style="display:flex;"><span>executing configuration steps that do not apply.
+</span></span><span style="display:flex;"><span>On failure, use this run&#39;s rollback and verify restoration.
+</span></span><span style="display:flex;"><span>Keep private settings local; report roles, counts and redacted results only.
+</span></span></code></pre></div><p>The benefit is a connected audit-change-verification-recovery workflow. Asking an agent to keep guessing a supposedly universal resolver address does not establish which part of the path is actually broken.</p>
+<h2 id="9-acceptance-means-more-than-a-running-process">9. Acceptance means more than a running process</h2>
+<p>Final testing covered the router&rsquo;s ports 53, 6053, and 5335, plus the filtering host&rsquo;s port 53. It included domestic and overseas names, A and AAAA, UDP and TCP, TXT, HTTPS record types, and nonexistent names.</p>
+<p>The existing HTTPS-record suppression policy was retained. Its response was checked against that policy; this is a separate concern from establishing an HTTPS connection to a website.</p>
+<p><img src="/post-images/smartdns-adguard-dns-correctness-postmortem/12-verification-matrix-en.webp" alt="Original acceptance matrix showing all 56 checks passed after service restarts" width="1600" height="1120" loading="lazy" decoding="async"></p>
+<p>Figure 12. All 56 resolution checks passed after service restarts. Medians include cache hits and represent this snapshot, rather than provider benchmarks.</p>
+<p>Eight local-record checks, an ad-filtering check, a proxy-failure scenario, and the client&rsquo;s system resolver were also verified. Google IPv4 and IPv6 answers returned to normal, previous abnormal answers disappeared, and AdGuard settings were compared again. Temporary SmartDNS instances were stopped, leaving only the production instance.</p>
+<p>No full-machine reboot was performed. The verified scope is actual behavior after service restarts and the relevant startup configuration. A full boot-order test can be scheduled in a maintenance window; it should not be claimed before it happens.</p>
+<h2 id="questions-that-tend-to-come-back">Questions that tend to come back</h2>
+<h3 id="would-a-single-public-resolver-be-simpler">Would a single public resolver be simpler?</h3>
+<p>For a simple network, it can be. It still needs to be reachable and suitable for the names your applications use. Adding many upstreams does not automatically increase trust and can add racing answers, delay, and diagnostic variables.</p>
+<h3 id="are-multiple-dns-entries-always-strict-primary-and-backup">Are multiple DNS entries always strict primary and backup?</h3>
+<p>Do not assume so. Operating systems, applications, browsers, and network state can affect selection. Entries with different routing or filtering policies can consequently produce different experiences. This repair aligned upstream routing and local static records while retaining AdGuard&rsquo;s additional filtering layer.</p>
+<h3 id="does-doh-replace-dnssec">Does DoH replace DNSSEC?</h3>
+<p>They address different layers. DoH protects the connection to the selected resolver. DNSSEC can establish verifiable DNS data when a zone is correctly signed and the validation chain is complete. Not every zone is signed, and enabling either mechanism does not eliminate all other checks.</p>
+<h3 id="should-clearing-cache-be-the-first-repair-step">Should clearing cache be the first repair step?</h3>
+<p>If the upstream path still returns abnormal answers, a clean cache can quickly fill with the same problem. Establish a trusted upstream and explicit routing before cache cleanup and client verification.</p>
+<h3 id="does-everyone-need-the-adapter">Does everyone need the adapter?</h3>
+<p>No. First compare hostname and numeric proxy targets in your environment. Keep the native path when it works. This adapter addresses an evidenced compatibility issue and introduces an additional service dependency.</p>
+<h3 id="will-correct-dns-make-every-overseas-site-directly-reachable">Will correct DNS make every overseas site directly reachable?</h3>
+<p>No. Resolution is one step. Routing, proxy rules, TLS, HTTP, authentication, and the application itself have separate requirements. The repair concerns DNS correctness; it does not claim to bypass every network restriction.</p>
+<h2 id="references-and-image-provenance">References and image provenance</h2>
+<p>Five images are genuine browser screenshots, cropped from official material. The other seven are original diagrams with separate Chinese and English artwork. A drawn terminal window has not been presented as a real capture.</p>
+<ol>
+<li><a href="https://github.com/pymumu/smartdns/blob/0f1912ab020ea9a60efac4732442f0bb7093f40b/src/dns_client/client_tls.c#L351-L374">Pinned SmartDNS source: TLS proxy connection creation</a></li>
+<li><a href="https://github.com/pymumu/smartdns/blob/0f1912ab020ea9a60efac4732442f0bb7093f40b/src/proxy.c#L749-L790">Same revision: HTTP CONNECT target construction</a></li>
+<li><a href="https://github.com/pymumu/smartdns/blob/0f1912ab020ea9a60efac4732442f0bb7093f40b/etc/smartdns/smartdns.conf">Same revision: group and stale-cache configuration</a></li>
+<li><a href="https://www.rfc-editor.org/rfc/rfc8484.html">RFC 8484: DNS Queries over HTTPS</a></li>
+<li><a href="https://www.rfc-editor.org/rfc/rfc8767.html">RFC 8767: Serving Stale Data to Improve DNS Resiliency</a></li>
+<li><a href="https://adguard-dns.io/kb/adguard-home/configuration/">Current AdGuard Home configuration knowledge base</a></li>
+<li><a href="https://github.com/felixonmars/dnsmasq-china-list">dnsmasq-china-list</a></li>
+</ol>
+<p>Related reading: <a href="/en/post/dns-evolution-history-architecture-and-modern-hardening-guide/">DNS evolution and modern hardening</a> and <a href="/en/post/bufferbloat-sqm-cake-home-network-fix/">home-network Bufferbloat troubleshooting</a>. Across these incidents, a useful habit keeps returning: after finding a healthy-looking metric, follow a real request through the entire path.</p>
+        </div>
+    </article>
+
+    
+
+
+
+
+  
+  
+    
+  
+
+
+<section aria-label="Comments" style="margin-top:40px"
+  data-gitalk-id="post-8bd502299ea8539ae1566f5e10e62eb3cb5aed44" data-gitalk-title="DNS Answered in 1 ms and Sent Me to the Wrong Place: Three SmartDNS and AdGuard Home Traps" data-gitalk-url="https://blog.margrop.net/en/post/smartdns-adguard-dns-correctness-postmortem/">
+  <h2>Comments</h2>
+  <p>Sign in with GitHub to comment. Chinese and English versions share the same discussion.
+    <a href="https://github.com/margrop/margropcomment.margrop.io/issues?q=is%3Aissue&#43;label%3AGitalk&#43;label%3A%22post-8bd502299ea8539ae1566f5e10e62eb3cb5aed44%22" target="_blank" rel="noopener noreferrer">Discuss on GitHub</a>
+  </p>
+  <div id="gitalk-container"></div>
+  <noscript>Enable JavaScript or use the GitHub discussion link above.</noscript>
+</section>
+<link rel="stylesheet" href="/vendor/gitalk/1.8.0/gitalk.css">
+<script src="/vendor/gitalk/1.8.0/gitalk.server-auth.min.js"></script>
+<script>
+  (function () {
+    if (typeof Gitalk === 'undefined') {
+      document.getElementById('gitalk-container').textContent = 'Comments could not load. Use the GitHub discussion link above.';
+      return;
+    }
+    var gitalk = new Gitalk({
+      clientID: "3181fd94e501cc5db0ad",
+      clientSecret: 'server-side',
+      proxy: "https://comments.margrop.net/oauth/token",
+      repo: "margropcomment.margrop.io",
+      owner: "margrop",
+      admin: ["margrop"],
+      id: "post-8bd502299ea8539ae1566f5e10e62eb3cb5aed44",
+      language: 'en',
+      createIssueManually: true,
+      distractionFreeMode: false
+    });
+    gitalk.render('gitalk-container');
+  })();
+</script>
+
+
+
+
+
+    
+<div class="site-stats" aria-label="Page Views">
+    <span>Views <span data-page-view-count>--</span></span>
+</div>
+
+
+    
+    
+    <script async src="https://js.users.51.la/21044367.js"></script>
+    <script async charset="UTF-8" id="LA_COLLECT" src="https://sdk.51.la/js-sdk-pro.min.js" onload="LA.init({id: '1vVTUWl7zoRjnKXi', ck: '1vVTUWl7zoRjnKXi'})"></script>
+    <script async src="https://sdk.51.la/perf/js-sdk-perf.min.js" crossorigin="anonymous" onload="new LingQue.Monitor().init({id: '202teQt8THXwqyve'})"></script>
+    <script defer src="/js/page-views.js"></script>
+    <div class="la-theme-widget" data-51la-widget aria-label="51.la Analytics"></div>
+    <script defer src="/js/51la-theme-widget.js"></script>
+</body>
+</html>

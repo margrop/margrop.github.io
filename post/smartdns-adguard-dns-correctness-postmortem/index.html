@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>DNS 1 毫秒就返回了，网站却打不开：SmartDNS × AdGuard Home 的三层陷阱 - 魔都水滴</title>
+<meta name="description" content="SmartDNS 在运行，DNS 查询也能毫秒返回，为什么网站仍然打不开？复盘一次真实排障：默认组混用、DoH 的信任边界、数字地址与域名 CONNECT 的兼容问题，再到 AdGuard 与缓存收尾，附 Windows 11、Ubuntu 26.04、macOS 27 本地自动化套件。">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://blog.margrop.net/post/smartdns-adguard-dns-correctness-postmortem/"><meta property="og:site_name" content="魔都水滴">
+<meta property="og:title" content="DNS 1 毫秒就返回了，网站却打不开：SmartDNS × AdGuard Home 的三层陷阱 - 魔都水滴">
+<meta property="og:description" content="SmartDNS 在运行，DNS 查询也能毫秒返回，为什么网站仍然打不开？复盘一次真实排障：默认组混用、DoH 的信任边界、数字地址与域名 CONNECT 的兼容问题，再到 AdGuard 与缓存收尾，附 Windows 11、Ubuntu 26.04、macOS 27 本地自动化套件。">
+<meta property="og:url" content="https://blog.margrop.net/post/smartdns-adguard-dns-correctness-postmortem/">
+<meta property="og:locale" content="zh_CN"><meta property="og:type" content="article"><meta property="og:locale:alternate" content="en_US"><meta property="og:image" content="https://blog.margrop.net/post-images/smartdns-adguard-dns-correctness-postmortem/01-cover-zh.webp"><meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="DNS 1 毫秒就返回了，网站却打不开：SmartDNS × AdGuard Home 的三层陷阱 - 魔都水滴">
+<meta name="twitter:description" content="SmartDNS 在运行，DNS 查询也能毫秒返回，为什么网站仍然打不开？复盘一次真实排障：默认组混用、DoH 的信任边界、数字地址与域名 CONNECT 的兼容问题，再到 AdGuard 与缓存收尾，附 Windows 11、Ubuntu 26.04、macOS 27 本地自动化套件。"><meta name="twitter:image" content="https://blog.margrop.net/post-images/smartdns-adguard-dns-correctness-postmortem/01-cover-zh.webp"><link rel="alternate" hreflang="zh-CN" href="https://blog.margrop.net/post/smartdns-adguard-dns-correctness-postmortem/"><link rel="alternate" hreflang="en-US" href="https://blog.margrop.net/en/post/smartdns-adguard-dns-correctness-postmortem/"><link rel="alternate" hreflang="x-default" href="https://blog.margrop.net/"><meta property="article:published_time" content="2026-10-18T07:00:00&#43;08:00">
+<meta property="article:modified_time" content="2026-10-18T07:00:00&#43;08:00"><meta property="article:tag" content="DNS"><meta property="article:tag" content="域名解析"><meta property="article:tag" content="网络"><meta property="article:tag" content="Network"><meta property="article:tag" content="故障排查"><meta property="article:tag" content="Troubleshooting"><meta property="article:tag" content="自动化"><meta property="article:tag" content="Automation"><meta property="article:tag" content="SmartDNS"><meta property="article:tag" content="AdGuard Home"><script type="application/ld+json">{"@context":"https://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"魔都水滴"},"dateModified":"2026-10-18T07:00:00+08:00","datePublished":"2026-10-18T07:00:00+08:00","description":"SmartDNS 在运行，DNS 查询也能毫秒返回，为什么网站仍然打不开？复盘一次真实排障：默认组混用、DoH 的信任边界、数字地址与域名 CONNECT 的兼容问题，再到 AdGuard 与缓存收尾，附 Windows 11、Ubuntu 26.04、macOS 27 本地自动化套件。","headline":"DNS 1 毫秒就返回了，网站却打不开：SmartDNS × AdGuard Home 的三层陷阱","image":"https://blog.margrop.net/post-images/smartdns-adguard-dns-correctness-postmortem/01-cover-zh.webp","inLanguage":"zh-CN","mainEntityOfPage":"https://blog.margrop.net/post/smartdns-adguard-dns-correctness-postmortem/","url":"https://blog.margrop.net/post/smartdns-adguard-dns-correctness-postmortem/"}</script>
+    <meta name="baidu-site-verification" content="code-sVFZ8SER59" />
+    <script src="/js/theme-toggle.js"></script>
+
+    
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-3J2W592DHJ"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-3J2W592DHJ');
+    </script>
+
+    <style>
+    :root {
+        color-scheme: light;
+        --page-bg: #fff;
+        --surface-bg: #f4f4f4;
+        --text: #222;
+        --muted: #666;
+        --subtle: #777;
+        --border: #eee;
+        --border-strong: #ddd;
+        --link: #006CFF;
+        --tag-bg: #eee;
+        --button-bg: #fff;
+        --button-primary-bg: #333;
+    }
+    @media (prefers-color-scheme: dark) {
+        :root:not([data-theme]) {
+            color-scheme: dark;
+            --page-bg: #111315;
+            --surface-bg: #1d2126;
+            --text: #e8eaed;
+            --muted: #aeb4bd;
+            --subtle: #9aa2ad;
+            --border: #30353d;
+            --border-strong: #454c56;
+            --link: #79b8ff;
+            --tag-bg: #2a3038;
+            --button-bg: #1d2126;
+            --button-primary-bg: #e8eaed;
+        }
+    }
+    html[data-theme="dark"] {
+        color-scheme: dark;
+        --page-bg: #111315;
+        --surface-bg: #1d2126;
+        --text: #e8eaed;
+        --muted: #aeb4bd;
+        --subtle: #9aa2ad;
+        --border: #30353d;
+        --border-strong: #454c56;
+        --link: #79b8ff;
+        --tag-bg: #2a3038;
+        --button-bg: #1d2126;
+        --button-primary-bg: #e8eaed;
+    }
+    html[data-theme="light"] {
+        color-scheme: light;
+        --page-bg: #fff;
+        --surface-bg: #f4f4f4;
+        --text: #222;
+        --muted: #666;
+        --subtle: #777;
+        --border: #eee;
+        --border-strong: #ddd;
+        --link: #006CFF;
+        --tag-bg: #eee;
+        --button-bg: #fff;
+        --button-primary-bg: #333;
+    }
+    body { background: var(--page-bg); font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif; max-width: 860px; margin: 0 auto; padding: 20px; line-height: 1.7; color: var(--text); }
+    body, h1, h2, h3, h4, h5, h6, p, ul, ol, li, blockquote, dt, dd { font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif; }
+    code, pre, kbd, samp { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+    h1 { border-bottom: 2px solid var(--border-strong); padding-bottom: 10px; }
+    article > h1 { font-size: 2em; line-height: 1.3; margin-bottom: 12px; }
+    .post-list { list-style: none; padding: 0; }
+    .post-list li { margin: 15px 0; }
+    .post-list a { text-decoration: none; color: var(--text); font-size: 18px; }
+    .post-list a:hover { color: var(--link); }
+    .date { color: var(--muted); font-size: 14px; margin-right: 10px; }
+    .tags { margin-top: 8px; }
+    .tag { background: var(--tag-bg); padding: 2px 8px; border-radius: 3px; font-size: 12px; margin-right: 5px; display: inline-block; }
+    nav { margin-bottom: 18px; border-bottom: 1px solid var(--border); padding-bottom: 15px; }
+    nav a { margin-right: 20px; text-decoration: none; color: var(--text); font-size: 16px; }
+    nav a:hover { color: var(--link); }
+    .language-switcher { display: flex; align-items: center; gap: 10px; margin: -8px 0 26px; }
+    .language-switcher a { display: inline-block; padding: 4px 10px; border: 1px solid var(--border-strong); border-radius: 999px; color: var(--muted); text-decoration: none; font-size: 14px; }
+    .language-switcher a.active { background: var(--link); border-color: var(--link); color: #fff; }
+    .content { line-height: 1.8; }
+    .content code { background: var(--surface-bg); padding: 2px 5px; border-radius: 3px; }
+    .content pre { background: var(--surface-bg); padding: 15px; overflow-x: auto; border-radius: 5px; }
+    .content pre code { background: none; padding: 0; border-radius: 0; }
+    .content img { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+    .content .code-snippet__fix {
+        margin: 0 0 1.5em;
+    }
+    .content .code-snippet__fix .code-snippet__line-index {
+        display: none !important;
+    }
+    .meta { color: var(--muted); font-size: 14px; margin-bottom: 14px; }
+    .meta-separator { margin: 0 6px; color: var(--subtle); }
+    .site-stats { display: flex; flex-wrap: wrap; gap: 10px 18px; margin: 28px 0 8px; padding-top: 12px; border-top: 1px solid var(--border); color: var(--subtle); font-size: 12px; }
+    a { color: var(--link); }
+    .hero { padding: 12px 0 24px; }
+    .hero h1 { border-bottom: 2px solid #333; }
+    .eyebrow { color: var(--muted); font-size: 12px; letter-spacing: .12em; margin: 0 0 8px; }
+    .hero-tagline { font-size: 18px; margin: 12px 0 8px; }
+    .hero-copy { color: var(--muted); margin: 0 0 14px; }
+    .hero-actions { margin: 14px 0 4px; }
+    .button { display: inline-block; margin-right: 12px; border: 1px solid var(--border-strong); border-radius: 3px; padding: 4px 10px; text-decoration: none; color: var(--text); background: var(--button-bg); font-size: 14px; }
+    .button-primary { background: var(--button-primary-bg); border-color: var(--button-primary-bg); color: var(--page-bg); }
+    .hero-banner { position: relative; display: flex; flex-direction: column; gap: 2px; margin: 18px 0 0; padding: 14px 44px 14px 16px; border: 1px solid var(--border-strong); border-left: 4px solid var(--link); border-radius: 4px; background: var(--surface-bg); color: var(--text); text-decoration: none; }
+    .hero-banner:hover { border-color: var(--link); }
+    .hero-banner-label { color: var(--muted); font-size: 12px; letter-spacing: .12em; }
+    .hero-banner strong { font-size: 17px; line-height: 1.5; }
+    .hero-banner small { color: var(--muted); font-size: 13px; }
+    .hero-banner-arrow { position: absolute; right: 16px; top: 50%; transform: translateY(-50%); color: var(--link); font-size: 20px; }
+    .favorites > blockquote { margin: 0 0 18px; padding: 10px 16px; border-left: 4px solid var(--link); background: var(--surface-bg); color: var(--muted); }
+    .favorites > blockquote p { margin: 0; }
+    .favorites-nav { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 8px; padding: 0; border: 0; }
+    .favorites-nav a { margin: 0; padding: 3px 10px; border: 1px solid var(--border-strong); border-radius: 999px; font-size: 14px; color: var(--text); text-decoration: none; }
+    .favorites-nav a:hover { border-color: var(--link); color: var(--link); }
+    .favorites h2 { margin-top: 36px; padding-bottom: 6px; border-bottom: 1px solid var(--border); scroll-margin-top: 16px; }
+    .favorites table { width: 100%; border-collapse: collapse; margin: 12px 0 18px; font-size: 15px; }
+    .favorites th, .favorites td { padding: 8px 10px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
+    .favorites th { color: var(--muted); font-size: 13px; font-weight: 600; background: var(--surface-bg); }
+    .favorites td:first-child { white-space: nowrap; }
+    .favorites tbody tr:hover { background: var(--surface-bg); }
+    .archive-summary { color: var(--muted); font-size: 14px; margin: -4px 0 12px; }
+    .year-nav { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 8px; padding: 0; border: 0; }
+    .year-nav a { margin: 0; padding: 3px 10px; border: 1px solid var(--border-strong); border-radius: 999px; font-size: 14px; color: var(--text); text-decoration: none; }
+    .year-nav a:hover { border-color: var(--link); color: var(--link); }
+    .year-nav span { color: var(--muted); font-size: 12px; }
+    .year-heading { display: flex; align-items: baseline; gap: 10px; margin: 32px 0 0; padding-bottom: 6px; border-bottom: 1px solid var(--border); scroll-margin-top: 16px; }
+    .year-heading span { color: var(--muted); font-size: 14px; font-weight: 400; }
+    .not-found { padding: 12px 0 24px; }
+    .not-found-en { color: var(--muted); }
+    .not-found .button { margin-bottom: 10px; }
+    .theme-toggle { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 1px solid var(--border-strong); border-radius: 999px; background: var(--button-bg); color: var(--text); cursor: pointer; font: inherit; font-size: 16px; }
+    .theme-toggle:hover { border-color: var(--link); color: var(--link); }
+    .la-theme-widget { margin: 12px 0 20px; min-height: 24px; color: var(--text); }
+    .identity-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: 16px 0; }
+    .identity-grid div { display: flex; flex-direction: column; }
+    .identity-grid strong { font-size: 15px; }
+    .identity-grid span, .topic-card span, .featured-list small { color: var(--muted); font-size: 13px; }
+    .section-block { padding-top: 28px; }
+    .section-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+    .section-heading h2 { margin: 0; }
+    .section-heading a { font-size: 14px; }
+    .topic-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+    .topic-card { display: block; padding: 14px; border: 1px solid var(--border); text-decoration: none; color: var(--text); }
+    .topic-card:hover { border-color: var(--border-strong); }
+    .topic-card strong { display: block; margin: 4px 0; font-size: 17px; }
+    .topic-index, .featured-list > a > span { color: var(--muted) !important; font-size: 12px !important; }
+    .featured-list { border-top: 1px solid var(--border); }
+    .featured-list > a { display: flex; gap: 14px; padding: 12px 0; border-bottom: 1px solid var(--border); text-decoration: none; color: var(--text); }
+    .featured-list div { display: flex; flex-direction: column; }
+    .latest-block { max-width: 860px; }
+    @media (max-width: 680px) {
+        body { padding: 16px; }
+        nav a { display: inline-block; margin-right: 12px; margin-bottom: 8px; }
+        .identity-grid { grid-template-columns: repeat(2, 1fr); }
+        .topic-grid { grid-template-columns: 1fr; }
+        .favorites table { display: block; overflow-x: auto; }
+        .favorites td:first-child { white-space: normal; }
+    }
+</style>
+
+</head>
+<body>
+    <nav>
+  <a href="/">首页</a>
+  <a href="/start-here/">开始这里</a>
+  <a href="/career/">Portfolio</a>
+  <a href="/tag/ai/">AI Agent</a>
+  <a href="/tag/docker/">Self-hosting</a>
+  <a href="/tag/%e8%bf%90%e7%bb%b4/">Engineering</a>
+  <a href="/post/">归档</a>
+  <a href="/tags/">标签</a>
+  <a href="/about/">关于</a>
+  <a href="https://github.com/margrop" target="_blank" rel="noopener">GitHub</a>
+</nav>
+
+    <div class="language-switcher">
+  <button class="theme-toggle" type="button" data-theme-toggle aria-label="切换到暗黑模式" aria-pressed="false">🌙</button>
+
+  
+  
+    <a href="/post/smartdns-adguard-dns-correctness-postmortem/" class="active">中文</a>
+  
+    <a href="/en/post/smartdns-adguard-dns-correctness-postmortem/" class="">English</a>
+  
+  
+</div>
+
+    
+    <article>
+        <h1>DNS 1 毫秒就返回了，网站却打不开：SmartDNS × AdGuard Home 的三层陷阱</h1>
+        <div class="meta">
+            发布时间: 2026-10-18
+            <span class="meta-separator">·</span>
+            <span>阅读量 <span data-page-view-count>--</span></span>
+        </div>
+        
+<div class="tags">
+    
+    <a href="/tag/dns/"><span class="tag">DNS</span></a>
+    
+    <a href="/tag/%E5%9F%9F%E5%90%8D%E8%A7%A3%E6%9E%90/"><span class="tag">域名解析</span></a>
+    
+    <a href="/tag/%E7%BD%91%E7%BB%9C/"><span class="tag">网络</span></a>
+    
+    <a href="/tag/network/"><span class="tag">Network</span></a>
+    
+    <a href="/tag/%E6%95%85%E9%9A%9C%E6%8E%92%E6%9F%A5/"><span class="tag">故障排查</span></a>
+    
+    <a href="/tag/troubleshooting/"><span class="tag">Troubleshooting</span></a>
+    
+    <a href="/tag/%E8%87%AA%E5%8A%A8%E5%8C%96/"><span class="tag">自动化</span></a>
+    
+    <a href="/tag/automation/"><span class="tag">Automation</span></a>
+    
+    <a href="/tag/smartdns/"><span class="tag">SmartDNS</span></a>
+    
+    <a href="/tag/adguard-home/"><span class="tag">AdGuard Home</span></a>
+    
+</div>
+
+
+        <div class="content">
+            <blockquote>
+<p>这次检查最容易让人放松警惕的地方，是 DNS 一直在回答。</p>
+<p>服务状态是 running，端口能连上，国内网站正常，几个查询甚至只花了零到一毫秒。继续看返回的地址，问题才露出来：部分境外域名被指向了不相干的地址，换到第二个 DNS 入口也没有恢复。</p>
+<p>最终修复涉及三个不同层次：让正确的域名走正确的上游，为境外查询建立实测可信的 DoH 路径，以及处理 SmartDNS 47.1 与现场代理之间的 CONNECT 目标兼容问题。最后再收拾缓存和客户端入口，才算走完闭环。</p>
+</blockquote>
+<p><img src="/post-images/smartdns-adguard-dns-correctness-postmortem/01-cover-zh.webp" alt="原创题图：查询延迟很低，仍需分别验证上游可信度、分流策略和代理目标" width="1600" height="900" fetchpriority="high" decoding="async"></p>
+<p>图 1：本文原创示意图。低延迟是一项性能指标，地址正确性需要另外建立证据。</p>
+<h2 id="一先别急着换-dns看看究竟是谁在回答">一、先别急着换 DNS，看看究竟是谁在回答</h2>
+<p>我之前写过一篇 <a href="/post/adguard-home-doh-dns-redirect/">AdGuard Home 与 DoH 排障文章</a>。这次现场让我给那篇文章补上一条很重要的边界：把某个上游的传输协议改成 HTTPS，并不能保证它对所有域名都给出你需要的可靠结果。</p>
+<p>这次的环境也更像许多家庭实验室的日常：一台软路由运行 dnsmasq 和 SmartDNS，另一台 Linux 主机运行 AdGuard Home，客户端同时拿到了两个 DNS 地址。代理服务则已经存在，并不和 SmartDNS 运行在同一台设备上。</p>
+<p>为了方便阅读，本文只使用两个角色：A 是运行 SmartDNS 的软路由，B 是运行 AdGuard Home 的过滤主机。所有真实设备地址、计算机名称、本地域名、账号和私有路径均已省略。文中的端口、版本、测试数量与配置行为来自实际记录；配图中的拓扑是脱敏后的原创示意。</p>
+<p>想象学校里有两处问路窗口。一个窗口负责检查来访名单，另一个窗口负责查询教室位置。你在手机上填了两个窗口的号码，并不意味着每次都会严格按“先第一个、失败再第二个”的顺序拨号。不同系统、应用和浏览器可能缓存、竞争查询，或者自行选择入口。</p>
+<p>所以我先确认了实际链路，而没有直接修改客户端的 DNS 列表。</p>
+<p><img src="/post-images/smartdns-adguard-dns-correctness-postmortem/02-topology-zh.webp" alt="原创拓扑图：客户端、AdGuard Home、dnsmasq 与 SmartDNS 的实际职责" width="1600" height="1120" loading="lazy" decoding="async"></p>
+<p>图 2：主链路与备用入口。角色表示职责，不对应任何公开的真实设备标识。</p>
+<p>现场的主入口是 dnsmasq 的 53 端口，它只把外部解析交给本机 SmartDNS 的 6053 端口。SmartDNS 还有一个 5335 第二入口，指定使用境外组。AdGuard Home 则是客户端的另一个入口，承担广告过滤和静态重写。</p>
+<p>进程、监听和转发关系都正常，说明“服务没有启动”这个假设可以排除了。接下来的问题是：这些服务把同一个问题交给了谁，又把什么答案交还给了客户端？</p>
+<h2 id="二第一层陷阱建了-chinaoversea-两个组却没有真正分流">二、第一层陷阱：建了 china、oversea 两个组，却没有真正分流</h2>
+<p>原配置里，上游分别标注了 <code>china</code> 和 <code>oversea</code>。这个界面很容易让人产生一种直觉：国内域名已经走国内组，境外域名已经走境外组。</p>
+<p>实际生成的配置没有支持这种直觉。</p>
+<p>SmartDNS 的上游组、默认组成员，以及域名规则，是几件分别控制的事情。一个服务器有 <code>-group china</code> 标签，并不自动意味着它已经离开默认组。主入口没有域名转发规则时，也不会凭组名里的英文单词推断域名应该归谁回答。</p>
+<p><img src="/post-images/smartdns-adguard-dns-correctness-postmortem/03-shot-group-options.webp" alt="真实截图：SmartDNS 官方配置中的 group 与 exclude-default-group 参数说明" width="1300" height="295" loading="lazy" decoding="async"></p>
+<p>图 3：真实浏览器截图，裁切自本文固定提交版本的 SmartDNS 官方配置文件。参数说明明确区分分组与排除默认组。</p>
+<p>可以把它想成食堂打饭：你给两个窗口挂上“普通餐”和“过敏专用餐”的牌子，排队系统却仍把所有同学随机送到任意窗口。牌子写对了，分配规则仍然可能缺失。</p>
+<p>这次主入口仍混用了国内外上游。第二入口虽然指定了境外组，但组里的服务器仍通过明文 UDP 连接，直接查询这些上游也会得到异常结果，因此换端口并没有建立新的可信路径。</p>
+<p>我采用的策略是：国内域名清单命中时交给 <code>china</code>，其余查询使用经过验证的 <code>oversea</code>；国内组从默认组排除。已有的局域网解析留在本地处理，避免把内部名字送到外部查询。</p>
+<p><img src="/post-images/smartdns-adguard-dns-correctness-postmortem/04-group-routing-zh.webp" alt="原创分流图：默认组成员与域名规则需要同时明确" width="1600" height="1000" loading="lazy" decoding="async"></p>
+<p>图 4：这里采用“国内清单命中，其余走可信境外组”的策略。这是一项策略选择，会让少量尚未收录的国内域名使用境外上游，并非零成本的万能分类器。</p>
+<p>下面是配置结构示意。占位变量需要由你的私有配置填入，不能原样复制成正式配置：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>server-https https://dns.alidns.com/dns-query -group china -exclude-default-group -host-ip &lt;DOMESTIC_DOH_ADDRESS&gt;
+</span></span><span style="display:flex;"><span>server-https https://dns.google/dns-query -group oversea -proxy doh-proxy -host-ip &lt;OVERSEAS_DOH_ADDRESS&gt;
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>domain-set -name china-domains -file /etc/smartdns/domain-set/china-domains.list
+</span></span><span style="display:flex;"><span>domain-rules /domain-set:china-domains/ -nameserver china
+</span></span></code></pre></div><p>实际部署还配置了另一家国内 DoH 和另一家境外 DoH，保留可用候选。原来的 UDP 上游只被停用，配置记录仍在备份中；其中两个旧节点在两轮独立查询里均超时，没有继续留在活动组里。</p>
+<p>国内清单采用维护中的公开项目 <code>dnsmasq-china-list</code>，转换成 SmartDNS 的域名列表格式。现场安装时共 109,797 条，并设置了每周更新。下载失败、格式不符或条目数量明显下降时保留旧文件，替换文件时也保留上一版。更新失败不能顺手把最后一份能用的清单清空。</p>
+<h2 id="三第二层陷阱doh-保护传输仍然需要选择可信的回答者">三、第二层陷阱：DoH 保护传输，仍然需要选择可信的回答者</h2>
+<p>看到境外 UDP 查询异常，下一步当然会想到 DoH。但我没有把“成功建立 HTTPS”当成修复完成。</p>
+<p>在这次现场，通过国内 DoH 查询某些境外域名，仍然拿到了异常地址。这里能确认的是结果存在明显异常、这条上游路径不满足本次需求；仅凭这些查询，不能进一步认定是哪一个中间设备、运营商或解析器内部环节造成了它。</p>
+<p><img src="/post-images/smartdns-adguard-dns-correctness-postmortem/05-shot-doh-standard.webp" alt="真实截图：RFC 8484 对 DNS over HTTPS 的定义" width="650" height="235" loading="lazy" decoding="async"></p>
+<p>图 5：RFC 8484 原文真实截图。DoH 将 DNS 查询与响应承载在 HTTPS 中，定义的是传输与交互协议。</p>
+<p>生活里的比方是密封信封。加密能让路上的人更难拆信、改信，也让你核验自己正在和哪个收信人通信。但收信人如果提供了过时的信息、采用了特殊策略，或者它继续向外问路时遇到了问题，密封信封不会自动把信里的内容改正确。</p>
+<p>因此，这里至少需要分开验证三件事：</p>
+<ol>
+<li>连接是否经过预期路径，证书链和域名校验是否通过。</li>
+<li>返回的 DNS 业务状态、记录类型和地址是否符合预期，而不只看 HTTP 状态。</li>
+<li>多个独立可信来源与实际业务访问，是否支持相同结论。</li>
+</ol>
+<p>DNS 的 <code>NOERROR</code> 也有类似边界。它表示响应码没有报告对应的 DNS 错误，既不是“地址已经过真实性审计”的印章，也不保证回答区一定包含请求的记录。遇到空回答、SOA、NXDOMAIN 或 SERVFAIL，应继续查看记录类型与上下文，不能全部归为“DNS 坏了”。</p>
+<p>经过现场现有代理访问 Google 和 Cloudflare DoH 时，返回结果恢复正常，Google 的 HTTPS 控制请求也返回了 204，证书校验始终开启。至此才找到了可供下一步配置使用的境外解析通道。</p>
+<p>国内服务继续使用直接可达的国内 DoH，是为了保留合适的本地 CDN 调度与可用性。境外服务使用实测可信的境外 DoH，是因为当前现场需要这条路径。这个结论来自现场对照，不代表某个品牌在所有网络里都固定更好。</p>
+<h2 id="四第三层陷阱curl-能通smartdns-却一直-servfail">四、第三层陷阱：curl 能通，SmartDNS 却一直 SERVFAIL</h2>
+<p>这一步最有意思，也最值得记录。</p>
+<p>代理上的 DoH 已经用 curl 跑通了，我把同样的服务配置到临时 SmartDNS 实例，国内分流正常，境外查询却失败。正式 DNS 仍保持原配置，问题只发生在临时端口上，因此可以继续查，不必拿全家网络做实验。</p>
+<p>对照条件收紧之后，差异出现在代理 CONNECT 的目标形式上：</p>
+<table>
+  <thead>
+      <tr>
+          <th>控制条件</th>
+          <th>本次现场结果</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>代理收到 DoH 服务的域名目标</td>
+          <td>查询成功</td>
+      </tr>
+      <tr>
+          <td>代理收到对应的数字地址目标</td>
+          <td>连接超时</td>
+      </tr>
+      <tr>
+          <td>SmartDNS 原生代理路径</td>
+          <td>境外查询 SERVFAIL</td>
+      </tr>
+  </tbody>
+</table>
+<p>这不是说 HTTP CONNECT 不能连接数字地址。它完全可以。这里的事实是当前代理路径对这两种目标表现不同；具体原因可能与代理规则、路由或实现有关，没有继续把未核实的内部原因写成结论。</p>
+<p>为了确认 SmartDNS 究竟传入了什么，我检查了与现场行为相符的 Release47 源码，并固定到一个可复查的提交，而不是在文章里引用随时变化的分支头。</p>
+<p><img src="/post-images/smartdns-adguard-dns-correctness-postmortem/06-shot-tls-call.webp" alt="真实截图：SmartDNS 的 TLS 连接路径把 server_info-&gt;ip 传入代理连接函数" width="1100" height="440" loading="lazy" decoding="async"></p>
+<p>图 6：真实源码截图。本文所查实现的 <code>client_tls.c</code> 在创建代理连接时使用了 <code>server_info-&gt;ip</code>。</p>
+<p>关键调用可以缩成下面几行：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-c" data-lang="c"><span style="display:flex;"><span>proxy <span style="color:#f92672">=</span> <span style="color:#a6e22e">proxy_conn_new</span>(
+</span></span><span style="display:flex;"><span>    server_info<span style="color:#f92672">-&gt;</span>proxy_name,
+</span></span><span style="display:flex;"><span>    server_info<span style="color:#f92672">-&gt;</span>ip,
+</span></span><span style="display:flex;"><span>    server_info<span style="color:#f92672">-&gt;</span>port, <span style="color:#ae81ff">0</span>, <span style="color:#ae81ff">1</span>
+</span></span><span style="display:flex;"><span>);
+</span></span></code></pre></div><p>继续往下看，HTTP 代理握手会把收到的目标拼成 CONNECT 请求。</p>
+<p><img src="/post-images/smartdns-adguard-dns-correctness-postmortem/07-shot-http-connect.webp" alt="真实截图：SmartDNS 代理实现中构造 HTTP CONNECT 目标的代码" width="1100" height="403" loading="lazy" decoding="async"></p>
+<p>图 7：同一固定提交的 <code>proxy.c</code> 真实截图。它解释了为什么仅在后一层调整编码方式，无法找回前一层已经没有传下来的域名。</p>
+<p>这也解释了为什么我没有把 <code>-use-domain</code> 当成一个随手加上就能解决问题的开关。假设快递员拿到的收件信息里只剩门牌号，后面即使改用“按姓名分类”的信封格式，也无法凭空恢复收件人的名字。</p>
+<p>范围必须说清楚：这是现场 SmartDNS 47.1、所检查源码路径与当前代理之间的兼容问题。很多代理本来就能正常处理数字目标，它们不需要本文这个适配层；其他版本也应重新检查实际实现，不应直接套用结论。</p>
+<h2 id="五修复兼容问题加一个很窄的适配器让-tls-完整穿过去">五、修复兼容问题：加一个很窄的适配器，让 TLS 完整穿过去</h2>
+<p>这次没有更换旁路由上的 SmartDNS 程序。我在过滤主机上部署了一个小型 CONNECT 适配服务，把指定 DoH 端点的数字目标转换回对应的公开服务域名，再交给既有 HTTP 代理。</p>
+<p><img src="/post-images/smartdns-adguard-dns-correctness-postmortem/08-connect-adapter-zh.webp" alt="原创适配器图：数字 CONNECT 目标被转换为域名，TLS 会话保持端到端" width="1600" height="1120" loading="lazy" decoding="async"></p>
+<p>图 8：适配器只处理代理连接目标。DNS 内容仍在客户端与 DoH 提供者之间的 TLS 会话中传输。</p>
+<p>它只接受指定来源，只允许两家 DoH 提供者的已配置端点与目标端口，不负责任意网址转发；服务使用 systemd 动态用户运行，并配置开机启动。未授权目标的测试得到了 403。</p>
+<p>这里特别保留了证书与域名校验。适配器不生成证书、不解密 DNS，不需要给客户端安装一个新的根证书，也没有使用跳过证书检查的参数。</p>
+<p>我还用一个隔离实例模拟了代理不可用：国内域名仍然能通过国内组解析，境外新查询返回失败，没有悄悄交给一个会产生异常结果的替代上游。现场同时保留了受限的过期缓存服务，已缓存的有效结果可以按既定上限继续服务；这和“临时去问另一个不可信回答者”是两种行为。</p>
+<p>代价也需要承认：境外新查询现在依赖适配服务和既有代理在线。服务独立启动、来源与目标受限、配置可以回滚，这些措施让依赖更清楚，但不能把依赖变没。如果你的代理原生支持数字 CONNECT，直接使用原生路径通常更简单。</p>
+<h2 id="六adguard-的加密入口上游与引导解析要分开看">六、AdGuard 的加密入口、上游与引导解析，要分开看</h2>
+<p>过滤主机上的 AdGuard Home 原来直接使用国内 DoH 上游，因此同样会向客户端返回部分异常结果。另一个需要顺手修复的问题，是该主机的系统解析文件仍指向一个已经停用的解析服务，链接实际失效了。</p>
+<p>修复后，AdGuard 的外部查询交给软路由的统一解析入口；它继续保留自己的广告过滤与静态重写。主机系统解析文件也被修复，没有额外启动一个和 AdGuard 争用端口的服务。</p>
+<p><img src="/post-images/smartdns-adguard-dns-correctness-postmortem/09-adguard-preservation-zh.webp" alt="原创保留数据图：此次完整保留 7 个过滤列表、50 条自定义规则、8 条静态重写" width="1600" height="900" loading="lazy" decoding="async"></p>
+<p>图 9：这是本次配置核对的实际数量，不是 AdGuard Home 的默认配置，也不是界面截图。</p>
+<p>编辑配置时，三个字段要区分开：</p>
+<table>
+  <thead>
+      <tr>
+          <th>字段或设置</th>
+          <th>负责的事情</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>对客户端提供加密 DNS 的监听设置</td>
+          <td>客户端如何连接 AdGuard</td>
+      </tr>
+      <tr>
+          <td><code>upstream_dns</code></td>
+          <td>AdGuard 把外部查询交给谁</td>
+      </tr>
+      <tr>
+          <td><code>bootstrap_dns</code></td>
+          <td>遇到上游域名时，先如何取得连接它所需的地址</td>
+      </tr>
+      <tr>
+          <td><code>fallback_dns</code></td>
+          <td>正常上游失败时，是否以及向谁尝试替代查询</td>
+      </tr>
+  </tbody>
+</table>
+<p>把入站加密监听打开，并不等于出站上游已经加密。只修改 bootstrap，也不等于普通业务查询就会走它。</p>
+<p>本次先停掉 AdGuard，再编辑配置，启动后重新比较，确认除 DNS 上游相关字段外，其余设置保持一致。过滤列表、用户规则和重写记录都不能因为“修一个 DNS”就顺手清空。</p>
+<p>客户端仍然有两个 DNS 入口，因此四条局域网静态记录也同步到备用入口，避免同一个名字换一个回答者就查不到。广告过滤则仍由 AdGuard 提供：客户端如果直接使用软路由入口，会绕过这一层过滤。双 DNS 提供可用性选择，并不会自动提供相同的过滤策略。</p>
+<h2 id="七为什么上游修好了客户端还像没修过">七、为什么上游修好了，客户端还像没修过？</h2>
+<p>接下来轮到缓存。</p>
+<p>原配置同时存在 SmartDNS 的固定一小时 TTL 和 dnsmasq 的一小时最小缓存 TTL，此外还开启了过期缓存服务。这样的组合会让部分结果保留得更久；如果最初进入缓存的就是异常地址，命中率越高，用户反而越容易反复拿到同一份旧答案。</p>
+<p><img src="/post-images/smartdns-adguard-dns-correctness-postmortem/10-shot-cache-options.webp" alt="真实截图：SmartDNS 官方配置对过期缓存时长和过期应答 TTL 的说明" width="1100" height="410" loading="lazy" decoding="async"></p>
+<p>图 10：真实源码配置截图。过期数据能服务多久，与客户端收到的过期应答 TTL，是两个不同的控制项。</p>
+<p>这像教室门口贴着一张旧课程表。教务处已经改了新表，门口那张复印件还没被换掉。同学查得再快，也只是更快地读到旧安排。</p>
+<p>我移除了强制一小时 TTL 的覆盖，主要遵循上游 TTL，同时给过期服务设置了一小时上限，过期应答的 TTL 设为 30 秒。这个选择是现场对可用性与新鲜度的折中，不代表所有环境都应该使用同一组数值。</p>
+<p><img src="/post-images/smartdns-adguard-dns-correctness-postmortem/11-cache-timeline-zh.webp" alt="原创缓存时间线：先修可信路径和分流，再处理缓存与客户端复测" width="1600" height="1000" loading="lazy" decoding="async"></p>
+<p>图 11：缓存不会判断某个旧答案是不是本次事故里的坏答案，清理与验证需要由运维流程完成。</p>
+<p>还有一个容易漏掉的顺序问题：持久缓存文件应在 SmartDNS 停止之后备份或移走。进程退出时可能重新写入内存缓存，如果你先挪文件、再停进程，它就可能把刚才想清掉的旧数据重新写回来。</p>
+<p>最后回到客户端，既检查指定服务器的查询，也检查操作系统真正使用的解析路径。浏览器自己的安全 DNS、应用内缓存和代理的远端解析都是独立变量，不能只凭一条指定端口的 dig 就宣布所有客户端已经恢复。</p>
+<h2 id="八三平台自动化套件先审计再应用失败后回滚">八、三平台自动化套件：先审计，再应用，失败后回滚</h2>
+<p>为了便于复用，我把这次做法整理成 <a href="/downloads/smartdns-adguard-dns-correctness-postmortem/dns-care-kit.zip">DNS Care Kit 下载包</a>，提供 Windows 11、Ubuntu 26.04、macOS 27 三个入口。完整源代码、国内域名清单、角色配置样例和回滚逻辑都在包内，也可以先查看 <a href="/downloads/smartdns-adguard-dns-correctness-postmortem/README.txt">使用说明</a>。</p>
+<p>这里的“一键”指一次填好自己的角色参数后，用一条命令执行约定流程。脚本不调用大模型 API，不依赖云端自动化平台，不临时下载远程脚本，也不拉取新镜像；它通过原生 SSH 操作你已经拥有的软路由、过滤主机和代理。DNS 验证当然仍要连接你选择的 DNS 服务，这项网络依赖属于功能本身。</p>
+<p>适用前提是本文这类拓扑：dnsmasq 监听 53，SmartDNS 主入口为 6053；过滤主机运行 Ubuntu 与使用绑定配置目录的 AdGuard 容器，已有 Python 3、Docker 和可用的 HTTP CONNECT 代理。macOS 入口使用系统自带的 Bash、plutil 和 OpenSSH，不要求在 Mac 上安装 Python。Ubuntu 入口使用系统 Python 3；Windows 入口使用 PowerShell 和 Windows OpenSSH 客户端。</p>
+<h3 id="方法一由人启动脚本自动执行">方法一：由人启动，脚本自动执行</h3>
+<p>解压后复制 <code>settings.example.json</code> 为 <code>settings.private.json</code>，只在自己的设备上填写 SSH 别名、设备地址、代理地址，以及四个 DoH 上游和可信对照端点。上游可以使用自建服务；套件的对照查询采用标准 DoH 报文，不绑定厂商专用 API。不要把真实配置上传到工单、文章评论或公共仓库。SSH 应事先能正常登录，首次主机指纹核验也应在使用套件前完成。</p>
+<p>默认只读审计：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-powershell" data-lang="powershell"><span style="display:flex;"><span><span style="color:#75715e"># Windows 11：进程级执行参数，不修改系统全局执行策略</span>
+</span></span><span style="display:flex;"><span>powershell.exe -NoProfile -ExecutionPolicy Bypass <span style="color:#f92672">-File</span> .\windows-<span style="color:#ae81ff">11</span>.ps1 -Mode Audit
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e"># Ubuntu 26.04</span>
+</span></span><span style="display:flex;"><span>bash ./ubuntu-26.04.sh audit
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># macOS 27</span>
+</span></span><span style="display:flex;"><span>bash ./macos-27.command audit
+</span></span></code></pre></div><p>确认符合该配置模型后，切换到应用模式。脚本会先验证可信 DoH 通道并准备端点信息，再安装受限适配器、备份并修复 SmartDNS，检查软路由后才调整 AdGuard：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-powershell" data-lang="powershell"><span style="display:flex;"><span>powershell.exe -NoProfile -ExecutionPolicy Bypass <span style="color:#f92672">-File</span> .\windows-<span style="color:#ae81ff">11</span>.ps1 -Mode Apply
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>bash ./ubuntu-26.04.sh apply
+</span></span><span style="display:flex;"><span><span style="color:#75715e"># 或</span>
+</span></span><span style="display:flex;"><span>bash ./macos-27.command apply
+</span></span></code></pre></div><p>失败时，入口会尝试恢复两端原配置，并打印本次运行编号。网络已经断开的情况下，任何自动回滚都无法保证远程执行成功，所以包内也保留显式回滚入口：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-powershell" data-lang="powershell"><span style="display:flex;"><span>powershell.exe -NoProfile -ExecutionPolicy Bypass <span style="color:#f92672">-File</span> .\windows-<span style="color:#ae81ff">11</span>.ps1 -Mode Rollback -RunId RUN_ID
+</span></span></code></pre></div><div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>bash ./ubuntu-26.04.sh rollback RUN_ID
+</span></span><span style="display:flex;"><span>bash ./macos-27.command rollback RUN_ID
+</span></span></code></pre></div><p>套件的精简检查包含 28 项协议与记录检查，并将 Google 回答与可信 DoH 的地址前缀做一致性核对。前缀比较只是一条排障线索，会受 CDN 调度影响，不能当成 DNSSEC 验证或域名真实性的最终证明。现场更完整的验收是后文的 56 项，二者不要混为一谈。</p>
+<p>测试口径也明确列在包内：macOS 27、Ubuntu 26.04 的只读链路均已实机运行并通过 28 项检查；Windows 入口经过 PowerShell 解析及四种流程模拟检查，不把 Linux 上的 PowerShell 检查写成完整 Windows 11 实机认证。Apply 是针对上述双主机拓扑的参数化实现，应先审阅，不能用于盲目覆盖任意 OpenWrt 或任意代理配置。</p>
+<h3 id="方法二让已有-agent-自动配置">方法二：让已有 Agent 自动配置</h3>
+<p>如果你已经在使用本地运维 Agent，可以把解压后的目录交给它。这里不要求某一家 Agent 产品，也不要求购买某个在线服务。以下提示词可以直接作为任务说明：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>你已被授权修复 settings.private.json 指定的两台设备的 DNS。
+</span></span><span style="display:flex;"><span>先阅读本地套件 README 和源代码，识别当前系统，运行对应的 Audit 入口。
+</span></span><span style="display:flex;"><span>确认实际拓扑、可信 DoH 对照、代理连接方式与该配置模型一致后，运行 Apply。
+</span></span><span style="display:flex;"><span>应用前保留备份，应用后验证两端的 UDP/TCP、A/AAAA、负例和过滤行为。
+</span></span><span style="display:flex;"><span>不要更改 DHCP、网关、SSH 认证、代理订阅、用户过滤规则或静态重写。
+</span></span><span style="display:flex;"><span>不要关闭 TLS 证书校验，不要把失败的境外查询转给未经验证的上游。
+</span></span><span style="display:flex;"><span>如果拓扑不同，保留诊断结果并说明差异，不执行不适用的配置步骤。
+</span></span><span style="display:flex;"><span>失败时执行本次运行编号对应的回滚，并核对恢复状态。
+</span></span><span style="display:flex;"><span>私有配置只留在本地；交付报告仅使用角色名、计数和脱敏结果。
+</span></span></code></pre></div><p>真正有价值的 Agent 自动化，是把检查、变更、验收和回滚连起来。让它反复猜一个“万能 DNS 地址”，并不能减少链路里的不确定性。</p>
+<h2 id="九怎样才算修完把能回答升级为证据闭环">九、怎样才算修完？把“能回答”升级为“证据闭环”</h2>
+<p>最终没有以服务 running 作为收工标准。我分别检查了软路由的 53、6053、5335，以及过滤主机的 53，覆盖国内外域名、A/AAAA、UDP/TCP、TXT、HTTPS 类型与不存在的域名。</p>
+<p>原来的 HTTPS 记录抑制策略得到保留，因此对应测试关注其响应是否符合现有策略；这和网页 HTTPS 连接是否成功是不同测试。</p>
+<p><img src="/post-images/smartdns-adguard-dns-correctness-postmortem/12-verification-matrix-zh.webp" alt="原创验收图：四个入口共 56 项检查通过及本次查询延迟快照" width="1600" height="1120" loading="lazy" decoding="async"></p>
+<p>图 12：重启相关服务后，56 项解析检查全部通过。中位数包含缓存命中，仅代表本次快照，不是不同 DNS 品牌的性能排名。</p>
+<p>另外完成了八次局域网静态记录检查、广告过滤检查、代理失效场景与客户端系统解析检查。Google 的 IPv4 与 IPv6 回答恢复正常，旧的异常结果不再出现。AdGuard 的原有数据也重新核对过，临时 SmartDNS 实例全部停止，正式进程只留下一个。</p>
+<p>这里没有执行整机重启。已确认的是服务重启后的实际行为，以及适配服务和原有 DNS 服务的启动配置；整机启动的先后顺序，仍可以在合适的维护窗口再做断电或重启验收。把已经验证的范围说清楚，比补一句未经执行的“重启也没问题”更有用。</p>
+<h2 id="qa几个容易再次绕回去的问题">Q&amp;A：几个容易再次绕回去的问题</h2>
+<h3 id="只配置一个公共-dns会不会更省事">只配置一个公共 DNS，会不会更省事？</h3>
+<p>对于简单网络，当然可能。前提仍是它在你的网络里可达，并能满足实际解析需求。多加十个服务器不会自动增加可信度，还会增加竞争回答、延迟和排障变量。</p>
+<h3 id="多个-dns-地址一定严格按主备顺序工作吗">多个 DNS 地址一定严格按主备顺序工作吗？</h3>
+<p>不应这样假设。操作系统、应用、浏览器和当前网络状态都可能影响选择。如果两个入口的分流与过滤策略不同，用户体验也可能随入口变化。本次统一了上游分流与本地静态记录，仍明确保留 AdGuard 独有的过滤层。</p>
+<h3 id="使用-doh-后还需要-dnssec-吗">使用 DoH 后还需要 DNSSEC 吗？</h3>
+<p>它们解决不同层面的问题。DoH 保护与所选解析器的连接；DNSSEC 在域名已正确签名且验证链完整时，为 DNS 数据提供可验证性。不是所有域名都签名，也不能因为启用了其中一个就省略其他检查。</p>
+<h3 id="发现异常后先清缓存是否最快">发现异常后，先清缓存是否最快？</h3>
+<p>清掉缓存后，如果仍向原来的异常路径提问，新缓存很快又会装入同样的问题。先建立可信上游和正确分流，再清缓存、做客户端复测，通常更容易解释每一步的效果。</p>
+<h3 id="每个人都需要这个-connect-适配器吗">每个人都需要这个 CONNECT 适配器吗？</h3>
+<p>不需要。先在自己的网络对比域名目标与数字目标。原生代理路径正常就继续使用它。这里新增一个服务，是为了处理有证据支持的特定兼容问题，并非推荐给所有家庭网络的标准组件。</p>
+<h3 id="dns-修好后所有境外网站都会自动直连成功吗">DNS 修好后，所有境外网站都会自动直连成功吗？</h3>
+<p>不会。正确解析只是建立连接的一个步骤。路由、代理规则、TLS、HTTP、账号和应用自身仍各有条件。本文修复的是解析链路，没有把 DNS 描述成解决所有网络问题的开关。</p>
+<h2 id="参考资料与配图来源">参考资料与配图来源</h2>
+<p>本文的五张真实截图均由浏览器打开官方原文后截取、裁切；其余七张为本文原创示意图，并提供中英文配图。截图没有用绘制的终端窗口冒充现场输出。</p>
+<ol>
+<li><a href="https://github.com/pymumu/smartdns/blob/0f1912ab020ea9a60efac4732442f0bb7093f40b/src/dns_client/client_tls.c#L351-L374">SmartDNS 固定提交：TLS 创建代理连接的位置</a></li>
+<li><a href="https://github.com/pymumu/smartdns/blob/0f1912ab020ea9a60efac4732442f0bb7093f40b/src/proxy.c#L749-L790">同一提交：HTTP CONNECT 目标构造</a></li>
+<li><a href="https://github.com/pymumu/smartdns/blob/0f1912ab020ea9a60efac4732442f0bb7093f40b/etc/smartdns/smartdns.conf">同一提交：上游分组与过期缓存配置说明</a></li>
+<li><a href="https://www.rfc-editor.org/rfc/rfc8484.html">RFC 8484：DNS Queries over HTTPS</a></li>
+<li><a href="https://www.rfc-editor.org/rfc/rfc8767.html">RFC 8767：Serving Stale Data to Improve DNS Resiliency</a></li>
+<li><a href="https://adguard-dns.io/kb/adguard-home/configuration/">AdGuard Home 当前配置知识库</a></li>
+<li><a href="https://github.com/felixonmars/dnsmasq-china-list">dnsmasq-china-list 项目</a></li>
+</ol>
+<p>相关旧文也可以一起读：<a href="/post/dns-evolution-history-architecture-and-modern-hardening-guide/">DNS 的演进与现代加固</a>、<a href="/post/bufferbloat-sqm-cake-home-network-fix/">家庭网络 Bufferbloat 排障</a>。这几次排障反复提醒我的，是同一件很具体的事：看见一个漂亮指标之后，再沿着真实请求走一遍。</p>
+        </div>
+    </article>
+
+    
+
+
+
+
+  
+  
+    
+  
+
+
+<section aria-label="评论" style="margin-top:40px"
+  data-gitalk-id="post-8bd502299ea8539ae1566f5e10e62eb3cb5aed44" data-gitalk-title="DNS 1 毫秒就返回了，网站却打不开：SmartDNS × AdGuard Home 的三层陷阱" data-gitalk-url="https://blog.margrop.net/post/smartdns-adguard-dns-correctness-postmortem/">
+  <h2>评论</h2>
+  <p>使用 GitHub 登录后即可评论，中英文版本共用同一讨论。
+    <a href="https://github.com/margrop/margropcomment.margrop.io/issues?q=is%3Aissue&#43;label%3AGitalk&#43;label%3A%22post-8bd502299ea8539ae1566f5e10e62eb3cb5aed44%22" target="_blank" rel="noopener noreferrer">在 GitHub 上参与讨论</a>
+  </p>
+  <div id="gitalk-container"></div>
+  <noscript>请开启 JavaScript，或通过上方 GitHub 链接参与讨论。</noscript>
+</section>
+<link rel="stylesheet" href="/vendor/gitalk/1.8.0/gitalk.css">
+<script src="/vendor/gitalk/1.8.0/gitalk.server-auth.min.js"></script>
+<script>
+  (function () {
+    if (typeof Gitalk === 'undefined') {
+      document.getElementById('gitalk-container').textContent = '评论加载失败，可使用上方 GitHub 链接参与讨论。';
+      return;
+    }
+    var gitalk = new Gitalk({
+      clientID: "3181fd94e501cc5db0ad",
+      clientSecret: 'server-side',
+      proxy: "https://comments.margrop.net/oauth/token",
+      repo: "margropcomment.margrop.io",
+      owner: "margrop",
+      admin: ["margrop"],
+      id: "post-8bd502299ea8539ae1566f5e10e62eb3cb5aed44",
+      language: 'zh-CN',
+      createIssueManually: true,
+      distractionFreeMode: false
+    });
+    gitalk.render('gitalk-container');
+  })();
+</script>
+
+
+
+
+
+    
+<div class="site-stats" aria-label="访问统计">
+    <span>本文阅读量 <span data-page-view-count>--</span></span>
+</div>
+
+
+    
+    
+    <script async src="https://js.users.51.la/21044367.js"></script>
+    <script async charset="UTF-8" id="LA_COLLECT" src="https://sdk.51.la/js-sdk-pro.min.js" onload="LA.init({id: '1vVTUWl7zoRjnKXi', ck: '1vVTUWl7zoRjnKXi'})"></script>
+    <script async src="https://sdk.51.la/perf/js-sdk-perf.min.js" crossorigin="anonymous" onload="new LingQue.Monitor().init({id: '202teQt8THXwqyve'})"></script>
+    <script defer src="/js/page-views.js"></script>
+    <div class="la-theme-widget" data-51la-widget aria-label="51.la 网站统计"></div>
+    <script defer src="/js/51la-theme-widget.js"></script>
+</body>
+</html>
