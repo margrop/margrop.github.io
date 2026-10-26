@@ -1,0 +1,600 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>NAS 网站搬到容器里，404/403 差点把全家首页干崩：这次我终于搞懂了 Synology ACL 的坑 - 魔都水滴</title>
+<meta name="description" content="记录一次把群晖 Web Station 静态站点迁移到 Portainer 管理 nginx 容器的真实过程。真正卡住的不是 nginx 配置，也不是 Docker 端口映射，而是 Synology ACL 权限：文件明明挂载进去了，容器里的 nginx 用户却没资格读。本文按问题背景、表现、分析、根因、解决方案和 Q&amp;A 完整复盘，并附 Windows 11 / Ubuntu 26.04 / …">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://blog.margrop.net/post/synology-webstation-nginx-container-migration/"><meta property="og:site_name" content="魔都水滴">
+<meta property="og:title" content="NAS 网站搬到容器里，404/403 差点把全家首页干崩：这次我终于搞懂了 Synology ACL 的坑 - 魔都水滴">
+<meta property="og:description" content="记录一次把群晖 Web Station 静态站点迁移到 Portainer 管理 nginx 容器的真实过程。真正卡住的不是 nginx 配置，也不是 Docker 端口映射，而是 Synology ACL 权限：文件明明挂载进去了，容器里的 nginx 用户却没资格读。本文按问题背景、表现、分析、根因、解决方案和 Q&amp;A 完整复盘，并附 Windows 11 / Ubuntu 26.04 / …">
+<meta property="og:url" content="https://blog.margrop.net/post/synology-webstation-nginx-container-migration/">
+<meta property="og:locale" content="zh_CN"><meta property="og:type" content="article"><meta property="og:locale:alternate" content="en_US"><meta property="og:image" content="https://blog.margrop.net/images/og-default.png"><meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="NAS 网站搬到容器里，404/403 差点把全家首页干崩：这次我终于搞懂了 Synology ACL 的坑 - 魔都水滴">
+<meta name="twitter:description" content="记录一次把群晖 Web Station 静态站点迁移到 Portainer 管理 nginx 容器的真实过程。真正卡住的不是 nginx 配置，也不是 Docker 端口映射，而是 Synology ACL 权限：文件明明挂载进去了，容器里的 nginx 用户却没资格读。本文按问题背景、表现、分析、根因、解决方案和 Q&amp;A 完整复盘，并附 Windows 11 / Ubuntu 26.04 / …"><meta name="twitter:image" content="https://blog.margrop.net/images/og-default.png"><link rel="alternate" hreflang="zh-CN" href="https://blog.margrop.net/post/synology-webstation-nginx-container-migration/"><link rel="alternate" hreflang="en-US" href="https://blog.margrop.net/en/post/synology-webstation-nginx-container-migration/"><link rel="alternate" hreflang="x-default" href="https://blog.margrop.net/"><meta property="article:published_time" content="2026-10-26T20:52:00&#43;08:00">
+<meta property="article:modified_time" content="2026-10-26T20:52:00&#43;08:00"><meta property="article:tag" content="NAS"><meta property="article:tag" content="群晖"><meta property="article:tag" content="Synology"><meta property="article:tag" content="Docker"><meta property="article:tag" content="nginx"><meta property="article:tag" content="Portainer"><meta property="article:tag" content="运维"><meta property="article:tag" content="容器"><meta property="article:tag" content="迁移"><meta property="article:tag" content="权限"><meta property="article:tag" content="Web"><script type="application/ld+json">{"@context":"https://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"魔都水滴"},"dateModified":"2026-10-26T20:52:00+08:00","datePublished":"2026-10-26T20:52:00+08:00","description":"记录一次把群晖 Web Station 静态站点迁移到 Portainer 管理 nginx 容器的真实过程。真正卡住的不是 nginx 配置，也不是 Docker 端口映射，而是 Synology ACL 权限：文件明明挂载进去了，容器里的 nginx 用户却没资格读。本文按问题背景、表现、分析、根因、解决方案和 Q\u0026amp;A 完整复盘，并附 Windows 11 / Ubuntu 26.04 / …","headline":"NAS 网站搬到容器里，404/403 差点把全家首页干崩：这次我终于搞懂了 Synology ACL 的坑","image":"https://blog.margrop.net/images/og-default.png","inLanguage":"zh-CN","mainEntityOfPage":"https://blog.margrop.net/post/synology-webstation-nginx-container-migration/","url":"https://blog.margrop.net/post/synology-webstation-nginx-container-migration/"}</script>
+    <meta name="baidu-site-verification" content="code-sVFZ8SER59" />
+    <script src="/js/theme-toggle.js"></script>
+
+    
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-3J2W592DHJ"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-3J2W592DHJ');
+    </script>
+
+    <style>
+    :root {
+        color-scheme: light;
+        --page-bg: #fff;
+        --surface-bg: #f4f4f4;
+        --text: #222;
+        --muted: #666;
+        --subtle: #777;
+        --border: #eee;
+        --border-strong: #ddd;
+        --link: #006CFF;
+        --tag-bg: #eee;
+        --button-bg: #fff;
+        --button-primary-bg: #333;
+    }
+    @media (prefers-color-scheme: dark) {
+        :root:not([data-theme]) {
+            color-scheme: dark;
+            --page-bg: #111315;
+            --surface-bg: #1d2126;
+            --text: #e8eaed;
+            --muted: #aeb4bd;
+            --subtle: #9aa2ad;
+            --border: #30353d;
+            --border-strong: #454c56;
+            --link: #79b8ff;
+            --tag-bg: #2a3038;
+            --button-bg: #1d2126;
+            --button-primary-bg: #e8eaed;
+        }
+    }
+    html[data-theme="dark"] {
+        color-scheme: dark;
+        --page-bg: #111315;
+        --surface-bg: #1d2126;
+        --text: #e8eaed;
+        --muted: #aeb4bd;
+        --subtle: #9aa2ad;
+        --border: #30353d;
+        --border-strong: #454c56;
+        --link: #79b8ff;
+        --tag-bg: #2a3038;
+        --button-bg: #1d2126;
+        --button-primary-bg: #e8eaed;
+    }
+    html[data-theme="light"] {
+        color-scheme: light;
+        --page-bg: #fff;
+        --surface-bg: #f4f4f4;
+        --text: #222;
+        --muted: #666;
+        --subtle: #777;
+        --border: #eee;
+        --border-strong: #ddd;
+        --link: #006CFF;
+        --tag-bg: #eee;
+        --button-bg: #fff;
+        --button-primary-bg: #333;
+    }
+    body { background: var(--page-bg); font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif; max-width: 860px; margin: 0 auto; padding: 20px; line-height: 1.7; color: var(--text); }
+    body, h1, h2, h3, h4, h5, h6, p, ul, ol, li, blockquote, dt, dd { font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif; }
+    code, pre, kbd, samp { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+    h1 { border-bottom: 2px solid var(--border-strong); padding-bottom: 10px; }
+    article > h1 { font-size: 2em; line-height: 1.3; margin-bottom: 12px; }
+    .post-list { list-style: none; padding: 0; }
+    .post-list li { margin: 15px 0; }
+    .post-list a { text-decoration: none; color: var(--text); font-size: 18px; }
+    .post-list a:hover { color: var(--link); }
+    .date { color: var(--muted); font-size: 14px; margin-right: 10px; }
+    .tags { margin-top: 8px; }
+    .tag { background: var(--tag-bg); padding: 2px 8px; border-radius: 3px; font-size: 12px; margin-right: 5px; display: inline-block; }
+    nav { margin-bottom: 18px; border-bottom: 1px solid var(--border); padding-bottom: 15px; }
+    nav a { margin-right: 20px; text-decoration: none; color: var(--text); font-size: 16px; }
+    nav a:hover { color: var(--link); }
+    .language-switcher { display: flex; align-items: center; gap: 10px; margin: -8px 0 26px; }
+    .language-switcher a { display: inline-block; padding: 4px 10px; border: 1px solid var(--border-strong); border-radius: 999px; color: var(--muted); text-decoration: none; font-size: 14px; }
+    .language-switcher a.active { background: var(--link); border-color: var(--link); color: #fff; }
+    .content { line-height: 1.8; }
+    .content code { background: var(--surface-bg); padding: 2px 5px; border-radius: 3px; }
+    .content pre { background: var(--surface-bg); padding: 15px; overflow-x: auto; border-radius: 5px; }
+    .content pre code { background: none; padding: 0; border-radius: 0; }
+    .content img { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+    .content td img { min-width: 72px; margin: 6px auto; }
+    .content .code-snippet__fix {
+        margin: 0 0 1.5em;
+    }
+    .content .code-snippet__fix .code-snippet__line-index {
+        display: none !important;
+    }
+    .meta { color: var(--muted); font-size: 14px; margin-bottom: 14px; }
+    .meta-separator { margin: 0 6px; color: var(--subtle); }
+    .site-stats { display: flex; flex-wrap: wrap; gap: 10px 18px; margin: 28px 0 8px; padding-top: 12px; border-top: 1px solid var(--border); color: var(--subtle); font-size: 12px; }
+    a { color: var(--link); }
+    .hero { padding: 12px 0 24px; }
+    .hero h1 { border-bottom: 2px solid #333; }
+    .eyebrow { color: var(--muted); font-size: 12px; letter-spacing: .12em; margin: 0 0 8px; }
+    .hero-tagline { font-size: 18px; margin: 12px 0 8px; }
+    .hero-copy { color: var(--muted); margin: 0 0 14px; }
+    .hero-actions { margin: 14px 0 4px; }
+    .button { display: inline-block; margin-right: 12px; border: 1px solid var(--border-strong); border-radius: 3px; padding: 4px 10px; text-decoration: none; color: var(--text); background: var(--button-bg); font-size: 14px; }
+    .button-primary { background: var(--button-primary-bg); border-color: var(--button-primary-bg); color: var(--page-bg); }
+    .hero-banner { position: relative; display: flex; flex-direction: column; gap: 2px; margin: 18px 0 0; padding: 14px 44px 14px 16px; border: 1px solid var(--border-strong); border-left: 4px solid var(--link); border-radius: 4px; background: var(--surface-bg); color: var(--text); text-decoration: none; }
+    .hero-banner:hover { border-color: var(--link); }
+    .hero-banner-label { color: var(--muted); font-size: 12px; letter-spacing: .12em; }
+    .hero-banner strong { font-size: 17px; line-height: 1.5; }
+    .hero-banner small { color: var(--muted); font-size: 13px; }
+    .hero-banner-arrow { position: absolute; right: 16px; top: 50%; transform: translateY(-50%); color: var(--link); font-size: 20px; }
+    .favorites > blockquote { margin: 0 0 18px; padding: 10px 16px; border-left: 4px solid var(--link); background: var(--surface-bg); color: var(--muted); }
+    .favorites > blockquote p { margin: 0; }
+    .favorites-nav { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 8px; padding: 0; border: 0; }
+    .favorites-nav a { margin: 0; padding: 3px 10px; border: 1px solid var(--border-strong); border-radius: 999px; font-size: 14px; color: var(--text); text-decoration: none; }
+    .favorites-nav a:hover { border-color: var(--link); color: var(--link); }
+    .favorites h2 { margin-top: 36px; padding-bottom: 6px; border-bottom: 1px solid var(--border); scroll-margin-top: 16px; }
+    .favorites table { width: 100%; border-collapse: collapse; margin: 12px 0 18px; font-size: 15px; }
+    .favorites th, .favorites td { padding: 8px 10px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
+    .favorites th { color: var(--muted); font-size: 13px; font-weight: 600; background: var(--surface-bg); }
+    .favorites td:first-child { white-space: nowrap; }
+    .favorites tbody tr:hover { background: var(--surface-bg); }
+    .archive-summary { color: var(--muted); font-size: 14px; margin: -4px 0 12px; }
+    .year-nav { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 8px; padding: 0; border: 0; }
+    .year-nav a { margin: 0; padding: 3px 10px; border: 1px solid var(--border-strong); border-radius: 999px; font-size: 14px; color: var(--text); text-decoration: none; }
+    .year-nav a:hover { border-color: var(--link); color: var(--link); }
+    .year-nav span { color: var(--muted); font-size: 12px; }
+    .year-heading { display: flex; align-items: baseline; gap: 10px; margin: 32px 0 0; padding-bottom: 6px; border-bottom: 1px solid var(--border); scroll-margin-top: 16px; }
+    .year-heading span { color: var(--muted); font-size: 14px; font-weight: 400; }
+    .not-found { padding: 12px 0 24px; }
+    .not-found-en { color: var(--muted); }
+    .not-found .button { margin-bottom: 10px; }
+    .theme-toggle { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 1px solid var(--border-strong); border-radius: 999px; background: var(--button-bg); color: var(--text); cursor: pointer; font: inherit; font-size: 16px; }
+    .theme-toggle:hover { border-color: var(--link); color: var(--link); }
+    .la-theme-widget { margin: 12px 0 20px; min-height: 24px; color: var(--text); }
+    .identity-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: 16px 0; }
+    .identity-grid div { display: flex; flex-direction: column; }
+    .identity-grid strong { font-size: 15px; }
+    .identity-grid span, .topic-card span, .featured-list small { color: var(--muted); font-size: 13px; }
+    .section-block { padding-top: 28px; }
+    .section-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+    .section-heading h2 { margin: 0; }
+    .section-heading a { font-size: 14px; }
+    .topic-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+    .topic-card { display: block; padding: 14px; border: 1px solid var(--border); text-decoration: none; color: var(--text); }
+    .topic-card:hover { border-color: var(--border-strong); }
+    .topic-card strong { display: block; margin: 4px 0; font-size: 17px; }
+    .topic-index, .featured-list > a > span { color: var(--muted) !important; font-size: 12px !important; }
+    .featured-list { border-top: 1px solid var(--border); }
+    .featured-list > a { display: flex; gap: 14px; padding: 12px 0; border-bottom: 1px solid var(--border); text-decoration: none; color: var(--text); }
+    .featured-list div { display: flex; flex-direction: column; }
+    .latest-block { max-width: 860px; }
+    @media (max-width: 680px) {
+        .content td img { width: 72px; }
+        body { padding: 16px; }
+        nav a { display: inline-block; margin-right: 12px; margin-bottom: 8px; }
+        .identity-grid { grid-template-columns: repeat(2, 1fr); }
+        .topic-grid { grid-template-columns: 1fr; }
+        .favorites table { display: block; overflow-x: auto; }
+        .favorites td:first-child { white-space: normal; }
+    }
+</style>
+
+</head>
+<body>
+    <nav>
+  <a href="/">首页</a>
+  <a href="/start-here/">开始这里</a>
+  <a href="/career/">Portfolio</a>
+  <a href="/tag/ai/">AI Agent</a>
+  <a href="/tag/docker/">Self-hosting</a>
+  <a href="/tag/%e8%bf%90%e7%bb%b4/">Engineering</a>
+  <a href="/post/">归档</a>
+  <a href="/tags/">标签</a>
+  <a href="/about/">关于</a>
+  <a href="https://github.com/margrop" target="_blank" rel="noopener">GitHub</a>
+</nav>
+
+    <div class="language-switcher">
+  <button class="theme-toggle" type="button" data-theme-toggle aria-label="切换到暗黑模式" aria-pressed="false">🌙</button>
+
+  
+  
+    <a href="/post/synology-webstation-nginx-container-migration/" class="active">中文</a>
+  
+    <a href="/en/post/synology-webstation-nginx-container-migration/" class="">English</a>
+  
+  
+</div>
+
+    
+    <article>
+        <h1>NAS 网站搬到容器里，404/403 差点把全家首页干崩：这次我终于搞懂了 Synology ACL 的坑</h1>
+        <div class="meta">
+            发布时间: 2026-10-26
+            <span class="meta-separator">·</span>
+            <span>阅读量 <span data-page-view-count>--</span></span>
+        </div>
+        
+<div class="tags">
+    
+    <a href="/tag/nas/"><span class="tag">NAS</span></a>
+    
+    <a href="/tag/%E7%BE%A4%E6%99%96/"><span class="tag">群晖</span></a>
+    
+    <a href="/tag/synology/"><span class="tag">Synology</span></a>
+    
+    <a href="/tag/docker/"><span class="tag">Docker</span></a>
+    
+    <a href="/tag/nginx/"><span class="tag">nginx</span></a>
+    
+    <a href="/tag/portainer/"><span class="tag">Portainer</span></a>
+    
+    <a href="/tag/%E8%BF%90%E7%BB%B4/"><span class="tag">运维</span></a>
+    
+    <a href="/tag/%E5%AE%B9%E5%99%A8/"><span class="tag">容器</span></a>
+    
+    <a href="/tag/%E8%BF%81%E7%A7%BB/"><span class="tag">迁移</span></a>
+    
+    <a href="/tag/%E6%9D%83%E9%99%90/"><span class="tag">权限</span></a>
+    
+    <a href="/tag/web/"><span class="tag">Web</span></a>
+    
+</div>
+
+
+        <div class="content">
+            <blockquote>
+<p>先说结论：这次迁移最危险的地方，不是“容器没跑起来”，也不是“80/443 没切过去”，而是文件已经挂进容器、nginx 也启动了，页面却死活打不开。</p>
+<p>最后真正的原因不是路径错，不是配置错，也不是镜像坏，而是 Synology 的权限模型里，Unix 权限只是第一道门，ACL 还像额外的小门禁名单。容器里的 nginx worker 用户，根本不在允许名单里。</p>
+<p>所以这篇文章，我不是想讲“怎么把 Web Station 换成 nginx 容器”这件事本身，而是想讲一个更有价值的经验：NAS 静态站上容器时，先把“谁有资格读文件”想清楚，比先折腾 nginx 配置重要得多。</p>
+</blockquote>
+<p><img src="/post-images/synology-webstation-nginx-container-migration/06-hero-cover.svg" alt="原创题图：把 NAS 网站搬进容器后，真正的坑往往不在服务，而在权限" width="1440" height="900" loading="lazy" decoding="async" style="max-width:100%;height:auto"></p>
+<h2 id="一问题背景为什么要把-web-station-迁到-nginx-容器">一、问题背景：为什么要把 Web Station 迁到 nginx 容器</h2>
+<p>先交代一下背景。</p>
+<p>这台 NAS 上一直用 Synology Web Station 提供一个静态站点，内容很简单，就是一些首页、小工具页、静态资源目录，没有动态 PHP 业务。像这样的站点，继续放在 Web Station 里当然也能跑，但我会越来越在意三件事：</p>
+<p>第一，服务边界不够清晰。Web Station、群晖自带 nginx、证书、反向代理、系统入口之间的关系比较紧，想要单独调整静态站行为时，总觉得动一下就会碰到别的功能。</p>
+<p>第二，后续维护不够顺手。静态站点本身很适合容器化，尤其是我已经在用 Portainer 管理其他容器时，把网站内容也交给 Portainer 管理，统一部署、统一重启、统一看健康状态，会更自然。</p>
+<p>第三，我想保留原访问地址不变。也就是说，对外还是原来那个站点入口，用户端尽量无感。这样迁移风险最低，也最容易验收。</p>
+<p>所以这次目标不是“把 NAS 上的网站彻底重做一遍”，而是“把内容提供方从 Web Station 切到容器 nginx，同时保留原入口和回滚能力”。</p>
+<p><img src="/post-images/synology-webstation-nginx-container-migration/01-architecture-before-after.svg" alt="原创示意图：迁移前后，入口和内容提供方的变化" width="1440" height="900" loading="lazy" decoding="async" style="max-width:100%;height:auto"></p>
+<h2 id="二迁移前的基线先把正常状态记下来">二、迁移前的基线：先把“正常状态”记下来</h2>
+<p>正式动刀前，我先记录了原站点的正常状态。这是非常重要的一步，因为如果后面要做迁移验收，就必须知道“迁移前后应该长什么样”。</p>
+<p>我当时主要核对了几类页面：首页、一个游戏页面、一个工具页面、一个静态资源文件。它们分别代表站点里最典型的几种访问模式。与此同时，我也确认了 HTTPS 入口的行为，因为最终目标不是只把 HTTP 跑通，而是原站点的整套访问方式都别变。</p>
+<p>这一步的结果很朴素：这些关键页面都能正常返回，大小也稳定。迁移后只要继续对照这组结果，就能判断新容器是不是已经真正接住了站点。</p>
+<p><img src="/post-images/synology-webstation-nginx-container-migration/01-baseline-http-https.webp" alt="真实截图：迁移前 HTTP 和 HTTPS 基线验证结果" width="1440" height="900" loading="lazy" decoding="async" style="max-width:100%;height:auto"></p>
+<h2 id="三问题表现容器起来了页面却先给你一记下马威">三、问题表现：容器起来了，页面却先给你一记下马威</h2>
+<p>接下来，我按“先并行、再切换”的方式，先把新 nginx 容器跑在一个临时端口上。这个思路很简单：旧站继续服务，新容器先在旁边跑，等它完全没问题了，再切原入口。这样对线上影响最小。</p>
+<p>但这时候问题出现了。</p>
+<p>新容器明明已经启动，端口映射也有了，挂载看上去也是对的，可访问临时端口时，首页先返回 403，很多静态资源直接 404。更要命的是，这种感觉非常迷惑：如果你只看“容器已经起来了”“端口也通了”，很容易以为就差一点点配置；但如果你真去测页面，就会发现站点根本没接住。</p>
+<p>这一步我把失败状态也记录下来了，因为后面证明它非常关键：问题不是“整个站点都坏了”，而是“首页和各类静态资源呈现出不同的失败形态”。这往往能提示我们，故障点更靠近文件系统和权限，而不是简单的路由问题。</p>
+<p><img src="/post-images/synology-webstation-nginx-container-migration/02-18080-failure-403-404.webp" alt="真实截图：迁移过程中临时端口先出现 403 和 404" width="1440" height="900" loading="lazy" decoding="async" style="max-width:100%;height:auto"></p>
+<h2 id="四问题分析先别急着改配置先看日志和挂载">四、问题分析：先别急着改配置，先看日志和挂载</h2>
+<p>遇到这种问题时，我最想提醒的是：不要一上来就反复重写 nginx 配置。那样很容易把自己绕进去。</p>
+<p>我当时按一个更朴素的顺序排查：</p>
+<p>先看挂载是不是对，确认网站目录真的进了容器；再看 nginx 配置是不是生效，确认 root、index、try_files 没有写错；最后才是看权限。因为前两类问题是“服务没配对”，第三类问题是“文件根本不给你读”。</p>
+<p>这一步最直观的证据来自容器日志：日志里明确出现了 Permission denied。也就是说，nginx 不是找不到页面，而是找到了页面但读不了。这个区别非常重要。</p>
+<p>因为“找不到”通常意味着路径、root、索引文件、目录结构有问题；“找到但不给读”则往往意味着运行用户、用户组、ACL、Unix mode 这些权限层面的东西没对上。</p>
+<p><img src="/post-images/synology-webstation-nginx-container-migration/03-container-permission-denied-log.webp" alt="真实截图：容器日志里出现 Permission denied" width="1440" height="900" loading="lazy" decoding="async" style="max-width:100%;height:auto"></p>
+<h2 id="五根因解释unix-权限是大门acl-是门禁名单">五、根因解释：Unix 权限是大门，ACL 是门禁名单</h2>
+<p>这也是这次事件里最有价值的部分。</p>
+<p>很多人第一次看到 Synology 上这种“目录看起来挂对了，服务看起来也起来了，但文件就是读不了”的情况，都会有点懵。我的建议是，把它想成一个小区门禁场景。</p>
+<p>Unix 权限就像小区门口的大牌子，写着“业主能进”“访客不能进”。这是第一层规则，比较粗。</p>
+<p>ACL 则像额外的小门禁名单。哪怕大门口写着某种通行规则，真正到某一栋楼时，还有一个更细的名单：谁能进电梯，谁能进楼道，谁能开哪扇门。这个名单不一定直观地表现在普通 ls 结果里，但它真实存在，而且优先级很高。</p>
+<p>而容器里的 nginx worker 用户，就像临时进来的送餐员。它拿着正确的楼栋号、门牌号，甚至人都站在门口了，但只要它不在那张额外的门禁名单里，就还是会吃闭门羹。</p>
+<p>这次问题就是这样。网站文件本身没坏，路径没挂错，nginx 配置也不是主要问题。真正卡住的是：容器里的 nginx 用户没有拿到读取这些文件的资格。</p>
+<p><img src="/post-images/synology-webstation-nginx-container-migration/03-acl-access-card.svg" alt="原创示意图：Unix 权限像大门，ACL 像额外门禁名单" width="1440" height="900" loading="lazy" decoding="async" style="max-width:100%;height:auto"></p>
+<h2 id="六如何解决问题最小改动优先复用现有组权限">六、如何解决问题：最小改动，优先复用现有组权限</h2>
+<p>找到根因后，解决方案反而没那么复杂。</p>
+<p>我没有选择粗暴地去改整站文件权限，也没有为了图省事给目录开很大的权限。原因很简单：静态站迁移的目标是把服务搬过去，不是顺手把文件安全边界打穿。</p>
+<p>更合理的做法，是让容器里的 nginx worker 复用现有的用户组权限。也就是说，不改动网站内容，不去重写文件 ACL，而是让运行 nginx 的进程用户归属到那个本来就允许读这些文件的组里。这样改动小，风险低，也符合“最小权限、最小变更”的原则。</p>
+<p>这里有一个很现实的工程经验：在家用 NAS 场景里，chmod 777 看起来是最快的，但往往是最不值得的。因为你真正要解决的问题，通常只是“某个服务用户读不了某些文件”，而不是“全世界都能读写这个目录”。这两者之间的安全差距很大。</p>
+<p><img src="/post-images/synology-webstation-nginx-container-migration/06-docker-runtime-readonly-mounts.webp" alt="真实截图：容器运行状态与只读挂载核对" width="1440" height="900" loading="lazy" decoding="async" style="max-width:100%;height:auto"></p>
+<h2 id="七迁移方案设计先并行验证再切原入口">七、迁移方案设计：先并行验证，再切原入口</h2>
+<p>这次迁移最值得保留的方法论，其实不是“nginx 容器怎么写”，而是顺序。</p>
+<p>正确顺序应该是：先在临时端口把新容器跑起来；再验证关键页面、静态资源、404 行为、PHP 行为；确认没问题后，再备份原生入口配置；最后才切原 80/443 入口。</p>
+<p>这样做的好处是，你始终有一条退路。新容器不行，就不切；切过去有问题，立刻回滚。整个过程的旧站存活时间足够长，不会因为“新站没起来，旧站又停了”而直接把首页搞挂。</p>
+<p>我觉得这也是很多迁移类任务最容易犯错的地方：大家都太关注“新方案怎么搭”，却低估了“旧方案怎么体面退场”。实际上，很多时候迁移失败不是因为新方案不行，而是因为切换太早、回滚太晚。</p>
+<p><img src="/post-images/synology-webstation-nginx-container-migration/04-blue-green-cutover.svg" alt="原创示意图：先并行、再切换、随时可回滚" width="1440" height="900" loading="lazy" decoding="async" style="max-width:100%;height:auto"></p>
+<p><img src="/post-images/synology-webstation-nginx-container-migration/02-data-flow.svg" alt="原创示意图：一次网页请求经过的链路" width="1440" height="900" loading="lazy" decoding="async" style="max-width:100%;height:auto"></p>
+<h2 id="八修复后验证临时端口先过原地址再过">八、修复后验证：临时端口先过，原地址再过</h2>
+<p>修完权限后，我先验证的是临时端口。原因很简单：这时候还没切原入口，万一还有问题，也只会影响测试，不会影响真实访问。</p>
+<p>这一步我重点看两类结果：一是首页、工具页、静态资源是否恢复 200；二是失败路径是否仍然符合预期，比如不存在的路径要 404，PHP 路径要继续保持原来的错误行为。这样做不是为了“看起来都绿”，而是确认新容器在接管站点时，没有把旧行为悄悄改坏。</p>
+<p>临时端口全部通过后，我才开始切原 80/443 入口。切换后紧接着又做了一次完整验证：HTTP 原地址、HTTPS 原地址、临时端口都再过一遍。最后的结果是，关键页面全部恢复一致，容器健康，原入口也正常。</p>
+<p>这时候我基本就可以确认：这次迁移不是“服务起来了”，而是“站点已经真的接住了”。</p>
+<p><img src="/post-images/synology-webstation-nginx-container-migration/04-original-and-18080-success.webp" alt="真实截图：修复后临时端口和原地址验证通过" width="1440" height="900" loading="lazy" decoding="async" style="max-width:100%;height:auto"></p>
+<p><img src="/post-images/synology-webstation-nginx-container-migration/05-portainer-stack-state.webp" alt="真实截图：Portainer Stack 与容器状态摘要" width="1440" height="900" loading="lazy" decoding="async" style="max-width:100%;height:auto"></p>
+<h2 id="九三平台一键脚本人工执行和-agent-自动配置都行">九、三平台一键脚本：人工执行和 Agent 自动配置都行</h2>
+<p>为了方便你复用，我把这次思路整理成了三份脚本，分别覆盖 Windows 11、Ubuntu 26.04 和 macOS 27。它们不依赖第三方服务，主要做四件事：预检、生成配置、部署容器、健康检查，并在失败时给出回滚提示。</p>
+<p>先说明一下脚本边界：它们不会替你硬编码真实 NAS 地址，也不会替你保存账号密码；它们更像一个“迁移脚手架”，帮你少漏步骤，而不是代替你做最后判断。</p>
+<h3 id="1-人工自动执行怎么用">1. 人工自动执行怎么用</h3>
+<p>如果你是自己手动执行，建议按这个顺序来：</p>
+<p>先在 NAS 或目标 Docker 主机上确认网站根目录、临时端口、镜像名、Stack 名都没冲突；再运行脚本生成配置并启动容器；然后先看健康状态，再访问临时端口；临时端口验证通过后，再切原入口；最后把回滚文件路径记下来。</p>
+<h3 id="2-agent-自动配置怎么用">2. Agent 自动配置怎么用</h3>
+<p>如果你是把这件事交给 Agent 去做，建议不要让它一上来就“直接切入口”。更稳妥的方式，是把脚本作为迁移步骤的一部分：先让 Agent 做预检和并行部署，再让它读取健康检查结果和页面验证结果，最后再决定是否切换入口。这样 Agent 的自动化会更安全，也更容易解释每一步为什么这么做。</p>
+<h3 id="3-windows-11-版">3. Windows 11 版</h3>
+<p>文件名建议保存为：<code>webstation_nginx_toolkit_windows11.ps1</code></p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-powershell" data-lang="powershell"><span style="display:flex;"><span><span style="color:#66d9ef">param</span>(
+</span></span><span style="display:flex;"><span>  [<span style="color:#66d9ef">string</span>]$SiteRoot = <span style="color:#e6db74">&#34;&#34;</span>,
+</span></span><span style="display:flex;"><span>  [<span style="color:#66d9ef">string</span>]$ConfigDir = <span style="color:#e6db74">&#34;&#34;</span>,
+</span></span><span style="display:flex;"><span>  [<span style="color:#66d9ef">string</span>]$Image = <span style="color:#e6db74">&#34;nginx:alpine&#34;</span>,
+</span></span><span style="display:flex;"><span>  [<span style="color:#66d9ef">string</span>]$StackName = <span style="color:#e6db74">&#34;webstation-nginx&#34;</span>,
+</span></span><span style="display:flex;"><span>  [<span style="color:#66d9ef">string</span>]$ContainerName = <span style="color:#e6db74">&#34;webstation-nginx&#34;</span>,
+</span></span><span style="display:flex;"><span>  [<span style="color:#66d9ef">int</span>]$TempPort = <span style="color:#ae81ff">18080</span>,
+</span></span><span style="display:flex;"><span>  [<span style="color:#66d9ef">switch</span>]$AgentMode
+</span></span><span style="display:flex;"><span>)
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">function</span> Log([string]$Message) {
+</span></span><span style="display:flex;"><span>  <span style="color:#66d9ef">if</span> (<span style="color:#f92672">-not</span> $AgentMode) { Write-Host $Message }
+</span></span><span style="display:flex;"><span>}
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> ([<span style="color:#66d9ef">string</span>]::IsNullOrWhiteSpace($SiteRoot)) { <span style="color:#66d9ef">throw</span> <span style="color:#e6db74">&#34;SiteRoot is required.&#34;</span> }
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> ([<span style="color:#66d9ef">string</span>]::IsNullOrWhiteSpace($ConfigDir)) { $ConfigDir = Join-Path $SiteRoot <span style="color:#e6db74">&#34;..\webstation-nginx-config&#34;</span> }
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> (<span style="color:#f92672">-not</span> (Test-Path $SiteRoot)) { <span style="color:#66d9ef">throw</span> <span style="color:#e6db74">&#34;Site root not found: </span>$SiteRoot<span style="color:#e6db74">&#34;</span> }
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> (Get-NetTCPConnection -LocalPort $TempPort -ErrorAction SilentlyContinue) { <span style="color:#66d9ef">throw</span> <span style="color:#e6db74">&#34;Port </span>$TempPort<span style="color:#e6db74"> is occupied.&#34;</span> }
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>New-Item -ItemType Directory -Force -Path $ConfigDir | Out-Null
+</span></span><span style="display:flex;"><span>$defaultConf = Join-Path $ConfigDir <span style="color:#e6db74">&#34;default.conf&#34;</span>
+</span></span><span style="display:flex;"><span>$compose = Join-Path $ConfigDir <span style="color:#e6db74">&#34;compose.yml&#34;</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#e6db74">@&#39;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">server {
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    listen 80 default_server;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    server_name _;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    root /usr/share/nginx/html;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    index index.html;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    autoindex off;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    location ~* \.(php[345]?|phtml)$ {
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        return 500;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    }
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    location / {
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        try_files $uri $uri/ =404;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    }
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">}
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">&#39;@</span> | Set-Content -Encoding UTF8 $defaultConf
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#e6db74">@&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">services:
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  web:
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    container_name: </span>$ContainerName<span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    image: </span>$Image<span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    restart: unless-stopped
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    ports:
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">      - &#34;</span>$($TempPort)<span style="color:#e6db74">:80&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    volumes:
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">      - &#34;</span>$SiteRoot<span style="color:#e6db74">:/usr/share/nginx/html:ro&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">      - &#34;</span>$defaultConf<span style="color:#e6db74">:/etc/nginx/conf.d/default.conf:ro&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">&#34;@</span> | Set-Content -Encoding UTF8 $compose
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>Log <span style="color:#e6db74">&#34;Config generated at </span>$ConfigDir<span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>Log <span style="color:#e6db74">&#34;Next steps:&#34;</span>
+</span></span><span style="display:flex;"><span>Log <span style="color:#e6db74">&#34;1. Review compose.yml&#34;</span>
+</span></span><span style="display:flex;"><span>Log <span style="color:#e6db74">&#34;2. Deploy with Docker or Portainer&#34;</span>
+</span></span><span style="display:flex;"><span>Log <span style="color:#e6db74">&#34;3. Verify http://&lt;nas-host&gt;:</span>$TempPort<span style="color:#e6db74">/&#34;</span>
+</span></span><span style="display:flex;"><span>Log <span style="color:#e6db74">&#34;4. Only then update the original 80/443 reverse proxy target&#34;</span>
+</span></span><span style="display:flex;"><span>Log <span style="color:#e6db74">&#34;Rollback: restore the previous reverse proxy config and reload nginx.&#34;</span>
+</span></span></code></pre></div><h3 id="4-ubuntu-2604-版">4. Ubuntu 26.04 版</h3>
+<p>文件名建议保存为：<code>webstation_nginx_toolkit_ubuntu2604.sh</code></p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span><span style="color:#75715e">#!/usr/bin/env bash
+</span></span></span><span style="display:flex;"><span>set -euo pipefail
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>AGENT_MODE<span style="color:#f92672">=</span><span style="color:#ae81ff">0</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> <span style="color:#f92672">[[</span> <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>1<span style="color:#66d9ef">:-</span><span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span> <span style="color:#f92672">==</span> <span style="color:#e6db74">&#34;--agent&#34;</span> <span style="color:#f92672">||</span> <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>1<span style="color:#66d9ef">:-</span><span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span> <span style="color:#f92672">==</span> <span style="color:#e6db74">&#34;--json&#34;</span> <span style="color:#f92672">]]</span>; <span style="color:#66d9ef">then</span>
+</span></span><span style="display:flex;"><span>  AGENT_MODE<span style="color:#f92672">=</span><span style="color:#ae81ff">1</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">fi</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>log<span style="color:#f92672">()</span> <span style="color:#f92672">{</span> <span style="color:#66d9ef">if</span> <span style="color:#f92672">[[</span> $AGENT_MODE -eq <span style="color:#ae81ff">0</span> <span style="color:#f92672">]]</span>; <span style="color:#66d9ef">then</span> echo <span style="color:#e6db74">&#34;</span>$1<span style="color:#e6db74">&#34;</span>; <span style="color:#66d9ef">fi</span> <span style="color:#f92672">}</span>
+</span></span><span style="display:flex;"><span>fail<span style="color:#f92672">()</span> <span style="color:#f92672">{</span> echo <span style="color:#e6db74">&#34;</span>$1<span style="color:#e6db74">&#34;</span> &gt;&amp;2; exit 1; <span style="color:#f92672">}</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>SITE_ROOT<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>SITE_ROOT<span style="color:#66d9ef">:-</span><span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>CONFIG_DIR<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>CONFIG_DIR<span style="color:#66d9ef">:-</span><span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>IMAGE<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>IMAGE<span style="color:#66d9ef">:-</span>nginx:alpine<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>STACK_NAME<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>STACK_NAME<span style="color:#66d9ef">:-</span>webstation-nginx<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>CONTAINER_NAME<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>CONTAINER_NAME<span style="color:#66d9ef">:-</span>webstation-nginx<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>TEMP_PORT<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>TEMP_PORT<span style="color:#66d9ef">:-</span>18080<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#f92672">[[</span> -n <span style="color:#e6db74">&#34;</span>$SITE_ROOT<span style="color:#e6db74">&#34;</span> <span style="color:#f92672">]]</span> <span style="color:#f92672">||</span> fail <span style="color:#e6db74">&#34;SITE_ROOT is required.&#34;</span>
+</span></span><span style="display:flex;"><span><span style="color:#f92672">[[</span> -d <span style="color:#e6db74">&#34;</span>$SITE_ROOT<span style="color:#e6db74">&#34;</span> <span style="color:#f92672">]]</span> <span style="color:#f92672">||</span> fail <span style="color:#e6db74">&#34;Site root not found: </span>$SITE_ROOT<span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>CONFIG_DIR<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>CONFIG_DIR<span style="color:#66d9ef">:-</span>$SITE_ROOT/../webstation-nginx-config<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>mkdir -p <span style="color:#e6db74">&#34;</span>$CONFIG_DIR<span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> ss -lnt | awk <span style="color:#e6db74">&#39;{print $4}&#39;</span> | grep -q <span style="color:#e6db74">&#34;:</span><span style="color:#e6db74">${</span>TEMP_PORT<span style="color:#e6db74">}</span>$<span style="color:#e6db74">&#34;</span>; <span style="color:#66d9ef">then</span>
+</span></span><span style="display:flex;"><span>  fail <span style="color:#e6db74">&#34;Port </span><span style="color:#e6db74">${</span>TEMP_PORT<span style="color:#e6db74">}</span><span style="color:#e6db74"> is occupied.&#34;</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">fi</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>cat &gt; <span style="color:#e6db74">&#34;</span>$CONFIG_DIR<span style="color:#e6db74">/default.conf&#34;</span> <span style="color:#e6db74">&lt;&lt;&#39;EOF&#39;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">server {
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    listen 80 default_server;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    server_name _;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    root /usr/share/nginx/html;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    index index.html;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    autoindex off;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    location ~* \.(php[345]?|phtml)$ {
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        return 500;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    }
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    location / {
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        try_files $uri $uri/ =404;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    }
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">}
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">EOF</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>cat &gt; <span style="color:#e6db74">&#34;</span>$CONFIG_DIR<span style="color:#e6db74">/compose.yml&#34;</span> <span style="color:#e6db74">&lt;&lt;EOF
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">services:
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  web:
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    container_name: ${CONTAINER_NAME}
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    image: ${IMAGE}
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    restart: unless-stopped
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    ports:
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">      - &#34;${TEMP_PORT}:80&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    volumes:
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">      - &#34;${SITE_ROOT}:/usr/share/nginx/html:ro&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">      - &#34;${CONFIG_DIR}/default.conf:/etc/nginx/conf.d/default.conf:ro&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">EOF</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>log <span style="color:#e6db74">&#34;Config generated at </span>$CONFIG_DIR<span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>log <span style="color:#e6db74">&#34;Next steps:&#34;</span>
+</span></span><span style="display:flex;"><span>log <span style="color:#e6db74">&#34;1. Review compose.yml&#34;</span>
+</span></span><span style="display:flex;"><span>log <span style="color:#e6db74">&#34;2. Deploy with Docker or Portainer&#34;</span>
+</span></span><span style="display:flex;"><span>log <span style="color:#e6db74">&#34;3. Verify http://&lt;nas-host&gt;:</span><span style="color:#e6db74">${</span>TEMP_PORT<span style="color:#e6db74">}</span><span style="color:#e6db74">/&#34;</span>
+</span></span><span style="display:flex;"><span>log <span style="color:#e6db74">&#34;4. Only then update the original 80/443 reverse proxy target&#34;</span>
+</span></span><span style="display:flex;"><span>log <span style="color:#e6db74">&#34;Rollback: restore the previous reverse proxy config and reload nginx.&#34;</span>
+</span></span></code></pre></div><h3 id="5-macos-27-版">5. macOS 27 版</h3>
+<p>文件名建议保存为：<code>webstation_nginx_toolkit_macos27.zsh</code></p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-zsh" data-lang="zsh"><span style="display:flex;"><span><span style="color:#75715e">#!/usr/bin/env zsh
+</span></span></span><span style="display:flex;"><span>set -euo pipefail
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>AGENT_MODE<span style="color:#f92672">=</span><span style="color:#ae81ff">0</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> <span style="color:#f92672">[[</span> <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>1<span style="color:#66d9ef">:-</span><span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span> <span style="color:#f92672">==</span> <span style="color:#e6db74">&#34;--agent&#34;</span> <span style="color:#f92672">||</span> <span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>1<span style="color:#66d9ef">:-</span><span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span> <span style="color:#f92672">==</span> <span style="color:#e6db74">&#34;--json&#34;</span> <span style="color:#f92672">]]</span>; <span style="color:#66d9ef">then</span>
+</span></span><span style="display:flex;"><span>  AGENT_MODE<span style="color:#f92672">=</span><span style="color:#ae81ff">1</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">fi</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>log<span style="color:#f92672">()</span> <span style="color:#f92672">{</span> <span style="color:#66d9ef">if</span> <span style="color:#f92672">[[</span> $AGENT_MODE -eq <span style="color:#ae81ff">0</span> <span style="color:#f92672">]]</span>; <span style="color:#66d9ef">then</span> echo <span style="color:#e6db74">&#34;</span>$1<span style="color:#e6db74">&#34;</span>; <span style="color:#66d9ef">fi</span> <span style="color:#f92672">}</span>
+</span></span><span style="display:flex;"><span>fail<span style="color:#f92672">()</span> <span style="color:#f92672">{</span> echo <span style="color:#e6db74">&#34;</span>$1<span style="color:#e6db74">&#34;</span> &gt;&amp;2; exit 1; <span style="color:#f92672">}</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>SITE_ROOT<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>SITE_ROOT<span style="color:#66d9ef">:-</span><span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>CONFIG_DIR<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>CONFIG_DIR<span style="color:#66d9ef">:-</span><span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>IMAGE<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>IMAGE<span style="color:#66d9ef">:-</span>nginx:alpine<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>STACK_NAME<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>STACK_NAME<span style="color:#66d9ef">:-</span>webstation-nginx<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>CONTAINER_NAME<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>CONTAINER_NAME<span style="color:#66d9ef">:-</span>webstation-nginx<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>TEMP_PORT<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>TEMP_PORT<span style="color:#66d9ef">:-</span>18080<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#f92672">[[</span> -n <span style="color:#e6db74">&#34;</span>$SITE_ROOT<span style="color:#e6db74">&#34;</span> <span style="color:#f92672">]]</span> <span style="color:#f92672">||</span> fail <span style="color:#e6db74">&#34;SITE_ROOT is required.&#34;</span>
+</span></span><span style="display:flex;"><span><span style="color:#f92672">[[</span> -d <span style="color:#e6db74">&#34;</span>$SITE_ROOT<span style="color:#e6db74">&#34;</span> <span style="color:#f92672">]]</span> <span style="color:#f92672">||</span> fail <span style="color:#e6db74">&#34;Site root not found: </span>$SITE_ROOT<span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>CONFIG_DIR<span style="color:#f92672">=</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">${</span>CONFIG_DIR<span style="color:#66d9ef">:-</span>$SITE_ROOT/../webstation-nginx-config<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>mkdir -p <span style="color:#e6db74">&#34;</span>$CONFIG_DIR<span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">if</span> lsof -nP -iTCP:<span style="color:#e6db74">${</span>TEMP_PORT<span style="color:#e6db74">}</span> -sTCP:LISTEN &gt;/dev/null 2&gt;&amp;1; <span style="color:#66d9ef">then</span>
+</span></span><span style="display:flex;"><span>  fail <span style="color:#e6db74">&#34;Port </span><span style="color:#e6db74">${</span>TEMP_PORT<span style="color:#e6db74">}</span><span style="color:#e6db74"> is occupied.&#34;</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">fi</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>cat &gt; <span style="color:#e6db74">&#34;</span>$CONFIG_DIR<span style="color:#e6db74">/default.conf&#34;</span> <span style="color:#e6db74">&lt;&lt;&#39;EOF&#39;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">server {
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    listen 80 default_server;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    server_name _;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    root /usr/share/nginx/html;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    index index.html;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    autoindex off;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    location ~* \.(php[345]?|phtml)$ {
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        return 500;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    }
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    location / {
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">        try_files $uri $uri/ =404;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    }
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">}
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">EOF</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>cat &gt; <span style="color:#e6db74">&#34;</span>$CONFIG_DIR<span style="color:#e6db74">/compose.yml&#34;</span> <span style="color:#e6db74">&lt;&lt;EOF
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">services:
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">  web:
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    container_name: ${CONTAINER_NAME}
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    image: ${IMAGE}
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    restart: unless-stopped
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    ports:
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">      - &#34;${TEMP_PORT}:80&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    volumes:
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">      - &#34;${SITE_ROOT}:/usr/share/nginx/html:ro&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">      - &#34;${CONFIG_DIR}/default.conf:/etc/nginx/conf.d/default.conf:ro&#34;
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">EOF</span>
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>log <span style="color:#e6db74">&#34;Config generated at </span>$CONFIG_DIR<span style="color:#e6db74">&#34;</span>
+</span></span><span style="display:flex;"><span>log <span style="color:#e6db74">&#34;Next steps:&#34;</span>
+</span></span><span style="display:flex;"><span>log <span style="color:#e6db74">&#34;1. Review compose.yml&#34;</span>
+</span></span><span style="display:flex;"><span>log <span style="color:#e6db74">&#34;2. Deploy with Docker or Portainer&#34;</span>
+</span></span><span style="display:flex;"><span>log <span style="color:#e6db74">&#34;3. Verify http://&lt;nas-host&gt;:</span><span style="color:#e6db74">${</span>TEMP_PORT<span style="color:#e6db74">}</span><span style="color:#e6db74">/&#34;</span>
+</span></span><span style="display:flex;"><span>log <span style="color:#e6db74">&#34;4. Only then update the original 80/443 reverse proxy target&#34;</span>
+</span></span><span style="display:flex;"><span>log <span style="color:#e6db74">&#34;Rollback: restore the previous reverse proxy config and reload nginx.&#34;</span>
+</span></span></code></pre></div><h2 id="十qa">十、Q&amp;A</h2>
+<h3 id="1-为什么不直接让-nginx-容器监听-80443">1. 为什么不直接让 nginx 容器监听 80/443？</h3>
+<p>因为这台 NAS 上 80/443 已经承担了原站点入口、HTTPS、系统相关服务等职责。直接让新容器抢端口，表面上更“彻底”，实际上会把影响面放大。更稳妥的做法，是先并行验证，再通过原入口反向代理到容器。</p>
+<h3 id="2-为什么-web-station-还保留">2. 为什么 Web Station 还保留？</h3>
+<p>因为保留 Web Station 可以保留回滚路径，也能避免误删套件导致其他功能受影响。迁移的关键不是“立刻清除旧方案”，而是“新方案稳定前，不轻易拆掉旧方案”。</p>
+<h3 id="3-为什么不用-chmod-777">3. 为什么不用 chmod 777？</h3>
+<p>因为 777 解决的是“所有人都可读写执行”，而实际问题通常只是“某个服务用户需要读取”。这两者不是一回事。能用更小权限解决问题，就不要放大权限边界。</p>
+<h3 id="4-为什么先做临时端口再做切换">4. 为什么先做临时端口再做切换？</h3>
+<p>因为临时端口可以把“部署问题”和“入口切换问题”拆开。部署错了，不影响原站；切换错了，也可以立刻回滚。这个顺序能显著降低事故面。</p>
+<h3 id="5-为什么这次-403-和-404-会一起出现">5. 为什么这次 403 和 404 会一起出现？</h3>
+<p>因为权限问题在不同路径、不同文件类型、不同 fallback 场景下，表现会不一样。对排查来说，真正重要的不是记住状态码本身，而是看到“服务能响应但内容读不出来”这个信号。</p>
+<p><img src="/post-images/synology-webstation-nginx-container-migration/05-troubleshooting-tree.svg" alt="原创示意图：403 和 404 的排查树" width="1440" height="900" loading="lazy" decoding="async" style="max-width:100%;height:auto"></p>
+<h2 id="十一最后一点经验先想谁能读再想怎么跑">十一、最后一点经验：先想“谁能读”，再想“怎么跑”</h2>
+<p>如果你也在折腾 NAS、Docker、静态站迁移，我这次最大的建议只有一句话：先把“谁能读这些文件”想清楚，再决定服务怎么跑。</p>
+<p>很多迁移任务表面上是在改 nginx、改端口、改反向代理，最后真正卡住的却是权限。尤其是群晖这类带 ACL 的系统，普通 Linux 经验有时不够用。你要把它当成一个更细的门禁系统来理解，而不是只看一个目录权限数字。</p>
+<p>这次迁移最后能平稳落地，不是因为配置多复杂，而是因为顺序对：先记录基线，再并行部署，再验证内容，再备份入口，最后才切换。真正值钱的，不是某个命令，而是这套不容易把站点搞挂的顺序。</p>
+<p>愿你的下一次迁移，也不要先被 403 和 404 吓一跳。</p>
+        </div>
+    </article>
+
+    
+
+
+
+
+  
+  
+    
+  
+
+
+<section aria-label="评论" style="margin-top:40px"
+  data-gitalk-id="post-140827c06773cee91dae836bc50057a6f1495db4" data-gitalk-title="NAS 网站搬到容器里，404/403 差点把全家首页干崩：这次我终于搞懂了 Synology ACL 的坑" data-gitalk-url="https://blog.margrop.net/post/synology-webstation-nginx-container-migration/">
+  <h2>评论</h2>
+  <p>使用 GitHub 登录后即可评论，中英文版本共用同一讨论。
+    <a href="https://github.com/margrop/margropcomment.margrop.io/issues?q=is%3Aissue&#43;label%3AGitalk&#43;label%3A%22post-140827c06773cee91dae836bc50057a6f1495db4%22" target="_blank" rel="noopener noreferrer">在 GitHub 上参与讨论</a>
+  </p>
+  <div id="gitalk-container"></div>
+  <noscript>请开启 JavaScript，或通过上方 GitHub 链接参与讨论。</noscript>
+</section>
+<link rel="stylesheet" href="/vendor/gitalk/1.8.0/gitalk.css">
+<script src="/vendor/gitalk/1.8.0/gitalk.server-auth.min.js"></script>
+<script>
+  (function () {
+    if (typeof Gitalk === 'undefined') {
+      document.getElementById('gitalk-container').textContent = '评论加载失败，可使用上方 GitHub 链接参与讨论。';
+      return;
+    }
+    var gitalk = new Gitalk({
+      clientID: "3181fd94e501cc5db0ad",
+      clientSecret: 'server-side',
+      proxy: "https://comments.margrop.net/oauth/token",
+      repo: "margropcomment.margrop.io",
+      owner: "margrop",
+      admin: ["margrop"],
+      id: "post-140827c06773cee91dae836bc50057a6f1495db4",
+      language: 'zh-CN',
+      createIssueManually: true,
+      distractionFreeMode: false
+    });
+    gitalk.render('gitalk-container');
+  })();
+</script>
+
+
+
+
+
+    
+<div class="site-stats" aria-label="访问统计">
+    <span>本文阅读量 <span data-page-view-count>--</span></span>
+</div>
+
+
+    
+    
+    <script async src="https://js.users.51.la/21044367.js"></script>
+    <script async charset="UTF-8" id="LA_COLLECT" src="https://sdk.51.la/js-sdk-pro.min.js" onload="LA.init({id: '1vVTUWl7zoRjnKXi', ck: '1vVTUWl7zoRjnKXi'})"></script>
+    <script async src="https://sdk.51.la/perf/js-sdk-perf.min.js" crossorigin="anonymous" onload="new LingQue.Monitor().init({id: '202teQt8THXwqyve'})"></script>
+    <script defer src="/js/page-views.js"></script>
+    <div class="la-theme-widget" data-51la-widget aria-label="51.la 网站统计"></div>
+    <script defer src="/js/51la-theme-widget.js"></script>
+</body>
+</html>
