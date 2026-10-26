@@ -1,0 +1,581 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>点了个“更新”，全屋三台家电全变砖？Home Assistant 升级 Midea AC LAN 的6分钟卡死惊魂与底层 Deps 离线自愈实录 - 魔都水滴</title>
+<meta name="description" content="深度复盘 Home Assistant 2026 升级 Midea AC LAN v2026.10.0 的全过程：揭秘境遇弱网导致开机卡死 6 分钟的底层根因，剖析 /config 假离线与 uv pip --upgrade 陷阱，利用官方 Core bootstrap.py 的 user-site 机制实现零侵入秒级自愈。内附 Windows 11、Ubuntu 26.04 与 macOS 27 …">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://blog.margrop.net/post/home-assistant-midea-ac-lan-upgrade-offline-deps/"><meta property="og:site_name" content="魔都水滴">
+<meta property="og:title" content="点了个“更新”，全屋三台家电全变砖？Home Assistant 升级 Midea AC LAN 的6分钟卡死惊魂与底层 Deps 离线自愈实录 - 魔都水滴">
+<meta property="og:description" content="深度复盘 Home Assistant 2026 升级 Midea AC LAN v2026.10.0 的全过程：揭秘境遇弱网导致开机卡死 6 分钟的底层根因，剖析 /config 假离线与 uv pip --upgrade 陷阱，利用官方 Core bootstrap.py 的 user-site 机制实现零侵入秒级自愈。内附 Windows 11、Ubuntu 26.04 与 macOS 27 …">
+<meta property="og:url" content="https://blog.margrop.net/post/home-assistant-midea-ac-lan-upgrade-offline-deps/">
+<meta property="og:locale" content="zh_CN"><meta property="og:type" content="article"><meta property="og:locale:alternate" content="en_US"><meta property="og:image" content="https://blog.margrop.net/post-images/home-assistant-midea-ac-lan-upgrade-offline-deps/01-cover-zh.webp"><meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="点了个“更新”，全屋三台家电全变砖？Home Assistant 升级 Midea AC LAN 的6分钟卡死惊魂与底层 Deps 离线自愈实录 - 魔都水滴">
+<meta name="twitter:description" content="深度复盘 Home Assistant 2026 升级 Midea AC LAN v2026.10.0 的全过程：揭秘境遇弱网导致开机卡死 6 分钟的底层根因，剖析 /config 假离线与 uv pip --upgrade 陷阱，利用官方 Core bootstrap.py 的 user-site 机制实现零侵入秒级自愈。内附 Windows 11、Ubuntu 26.04 与 macOS 27 …"><meta name="twitter:image" content="https://blog.margrop.net/post-images/home-assistant-midea-ac-lan-upgrade-offline-deps/01-cover-zh.webp"><link rel="alternate" hreflang="zh-CN" href="https://blog.margrop.net/post/home-assistant-midea-ac-lan-upgrade-offline-deps/"><link rel="alternate" hreflang="en-US" href="https://blog.margrop.net/en/post/home-assistant-midea-ac-lan-upgrade-offline-deps/"><link rel="alternate" hreflang="x-default" href="https://blog.margrop.net/"><meta property="article:published_time" content="2026-10-26T22:30:00&#43;08:00">
+<meta property="article:modified_time" content="2026-10-26T22:30:00&#43;08:00"><meta property="article:tag" content="homeassistant"><meta property="article:tag" content="HA"><meta property="article:tag" content="智能家居"><meta property="article:tag" content="自动化"><meta property="article:tag" content="Automation"><meta property="article:tag" content="故障排查"><meta property="article:tag" content="Troubleshooting"><meta property="article:tag" content="自托管"><meta property="article:tag" content="Self-hosting"><meta property="article:tag" content="Midea"><meta property="article:tag" content="美的"><meta property="article:tag" content="Python"><script type="application/ld+json">{"@context":"https://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"魔都水滴"},"dateModified":"2026-10-26T22:30:00+08:00","datePublished":"2026-10-26T22:30:00+08:00","description":"深度复盘 Home Assistant 2026 升级 Midea AC LAN v2026.10.0 的全过程：揭秘境遇弱网导致开机卡死 6 分钟的底层根因，剖析 /config 假离线与 uv pip --upgrade 陷阱，利用官方 Core bootstrap.py 的 user-site 机制实现零侵入秒级自愈。内附 Windows 11、Ubuntu 26.04 与 macOS 27 …","headline":"点了个“更新”，全屋三台家电全变砖？Home Assistant 升级 Midea AC LAN 的6分钟卡死惊魂与底层 Deps 离线自愈实录","image":"https://blog.margrop.net/post-images/home-assistant-midea-ac-lan-upgrade-offline-deps/01-cover-zh.webp","inLanguage":"zh-CN","mainEntityOfPage":"https://blog.margrop.net/post/home-assistant-midea-ac-lan-upgrade-offline-deps/","url":"https://blog.margrop.net/post/home-assistant-midea-ac-lan-upgrade-offline-deps/"}</script>
+    <meta name="baidu-site-verification" content="code-sVFZ8SER59" />
+    <script src="/js/theme-toggle.js"></script>
+
+    
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-3J2W592DHJ"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-3J2W592DHJ');
+    </script>
+
+    <style>
+    :root {
+        color-scheme: light;
+        --page-bg: #fff;
+        --surface-bg: #f4f4f4;
+        --text: #222;
+        --muted: #666;
+        --subtle: #777;
+        --border: #eee;
+        --border-strong: #ddd;
+        --link: #006CFF;
+        --tag-bg: #eee;
+        --button-bg: #fff;
+        --button-primary-bg: #333;
+    }
+    @media (prefers-color-scheme: dark) {
+        :root:not([data-theme]) {
+            color-scheme: dark;
+            --page-bg: #111315;
+            --surface-bg: #1d2126;
+            --text: #e8eaed;
+            --muted: #aeb4bd;
+            --subtle: #9aa2ad;
+            --border: #30353d;
+            --border-strong: #454c56;
+            --link: #79b8ff;
+            --tag-bg: #2a3038;
+            --button-bg: #1d2126;
+            --button-primary-bg: #e8eaed;
+        }
+    }
+    html[data-theme="dark"] {
+        color-scheme: dark;
+        --page-bg: #111315;
+        --surface-bg: #1d2126;
+        --text: #e8eaed;
+        --muted: #aeb4bd;
+        --subtle: #9aa2ad;
+        --border: #30353d;
+        --border-strong: #454c56;
+        --link: #79b8ff;
+        --tag-bg: #2a3038;
+        --button-bg: #1d2126;
+        --button-primary-bg: #e8eaed;
+    }
+    html[data-theme="light"] {
+        color-scheme: light;
+        --page-bg: #fff;
+        --surface-bg: #f4f4f4;
+        --text: #222;
+        --muted: #666;
+        --subtle: #777;
+        --border: #eee;
+        --border-strong: #ddd;
+        --link: #006CFF;
+        --tag-bg: #eee;
+        --button-bg: #fff;
+        --button-primary-bg: #333;
+    }
+    body { background: var(--page-bg); font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif; max-width: 860px; margin: 0 auto; padding: 20px; line-height: 1.7; color: var(--text); }
+    body, h1, h2, h3, h4, h5, h6, p, ul, ol, li, blockquote, dt, dd { font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif; }
+    code, pre, kbd, samp { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+    h1 { border-bottom: 2px solid var(--border-strong); padding-bottom: 10px; }
+    article > h1 { font-size: 2em; line-height: 1.3; margin-bottom: 12px; }
+    .post-list { list-style: none; padding: 0; }
+    .post-list li { margin: 15px 0; }
+    .post-list a { text-decoration: none; color: var(--text); font-size: 18px; }
+    .post-list a:hover { color: var(--link); }
+    .date { color: var(--muted); font-size: 14px; margin-right: 10px; }
+    .tags { margin-top: 8px; }
+    .tag { background: var(--tag-bg); padding: 2px 8px; border-radius: 3px; font-size: 12px; margin-right: 5px; display: inline-block; }
+    nav { margin-bottom: 18px; border-bottom: 1px solid var(--border); padding-bottom: 15px; }
+    nav a { margin-right: 20px; text-decoration: none; color: var(--text); font-size: 16px; }
+    nav a:hover { color: var(--link); }
+    .language-switcher { display: flex; align-items: center; gap: 10px; margin: -8px 0 26px; }
+    .language-switcher a { display: inline-block; padding: 4px 10px; border: 1px solid var(--border-strong); border-radius: 999px; color: var(--muted); text-decoration: none; font-size: 14px; }
+    .language-switcher a.active { background: var(--link); border-color: var(--link); color: #fff; }
+    .content { line-height: 1.8; }
+    .content code { background: var(--surface-bg); padding: 2px 5px; border-radius: 3px; }
+    .content pre { background: var(--surface-bg); padding: 15px; overflow-x: auto; border-radius: 5px; }
+    .content pre code { background: none; padding: 0; border-radius: 0; }
+    .content img { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+    .content td img { min-width: 72px; margin: 6px auto; }
+    .content .code-snippet__fix {
+        margin: 0 0 1.5em;
+    }
+    .content .code-snippet__fix .code-snippet__line-index {
+        display: none !important;
+    }
+    .meta { color: var(--muted); font-size: 14px; margin-bottom: 14px; }
+    .meta-separator { margin: 0 6px; color: var(--subtle); }
+    .site-stats { display: flex; flex-wrap: wrap; gap: 10px 18px; margin: 28px 0 8px; padding-top: 12px; border-top: 1px solid var(--border); color: var(--subtle); font-size: 12px; }
+    a { color: var(--link); }
+    .hero { padding: 12px 0 24px; }
+    .hero h1 { border-bottom: 2px solid #333; }
+    .eyebrow { color: var(--muted); font-size: 12px; letter-spacing: .12em; margin: 0 0 8px; }
+    .hero-tagline { font-size: 18px; margin: 12px 0 8px; }
+    .hero-copy { color: var(--muted); margin: 0 0 14px; }
+    .hero-actions { margin: 14px 0 4px; }
+    .button { display: inline-block; margin-right: 12px; border: 1px solid var(--border-strong); border-radius: 3px; padding: 4px 10px; text-decoration: none; color: var(--text); background: var(--button-bg); font-size: 14px; }
+    .button-primary { background: var(--button-primary-bg); border-color: var(--button-primary-bg); color: var(--page-bg); }
+    .hero-banner { position: relative; display: flex; flex-direction: column; gap: 2px; margin: 18px 0 0; padding: 14px 44px 14px 16px; border: 1px solid var(--border-strong); border-left: 4px solid var(--link); border-radius: 4px; background: var(--surface-bg); color: var(--text); text-decoration: none; }
+    .hero-banner:hover { border-color: var(--link); }
+    .hero-banner-label { color: var(--muted); font-size: 12px; letter-spacing: .12em; }
+    .hero-banner strong { font-size: 17px; line-height: 1.5; }
+    .hero-banner small { color: var(--muted); font-size: 13px; }
+    .hero-banner-arrow { position: absolute; right: 16px; top: 50%; transform: translateY(-50%); color: var(--link); font-size: 20px; }
+    .favorites > blockquote { margin: 0 0 18px; padding: 10px 16px; border-left: 4px solid var(--link); background: var(--surface-bg); color: var(--muted); }
+    .favorites > blockquote p { margin: 0; }
+    .favorites-nav { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 8px; padding: 0; border: 0; }
+    .favorites-nav a { margin: 0; padding: 3px 10px; border: 1px solid var(--border-strong); border-radius: 999px; font-size: 14px; color: var(--text); text-decoration: none; }
+    .favorites-nav a:hover { border-color: var(--link); color: var(--link); }
+    .favorites h2 { margin-top: 36px; padding-bottom: 6px; border-bottom: 1px solid var(--border); scroll-margin-top: 16px; }
+    .favorites table { width: 100%; border-collapse: collapse; margin: 12px 0 18px; font-size: 15px; }
+    .favorites th, .favorites td { padding: 8px 10px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
+    .favorites th { color: var(--muted); font-size: 13px; font-weight: 600; background: var(--surface-bg); }
+    .favorites td:first-child { white-space: nowrap; }
+    .favorites tbody tr:hover { background: var(--surface-bg); }
+    .archive-summary { color: var(--muted); font-size: 14px; margin: -4px 0 12px; }
+    .year-nav { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 8px; padding: 0; border: 0; }
+    .year-nav a { margin: 0; padding: 3px 10px; border: 1px solid var(--border-strong); border-radius: 999px; font-size: 14px; color: var(--text); text-decoration: none; }
+    .year-nav a:hover { border-color: var(--link); color: var(--link); }
+    .year-nav span { color: var(--muted); font-size: 12px; }
+    .year-heading { display: flex; align-items: baseline; gap: 10px; margin: 32px 0 0; padding-bottom: 6px; border-bottom: 1px solid var(--border); scroll-margin-top: 16px; }
+    .year-heading span { color: var(--muted); font-size: 14px; font-weight: 400; }
+    .not-found { padding: 12px 0 24px; }
+    .not-found-en { color: var(--muted); }
+    .not-found .button { margin-bottom: 10px; }
+    .theme-toggle { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 1px solid var(--border-strong); border-radius: 999px; background: var(--button-bg); color: var(--text); cursor: pointer; font: inherit; font-size: 16px; }
+    .theme-toggle:hover { border-color: var(--link); color: var(--link); }
+    .la-theme-widget { margin: 12px 0 20px; min-height: 24px; color: var(--text); }
+    .identity-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: 16px 0; }
+    .identity-grid div { display: flex; flex-direction: column; }
+    .identity-grid strong { font-size: 15px; }
+    .identity-grid span, .topic-card span, .featured-list small { color: var(--muted); font-size: 13px; }
+    .section-block { padding-top: 28px; }
+    .section-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+    .section-heading h2 { margin: 0; }
+    .section-heading a { font-size: 14px; }
+    .topic-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+    .topic-card { display: block; padding: 14px; border: 1px solid var(--border); text-decoration: none; color: var(--text); }
+    .topic-card:hover { border-color: var(--border-strong); }
+    .topic-card strong { display: block; margin: 4px 0; font-size: 17px; }
+    .topic-index, .featured-list > a > span { color: var(--muted) !important; font-size: 12px !important; }
+    .featured-list { border-top: 1px solid var(--border); }
+    .featured-list > a { display: flex; gap: 14px; padding: 12px 0; border-bottom: 1px solid var(--border); text-decoration: none; color: var(--text); }
+    .featured-list div { display: flex; flex-direction: column; }
+    .latest-block { max-width: 860px; }
+    @media (max-width: 680px) {
+        .content td img { width: 72px; }
+        body { padding: 16px; }
+        nav a { display: inline-block; margin-right: 12px; margin-bottom: 8px; }
+        .identity-grid { grid-template-columns: repeat(2, 1fr); }
+        .topic-grid { grid-template-columns: 1fr; }
+        .favorites table { display: block; overflow-x: auto; }
+        .favorites td:first-child { white-space: normal; }
+    }
+</style>
+
+</head>
+<body>
+    <nav>
+  <a href="/">首页</a>
+  <a href="/start-here/">开始这里</a>
+  <a href="/career/">Portfolio</a>
+  <a href="/tag/ai/">AI Agent</a>
+  <a href="/tag/docker/">Self-hosting</a>
+  <a href="/tag/%e8%bf%90%e7%bb%b4/">Engineering</a>
+  <a href="/post/">归档</a>
+  <a href="/tags/">标签</a>
+  <a href="/about/">关于</a>
+  <a href="https://github.com/margrop" target="_blank" rel="noopener">GitHub</a>
+</nav>
+
+    <div class="language-switcher">
+  <button class="theme-toggle" type="button" data-theme-toggle aria-label="切换到暗黑模式" aria-pressed="false">🌙</button>
+
+  
+  
+    <a href="/post/home-assistant-midea-ac-lan-upgrade-offline-deps/" class="active">中文</a>
+  
+    <a href="/en/post/home-assistant-midea-ac-lan-upgrade-offline-deps/" class="">English</a>
+  
+  
+</div>
+
+    
+    <article>
+        <h1>点了个“更新”，全屋三台家电全变砖？Home Assistant 升级 Midea AC LAN 的6分钟卡死惊魂与底层 Deps 离线自愈实录</h1>
+        <div class="meta">
+            发布时间: 2026-10-26
+            <span class="meta-separator">·</span>
+            <span>阅读量 <span data-page-view-count>--</span></span>
+        </div>
+        
+<div class="tags">
+    
+    <a href="/tag/homeassistant/"><span class="tag">homeassistant</span></a>
+    
+    <a href="/tag/ha/"><span class="tag">HA</span></a>
+    
+    <a href="/tag/%E6%99%BA%E8%83%BD%E5%AE%B6%E5%B1%85/"><span class="tag">智能家居</span></a>
+    
+    <a href="/tag/%E8%87%AA%E5%8A%A8%E5%8C%96/"><span class="tag">自动化</span></a>
+    
+    <a href="/tag/automation/"><span class="tag">Automation</span></a>
+    
+    <a href="/tag/%E6%95%85%E9%9A%9C%E6%8E%92%E6%9F%A5/"><span class="tag">故障排查</span></a>
+    
+    <a href="/tag/troubleshooting/"><span class="tag">Troubleshooting</span></a>
+    
+    <a href="/tag/%E8%87%AA%E6%89%98%E7%AE%A1/"><span class="tag">自托管</span></a>
+    
+    <a href="/tag/self-hosting/"><span class="tag">Self-hosting</span></a>
+    
+    <a href="/tag/midea/"><span class="tag">Midea</span></a>
+    
+    <a href="/tag/%E7%BE%8E%E7%9A%84/"><span class="tag">美的</span></a>
+    
+    <a href="/tag/python/"><span class="tag">Python</span></a>
+    
+</div>
+
+
+        <div class="content">
+            <p>智能家居最让人心惊肉跳的瞬间，不是买来的新硬件配不上网，而是一个已经稳定运行了大半年的核心插件，在 HACS 里弹出了一个鲜红的更新提示。你顺手点了一下「更新」，重启系统后，不仅设备全部失联，连整个智能家居中枢都在启动过程中僵死在半路上。</p>
+<p>2026 年 10 月 26 日，我针对家里 Home Assistant 系统中的 Midea AC LAN 集成（负责接管全屋的美的滚筒洗衣机、洗碗机与燃气热水器）做了一次日常版本升级升级评估与实操。从 v2026.9.1 升级到 v2026.10.0，看似只是一个小版本迭代，背后却险象环生：启动流程足足卡死超过 6 分钟、三台核心大件全部显示「无法加载」、控制实体属性大面积变动，以及境内弱网环境下 Python 包管理器的致命缺陷。</p>
+<p>这篇文章将完整复盘这场历时近两小时的排障与架构深潜：不仅有详尽的现象分析、源码考古与生活化比方，更有经过生产环境真实验证的零侵入离线自愈方案，以及支持 Windows 11、Ubuntu 26.04 和 macOS 27 的一键自动化脚本。</p>
+<p><picture><source media="(max-width: 640px)" srcset="/post-images/home-assistant-midea-ac-lan-upgrade-offline-deps/01-cover-zh-mobile.webp"><img src="/post-images/home-assistant-midea-ac-lan-upgrade-offline-deps/01-cover-zh.webp" alt="原创题图：从 6 分钟开机卡死到秒级自愈，Home Assistant 离线依赖注入实录" width="1600" height="1000" loading="lazy" decoding="async" style="max-width:100%;height:auto"></picture></p>
+<p>图 1：本文原创题图。展示了本次升级涉及的三台核心大家电、启动阶段的 Stage 2 阻塞超时，以及最终通过规范目录实现的零侵入离线挂载。</p>
+<h2 id="一问题背景承载全家生活的局域网中枢">一、问题背景：承载全家生活的局域网中枢</h2>
+<p>在智能家居架构中，白电（大家电）的接入地位极为特殊。温湿度计或人体传感器偶尔掉线，顶多是灯光联动稍慢一秒；但洗衣机、洗碗机和热水器，是直接与水路、强电和燃气打交道的重型设备。</p>
+<p>我的 Home Assistant 部署在局域网专用的独立服务器上（运行最新的 Home Assistant OS，Core 版本为 2026.10.4，底层 Python 运行时为 3.14）。为了彻底摆脱厂商云端断网、服务器维护或延迟过高的限制，家里的美的设备全部通过经典的开源第三方集成 <code>midea_ac_lan</code> 走局域网纯本地协议交互：</p>
+<table>
+  <thead>
+      <tr>
+          <th>设备名称</th>
+          <th>硬件型号 / 协议识别码</th>
+          <th>协议版本</th>
+          <th>接管控制与传感器职能</th>
+      </tr>
+  </thead>
+  <tbody>
+      <tr>
+          <td>美的滚筒洗衣机</td>
+          <td>38111463 / Type 0xDB</td>
+          <td>V2 局域网协议</td>
+          <td>运行进度、洗涤程序、水温档位、脱水转速、剩余时间</td>
+      </tr>
+      <tr>
+          <td>美的智能洗碗机 H5</td>
+          <td>000000H5 / Type 0xE1</td>
+          <td>V3 局域网协议</td>
+          <td>门状态、漂洗剂与软水盐告警、洗涤模式、童锁、电源</td>
+      </tr>
+      <tr>
+          <td>美的燃气热水器</td>
+          <td>5110188E / Type 0xE3</td>
+          <td>V3 局域网协议</td>
+          <td>出水水温、燃烧状态火焰感应、零冷水循环、运行保护</td>
+      </tr>
+  </tbody>
+</table>
+<p>这三台设备总共衍生出 34 个实体，长期嵌入在 Lovelace 首页和自动化大屏中。</p>
+<p>当天下午，HACS（Home Assistant Community Store）弹出了 Midea AC LAN 的新版本提醒：从本地运行的 <code>v2026.9.1</code> 推送至 <code>v2026.10.0</code>。作者在 Release 说明中提到了多项稳定性增强、对新设备类型的支持以及优雅停机时的连接断开修复。</p>
+<p>从表面上看，这是一个非常常规的小版本更新。然而，当升级指令下发后，平静的家庭局域网瞬间被打破。</p>
+<p><a href="/post-images/home-assistant-midea-ac-lan-upgrade-offline-deps/02-integrations.webp"><picture><img src="/post-images/home-assistant-midea-ac-lan-upgrade-offline-deps/02-integrations.webp" alt="真实截图：Home Assistant 集成列表中的 Midea AC LAN 正常加载，接管全屋 3 台核心大家电" width="1600" height="900" loading="lazy" decoding="async" style="max-width:100%;height:auto"></picture></a></p>
+<p>图 2：真实系统截图。Home Assistant 集成管理看板中正常工作的 Midea AC LAN 模块。它同时管理着滚筒洗衣机、洗碗机和燃气热水器。</p>
+<h2 id="二问题表现漫长的-6-分钟卡死与全线瘫痪">二、问题表现：漫长的 6 分钟卡死与全线瘫痪</h2>
+<p>按照通常习惯，如果在 HACS 界面直接点击「更新」并重启，接下来会遭遇令人绝望的连锁灾难。</p>
+<p>在测试环境中，我们先通过隔离工具将新版集成文件写入 <code>custom_components/midea_ac_lan/</code>，然后下发了重启命令。通常情况下，这台高性能主机的 Home Assistant Core 重启只需要 15 到 20 秒。但这一次，倒计时在浏览器界面上转了一圈又一圈，整整 5 分钟过去了，Web 控制台依然毫无响应。</p>
+<p>通过底层宿主机抓取实时日志，我们看到了令人震惊的场景：</p>
+<ol>
+<li>启动流程被硬生生阻断：系统卡在 Stage 2 初始化阶段，日志中反复刷出 <code>[homeassistant.bootstrap] Waiting on tasks: {&lt;Task pending name=&lsquo;setup component midea_ac_lan&rsquo;&hellip;&gt;}</code>。</li>
+<li>触发超时强行跳过：足足等待了 360 秒（6 分钟）后，Home Assistant Core 的看门狗计时器终于忍无可忍，抛出警告：<code>Something is blocking Home Assistant from wrapping up the start up phase. We&rsquo;re going to continue anyway.</code>。</li>
+<li>全线加载失败：虽然整个中枢终于勉强挤进了运行态，但打开「设置 → 设备与集成」，Midea AC LAN 旗下的三个条目（洗衣机、洗碗机、热水器）全部呈现暗红色的 <code>not_loaded</code>（未加载）状态！</li>
+<li>核心功能暴毙：在设备调试面板中，新版代码抛出了致命异常：<code>TypeError: device_selector() got an unexpected keyword argument &lsquo;sn8&rsquo;</code>。</li>
+</ol>
+<p>为什么更新一个家电集成，不仅让设备全废，还会导致整个 Home Assistant 启动过程像被水泥浇筑了一样卡死 6 分钟？</p>
+<h2 id="三生动比方开学典礼上的慢速快递员">三、生动比方：开学典礼上的慢速快递员</h2>
+<p>为了让即使没有软件工程背景的读者、甚至家里上小学的小朋友也能秒懂这里面的玄机，我们可以把 Home Assistant 的启动过程比作一场「全校开学典礼」。</p>
+<p><picture><source media="(max-width: 640px)" srcset="/post-images/home-assistant-midea-ac-lan-upgrade-offline-deps/03-analogy-zh-mobile.webp"><img src="/post-images/home-assistant-midea-ac-lan-upgrade-offline-deps/03-analogy-zh.webp" alt="原创比方图：开学典礼与课桌专用书袋的生活化对比" width="1600" height="1000" loading="lazy" decoding="async" style="max-width:100%;height:auto"></picture></p>
+<p>图 3：本文原创示意图。用生活中的开学典礼、校门口安检与课桌专用书袋，通俗比拟依赖拉取卡死、假离线挂载与真实解决路径。</p>
+<h3 id="1-现象开学典礼被迫暂停-6-分钟">1. 现象：开学典礼被迫暂停 6 分钟</h3>
+<p>想象一下，开学第一天早上，全校师生（灯光、网关、传感器、面板）都站在操场上，校长准备宣布典礼开始（系统进入 RUNNING 状态）。</p>
+<p>这时负责考勤的主任（Core 启动器）拿起一张装备清单（插件的 <code>manifest.json</code>），走到「小美同学」（Midea 集成）面前，发现清单上写着：「今天上课必须携带 2026 最新版的美的说明书（<code>midea-lan==2026.10.0</code>）」。</p>
+<p>主任一看小美书包里没有这本书，便立即派出一个快递员去外省总仓库（PyPI 镜像源 <code>files.pythonhosted.org</code>）去取。</p>
+<p>偏偏那天高速公路上大堵车，网络信号极其恶劣，快递员骑着一辆破旧的自行车，一秒钟只能往前挪几厘米（下载速度只有可怜的 10 KB/s）。更要命的是，学校规定：开学典礼必须所有人装备齐全才能宣布开始！</p>
+<p>于是，全操场几千名师生在凄风冷雨中足足干等了 6 分钟！直到校长实在冻得受不了了，才吹哨强行宣布开幕，但由于小美同学终究没拿到书，被当场罚站（集成标记为 <code>not_loaded</code>），今天的所有课都无法上了。</p>
+<h3 id="2-误区一把书扔在校门口地上config-假离线">2. 误区一：把书扔在校门口地上（/config 假离线）</h3>
+<p>有人可能会问：我提前把这本说明书从别的地方下载好，扔在学校大门口的过道上（即把 <code>midealan</code> 放在 <code>/config/</code> 根目录），不就不用派快递员了吗？</p>
+<p>这就引出了后面我们要深剖的代码假象：学校的保洁门卫大爷只有在引导客人进校门的一瞬间（import custom_components）会低头看一下大门口；等真正上课检查装备时，大爷根本不看门口地上堆的杂物！所以你扔在门外的书，老师根本不知道，依然会派快递员去外省跑腿。</p>
+<h3 id="3-误区二带了一张光盘安检员非要打电话国际长途file-轮子陷阱">3. 误区二：带了一张光盘，安检员非要打电话国际长途（file:// 轮子陷阱）</h3>
+<p>又有人想：那我给老师带一张存了说明书的光盘（本地 <code>file://&hellip;whl</code>）行不行？</p>
+<p>不行！因为学校的装备安检员有个不可理喻的强迫症规定（执行 <code>uv pip install</code> 时被强制追加了 <code>&ndash;upgrade</code> 升级参数）。安检员拿到你的光盘后，非要拿起长途电话，向跨国出版总部重新核对一遍：这本书里提到的标点符号有没有更新的版本？结果电话线又被卡死在越洋慢速线路上了。</p>
+<h3 id="4-黄金正解课桌里预留的专用暗格configdeps-目录">4. 黄金正解：课桌里预留的专用暗格（/config/deps 目录）</h3>
+<p>那怎样才能既不打电话、又不派快递员呢？</p>
+<p>深入翻阅学校的百年规章（Home Assistant Core 官方启动代码）后，我们发现：校长早在每个学生的课桌最深处，设计了一个专用的「免检暗格」（路径为 <code>/config/deps/lib/python3.14/site-packages/</code>）。</p>
+<p>只要你提前把印有官方防伪钢印（<code>.dist-info</code>）的正版说明书整整齐齐放进这个暗格里，老师一进门伸手一摸，发现书已经在暗格中躺得好好的，便当场打勾放行！开学典礼 1 秒钟顺利举行，全校皆大欢喜。</p>
+<h2 id="四问题深度分析双重陷阱与代码考古">四、问题深度分析：双重陷阱与代码考古</h2>
+<p>回到严肃的技术细节。导致这次升级灾难的，实际上是两记环环相扣的暗箭：</p>
+<p><a href="/post-images/home-assistant-midea-ac-lan-upgrade-offline-deps/04-boot-freeze-log.webp"><picture><img src="/post-images/home-assistant-midea-ac-lan-upgrade-offline-deps/04-boot-freeze-log.webp" alt="现场日志截图：HA Core 启动被 setup component midea_ac_lan 阻塞长达 6 分钟" width="1600" height="900" loading="lazy" decoding="async" style="max-width:100%;height:auto"></picture></a></p>
+<p>图 4：真实运行环境日志快照。清清楚楚记录了 <code>homeassistant.bootstrap</code> 在 Stage 2 中因等待 <code>setup component midea_ac_lan</code> 耗尽 360 秒超时的全过程。</p>
+<h3 id="1-第一重陷阱版本参数断崖式不兼容">1. 第一重陷阱：版本参数断崖式不兼容</h3>
+<p>Midea AC LAN 本身只是一个对接 Home Assistant 的外壳界面，真正解析美的电器的网络二进制报文、加解密通信密钥（Token/Key）以及匹配设备型号协议的核心，是一个名为 <code>midea-lan</code> 的独立 Python 伴生库。</p>
+<p>在旧版本 <code>v2026.9.1</code> 中，集成依赖的是 <code>midea-lan 2026.9.1</code>；而在新版 <code>v2026.10.0</code> 中，集成代码重构了设备选择器，调用方式变为：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-python" data-lang="python"><span style="display:flex;"><span>device_selector(
+</span></span><span style="display:flex;"><span>    device_type,
+</span></span><span style="display:flex;"><span>    device_id,
+</span></span><span style="display:flex;"><span>    ip_address,
+</span></span><span style="display:flex;"><span>    port,
+</span></span><span style="display:flex;"><span>    token,
+</span></span><span style="display:flex;"><span>    key,
+</span></span><span style="display:flex;"><span>    protocol,
+</span></span><span style="display:flex;"><span>    model,
+</span></span><span style="display:flex;"><span>    sn8,                 <span style="color:#75715e"># 新增参数</span>
+</span></span><span style="display:flex;"><span>    manufacturer_code,   <span style="color:#75715e"># 新增参数</span>
+</span></span><span style="display:flex;"><span>    cloud_name           <span style="color:#75715e"># 新增参数</span>
+</span></span><span style="display:flex;"><span>)
+</span></span></code></pre></div><p>然而，旧版的 <code>midea-lan 2026.9.1</code> 函数定义里根本没有这三个新参数！</p>
+<p>如果系统在升级集成时，未能同步将底层的 <code>midea-lan</code> 库替换为 <code>2026.10.0</code>，那么任何一台美的设备在执行 <code>async_setup_entry</code> 时，都会瞬间抛出 <code>TypeError</code> 异常，直接崩溃。</p>
+<h3 id="2-第二重陷阱假离线挂载与-syspath-的障眼法">2. 第二重陷阱：假离线挂载与 sys.path 的障眼法</h3>
+<p>你可能会好奇，既然依赖库这么重要，之前系统难道一直是在线联网下载的吗？</p>
+<p>这里就隐藏着许多智能家居老玩家和维护脚本都会踩中的「认知误区」。在之前的运维记录中，曾有人将 <code>midea-lan 2026.9.1</code> 手动解压放到了配置根目录 <code>/config/midealan/</code> 下，误以为这样就能实现「离线 Vendoring」。</p>
+<p>但通过分析 Home Assistant 2026.10 的核心加载源码 <code>homeassistant/loader.py</code>（第 1709 至 1713 行），真相水落石出：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-python" data-lang="python"><span style="display:flex;"><span><span style="color:#75715e"># homeassistant/loader.py 片段</span>
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">try</span>:
+</span></span><span style="display:flex;"><span>    sys<span style="color:#f92672">.</span>path<span style="color:#f92672">.</span>insert(<span style="color:#ae81ff">0</span>, config_dir)
+</span></span><span style="display:flex;"><span>    <span style="color:#75715e"># 仅在此处动态 import custom_components</span>
+</span></span><span style="display:flex;"><span>    integration <span style="color:#f92672">=</span> importlib<span style="color:#f92672">.</span>import_module(<span style="color:#e6db74">f</span><span style="color:#e6db74">&#34;</span><span style="color:#e6db74">{</span>CUSTOM_COMPONENTS<span style="color:#e6db74">}</span><span style="color:#e6db74">.</span><span style="color:#e6db74">{</span>domain<span style="color:#e6db74">}</span><span style="color:#e6db74">&#34;</span>)
+</span></span><span style="display:flex;"><span><span style="color:#66d9ef">finally</span>:
+</span></span><span style="display:flex;"><span>    <span style="color:#75715e"># 扫描与初次引入完成后，立刻将 config_dir 从 sys.path 彻底剔除！</span>
+</span></span><span style="display:flex;"><span>    sys<span style="color:#f92672">.</span>path<span style="color:#f92672">.</span>remove(config_dir)
+</span></span></code></pre></div><p>原来，Home Assistant 只在最开始探测自定义集成模块的瞬间，极其短暂地将 <code>/config</code> 目录推入内存中的 <code>sys.path</code>；随后立刻将其移出！</p>
+<p>在后续的常规运行期、以及核心类库判断依赖是否满足的 <code>is_installed()</code> 阶段，<code>/config</code> 根本不在 Python 的模块搜索路径里。之前之所以能跑，完全是因为当时碰巧在容器或虚拟环境的系统全局 <code>site-packages</code> 里安装成功过；放在 <code>/config</code> 根目录下的文件，从始至终都是摆设！</p>
+<p><picture><source media="(max-width: 640px)" srcset="/post-images/home-assistant-midea-ac-lan-upgrade-offline-deps/05-architecture-zh-mobile.webp"><img src="/post-images/home-assistant-midea-ac-lan-upgrade-offline-deps/05-architecture-zh.webp" alt="原创架构图：loader.py 与 bootstrap.py 的依赖查找与加载路径解剖" width="1600" height="1000" loading="lazy" decoding="async" style="max-width:100%;height:auto"></picture></p>
+<p>图 5：本文原创架构图。深度剖析了 <code>loader.py</code> 的临时挂载、<code>package.py</code> 的强制 upgrade 网络重试，以及 <code>bootstrap.py</code> 中永久注入的 user-site 机制。</p>
+<h3 id="3-第三重陷阱uv-pip-upgrade-的网络黑洞">3. 第三重陷阱：uv pip &ndash;upgrade 的网络黑洞</h3>
+<p>Home Assistant 从 2024 年底开始，全面引入了极速的 Python 包管理工具 <code>uv</code> 代替传统的 <code>pip</code>。这本来是一项提升性能的壮举，但在国内弱网环境下，却演化成了一个噩梦。</p>
+<p>当集成在 <code>manifest.json</code> 中声明了：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-json" data-lang="json"><span style="display:flex;"><span>{
+</span></span><span style="display:flex;"><span>  <span style="color:#f92672">&#34;domain&#34;</span>: <span style="color:#e6db74">&#34;midea_ac_lan&#34;</span>,
+</span></span><span style="display:flex;"><span>  <span style="color:#f92672">&#34;requirements&#34;</span>: [<span style="color:#e6db74">&#34;midea-lan==2026.10.0&#34;</span>]
+</span></span><span style="display:flex;"><span>}
+</span></span></code></pre></div><p>Core 在启动时会通过 <code>homeassistant.util.package.is_installed()</code> 进行校验。由于上面提到的假离线失效，Core 认为这个包没有安装，于是调用：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>uv pip install --upgrade midea-lan<span style="color:#f92672">==</span>2026.10.0
+</span></span></code></pre></div><p>在用户的家庭网络环境下，访问海外的 <code>files.pythonhosted.org</code> 速度经常跌落至 10 KB/s 以下。一个 330 KB 的 Wheel 包，下载需要数分钟甚至更久，期间一旦触发 TLS 握手重试或数据包中断，uv 就会挂起重试。</p>
+<p>更有甚者，有人尝试把 manifest 改成指向本地文件：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-json" data-lang="json"><span style="display:flex;"><span>{
+</span></span><span style="display:flex;"><span>  <span style="color:#f92672">&#34;requirements&#34;</span>: [<span style="color:#e6db74">&#34;file:///config/wheels/midea_lan-2026.10.0-py3-none-any.whl&#34;</span>]
+</span></span><span style="display:flex;"><span>}
+</span></span></code></pre></div><p>这依然会卡死！因为 Core 调用安装命令时，写死了 <code>&ndash;upgrade</code> 标志。根据 PEP 规范与 uv 的解析逻辑，带有 <code>&ndash;upgrade</code> 时，包解析器会强行连网查询该包的所有间接依赖是否在 PyPI 上有更新版本。只要宿主机无法顺畅连接外网，这个网络重试黑洞就会直接将 Home Assistant 拖入长达 6 分钟的 Stage 2 启动死锁中！</p>
+<h2 id="五问题根因与破局点寻找官方认可的生路">五、问题根因与破局点：寻找官方认可的生路</h2>
+<p>既然改 <code>manifest.json</code> 会破坏版本定义且触发联网检查，放 <code>/config</code> 根目录又无效，官方到底留没留下纯离线、零侵入的解决方案？</p>
+<p>答案就藏在 Home Assistant 启动引导器 <code>homeassistant/bootstrap.py</code> 中。</p>
+<p>通过查阅 2026.10.4 的源码，我们锁定了函数 <code>async_mount_local_lib_path</code>：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-python" data-lang="python"><span style="display:flex;"><span><span style="color:#66d9ef">async</span> <span style="color:#66d9ef">def</span> <span style="color:#a6e22e">async_mount_local_lib_path</span>(config_dir: str) <span style="color:#f92672">-&gt;</span> str:
+</span></span><span style="display:flex;"><span>    <span style="color:#e6db74">&#34;&#34;&#34;Add local library to Python Path.
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    This function is a coroutine.
+</span></span></span><span style="display:flex;"><span><span style="color:#e6db74">    &#34;&#34;&#34;</span>
+</span></span><span style="display:flex;"><span>    deps_dir <span style="color:#f92672">=</span> os<span style="color:#f92672">.</span>path<span style="color:#f92672">.</span>join(config_dir, <span style="color:#e6db74">&#34;deps&#34;</span>)
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">if</span> (lib_dir <span style="color:#f92672">:=</span> <span style="color:#66d9ef">await</span> async_get_user_site(deps_dir)) <span style="color:#f92672">not</span> <span style="color:#f92672">in</span> sys<span style="color:#f92672">.</span>path:
+</span></span><span style="display:flex;"><span>        sys<span style="color:#f92672">.</span>path<span style="color:#f92672">.</span>insert(<span style="color:#ae81ff">0</span>, lib_dir)
+</span></span><span style="display:flex;"><span>    <span style="color:#66d9ef">return</span> deps_dir
+</span></span></code></pre></div><p>这里的逻辑非常清晰而优雅：</p>
+<ol>
+<li>官方保留的专用目录：在配置目录下，有一个专为本地依赖预留的 <code>deps/</code> 体系。</li>
+<li>永久置顶 sys.path[0]：系统在 Stage 0 引导的最开始，就会通过 <code>async_get_user_site</code> 找到对应的 Python 版本目录（例如 <code>/config/deps/lib/python3.14/site-packages</code>），并将其直接插入到 Python 搜索路径的最顶端（<code>sys.path[0]</code>）！</li>
+<li>完美阻断联网安装：在后续检查依赖时，<code>importlib.metadata</code> 会首先扫描 <code>sys.path[0]</code>。如果我们在该目录下同时放置了解压后的代码包（<code>midealan/</code>）和元数据分发信息包（<code>midea_lan-2026.10.0.dist-info/</code>），<code>is_installed(&ldquo;midea-lan==2026.10.0&rdquo;)</code> 将当场返回 <code>True</code>！</li>
+<li>保持集成发布包的绝对纯净：官方 <code>manifest.json</code> 不需要做任何篡改，完全维持 <code>midea-lan==2026.10.0</code> 的官方声明。以后即使官方发布热修复或通过 Git 同步，都不会发生配置冲突。</li>
+</ol>
+<p><a href="/post-images/home-assistant-midea-ac-lan-upgrade-offline-deps/06-deps-filesystem.webp"><picture><img src="/post-images/home-assistant-midea-ac-lan-upgrade-offline-deps/06-deps-filesystem.webp" alt="真实目录证据：解包至 /config/deps/lib/python3.14/site-packages/ 的 midealan 与 dist-info" width="1600" height="900" loading="lazy" decoding="async" style="max-width:100%;height:auto"></picture></a></p>
+<p>图 6：现场环境的目录结构快照。确认 <code>midealan</code> 代码目录与 <code>.dist-info</code> 规范放置在 Python 3.14 的 site-packages 路径下。</p>
+<h2 id="六如何解决问题从离线注入到闭环验收">六、如何解决问题：从离线注入到闭环验收</h2>
+<p>理清了底层原理，解决方案的实施路径就变得清晰而极其稳健。整个实施过程严格遵循生产级变更标准，分为五个关键阶段：</p>
+<h3 id="阶段一宿主机离线拉取与双重哈希校验">阶段一：宿主机离线拉取与双重哈希校验</h3>
+<p>我们在外围工作机（能够稳定访问海外源的 Mac 电脑）上，通过高带宽通道直接下载对应的发布制品，并在本地完成 SHA256 完整性核对：</p>
+<ul>
+<li>集成源码包：GitHub Tag 源码 ZIP（sha256 校验值为 <code>56fe36ef…9591</code>，确认与官方 Release 逐字节吻合）。</li>
+<li>依赖类库：PyPI 官方发布的纯 Python Wheel 轮子 <code>midea_lan-2026.10.0-py3-none-any.whl</code>（sha256 校验值为 <code>1aef9186…e56d</code>，确认无损坏）。</li>
+</ul>
+<h3 id="阶段二生产环境旧资产全量备份">阶段二：生产环境旧资产全量备份</h3>
+<p>在进行任何写入之前，通过自动化运维探针对 Home Assistant 上的原有资产执行严格备份：</p>
+<ul>
+<li>备份 <code>custom_components/midea_ac_lan/</code> 目录下的所有文件；</li>
+<li>备份旧版 <code>/config/midealan</code> 和历史遗留的 <code>midea_lan-2026.9.1.dist-info</code>；</li>
+<li>累计归档 123 个历史资产文件，确保任何异常均可一键回滚。</li>
+</ul>
+<h3 id="阶段三规范化-deps-注入与旧文件清理">阶段三：规范化 Deps 注入与旧文件清理</h3>
+<ol>
+<li>目录创建：在 Home Assistant 端建立严格匹配当前 Python 运行时版本的依赖目录：<code>/config/deps/lib/python3.14/site-packages/</code>。</li>
+<li>解包注入：将 Wheel 包解压，把其中的 <code>midealan/</code> 代码包和 <code>midea_lan-2026.10.0.dist-info/</code> 元数据包同步推送到上述目录中，并逐文件校验大小。</li>
+<li>写入集成：将 <code>custom_components/midea_ac_lan/</code> 的 32 个新版文件全量写入，并维持未经修改的官方 <code>manifest.json</code>。</li>
+<li>卫生清理：彻底删除过去留在 <code>/config</code> 根目录下的废弃 <code>midealan</code> 目录及临时目录，消除一切路径干扰。</li>
+</ol>
+<h3 id="阶段四配置校验与安全重启">阶段四：配置校验与安全重启</h3>
+<p>在下发重启指令前，调用 Home Assistant 官方的 <code>check_config</code> 服务：</p>
+<ul>
+<li>确认 YAML 配置校验结果为 <code>valid</code>，无任何报错或警告；</li>
+<li>触发优雅重启；</li>
+<li>这一次，没有了 10 KB/s 的网络死锁，Home Assistant 在 18 秒内秒级完成冷启动！</li>
+<li>核心状态立刻跃升为 <code>RUNNING</code>，Stage 2 耗时缩短至毫秒级。</li>
+</ul>
+<h3 id="阶段五设备状态机核对与实体分流治理">阶段五：设备状态机核对与实体分流治理</h3>
+<p>重启完成后，我们通过 WebSocket 接口抓取三台核心电器的加载状态：</p>
+<ul>
+<li>美的滚筒洗衣机：<code>loaded</code>；</li>
+<li>美的智能洗碗机：<code>loaded</code>；</li>
+<li>美的燃气热水器：<code>loaded</code>。</li>
+</ul>
+<p>原有的 34 个基础实体全部完好保留，历史曲线平滑延续。</p>
+<p><a href="/post-images/home-assistant-midea-ac-lan-upgrade-offline-deps/07-dishwasher.webp"><picture><img src="/post-images/home-assistant-midea-ac-lan-upgrade-offline-deps/07-dishwasher.webp" alt="真实截图：洗碗机 H5 设备详情页，展示新版状态原始值及重命名并禁用的 11 个控制实体" width="1600" height="900" loading="lazy" decoding="async" style="max-width:100%;height:auto"></picture></a></p>
+<p>图 7：洗碗机设备详情页面。展示了新版规范命名并默认禁用的 11 个控制实体，以及正常工作的状态汇报。</p>
+<p><a href="/post-images/home-assistant-midea-ac-lan-upgrade-offline-deps/08-washer.webp"><picture><img src="/post-images/home-assistant-midea-ac-lan-upgrade-offline-deps/08-washer.webp" alt="真实截图：美的滚筒洗衣机设备详情页，实体属性与运行状态完好保留" width="1600" height="900" loading="lazy" decoding="async" style="max-width:100%;height:auto"></picture></a></p>
+<p>图 8：美的滚筒洗衣机设备页面。水温、脱水速度、剩余时间和运行阶段传感器数据均精准保持。</p>
+<p><a href="/post-images/home-assistant-midea-ac-lan-upgrade-offline-deps/09-water-heater.webp"><picture><img src="/post-images/home-assistant-midea-ac-lan-upgrade-offline-deps/09-water-heater.webp" alt="真实截图：美的燃气热水器设备详情页，燃烧状态、水温控制与保护开关" width="1600" height="900" loading="lazy" decoding="async" style="max-width:100%;height:auto"></picture></a></p>
+<p>图 9：燃气热水器详情页面。清晰展示了当前水温、燃烧状态传感器与零冷水开关联动。</p>
+<p>此时，还有两处细微但至关重要的「新版行为变动」需要人工接管处理：</p>
+<ol>
+<li>洗碗机新增 11 个实验性实体：新版集成对洗碗机默认开启了「开始、预约开始、暂停、恢复、取消」等 5 个动作按钮，以及程序选择、预约时长、自动开门等开关。由于 H5 这款硬件是否完全支持远程通过网络触发启动尚存不确定性，为了防止误触引发漏水或干烧风险，我们将这些新增实体统一重命名为 <code><em>.mei_de_xi_wan_ji_</em></code> 规范格式，并在实体注册表中将其标记为 <code>disabled_by: user</code>（安全禁用）。后续有实际需要时，可在 UI 中单独开启。</li>
+<li>状态值格式变更为纯小写：新版代码将洗碗机和洗衣机的原始枚举值，由以前的首字母大写改为了小写 Key（例如 <code>Running</code> → <code>running</code>，<code>ECO Wash</code> → <code>eco_wash</code>，<code>Idle</code> → <code>idle</code>，<code>Power Off</code> → <code>power_off</code>）。由于上游集成的简体中文语言包尚未补充这些状态的翻译映射，Lovelace 面板上会直接显示英文原值。如果你有基于状态文字匹配的自动化脚本，需要同步核对是否受到影响。</li>
+</ol>
+<p><a href="/post-images/home-assistant-midea-ac-lan-upgrade-offline-deps/10-hacs.webp"><picture><img src="/post-images/home-assistant-midea-ac-lan-upgrade-offline-deps/10-hacs.webp" alt="真实截图：HACS 成功对齐已安装记录至 v2026.10.0，消除红点通知" width="1600" height="900" loading="lazy" decoding="async" style="max-width:100%;height:auto"></picture></a></p>
+<p>图 10：HACS 集成管理卡片。已成功与上游 v2026.10.0 版本对齐，移除了更新角标。</p>
+<h2 id="七全平台一键离线升级工具与脚本">七、全平台一键离线升级工具与脚本</h2>
+<p>为了让遇到同样弱网超时困扰、或者希望在未来的版本更新中一劳永逸避坑的玩家能够轻松落地，我们开发了配套的自动化离线注入工具集。</p>
+<p>该工具完全基于 Python 3 标准库构建，零第三方 pip 依赖，支持本地离线校验、自动探测 Python 运行时版本、自动构建 deps 目录并安全重启验证。</p>
+<p><picture><source media="(max-width: 640px)" srcset="/post-images/home-assistant-midea-ac-lan-upgrade-offline-deps/11-workflow-zh-mobile.webp"><img src="/post-images/home-assistant-midea-ac-lan-upgrade-offline-deps/11-workflow-zh.webp" alt="原创流程图：Windows 11、Ubuntu 26.04 与 macOS 27 三端自动化实施机制" width="1600" height="1000" loading="lazy" decoding="async" style="max-width:100%;height:auto"></picture></p>
+<p>图 11：本文原创流程图。涵盖了三端自动化脚本从环境探针、离线哈希防篡改、隔离解包到闭环验证的完整流水线。</p>
+<p>代码已开源并提供打包下载：</p>
+<ul>
+<li>工具包完整下载：<a href="/downloads/midea-deps-toolkit/README.md">midea-deps-toolkit.zip</a></li>
+<li>核心实现源码：<a href="/downloads/midea-deps-toolkit/midea_deps_toolkit.py">midea_deps_toolkit.py</a></li>
+</ul>
+<h3 id="方法-a人工自动执行三端一键命令行">方法 A：人工自动执行（三端一键命令行）</h3>
+<p>在本地电脑上下载解压工具包后，打开对应系统的终端，运行单条指令即可。程序会自动检查环境并在隐藏密码提示下交互式读取 Token，杜绝凭据泄漏风险：</p>
+<h4 id="1-windows-11powershell-7--windows-powershell">1. Windows 11（PowerShell 7 / Windows PowerShell）</h4>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-powershell" data-lang="powershell"><span style="display:flex;"><span>powershell -NoProfile -ExecutionPolicy Bypass <span style="color:#f92672">-File</span> .\run-windows11.ps1 -Apply
+</span></span></code></pre></div><p>说明：这里的执行策略覆盖仅作用于当前的 PowerShell 单次会话，不会修改全局系统安全策略。</p>
+<h4 id="2-ubuntu-2604-ltsbash">2. Ubuntu 26.04 LTS（Bash）</h4>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>bash ./run-ubuntu2604.sh --apply
+</span></span></code></pre></div><h4 id="3-macos-27zsh">3. macOS 27（Zsh）</h4>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-zsh" data-lang="zsh"><span style="display:flex;"><span>zsh ./run-macos27.zsh --apply
+</span></span></code></pre></div><p>若不带 <code>&ndash;apply</code> 参数，工具默认只执行「只读探测」，会输出当前 Home Assistant 版本、Python 目录规范以及 Midea 实体的在线情况，绝不会擅自修改服务端的任何文件。</p>
+<h3 id="方法-bagent-自动化配置方案">方法 B：Agent 自动化配置方案</h3>
+<p>如果你日常使用具备命令行调用能力的 AI Agent（如 Claude Code、OpenCode 或专用运维智能体），可以将工具包解压到工作区，并将下述任务提示词直接托付给 Agent：</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-text-size-adjust:none;"><code class="language-text" data-lang="text"><span style="display:flex;"><span>请使用当前目录中的 midea_deps_toolkit.py 对我的 Home Assistant 进行 Midea AC LAN 离线依赖升级与加固。
+</span></span><span style="display:flex;"><span>从环境变量 HA_URL 读取中枢地址，从 HA_TOKEN 读取长期访问令牌，严禁在控制台打印令牌或完整 IP 地址。
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>第一步：先执行只读评估：
+</span></span><span style="display:flex;"><span>python3 midea_deps_toolkit.py --non-interactive
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>第二步：核对探测到的 Python 版本后，执行安全离线依赖解包与升级：
+</span></span><span style="display:flex;"><span>python3 midea_deps_toolkit.py --non-interactive --apply
+</span></span><span style="display:flex;"><span>
+</span></span><span style="display:flex;"><span>任务要求：
+</span></span><span style="display:flex;"><span>1. 下载 Release ZIP 与 midea-lan 2026.10.0 wheel 并执行 SHA256 完整性核对；
+</span></span><span style="display:flex;"><span>2. 在服务端严格注入至 /config/deps/lib/python3.14/site-packages/，禁止修改 manifest.json 原文；
+</span></span><span style="display:flex;"><span>3. 清理 /config 根目录下的历史游离 midealan 目录；
+</span></span><span style="display:flex;"><span>4. 调用 check_config 服务并在合法的前提下重启 Home Assistant；
+</span></span><span style="display:flex;"><span>5. 重启完成后通过 API 验证洗衣机、洗碗机、热水器三个条目状态均为 loaded；
+</span></span><span style="display:flex;"><span>6. 检查洗碗机新增的实体，将其统一重命名并安全禁用。
+</span></span></code></pre></div><p><a href="/post-images/home-assistant-midea-ac-lan-upgrade-offline-deps/12-dashboard.webp"><picture><img src="/post-images/home-assistant-midea-ac-lan-upgrade-offline-deps/12-dashboard.webp" alt="真实截图：家庭控制面板中正常运转的美的家电状态与联动卡片" width="1600" height="900" loading="lazy" decoding="async" style="max-width:100%;height:auto"></picture></a></p>
+<p>图 12：整理完成后正常运转的「我的家」大屏控制台。美的洗衣机、洗碗机和热水器在概览页上稳定更新。</p>
+<h2 id="八常见问题-qa">八、常见问题 Q&amp;A</h2>
+<h3 id="q1为什么我直接在-hacs-点更新后每次重启都要卡很久">Q1：为什么我直接在 HACS 点更新后，每次重启都要卡很久？</h3>
+<p>这是典型的 <code>uv pip install &ndash;upgrade</code> 弱网超时。集成在 manifest 里写了依赖要求，系统发现本地没有装，便在每次启动时尝试联网拉取。由于国内访问国外下载源极慢，看门狗计时器每次都会硬等数分钟直到超时。按照本文方法把依赖放进 <code>/config/deps/lib/pythonX.Y/site-packages/</code> 后，系统直接判定依赖已满足，启动立刻恢复秒级。</p>
+<h3 id="q2未来-home-assistant-升级大版本比如从-python-314-升到-python-315该怎么办">Q2：未来 Home Assistant 升级大版本（比如从 Python 3.14 升到 Python 3.15）该怎么办？</h3>
+<p><code>deps/lib/</code> 下的目录名称是严格绑定 Python 大小版本的。当未来 Home Assistant Core 升级其底层的 Python 运行时小版本时，你需要把旧版本目录下的 <code>site-packages</code> 内容复制或迁移到对应的新版本目录（例如 <code>deps/lib/python3.15/site-packages</code>）中即可。本文提供的工具支持 <code>&ndash;python-ver</code> 参数，可以秒级完成新目录的构建。</p>
+<h3 id="q3为什么不建议把-manifestjson-改成-file-本地-wheel">Q3：为什么不建议把 manifest.json 改成 file:// 本地 wheel？</h3>
+<p>首先，改动第三方集成的 manifest 会导致它失去官方源码的完整性，以后 HACS 检测或者更新时会经常提示文件冲突；其次，更关键的是 Home Assistant 调用底层 uv 时附带了 <code>&ndash;upgrade</code> 标志，即便你指向了本地 wheel 文件，uv 依然会发起网络请求重新验证依赖树，弱网环境下依然会发生超时卡死。</p>
+<h3 id="q4面板上的洗碗机状态显示为power_off或idle能改成中文吗">Q4：面板上的洗碗机状态显示为「power_off」或「idle」，能改成中文吗？</h3>
+<p>可以。新版上游代码只翻译了实体名称，未提供状态值的多语言映射。你可以通过在 <code>configuration.yaml</code> 中建立简单的模板传感器（Template Sensor），使用映射字典将 <code>power_off</code> 转换为「已关机」、<code>running</code> 转换为「运行中」、<code>eco_wash</code> 转换为「节能洗」，并在前端 Lovelace 卡片上引用该模板传感器，即可恢复原汁原味的优雅中文显示。</p>
+<h3 id="q5这套方案需要公网连接或第三方中转服务吗">Q5：这套方案需要公网连接或第三方中转服务吗？</h3>
+<p>完全不需要。本文的所有工具、脚本和流程均完全运行在内网本地环境中，下载依赖是在你的外围电脑上完成并验证 SHA256，所有向 Home Assistant 的推送与调用全部基于局域网官方 REST API。既不依赖任何第三方平台，也不泄露任何家庭网络隐私。</p>
+<h2 id="参考资料与文献">参考资料与文献</h2>
+<ul>
+<li><a href="https://developers.home-assistant.io/docs/creating_integration_manifest/">Home Assistant 官方开发者文档：集成架构与清单规范 (Manifest Specification)</a></li>
+<li><a href="https://developers.home-assistant.io/docs/architecture_components/">Home Assistant 官方文档：异步启动引导机制 (Bootstrap Implementation)</a></li>
+<li><a href="https://peps.python.org/pep-0370/">PEP 370：Per user site-packages Directory 规范</a></li>
+<li><a href="https://github.com/georgezhao2010/midea_ac_lan">Midea AC LAN 开源仓库与发布说明</a></li>
+<li><a href="https://docs.python.org/3/library/importlib.metadata.html">Python 官方 importlib.metadata 运行时元数据查找规范</a></li>
+<li><a href="https://developers.home-assistant.io/docs/api/websocket/">Home Assistant REST &amp; WebSocket 官方交互协议指南</a></li>
+</ul>
+<p>文中的 Home Assistant 品牌标志来自官方开源资产，原理图与流程图均为本文原创绘制。界面截图均源自本次真实运行环境，所有网络 IP、机器标识、个人账户及敏感用能数值已做不透明脱敏遮蔽。</p>
+        </div>
+    </article>
+
+    
+
+
+
+
+  
+  
+    
+  
+
+
+<section aria-label="评论" style="margin-top:40px"
+  data-gitalk-id="post-f951a7a6e4e63454796d086fd9d583e9a35f0767" data-gitalk-title="点了个“更新”，全屋三台家电全变砖？Home Assistant 升级 Midea AC LAN 的6分钟卡死惊魂与底层 Deps 离线自愈实录" data-gitalk-url="https://blog.margrop.net/post/home-assistant-midea-ac-lan-upgrade-offline-deps/">
+  <h2>评论</h2>
+  <p>使用 GitHub 登录后即可评论，中英文版本共用同一讨论。
+    <a href="https://github.com/margrop/margropcomment.margrop.io/issues?q=is%3Aissue&#43;label%3AGitalk&#43;label%3A%22post-f951a7a6e4e63454796d086fd9d583e9a35f0767%22" target="_blank" rel="noopener noreferrer">在 GitHub 上参与讨论</a>
+  </p>
+  <div id="gitalk-container"></div>
+  <noscript>请开启 JavaScript，或通过上方 GitHub 链接参与讨论。</noscript>
+</section>
+<link rel="stylesheet" href="/vendor/gitalk/1.8.0/gitalk.css">
+<script src="/vendor/gitalk/1.8.0/gitalk.server-auth.min.js"></script>
+<script>
+  (function () {
+    if (typeof Gitalk === 'undefined') {
+      document.getElementById('gitalk-container').textContent = '评论加载失败，可使用上方 GitHub 链接参与讨论。';
+      return;
+    }
+    var gitalk = new Gitalk({
+      clientID: "3181fd94e501cc5db0ad",
+      clientSecret: 'server-side',
+      proxy: "https://comments.margrop.net/oauth/token",
+      repo: "margropcomment.margrop.io",
+      owner: "margrop",
+      admin: ["margrop"],
+      id: "post-f951a7a6e4e63454796d086fd9d583e9a35f0767",
+      language: 'zh-CN',
+      createIssueManually: true,
+      distractionFreeMode: false
+    });
+    gitalk.render('gitalk-container');
+  })();
+</script>
+
+
+
+
+
+    
+<div class="site-stats" aria-label="访问统计">
+    <span>本文阅读量 <span data-page-view-count>--</span></span>
+</div>
+
+
+    
+    
+    <script async src="https://js.users.51.la/21044367.js"></script>
+    <script async charset="UTF-8" id="LA_COLLECT" src="https://sdk.51.la/js-sdk-pro.min.js" onload="LA.init({id: '1vVTUWl7zoRjnKXi', ck: '1vVTUWl7zoRjnKXi'})"></script>
+    <script async src="https://sdk.51.la/perf/js-sdk-perf.min.js" crossorigin="anonymous" onload="new LingQue.Monitor().init({id: '202teQt8THXwqyve'})"></script>
+    <script defer src="/js/page-views.js"></script>
+    <div class="la-theme-widget" data-51la-widget aria-label="51.la 网站统计"></div>
+    <script defer src="/js/51la-theme-widget.js"></script>
+</body>
+</html>
